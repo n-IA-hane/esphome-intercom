@@ -13,14 +13,22 @@ export function formatListFromMetadata(value) {
   return [];
 }
 
+export function publicDialTarget(entry) {
+  for (const value of [entry?.name, entry?.extension, entry?.number, entry?.sip_uri]) {
+    const address = String(value ?? "").trim();
+    if (address) return address;
+  }
+  return "";
+}
+
 export function targetFromRosterEntry(entry) {
   const metadata = entry?.metadata || {};
   const id = entry?.id || entry?.name;
   const signaling = metadata.sip_transport || metadata.signaling_transport || "";
   return {
     endpoint_id: metadata.endpoint_id || "",
-    device_id: metadata.device_id || id,
-    name: entry?.name || id,
+    device_id: metadata.device_id || "",
+    name: publicDialTarget(entry),
     route_id: id,
     host: entry?.address || "",
     sip_transport: signaling,

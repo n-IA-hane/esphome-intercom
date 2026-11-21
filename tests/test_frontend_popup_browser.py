@@ -983,8 +983,8 @@ def test_video_hangup_bounds_follow_visible_runtime_controls(popup_page, hidden_
           .map(b=>({left:b.left,right:b.right,top:b.top,bottom:b.bottom}));};
       window.layoutFixture={view,e,dialog,measure:()=>view._measureLayout(),
         inspect:()=>({card:box(e.card),button:box(e.hangupBtn),controls:box(e.runtimeControls),
-          paddingRight:parseFloat(getComputedStyle(e.hangupBtn).paddingRight),
-          copy:textBoxes(e.hangupBtn.querySelector('.hangup-copy')),
+          paddingRight:parseFloat(getComputedStyle(e.hangupBtn.parentElement).paddingRight),
+          copy:textBoxes(e.hangupPeer.parentElement),
           duration:textBoxes(e.hangupDuration)})};
     }""")
 
@@ -997,8 +997,8 @@ def test_video_hangup_bounds_follow_visible_runtime_controls(popup_page, hidden_
         for key in ("copy", "duration"):
             assert state[key]
             for rect in state[key]:
-                assert rect["left"] >= max(card["left"], button["left"]) - 1
-                assert rect["right"] <= min(card["right"], button["right"]) + 1
+                assert rect["left"] >= button["right"] - 1
+                assert rect["right"] <= card["right"] + 1
                 assert rect["top"] >= button["top"] - 1
                 assert rect["bottom"] <= button["bottom"] + 1
 
@@ -1017,7 +1017,7 @@ def test_video_hangup_bounds_follow_visible_runtime_controls(popup_page, hidden_
     hidden = page.evaluate("layoutFixture.inspect()")
     assert hidden["controls"]["width"] == 0 and hidden["controls"]["height"] == 0
     assert_readable(hidden)
-    assert hidden["paddingRight"] == 0
+    assert hidden["paddingRight"] == 8
 
     page.evaluate("""()=>{
       layoutFixture.view.removeAttribute('data-receive-popup');

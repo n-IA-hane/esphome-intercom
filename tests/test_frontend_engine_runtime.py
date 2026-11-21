@@ -1326,7 +1326,7 @@ await superseded.startHaSoftphone(
   {{endpoint_id:"kitchen", device_id:"kitchen-device"}},
   {{callee:"Reception@Hotel", shouldAbort:()=>true}},
 );
-assert.equal(supersededRequests.at(-1).service_data.destination, "receiver-device");
+assert.equal(supersededRequests.at(-1).service_data.destination, "Reception@Hotel");
 
 // Browser capture/playback follows the negotiated local SDP direction. A
 // recvonly answer must not ask for microphone permission; hold/resume and
@@ -1885,6 +1885,7 @@ const namedSessionBackup=new Map(session);
 for (const browser of [false,true]) {{
   for (const [target,expected] of [
     [{{name:" Shadow destination ",extension:"101",number:"202"}},"Shadow destination"],
+    [{{name:"Casa", device_id:"54da57478a40e69420df7586730f6706", endpoint_id:"account:home", extension:"101"}},"Casa"],
     [{{name:"Saved contact",number:"+12025550123"}},"Saved contact"],
     [{{name:"101",extension:"202"}},"101"],
     [{{name:"  ",extension:"101"}},"101"],

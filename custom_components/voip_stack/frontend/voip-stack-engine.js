@@ -19,7 +19,7 @@ const [
   },
   { normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches },
   { BrowserMediaDevices, exactDeviceConstraint },
-  { phoneCallPresentation },
+  { phoneCallPresentation, publicDialTarget },
   { BrowserAudioSession, AudioSetupSupersededError, settleWithin },
 ] = await Promise.all([
   import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`),
@@ -1536,8 +1536,7 @@ class VoipStackEngine extends EventTarget {
     return this._dashboardOperation(owner, async (browser) => {
       let current = await this._dashboardSnapshot(owner);
       if (current.state !== "idle") throw new Error("The selected phone is already busy or unavailable.");
-      const destination = [target?.name, target?.extension, target?.number]
-        .map(value => String(value || "").trim()).find(Boolean) || "";
+      const destination = publicDialTarget(target);
       if (!destination) throw new Error("This contact has no destination.");
       if (!browser) {
         return this._hass.callService("voip_stack", "call", { device_id: owner.device_id, destination });
@@ -2117,6 +2116,11 @@ class VoipStackEngine extends EventTarget {
   }
 
   async startHaSoftphone(target, softphoneInfo, context = {}) {
+    const destination = typeof target === "string"
+      ? target.trim()
+      : String(context.callee || publicDialTarget(target)).trim();
+    if (!destination) throw new Error("This contact has no destination.");
+    const targetInfo = typeof target === "object" && target !== null ? target : {};
     await this._waitForMediaCleanup();
     this._resetStats();
     let endpointId = String(context.endpoint_id || softphoneInfo?.endpoint_id || "").trim();
@@ -2127,8 +2131,7 @@ class VoipStackEngine extends EventTarget {
       service: "call",
       return_response: true,
       service_data: {
-        destination: (!target.manual && target.endpoint_id && (target.device_id || target.endpoint_id))
-          || context.callee || target.name || target.device_id || "",
+        destination,
         call_id: context.call_id || "",
         send_video: Boolean(context.sendVideo),
         media_client_id: this._mediaClientId,
@@ -2168,10 +2171,10 @@ class VoipStackEngine extends EventTarget {
     if (state === "in_call") {
       const mediaInfo = {
         ...(softphoneInfo || {}),
-        ...(target || {}),
+        ...targetInfo,
         device_id: deviceId,
         endpoint_id: endpointId,
-        audio_mode: target?.audio_mode || softphoneInfo?.audio_mode || "full_duplex",
+        audio_mode: targetInfo.audio_mode || softphoneInfo?.audio_mode || "full_duplex",
       };
       await this.resumeSession(mediaInfo, deviceId, { ...(reply || {}), endpoint_id: endpointId });
     }

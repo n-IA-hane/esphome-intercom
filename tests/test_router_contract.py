@@ -28,7 +28,7 @@ class RouterContractTest(unittest.TestCase):
                 # Older persisted rosters can have the same normalized spelling.
                 other = roster.RosterEntry(roster.normalize_roster_key(name), address="192.0.2.25")
                 entries = [other, phone]
-                for target in (name, phone.id, "selected-ha-device", "account-selected"):
+                for target in (name, phone.id, "204"):
                     decision = router.resolve_ha_router(target, entries, trunk_ready=True)
                     self.assertIs(decision.entry, phone)
                     self.assertEqual(decision.sip_uri, phone.sip_uri)
@@ -36,6 +36,17 @@ class RouterContractTest(unittest.TestCase):
                 inbound = router.route_inbound_trunk(
                     router.CallContext(call_id="selection", direction="inbound", origin="trunk", route_hint=name), entries)
                 self.assertIs(inbound.entry, phone)
+
+    def test_public_dial_string_cannot_select_a_different_phone_by_registry_id(self):
+        casa = roster.RosterEntry("Casa", name="Casa", extension="101", sip_uri="sip:Casa@192.0.2.1")
+        other = roster.RosterEntry("Studio", name="Studio", sip_uri="sip:Studio@192.0.2.2",
+                                   metadata={"endpoint_id": "Casa", "device_id": "54da57478a40e69420df7586730f6706"})
+        for entries in ([other, casa], [casa, other]):
+            for dialed in ("Casa", "101"):
+                decision = router.resolve_ha_router(dialed, entries)
+                self.assertIs(decision.entry, casa)
+                self.assertEqual(decision.sip_uri, casa.sip_uri)
+            self.assertIsNone(router.resolve_ha_router(other.metadata["device_id"], entries).entry)
 
     def test_uri_and_unclaimed_external_shortcuts_remain_explicit(self) -> None:
         lookalikes = [roster.RosterEntry("ReceptionHotel", address="192.0.2.14"),

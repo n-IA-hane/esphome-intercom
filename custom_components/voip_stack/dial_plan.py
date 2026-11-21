@@ -152,7 +152,7 @@ def build_sip_contact_targets(
     targets: list[SipContactTarget] = []
     excluded = str(exclude_endpoint_id or "").strip()
     for member_order, member in enumerate(members):
-        entry = find_entry(entries, str(member), include_number=False)
+        entry = find_entry(entries, str(member), include_number=False, include_internal_ids=True)
         if entry is None or not entry.enabled:
             continue
         endpoint_id = str((entry.metadata or {}).get("endpoint_id") or entry.id).strip()

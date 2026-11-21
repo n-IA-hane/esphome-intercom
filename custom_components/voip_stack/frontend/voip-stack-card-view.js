@@ -157,7 +157,7 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active .destination-value,
       .video-active .status,
       .video-active .status-reason,
-      .video-active .stats,
+      .video-active .stats { color: white; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
       ha-card.card.video-active > .button-container {
         position: absolute;
         left: 0;
@@ -172,7 +172,7 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .video-active .destination-row,
       .video-active .status,
-      .video-active .status-reason,
+      .video-active .status-reason { display: none; }
       .header { font-size: 1.2em; font-weight: 500; margin-bottom: var(--voip-fluid-space, 16px); color: var(--primary-text-color); text-align: center; }
       .header[hidden] { display: none; }
 
@@ -337,21 +337,29 @@ export function buildMainCardSkeleton(cardVersion) {
         transition: transform 80ms linear;
       }
       .hangup-icon, .hangup-copy, .hangup-duration { display: none; }
-      .video-active .voip-button.hangup {
+      ha-card.card.video-active > .button-container:has(> .hangup:not([hidden])) {
         box-sizing: border-box;
-        width: auto;
-        flex: 1 1 auto;
-        height: 100%;
-        min-height: 50px;
-        border-radius: 0;
-        padding: 0 18px;
-        gap: 12px;
         justify-content: flex-start;
+        align-items: center;
+        gap: 8px;
+        padding-right: max(8px, var(--voip-video-actions-space, 0px));
         overflow: hidden;
+        color: white;
         background: linear-gradient(90deg, rgba(122, 5, 5, .24), rgba(230, 35, 35, .18));
         -webkit-backdrop-filter: blur(8px) saturate(1.12);
         backdrop-filter: blur(8px) saturate(1.12);
         box-shadow: 0 -1px 0 rgba(255,255,255,.18), 0 -8px 30px rgba(0,0,0,.24);
+      }
+      .video-active .voip-button.hangup {
+        box-sizing: border-box;
+        flex: 0 0 48px;
+        width: 48px;
+        height: 100%;
+        padding: 0;
+        border-radius: 0;
+      }
+      .button-container > .hangup[hidden] ~ :is(.hangup-copy, .hangup-stats, .hangup-duration) {
+        display: none;
       }
       .video-active .hangup-pulse { display: none; }
       .video-active .hangup-label { display: none; }
@@ -446,18 +454,17 @@ export function buildMainCardSkeleton(cardVersion) {
         margin-top: 10px;
       }
       .runtime-controls[hidden] { display: none; }
+      .card:not(.video-active) > .button-container:has(> .audio-call-summary:not([hidden])) {
+        flex-direction: column;
+        gap: 8px;
+      }
       .audio-call-summary {
-        display: flex;
-        align-items: baseline;
-        justify-content: center;
-        gap: 12px;
-        padding: 10px 0;
+        text-align: center;
         color: var(--primary-text-color, inherit);
         font-size: 1.1rem;
         font-weight: 600;
+        font-variant-numeric: tabular-nums;
       }
-      .audio-call-summary .call-peer { min-width: 0; overflow-wrap: anywhere; }
-      .audio-call-summary .call-duration { flex: none; font-variant-numeric: tabular-nums; }
       .audio-call-summary[hidden] { display: none; }
       .card > .phone-activity {
         position: absolute;
@@ -499,8 +506,7 @@ export function buildMainCardSkeleton(cardVersion) {
         text-align: left;
       }
       .settings-panel[hidden] { display: none; }
-      .runtime-controls .settings-label { display: inline; }
-      .runtime-controls .microphone-control .settings-label { display: inline; }
+      .runtime-controls .settings-label { display: none; }
       .microphone-control[aria-pressed="true"] { color: var(--warning-color, #e9b542); }
       .settings-label-icon {
         display: inline-flex;
@@ -531,9 +537,6 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active:not(.settings-open) .runtime-controls .settings-label-icon {
         display: inline-flex;
         --mdc-icon-size: 23px;
-      }
-      .video-active:not(.settings-open) .voip-button.hangup {
-        padding-right: var(--voip-video-actions-space, 0px);
       }
       .card.settings-open {
         overflow: auto;
@@ -793,12 +796,9 @@ export function buildMainCardSkeleton(cardVersion) {
     const audioCallSummary = document.createElement("div");
     audioCallSummary.className = "audio-call-summary";
     audioCallSummary.hidden = true;
-    const audioCallPeer = document.createElement("span");
-    audioCallPeer.className = "call-peer";
     const audioCallDuration = document.createElement("span");
     audioCallDuration.className = "call-duration";
-    audioCallSummary.append(audioCallPeer, audioCallDuration);
-    card.appendChild(audioCallSummary);
+    audioCallSummary.appendChild(audioCallDuration);
 
     // Button container with all four action buttons + a placeholder.
     // Visibility toggled in _render via [hidden].
@@ -845,9 +845,6 @@ export function buildMainCardSkeleton(cardVersion) {
     hangupStats.hidden = true;
     hangupBtn.appendChild(hangupLabel);
     hangupBtn.appendChild(hangupIcon);
-    hangupBtn.appendChild(hangupCopy);
-    hangupBtn.appendChild(hangupStats);
-    hangupBtn.appendChild(hangupDuration);
     const callBtn = document.createElement("button");
     callBtn.type = "button";
     callBtn.className = "voip-button call";
@@ -859,7 +856,8 @@ export function buildMainCardSkeleton(cardVersion) {
     placeholderBtn.disabled = true;
     buttonContainer.appendChild(answerBtn);
     buttonContainer.appendChild(declineBtn);
-    buttonContainer.appendChild(hangupBtn);
+    buttonContainer.appendChild(audioCallSummary);
+    buttonContainer.append(hangupBtn, hangupCopy, hangupStats, hangupDuration);
     buttonContainer.appendChild(callBtn);
     buttonContainer.appendChild(placeholderBtn);
     card.appendChild(buttonContainer);
@@ -1297,7 +1295,7 @@ export function buildMainCardSkeleton(cardVersion) {
       keypadPanel, keypadInput, keypadKeys, keypadGrid,
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
-      audioCallSummary, audioCallPeer, audioCallDuration, microphoneBtn, microphoneLabel, microphoneIcon,
+      audioCallSummary, audioCallDuration, microphoneBtn, microphoneLabel, microphoneIcon,
       transferLabel: transferBtn.querySelector(".settings-label"),
       runtimeControls, keypadBtn, keypadLabel, keypadIcon, settingsBtn, settingsPanel, popupSettings, voicemailBtn, voicemailPanel, parkBtn, transferBtn, transferHangupBtn, parkingNotice, phoneActivity, recordBtn,
       routingPanel, routingControls, ringingControls, trunkRow, trunkSelect,

@@ -327,7 +327,7 @@ function destinationCard() {{
   const card=new Card();card.config={{mode:"ha_softphone",device_id:"owner"}};
   card._softphoneSnapshot={{endpoint_id:"browser:owner"}};
   card._rosterEntries=[offlineEntry,logicalBrowser,staticContact];card._availableDevices=[];
-  card._softphoneTargetDeviceId="ws3";
+  card._softphoneDestination="WS3 LCD";
   card._testSelect=new FakeElement();
   card._render=()=>card._renderSoftphoneDestinationSelect(card._testSelect);
   return card;
@@ -410,7 +410,7 @@ assert.equal(cardModel.mirroredEndpointPeerLabel({{
 
 function elements() {{
   const names = [
-    "audioCallSummary", "audioCallPeer", "audioCallDuration",
+    "audioCallSummary", "audioCallDuration",
     "microphoneBtn", "microphoneLabel", "microphoneIcon",
     "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "card",
     "declineBtn", "destRow", "destSelect", "destValue", "destValueWrap",
@@ -473,7 +473,7 @@ assert.deepEqual(JSON.parse(activityIdentity._els.phoneActivity.dataset.rows), [
 
 const manualIdentity = makeCard();
 manualIdentity._softphoneTargets = () => [{{device_id: "ball", name: "Spotpear"}}];
-manualIdentity._softphoneTargetDeviceId = "ball";
+manualIdentity._softphoneDestination = "Spotpear";
 manualIdentity._softphoneSnapshot = {{state:"remote_ringing",direction:"outgoing",call_id:"new",dialed_target:"426"}};
 assert.equal(manualIdentity._getDestination(), "426", "Use the current call, not the idle picker");
 assert.equal(manualIdentity._activeSoftphonePeerDevice(), null, "Do not attach the previously selected ESP camera");
@@ -767,7 +767,8 @@ autoAnswerCard._rosterEntries = [{{
     audio_mode: "mic_only",
   }},
 }}];
-autoAnswerCard._softphoneTargetDeviceId = "device-test";
+autoAnswerCard._softphoneDestination = "Test";
+assert.equal(autoAnswerCard._getSoftphoneTargetDevice().audio_mode, "mic_only");
 let automaticAnswer = null;
 autoAnswerCard._answer = async (options) => {{ automaticAnswer = options; }};
 // The toggle saves its microphone success for the page-wide check, which the
@@ -1274,8 +1275,7 @@ engine.startHaSoftphone = async (target, session, options) => {{
 }};
 const cameraChecksBeforeAudioOnly = cameraPermissionChecks;
 await audioOnly._startCall();
-assert.equal(audioOnlyStart.target.endpoint_kind, "esphome");
-assert.deepEqual(audioOnlyStart.target.capabilities, ["audio", "dtmf"]);
+assert.equal(audioOnlyStart.target, "Waveshare S3 Audio");
 assert.equal(audioOnlyStart.options.sendVideo, false);
 assert.equal(cameraPermissionChecks, cameraChecksBeforeAudioOnly);
 engine.releaseSoftphoneSession("audio-only", "default");
@@ -1295,7 +1295,7 @@ engine.startHaSoftphone = async (target, session, options) => {{
   return {{ ...base, state: "calling", sequence: 1 }};
 }};
 await outbound._startCall();
-assert.equal(outboundStart.target.name, "Home HA");
+assert.equal(outboundStart.target, "Home HA");
 assert.equal(outboundStart.options.callee, "Home HA");
 assert.equal(outbound._softphoneSnapshot.state, "calling");
 outbound._render();
@@ -1322,7 +1322,7 @@ acknowledged._hass.connection={{sendMessagePromise:async request=>{{
 acknowledged._softphoneKeypadOpen = true;
 acknowledged._softphoneManualTarget = "426";
 engine.startHaSoftphone=async(target, session, options)=>{{
- assert.equal(target.name, "426");
+ assert.equal(target, "426");
  assert.equal(options.callee, "426");
  assert.equal(acknowledged._softphoneKeypadOpen, false);
  return {{schema_version:2,success:true,call_id:base.call_id,

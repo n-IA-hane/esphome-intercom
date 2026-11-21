@@ -540,7 +540,9 @@ def test_microphone_mute_is_shared_and_survives_media_changes_without_muting_pla
         assert await duration.is_visible()
         previous_duration = await duration.text_content()
         await page.wait_for_function("previous=>card.shadowRoot.querySelector('.audio-call-summary .call-duration').textContent !== previous", arg=previous_duration)
-        assert await page.locator(".audio-call-summary .call-peer").text_content() == "Peer"
+        assert await page.locator(".audio-call-summary").evaluate(
+            "(summary) => summary.innerText === summary.querySelector('.call-duration').innerText"
+        )
         await page.screenshot(path=str(tmp_path / "audio-call-muted.png"), full_page=True)
         await page.get_by_role("button", name="Hang up call", exact=True).click()
         await page.wait_for_function("!engine._ws && !engine._audioSession.audioContext && !engine.mediaCleanupPending")

@@ -958,3 +958,17 @@ class FrontendCardContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_video_mode_style_rules_are_complete():
+    """Removing a declaration at the end of a selector list silently merges the list into the
+    next rule. That un-hid the title and the status during video and laid them over the hang up
+    bar, so the button needed several taps."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "custom_components" / "voip_stack" / "frontend"
+              / "voip-stack-card-view.js").read_text()
+    assert ".video-active .status-reason { display: none; }" in source
+    assert ".video-active .stats { color: white;" in source
+    assert ".video-active .status-reason,\n      .header {" not in source
+    assert ".video-active .stats,\n      ha-card.card.video-active > .button-container {" not in source

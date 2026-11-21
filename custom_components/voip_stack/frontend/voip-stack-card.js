@@ -46,6 +46,7 @@ const [
     reasonKey,
     softphoneSnapshotSupersedes,
     targetFromRosterEntry,
+    publicDialTarget,
     terminalPeerLabel,
   },
   { buildMainCardSkeleton, buildUnconfiguredCardSkeleton },
@@ -113,7 +114,8 @@ class VoipStackCard extends HTMLElement {
     this._softphoneDnd = false;
     this._softphoneExtension = "";
     this._softphoneGroups = { ring_group: "", conference_group: "", conference_ring: false };
-    this._softphoneTargetDeviceId = null;
+    this._softphoneDestination = "";
+    this._legacySoftphoneTargetId = "";
     this._softphoneKeypadOpen = false;
     this._softphoneManualTarget = "";
     this._mirrorKeypadOpen = false;
@@ -870,9 +872,7 @@ class VoipStackCard extends HTMLElement {
       this._render();
       return;
     }
-    this._softphoneTargetDeviceId =
-      this._loadSoftphoneTargetPreference() ||
-      this._softphoneTargetDeviceId;
+    this._loadSoftphoneTargetPreference();
     // Ringtone and microphone filtering are browser preferences. Auto-answer
     // and camera intent come from the logical phone snapshot.
     this._readBrowserPreferences();
@@ -1228,19 +1228,38 @@ class VoipStackCard extends HTMLElement {
     );
   }
 
-  _softphoneTargetStorageKey() {
-    return `voip_softphone_target_${this._phonePreferenceStorageId() || "default"}`;
+  _softphoneTargetStorageKey(prefix = "voip_softphone_destination") {
+    return `${prefix}_${this._phonePreferenceStorageId() || "default"}`;
   }
 
   _loadSoftphoneTargetPreference() {
-    try { return localStorage.getItem(this._softphoneTargetStorageKey()) || ""; }
-    catch (_) { return ""; }
+    this._softphoneDestination = "";
+    this._legacySoftphoneTargetId = "";
+    try {
+      this._softphoneDestination = localStorage.getItem(this._softphoneTargetStorageKey()) || "";
+      if (!this._softphoneDestination) {
+        this._legacySoftphoneTargetId = localStorage.getItem(this._softphoneTargetStorageKey("voip_softphone_target")) || "";
+      }
+    } catch (_) {}
+    this._migrateSoftphoneTargetPreference();
   }
 
-  _saveSoftphoneTargetPreference(deviceId) {
+  _migrateSoftphoneTargetPreference() {
+    if (!this._legacySoftphoneTargetId) return;
+    const matches = this._rosterEntries.filter(entry =>
+      (entry.metadata?.device_id || entry.id || entry.name) === this._legacySoftphoneTargetId);
+    if (matches.length === 1 && publicDialTarget(matches[0])) {
+      this._saveSoftphoneTargetPreference(publicDialTarget(matches[0]));
+    }
+  }
+
+  _saveSoftphoneTargetPreference(destination) {
+    this._softphoneDestination = destination;
+    this._legacySoftphoneTargetId = "";
     try {
-      if (deviceId) localStorage.setItem(this._softphoneTargetStorageKey(), deviceId);
+      if (destination) localStorage.setItem(this._softphoneTargetStorageKey(), destination);
       else localStorage.removeItem(this._softphoneTargetStorageKey());
+      localStorage.removeItem(this._softphoneTargetStorageKey("voip_softphone_target"));
     } catch (_) {}
   }
 
@@ -1349,8 +1368,8 @@ class VoipStackCard extends HTMLElement {
     for (const entry of this._rosterEntries || []) {
       if (!entry || entry.enabled === false) continue;
       const target = this._targetFromRosterEntry(entry);
-      if (!target.device_id || !target.name) continue;
-      if (target.device_id === ownDeviceId || (ownEndpointId && target.endpoint_id === ownEndpointId)) continue;
+      if (!target.name) continue;
+      if ((ownDeviceId && target.device_id === ownDeviceId) || (ownEndpointId && target.endpoint_id === ownEndpointId)) continue;
       if (target.state === "unavailable" || ["offline", "unavailable"].includes(target.availability)) continue;
       // Older phonebooks can lack availability until the first state snapshot.
       if (target.endpoint_kind === "sip_account" && !target.availability &&
@@ -1365,7 +1384,7 @@ class VoipStackCard extends HTMLElement {
     for (const entry of this._rosterEntries || []) {
       if (!entry || entry.enabled === false) continue;
       if (String(entry.metadata?.group_type || "") !== groupType) continue;
-      const name = entry.name || entry.id;
+      const name = publicDialTarget(entry);
       if (name) groups.push(name);
     }
     return groups;
@@ -1374,8 +1393,9 @@ class VoipStackCard extends HTMLElement {
   _getSoftphoneTargetDevice() {
     const targets = this._softphoneTargets();
     if (targets.length === 0) return null;
-    const wanted = this._transferDraft?.targetDeviceId || this._softphoneTargetDeviceId;
-    return wanted ? targets.find(d => d.device_id === wanted) || null : targets[0];
+    const wanted = this._transferDraft?.destination || this._softphoneDestination;
+    if (wanted) return targets.find(target => target.name === wanted) || null;
+    return this._legacySoftphoneTargetId ? null : targets[0];
   }
 
   _activeSoftphonePeerDevice() {
@@ -1530,15 +1550,15 @@ class VoipStackCard extends HTMLElement {
     const rosterEntries = [];
     for (const entry of contacts) {
       if (!entry || typeof entry !== "object") continue;
-      const id = String(entry.id || entry.name || "").trim();
-      if (!id) continue;
+      const id = String(entry.id || "").trim();
+      if (!id && !publicDialTarget(entry)) continue;
       rosterEntries.push({
         id,
-        name: String(entry.name || entry.id || "").trim(),
+        name: String(entry.name || "").trim(),
         address: String(entry.address || entry.host || "").trim(),
         sip_uri: String(entry.sip_uri || "").trim(),
-        extension: String(entry.extension || "").trim(),
-        number: String(entry.number || "").trim(),
+        extension: String(entry.extension ?? "").trim(),
+        number: String(entry.number ?? "").trim(),
         port: Number(entry.port || 0),
         ha_bridge: !!entry.ha_bridge,
         enabled: entry.enabled !== false,
@@ -1546,8 +1566,9 @@ class VoipStackCard extends HTMLElement {
       });
     }
     this._rosterEntries = rosterEntries;
-    if (this._isHaSoftphoneMode() && !this._softphoneTargetDeviceId) {
-      this._softphoneTargetDeviceId = this._softphoneTargets()[0]?.device_id || null;
+    this._migrateSoftphoneTargetPreference();
+    if (this._isHaSoftphoneMode() && !this._softphoneDestination && !this._legacySoftphoneTargetId) {
+      this._softphoneDestination = this._softphoneTargets()[0]?.name || "";
     }
     return true;
   }
@@ -1973,9 +1994,6 @@ class VoipStackCard extends HTMLElement {
     }
     this._syncRingtoneRequest(espState);
 
-    els.headerName.textContent = this._formatHeaderTitle(displayName);
-    els.header.hidden = this._dashboardEmbedded || !displayName;
-
     // ESP cards mirror the ESP contact cycler. The optional keypad keeps its
     // own manual buffer and calls the ESPHome start_call service directly.
     const softphoneMode = this._isHaSoftphoneMode();
@@ -1992,6 +2010,8 @@ class VoipStackCard extends HTMLElement {
       this._activeNativeCameraEntityId(espState),
     );
     const visualMediaVisible = videoVisible || nativeCameraVisible;
+    els.headerName.textContent = this._formatHeaderTitle(displayName);
+    els.header.hidden = this._dashboardEmbedded || !displayName || (visualMediaVisible && !this._settingsOpen);
     els.card.classList.toggle("video-active", visualMediaVisible);
     els.videoCanvas.hidden = !videoVisible;
     els.videoShade.hidden = !visualMediaVisible;
@@ -1999,10 +2019,9 @@ class VoipStackCard extends HTMLElement {
     this._syncVideoDurationTimer(showHangup && connectedAt > 0);
     const activePeer = (!softphoneMode && this._mirroredConnectedPeer) || caller || destination || this._t("Active call");
     const callDuration = this._formatVideoCallDuration();
-    els.audioCallSummary.hidden = visualMediaVisible || !showHangup;
-    els.audioCallPeer.textContent = activePeer;
+    const showCallTime = showHangup && !visualMediaVisible && connectedAt > 0 && espState === "in_call";
+    els.audioCallSummary.hidden = !showCallTime;
     els.audioCallDuration.textContent = callDuration;
-    els.audioCallDuration.hidden = !connectedAt || espState !== "in_call";
     if (els.hangupPeer) {
       const normalizedState = espState.toLowerCase();
       els.hangupState.textContent = this._stopping
@@ -2361,7 +2380,7 @@ class VoipStackCard extends HTMLElement {
       const bounds = controls.getBoundingClientRect();
       if (bounds.width > 0 && bounds.height > 0) {
         const right = card.getBoundingClientRect().right - bounds.left;
-        const gap = parseFloat(getComputedStyle(this._els.hangupBtn).columnGap) || 0;
+        const gap = parseFloat(getComputedStyle(this._els.hangupBtn.parentElement).columnGap) || 0;
         card.style.setProperty("--voip-video-actions-space", `${Math.ceil(right + gap)}px`);
       }
       const keypad = this._els.keypadPanel;
@@ -2497,8 +2516,8 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     const current = this._getSoftphoneTargetDevice();
     const optionsKey = JSON.stringify({
-      selected: current?.device_id || "",
-      targets: targets.map((device) => [device.device_id, device.name || device.device_id]),
+      selected: current?.name || "",
+      targets: targets.map(target => target.name),
     });
     select.disabled = this._starting || this._stopping || targets.length === 0;
     // Active SIP state transitions may render several times in a fraction of
@@ -2521,25 +2540,24 @@ class VoipStackCard extends HTMLElement {
         prompt.selected = true;
         options.push(prompt);
       }
-      for (const device of targets) {
+      for (const target of targets) {
         const opt = document.createElement("option");
-        opt.value = device.device_id;
-        opt.textContent = device.name || device.device_id;
-        if (device.device_id === current?.device_id) opt.selected = true;
+        opt.value = target.name;
+        opt.textContent = target.name;
+        if (target.name === current?.name) opt.selected = true;
         options.push(opt);
       }
     }
     select.replaceChildren(...options);
   }
 
-  _setSoftphoneTarget(deviceId) {
+  _setSoftphoneTarget(destination) {
     if (this._transferDraft) {
-      this._transferDraft.targetDeviceId = deviceId;
+      this._transferDraft.destination = destination;
       this._render();
       return;
     }
-    this._softphoneTargetDeviceId = deviceId || null;
-    this._saveSoftphoneTargetPreference(this._softphoneTargetDeviceId);
+    this._saveSoftphoneTargetPreference(destination);
     this._render();
   }
 
@@ -2688,19 +2706,11 @@ class VoipStackCard extends HTMLElement {
   }
 
   async _startHaSoftphoneCall(softphoneInfo, operationId, destination = "", options = {}) {
-    const manualTarget = destination || (this._softphoneKeypadOpen ? this._softphoneManualTarget.trim() : "");
-    const target = manualTarget
-      ? {
-          device_id: `manual:${manualTarget}`,
-          name: manualTarget,
-          audio_mode: "full_duplex",
-          manual: true,
-        }
-      : this._getSoftphoneTargetDevice();
-    if (!target?.name && !target?.device_id) {
-      throw new Error("No endpoint available");
-    }
-    const callee = manualTarget || target.name || this._getDestination();
+    const manualTarget = String(destination || (this._softphoneKeypadOpen ? this._softphoneManualTarget : "")).trim();
+    if (this._softphoneKeypadOpen && !manualTarget) throw new Error("No destination entered");
+    const target = manualTarget ? {name: manualTarget, manual: true} : this._getSoftphoneTargetDevice();
+    const callee = target?.name;
+    if (!callee) throw new Error("No endpoint available");
     this._softphoneKeypadOpen = false;
     this._render();
 
@@ -2729,7 +2739,7 @@ class VoipStackCard extends HTMLElement {
       });
     }
     if (operationId !== this._callOperationId) return;
-    const reply = await voipStackEngine.startHaSoftphone(target, sessionInfo, {
+    const reply = await voipStackEngine.startHaSoftphone(callee, sessionInfo, {
       ...scope,
       callee,
       sendVideo,
@@ -3420,7 +3430,7 @@ class VoipStackCard extends HTMLElement {
     if (this._transferBusy) return;
     if (this._transferDraft) this._transferDraft = null;
     else if (this._getEspState() === "in_call" && this._sessionCallId()) {
-      this._transferDraft = {callId: this._sessionCallId(), targetDeviceId: null, manual: "", keypad: false};
+      this._transferDraft = {callId: this._sessionCallId(), destination: "", manual: "", keypad: false};
       this._settingsOpen = false;
     }
     this._render();
@@ -3635,7 +3645,7 @@ class VoipStackCard extends HTMLElement {
     const self = entries.find((entry) => entry.metadata?.device_id === deviceId);
     const policy = self?.metadata?.call_policy || {};
     const names = entries.filter((entry) => entry.enabled !== false && entry !== self)
-      .map((entry) => entry.name || entry.id);
+      .map(publicDialTarget).filter(Boolean);
     for (const [field, slot] of [
       ["forward_to", "always"], ["busy_to", "busy"], ["unavailable_to", "unavailable"],
     ]) {
@@ -3861,7 +3871,7 @@ class VoipStackCard extends HTMLElement {
       !this._hass?.services?.voip_stack?.set_phone_memberships;
     if (row.hidden) return;
     const choices = (this._rosterEntries || []).filter(entry => entry.metadata?.virtual_endpoint === "paging" && entry.metadata?.paging_group_id)
-      .map(entry => ({ id: String(entry.metadata.paging_group_id), name: entry.name || entry.id, enabled: entry.enabled !== false }))
+      .map(entry => ({ id: String(entry.metadata.paging_group_id), name: publicDialTarget(entry), enabled: entry.enabled !== false }))
       .sort((a, b) => a.name.localeCompare(b.name));
     const signature = JSON.stringify(choices);
     if (select.dataset.options !== signature) {
@@ -4070,10 +4080,9 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     if (targets.length === 0) return;
     const current = this._getSoftphoneTargetDevice();
-    const idx = Math.max(0, targets.findIndex(d => d.device_id === current?.device_id));
+    const idx = targets.findIndex(target => target.name === current?.name);
     const next = targets[(idx + delta + targets.length) % targets.length];
-    this._softphoneTargetDeviceId = next.device_id;
-    this._render();
+    this._setSoftphoneTarget(next.name);
   }
 
   async _getDeviceInfo() {
