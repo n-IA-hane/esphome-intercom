@@ -22,6 +22,7 @@ from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core.codec_capabilities import supports_dahua_pcm
 from .core.media.shadow import shadow_answer
+from .core.media.payload_map import PayloadConflict, PayloadMap, RtpMapping
 from .core.rtp_payload import (
     RtpPayloadDecoder as RtpPayloadDecoder,
     RtpPayloadEncoder as RtpPayloadEncoder,
@@ -168,10 +169,26 @@ class SipDialog(DialogSignalingState):
     recv_formats: tuple[sdp.RtpPcmFormat, ...] = ()
     send_formats: tuple[sdp.RtpPcmFormat, ...] = ()
     match_received_codec: bool = False
-    recv_payload_history: tuple[sdp.RtpPcmFormat, ...] = ()
+    audio_payloads: PayloadMap = field(default_factory=PayloadMap, repr=False)
+    video_payloads: PayloadMap = field(default_factory=PayloadMap, repr=False)
     # The previous dialog retains its already discovered destinations until
     # its media owner finalizes or compensates a remotely accepted update.
     _local_media_endpoints: dict | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self):
+        self.audio_payloads = _audio_payload_update(self.audio_payloads,
+            send=self.send_formats or (self.send_format,), receive=self.recv_formats or (self.recv_format,),
+            send_dtmf=self.send_dtmf_payload_type, send_clock=self.send_dtmf_clock_rate or self.dtmf_clock_rate,
+            receive_dtmf=self.dtmf_payload_type, receive_clock=self.dtmf_clock_rate)
+        self.video_payloads = _video_payload_update(self.video_payloads, self.video_format,
+                                                    self.local_video_format or self.video_format)
+
+    @property
+    def recv_payload_history(self) -> tuple[sdp.RtpPcmFormat, ...]:
+        """Read-only compatibility view; the immutable map is the sole history."""
+        return tuple(sdp.RtpPcmFormat(pt, encoding, clock, channels)
+                     for pt, (encoding, clock, channels) in self.audio_payloads.receive_history.items()
+                     if encoding != "TELEPHONE-EVENT")
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -209,6 +226,35 @@ def _validate_receive_payload_update(
     # At most 128 entries. History validates SDP; it does not keep decoders or
     # retired receive formats active beyond their separate media grace period.
     return tuple(mappings.values())
+
+
+def _payload_numbers(formats) -> dict[int, RtpMapping]:
+    result = {}
+    for fmt in formats:
+        if isinstance(fmt, sdp.RtpPcmFormat):
+            identity = (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
+        elif isinstance(fmt, sdp.RtpVideoFormat):
+            identity = (fmt.encoding.upper(), fmt.clock_rate, 1)
+        elif isinstance(fmt, sdp.RtpDtmfFormat):
+            identity = ("TELEPHONE-EVENT", fmt.sample_rate, 1)
+        else:
+            continue  # A delayed-offer seed is decoded PCM, not an RTP mapping.
+        previous = result.get(fmt.payload_type)
+        if previous is not None and previous != identity:
+            raise PayloadConflict("SDP assigned one payload to different negotiated codecs")
+        result[fmt.payload_type] = identity
+    return result
+
+
+def _audio_payload_update(previous: PayloadMap, *, send, receive, send_dtmf=None, send_clock=8000,
+                          receive_dtmf=None, receive_clock=8000) -> PayloadMap:
+    outgoing = (*send, *((sdp.RtpDtmfFormat(send_dtmf, send_clock),) if send_dtmf is not None else ()))
+    incoming = (*receive, *((sdp.RtpDtmfFormat(receive_dtmf, receive_clock),) if receive_dtmf is not None else ()))
+    return previous.with_mappings(send=_payload_numbers(outgoing), receive=_payload_numbers(incoming))
+
+
+def _video_payload_update(previous: PayloadMap, send, receive) -> PayloadMap:
+    return previous.with_mappings(send=_payload_numbers((send,)), receive=_payload_numbers((receive,)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1456,9 +1502,9 @@ class SipCallClient:
             )
             if selected is None:
                 return None
-            recv_payload_history = _validate_receive_payload_update(
-                current, selected.recv_formats if local_offer_sdp else (selected.recv,)
-            )
+            audio_payloads = _audio_payload_update(current.audio_payloads,
+                send=selected.send_formats or (selected.send,),
+                receive=(selected.recv_formats or (selected.recv,)) if local_offer_sdp else (selected.recv,))
             parsed = sdp.parse_sdp(request.body)
             accepted_video = tuple(
                 dict.fromkeys(
@@ -1501,6 +1547,13 @@ class SipCallClient:
                 if video_directional is not None
                 else None
             )
+            try:
+                video_payloads = _video_payload_update(current.video_payloads, video, local_video)
+            except PayloadConflict:
+                if local_offer_sdp:
+                    return None  # The existing offer owner handles a remotely committed answer.
+                video = local_video = video_answer = None
+                video_payloads = _video_payload_update(current.video_payloads, None, None)
             remote_video = sdp.parse_video_sdp(request.body) if video is not None else None
             remote_video_target = sdp.RemoteMediaTarget.from_section(
                 remote_video,
@@ -1574,7 +1627,8 @@ class SipCallClient:
                 recv_formats=selected.recv_formats if local_offer_sdp else (selected.recv,),
                 send_formats=selected.send_formats if local_offer_sdp else (selected.send,),
                 match_received_codec=self.match_received_codec,
-                recv_payload_history=recv_payload_history,
+                audio_payloads=audio_payloads,
+                video_payloads=video_payloads,
                 remote_target_uri=remote_target,
                 dtmf_payload_type=dtmf_recv.payload_type if dtmf_recv else None,
                 dtmf_clock_rate=dtmf_recv.sample_rate if dtmf_recv else 8000,
@@ -3597,7 +3651,8 @@ class SipCallClient:
             )
             if audio is None:
                 return None
-            recv_payload_history = _validate_receive_payload_update(current, audio.recv_formats)
+            audio_payloads = _audio_payload_update(current.audio_payloads,
+                send=audio.send_formats or (audio.send,), receive=audio.recv_formats or (audio.recv,))
             parsed = sdp.parse_sdp(answer.body)
             video_pair, imageattr_fallback = (
                 self._video_answer_or_fallback(
@@ -3652,7 +3707,8 @@ class SipCallClient:
                 recv_formats=audio.recv_formats,
                 send_formats=audio.send_formats,
                 match_received_codec=self.match_received_codec,
-                recv_payload_history=recv_payload_history,
+                audio_payloads=audio_payloads,
+                video_payloads=current.video_payloads,
                 remote_target_uri=remote_target,
                 dtmf_payload_type=(
                     dtmf_recv.payload_type if dtmf_recv is not None else None
@@ -4245,7 +4301,9 @@ class SipCallClient:
             shadow_answer(self.dialog_ids.call_id, self._local_sdp_body, msg.body, selected,
                           dahua=self.include_dahua_pcm)
             if selected is not None:
-                recv_payload_history = _validate_receive_payload_update(self.dialog, selected.recv_formats)
+                payload_owner = self.early_dialogs.get(remote_tag) or self.dialog
+                audio_payloads = _audio_payload_update(payload_owner.audio_payloads if payload_owner else PayloadMap(),
+                    send=selected.send_formats or (selected.send,), receive=selected.recv_formats or (selected.recv,))
         except Exception as err:
             selected = None
             negotiation_error = err
@@ -4299,6 +4357,22 @@ class SipCallClient:
             if dtmf_direction is not None
             else dtmf_recv
         )
+        try:
+            audio_payloads = _audio_payload_update(audio_payloads,
+                send=selected.send_formats or (selected.send,), receive=selected.recv_formats or (selected.recv,),
+                send_dtmf=dtmf_send.payload_type if dtmf_send else None,
+                send_clock=dtmf_send.sample_rate if dtmf_send else 8000,
+                receive_dtmf=dtmf_recv.payload_type if dtmf_recv else None,
+                receive_clock=dtmf_recv.sample_rate if dtmf_recv else 8000)
+            video_payloads = _video_payload_update(payload_owner.video_payloads if payload_owner else PayloadMap(),
+                                                   video_answer, local_video_answer)
+        except PayloadConflict as error:
+            _LOGGER.info("SIP answer payload lifetime conflict: %s", error)
+            if not provisional:
+                self._reject_confirmed_dialog(remote_tag=remote_tag, remote_host=remote_host,
+                    remote_sip_port=remote_sip_port, remote_target_uri=remote_target_uri,
+                    local_uri=local_uri, remote_uri=remote_uri, route_set=route_set)
+            return False
         session_timer: sip.SipSessionExpires | None = None
         if raw_session_timer := msg.header("Session-Expires"):
             try:
@@ -4341,7 +4415,8 @@ class SipCallClient:
             recv_formats=selected.recv_formats,
             send_formats=selected.send_formats,
             match_received_codec=self.match_received_codec,
-            recv_payload_history=recv_payload_history,
+            audio_payloads=audio_payloads,
+            video_payloads=video_payloads,
             remote_target_uri=remote_target_uri,
             route_set=route_set,
             dtmf_payload_type=(dtmf_recv.payload_type if dtmf_recv else None),

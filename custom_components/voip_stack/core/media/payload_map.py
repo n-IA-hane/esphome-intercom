@@ -36,7 +36,8 @@ def _frozen(numbers: Mapping[int, RtpMapping]) -> Mapping[int, RtpMapping]:
     for number, mapping in numbers.items():
         if not 0 <= number <= LAST_DYNAMIC:
             raise PayloadConflict(f"payload number {number} is out of range")
-        static = STATIC_RTPMAP.get(number)
+        from ..sdp_video import video_static_rtp_mapping
+        static = STATIC_RTPMAP.get(number) or video_static_rtp_mapping(number)
         if static is not None and static != mapping:
             raise PayloadConflict(f"static payload {number} is {static} and cannot mean {mapping}")
     return MappingProxyType(dict(numbers))
@@ -71,6 +72,22 @@ class PayloadMap:
     def __post_init__(self) -> None:
         for name in ("receive", "send", "receive_history", "send_history"):
             object.__setattr__(self, name, _frozen(getattr(self, name)))
+        object.__setattr__(self, "receive_history", _frozen(_extended(
+            self.receive_history, self.receive, "local receive")))
+        object.__setattr__(self, "send_history", _frozen(_extended(
+            self.send_history, self.send, "remote receive")))
+
+    def with_mappings(self, *, receive: Mapping[int, RtpMapping], send: Mapping[int, RtpMapping]) -> PayloadMap:
+        """Prepare the negotiated directional sets without losing retired meanings.
+
+        The SDP negotiator owns compatibility, policy and codec parameters.
+        This primitive owns only number identity, including across offerer changes.
+        """
+        if receive == self.receive and send == self.send:
+            return self
+        return PayloadMap(receive=receive, send=send,
+            receive_history=_extended(self.receive_history, receive, "local receive"),
+            send_history=_extended(self.send_history, send, "remote receive"))
 
     @classmethod
     def for_offer(cls, mappings: Iterable[RtpMapping], previous: PayloadMap | None = None) -> PayloadMap:

@@ -110,3 +110,20 @@ def test_numbers_out_of_range_or_against_a_static_assignment_are_refused():
         PayloadMap().answering({0: PCMA}, [PCMA])
     with pytest.raises(PayloadConflict):
         PayloadMap.for_offer([PCMA]).with_answer({9: PCMA})
+
+
+def test_direct_snapshot_has_one_consistent_active_and_retired_meaning():
+    initial = PayloadMap(receive={96: L16_16}, send={120: L16_16})
+    assert initial.receive_history == {96: L16_16} and initial.send_history == {120: L16_16}
+    retired = initial.with_mappings(receive={0: PCMU}, send={0: PCMU})
+    assert 96 not in retired.receive and retired.receive_history[96] == L16_16
+    assert 120 not in retired.send and retired.send_history[120] == L16_16
+    assert retired.with_mappings(receive=retired.receive, send=retired.send) is retired
+    with pytest.raises(PayloadConflict):
+        PayloadMap(send={120: PCM_DAHUA}, send_history={120: L16_16})
+
+
+def test_static_video_identity_uses_the_same_parser_registry_fact():
+    assert PayloadMap(receive={26: ("JPEG", 90000, 1)}).receive_mapping(26) == ("JPEG", 90000, 1)
+    with pytest.raises(PayloadConflict):
+        PayloadMap(send={26: ("H264", 90000, 1)})

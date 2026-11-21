@@ -1,6 +1,7 @@
 """Receive codec alternatives retain offer PTs independently of transmit choice."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -225,7 +226,9 @@ def test_payload_history_is_bounded_and_independent_of_active_receive_set():
     formats = tuple(sdp.RtpPcmFormat(pt, "L16", 16000, 1, 20) for pt in range(128))
     history = sip_client._validate_receive_payload_update(None, formats)
     assert len(history) == 128
-    current = replace(_dialog(formats[0]), recv_payload_history=history)
+    # The legacy adapter accepts arbitrary slots for this range-bound witness.
+    # Real SipDialog values now enforce RFC static assignments in PayloadMap.
+    current = SimpleNamespace(recv_payload_history=history, recv_formats=(formats[0],), recv_format=formats[0])
     assert sip_client._validate_receive_payload_update(current, (formats[127],)) == history
     assert current.recv_formats == (formats[0],)
     with pytest.raises(sdp.SdpError, match="outside the RTP range"):

@@ -716,6 +716,15 @@ _STATIC_VIDEO_RTPMAP = {
     34: "H263/90000",
 }
 
+
+def video_static_rtp_mapping(payload_type: int) -> tuple[str, int, int] | None:
+    """Expose the parser's static video identity facts to the dialog map owner."""
+    value = _STATIC_VIDEO_RTPMAP.get(payload_type)
+    if value is None:
+        return None
+    encoding, clock = value.split("/", 1)
+    return encoding, int(clock), 1
+
 _VIDEO_ENCODING_ALIASES = {
     "H264": "H264",
     "H265": "H265",
