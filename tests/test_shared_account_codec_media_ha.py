@@ -248,6 +248,15 @@ async def test_shared_account_codec_winner_media_and_reuse(
             assert stats["errors"] == []
             assert stats["card"]["caller"] == "transfer_a"
             assert stats["card"]["callee"] == "Home reception"
+            account_view = [
+                message["event"]
+                for message in stats["control_events"]
+                if message.get("event", {}).get("call_id") == call_id
+                and "can_attach_media" in message["event"]
+            ][-1]
+            assert account_view["state"] == "in_call"
+            assert account_view["can_attach_media"] is (winner == "ha")
+            assert not account_view["can_answer"]
             call_evidence = {
                 "winner": winner,
                 "call_id": call_id,
@@ -255,7 +264,22 @@ async def test_shared_account_codec_winner_media_and_reuse(
                 "ha_answer": caller.remote_sdp.decode(),
                 "browser": stats,
                 "wire_to_caller": check_wire(case, caller.received),
+                # The1200B limit is HA's output builder budget. This external
+                # L16 sender uses its legal20ms/1920B quantum within HA's
+                # announced maxptime128; UDP payloads may carry up to65507B.
+                "wire_from_caller": check_wire(
+                    case, caller.transmitted, payload_limit=65507
+                ),
             }
+            assert call_evidence["wire_from_caller"]["actual_packet_ms"] == [
+                case.peer_tx_ms
+            ]
+            if case.name == "L16":
+                assert call_evidence["wire_from_caller"]["payload_bytes"] == [1920]
+            # RFC L16 mono48k/20ms is1920B. The independent1200B packet
+            # budget requires the existing legal10ms fallback on HA TX.
+            expected_ms = 10 if case.name == "L16" else case.peer_rx_ms
+            assert call_evidence["wire_to_caller"]["actual_packet_ms"] == [expected_ms]
             received_ssrc = call_evidence["wire_to_caller"]["ssrc"]
             assert received_ssrc not in ssrcs
             ssrcs.add(received_ssrc)
@@ -284,6 +308,9 @@ async def test_shared_account_codec_winner_media_and_reuse(
                 assert not stats["card"]["tracks"]
                 assert not stats["card"]["audioReady"]
                 call_evidence["wire_to_callee"] = check_wire(case, callee.received)
+                assert call_evidence["wire_to_callee"]["actual_packet_ms"] == [
+                    expected_ms
+                ]
                 call_evidence["callee_sdp"] = callee.receive_sdp.decode()
                 decoded = await decode_named_rtp(
                     case,

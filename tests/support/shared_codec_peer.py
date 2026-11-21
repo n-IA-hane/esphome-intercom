@@ -225,6 +225,7 @@ class CodecPeer(GenericRegisteredPeer):
         self.to_header = None
         self.target_uri = None
         self.remote_signal = None
+        self.signalling = []
 
     def answer(self, request, address, status=200, body=b""):
         headers = [
@@ -257,6 +258,7 @@ class CodecPeer(GenericRegisteredPeer):
         )
 
     def datagram_received(self, raw, address):
+        self.signalling.append(raw)
         message = sip.parse_message(raw)
         if message.is_response:
             self.messages.put_nowait(message)
@@ -533,13 +535,13 @@ def payload_duration_ms(case, payload):
     return len(payload) * 1000 / (case.clock * width)
 
 
-def check_wire(case, packets):
+def check_wire(case, packets, *, payload_limit=1200):
     assert len(packets) >= 12, len(packets)
     rows = [parse_packet(packet) for packet in packets]
     assert len({row["ssrc"] for row in rows}) == 1
     durations = [payload_duration_ms(case, row["payload"]) for row in rows]
     assert all(0 < value <= 120 for value in durations)
-    assert all(len(row["payload"]) <= 1200 for row in rows)
+    assert all(len(row["payload"]) <= payload_limit for row in rows)
     # Startup silence suppression can create a clock gap. Every steady packet
     # thereafter must advance by its actual independently decoded duration.
     for index in range(6, len(rows) - 1):
