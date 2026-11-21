@@ -130,12 +130,14 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
     local_port = probe.getsockname()[1]
     probe.close()
     requests = []
+    pcm_rx_pt = 97
 
     class DoorStation(asyncio.DatagramProtocol):
         def connection_made(self, transport):
             self.transport = transport
 
         def datagram_received(self, raw, address):
+            nonlocal pcm_rx_pt
             request = sip.parse_message(raw)
             requests.append(request)
             if request.method not in {"INVITE", "BYE"}:
@@ -145,14 +147,21 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             headers.append(("To", to if ";tag=" in to else to + ";tag=door"))
             body = b""
             if request.method == "INVITE":
+                if not user_agent:
+                    # Keep the manual contact's conflicting PCM answer tied
+                    # to its offered L16/8000 mapping, independently of the
+                    # automatic catalog's dynamic payload numbering.
+                    pcm_rx_pt = next(int(line.split(b":", 1)[1].split()[0])
+                        for line in request.body.splitlines()
+                        if line.startswith(b"a=rtpmap:") and line.split()[1] == b"L16/8000/1")
                 port = self.transport.get_extra_info("sockname")[1]
                 headers += [("Contact", f"<sip:door@127.0.0.1:{port}>"), ("Content-Type", "application/sdp")]
                 body = (
                     "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Door\r\n"
                     "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-                    f"m=audio {remote_port} RTP/AVP 0 {pcm_tx_pt} {100 if user_agent else 99}\r\n"
+                    f"m=audio {remote_port} RTP/AVP 0 {pcm_tx_pt if user_agent else pcm_rx_pt} {100 if user_agent else 99}\r\n"
                     + (f"a=rtpmap:{pcm_tx_pt} PCM/16000\r\na=rtpmap:0 PCMU/8000\r\n" if user_agent else
-                       "a=rtpmap:0 PCMU/8000\r\na=rtpmap:97 PCM/16000\r\n")
+                       f"a=rtpmap:0 PCMU/8000\r\na=rtpmap:{pcm_rx_pt} PCM/16000\r\n")
                     + f"a=rtpmap:{100 if user_agent else 99} telephone-event/8000\r\n"
                     f"a=fmtp:{100 if user_agent else 99} 0-15\r\na=sendrecv\r\n"
                     "m=video 45002 RTP/AVP 105\r\na=framerate:20.000000\r\n"
@@ -194,7 +203,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         assert b"a=recvonly" in requests[0].body
         assert (b"a=rtpmap:97 PCM/16000" in requests[0].body) is bool(user_agent)
         if not user_agent:
-            assert b"a=rtpmap:97 L16/8000" in requests[0].body
+            assert f"a=rtpmap:{pcm_rx_pt} L16/8000/1".encode() in requests[0].body
         assert b"a=rtpmap:0 PCMU/8000" in requests[0].body
         assert (b"b=RS:0\r\nb=RR:0" in requests[0].body) is symmetric
         hass.store["call_id"] = client.dialog.call_id
@@ -238,7 +247,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                 expected = (((value & 0x0F) * 8 + 132) << ((value >> 4) & 7)) - 132
                 assert struct.unpack("<160h", frame) == (expected,) * 160
 
-        await send(97, 1, 0, struct.pack("<320h", *([1000] * 320)))
+        await send(pcm_rx_pt, 1, 0, struct.pack("<320h", *([1000] * 320)))
         expected_bytes = session.recv_format.audio_format.nominal_frame_bytes
         if user_agent:
             first = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
@@ -246,7 +255,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             samples = struct.unpack(f"<{len(first) // 2}h", first)
             assert all(abs(sample - 1000) <= 2 for sample in samples[16:])
         else:
-            # Manual contact offers PT97 as L16/8000. An answer's conflicting
+            # The manual contact offers L16/8000. An answer's conflicting
             # PCM mapping must not silently reinterpret that payload as Dahua PCM.
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(browser.audio.get(), 0.05)

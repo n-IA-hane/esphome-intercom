@@ -213,10 +213,10 @@ def _service_description_field(document: dict, service: str, field: str) -> dict
 @pytest.mark.parametrize(
     ("service", "expected_integrations"),
     [
-        ("answer", {"voip_stack", "esphome"}),
-        ("decline", {"voip_stack", "esphome"}),
-        ("call", {"voip_stack", "esphome"}),
-        ("hangup", {"voip_stack", "esphome"}),
+        ("answer", {"voip_stack"}),
+        ("decline", {"voip_stack"}),
+        ("call", {"voip_stack"}),
+        ("hangup", {"voip_stack"}),
         ("forward", {"voip_stack"}),
         ("set_dnd", {"voip_stack"}),
         ("set_ha_softphone_settings", {"voip_stack"}),
@@ -232,6 +232,7 @@ def test_phone_service_pickers_expose_only_compatible_integrations(
     assert "device" in selector
     filters = (selector.get("device") or {}).get("filter") or []
     assert {item["integration"] for item in filters} == expected_integrations
+    assert {item["model"] for item in filters} == {"SIP account", "Home Assistant softphone"}
     fields = document[service]["fields"]
     assert "endpoint_id" not in fields
     assert "entity_id" not in fields

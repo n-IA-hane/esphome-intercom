@@ -3,6 +3,7 @@
 from importlib import import_module
 from dataclasses import replace
 import json
+import math
 import struct
 
 import pytest
@@ -68,26 +69,46 @@ def test_generic_offer_quantum_and_maxptime_are_receivable_for_every_codec(
     formats = list(audio_format.HA_SIP_PCM_FORMATS)
     receive_formats = sorted(formats, key=lambda fmt: fmt.frame_ms != receive_preference_ms)
     offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 40000,
-        formats, receive_formats, include_common_codecs=True)
+        formats, receive_formats, include_common_codecs=True,
+        local_capabilities=sip_client.HA_AUDIO_CAPABILITIES)
     parsed = sdp.parse_sdp(offer)
     assert parsed["ptime"] == receive_preference_ms
-    assert parsed["ptime"] <= parsed["maxptime"] <= 20
+    assert parsed["ptime"] <= parsed["maxptime"]
+    assert parsed["maxptime"] == min(sip_client.HA_AUDIO_CAPABILITIES.max_receive_packet_ms(fmt)
+        for fmt in sdp.offered_pcm_formats(offer))
     fmt = next(fmt for fmt in sdp.offered_pcm_formats(offer)
         if fmt.encoding == encoding and fmt.sample_rate == rate)
     records = []
-    for packet_ms in (parsed["ptime"], parsed["maxptime"]):
+    # maxptime is a ceiling, not a promise that every codec has that frame
+    # duration. RFC 7587 permits Opus encoder frames up to 60 ms, not 64 ms.
+    maximum = (max(ms for ms in (2.5, 5, 10, 20, 40, 60) if ms <= parsed["maxptime"])
+               if encoding == "OPUS" else parsed["maxptime"])
+    for packet_ms in (parsed["ptime"], maximum):
         wire_format = replace(fmt, frame_ms=packet_ms)
-        samples = wire_format.audio_format.nominal_frame_samples
-        pcm = struct.pack(f"<{samples}h", *(1000 + index % 100 for index in range(samples)))
-        payload = sip_client.RtpPayloadEncoder(wire_format).encode(pcm)
-        frames = RtpAudioReceiver(fmt).decode(fmt.payload_type, payload)
+        samples = wire_format.audio_format.nominal_frame_samples * wire_format.audio_format.channels
+        packet_count = int(fmt.frame_ms) // math.gcd(int(fmt.frame_ms), int(packet_ms))
+        encoder = sip_client.RtpPayloadEncoder(wire_format)
+        receiver = RtpAudioReceiver(fmt)
+        frames, expected, payload_bytes = [], [], 0
+        try:
+            for packet in range(packet_count):
+                pcm = struct.pack(f"<{samples}h", *(1000 + (packet * samples + index) % 100
+                                                   for index in range(samples)))
+                expected.append(pcm)
+                payload = encoder.encode(pcm)
+                payload_bytes += len(payload)
+                frames.extend(receiver.decode(fmt.payload_type, payload, normalize_frames=True))
+            assert not receiver.has_pending_pcm
+        finally:
+            encoder.close()
+            receiver.close()
         decoded = b"".join(frames)
-        assert len(decoded) == len(pcm)
+        assert len(decoded) == sum(map(len, expected))
         assert all(len(frame) == fmt.audio_format.nominal_frame_bytes for frame in frames)
         if encoding == "L16":
-            assert decoded == pcm
-        records.append({"packet_ms": packet_ms, "samples": samples,
-            "payload_bytes": len(payload), "decoded_bytes": len(decoded), "frames": len(frames)})
+            assert decoded == b"".join(expected)
+        records.append({"packet_ms": packet_ms, "packets": packet_count, "samples": samples,
+            "payload_bytes": payload_bytes, "decoded_bytes": len(decoded), "frames": len(frames)})
     (tmp_path / "codec-quantum.json").write_text(json.dumps({
         "encoding": encoding, "rate": rate, "offer": offer, "records": records,
     }, indent=2))

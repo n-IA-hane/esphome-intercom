@@ -244,4 +244,6 @@ def test_explicit_esp_receiver_contract_is_unchanged(frame_ms):
     )
     assert current == previous
     assert f"a=ptime:{frame_ms}\r\n" in current
-    assert f"a=maxptime:{frame_ms}\r\n" not in current  # Equal to ptime, redundant on D1.
+    # The active composer serializes the explicit receiver ceiling, including
+    # when it equals the recommendation. Neither capability owner may widen it.
+    assert sdp.parse_sdp(current)["maxptime"] == frame_ms

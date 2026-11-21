@@ -24,6 +24,7 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     offer = sdp.build_offer_directional(
         "192.0.2.1", "192.0.2.1", 40000, *local[initiator],
         allow_directional_payloads=True, independent_audio_ptime=True,
+        local_capabilities=sip_client.HA_AUDIO_CAPABILITIES if initiator == "ha" else None,
     )
     selected = sdp.negotiate_directional(
         offer, *local[answerer],

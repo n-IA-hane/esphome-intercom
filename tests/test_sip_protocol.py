@@ -1395,6 +1395,20 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         offered_audio = sdp.offered_pcm_formats(client._local_sdp_body)[0]
         offered_dtmf = sdp.offered_dtmf_formats(client._local_sdp_body)[0]
+        # Preserve the recorded single-clock offer behind this remapping
+        # witness. The current automatic offer also lists a separate 16 kHz
+        # event mapping, which correctly takes precedence for 16 kHz audio.
+        other_events = {fmt.payload_type for fmt in sdp.offered_dtmf_formats(client._local_sdp_body)
+                        if fmt.payload_type != offered_dtmf.payload_type}
+        lines = []
+        for line in client._local_sdp_body.splitlines():
+            if line.startswith("m=audio "):
+                parts = line.split()
+                line = " ".join([*parts[:3], *(pt for pt in parts[3:] if int(pt) not in other_events)])
+            if any(line.startswith((f"a=rtpmap:{pt} ", f"a=fmtp:{pt} ")) for pt in other_events):
+                continue
+            lines.append(line)
+        client._local_sdp_body = "\r\n".join(lines) + "\r\n"
         answer = (
             "v=0\r\no=- 2 1 IN IP4 127.0.0.2\r\n"
             "s=answer\r\nc=IN IP4 127.0.0.2\r\nt=0 0\r\n"
