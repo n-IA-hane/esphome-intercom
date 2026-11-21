@@ -72,13 +72,17 @@ VOIP_CODEC_REFERENCE_DIR=/path/to/verified-codec-corpus \
   "$HA_PYTHON" -m pytest \
   tests/test_shared_account_codec_media_ha.py \
   tests/test_g726_named_rtp_oracle_ha.py \
+  tests/test_g72640_itu_reference_ha.py \
   -m "ha and not live" --junitxml=test-results/codec-reference.xml -ra
 python scripts/check_test_results.py test-results/codec-reference.xml
 ```
 
 Missing optional backends or corpus remain explicit skips and do not qualify
-that reference run. G726-40 also retains its independent decoder oracle gap;
-availability of its production backend alone cannot complete this matrix.
+that reference run. G726-40 uses an external ITU STL reference at revision
+`5a9febb4793df3922dffbd0ea68e040de6278de3`, described by
+`itu-stl-g726/reference.json` under the corpus directory. Its source, adapter
+and binary hashes, then both bit-exact corpus directions, are checked before
+the peer uses it. Reference sources and binaries stay outside the repository.
 `js-runtime` selects the Node tests without launching Chromium.
 The real JPEG normalization and codec-to-codec RTP regressions run in the HA
 environment, where their runtime dependency and FFmpeg are installed. Their

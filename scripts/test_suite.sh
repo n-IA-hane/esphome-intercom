@@ -265,6 +265,7 @@ ha_tests=(
   tests/test_shared_account_fidelity_ha.py
   tests/test_explicit_linear_codec_offers_ha.py
   tests/test_g726_named_rtp_oracle_ha.py
+  tests/test_g72640_itu_reference_ha.py
   tests/test_canonical_account_parking_ha.py
   tests/test_bridge_audio_common_wire_ha.py
   tests/test_bridge_independent_ptime_ha.py
