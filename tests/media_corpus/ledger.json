@@ -210,11 +210,10 @@
  {
   "step": "softphone-baresip-offers-l16-44100-1-20-430#0",
   "entry_point": "inbound initial offer",
-  "field": "outcome",
-  "prior": "reject",
-  "intended": "accept",
-  "cc": "CC-12",
-  "implemented": true
+  "field": "recv.ptime",
+  "prior": 20,
+  "intended": 10,
+  "cc": "CC-2"
  },
  {
   "step": "softphone-baresip-offers-l16-48000-2-10-430#0",

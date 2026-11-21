@@ -950,7 +950,32 @@
   "outcome": "reject"
  },
  "softphone-baresip-offers-l16-44100-1-20-430#0": {
-  "outcome": "reject"
+  "answer": [
+   "m=audio RTP/AVP 11 101",
+   "a=rtpmap:11 L16/44100/1",
+   "a=rtpmap:101 telephone-event/8000",
+   "a=fmtp:101 0-15",
+   "a=ptime:20",
+   "a=maxptime:130",
+   "a=sendrecv"
+  ],
+  "answer_bytes": "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=VoIP Stack\r\nc=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 11 101\r\na=rtpmap:11 L16/44100/1\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=maxptime:130\r\na=sendrecv\r\n",
+  "dtmf": {
+   "clock": 8000,
+   "payload": 101
+  },
+  "outcome": "accept",
+  "recv": {
+   "codec": "L16/44100/1",
+   "payload": 11,
+   "ptime": 20
+  },
+  "send": {
+   "codec": "L16/44100/1",
+   "payload": 11,
+   "ptime": 10
+  },
+  "video": false
  },
  "softphone-baresip-offers-l16-48000-1-10-101#0": {
   "answer": [

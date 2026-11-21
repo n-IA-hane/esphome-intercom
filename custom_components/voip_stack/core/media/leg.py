@@ -11,9 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from ..audio_capabilities import HA_AUDIO_CAPABILITIES
+from ..audio_format import AudioFormat, MAX_SAMPLE_RATE, PcmFormat
 from ..codec_capabilities import common_sip_codecs
 from ..sdp_audio import offered_dtmf_formats, offered_pcm_formats
-from ..sdp_parser import parse_audio_flow_attributes
+from ..sdp_parser import parse_audio_flow_attributes, parse_sdp, supports_independent_audio_ptime
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
 from .capability import PeerEvidence
 from .codecs import CODECS
@@ -38,6 +39,10 @@ class LegPolicy:
     default_packet_ms: int = 20
     budget: int = 1200
     encodings: frozenset[str] | None = None
+    codec_order: tuple[str, ...] = ()
+    # None is a dynamic backend; a tuple is an explicit fixed local capability.
+    send_capabilities: tuple[AudioFormat, ...] | None = None
+    receive_capabilities: tuple[AudioFormat, ...] | None = None
 
 
 PHONE_POLICY = LegPolicy(
@@ -76,6 +81,8 @@ def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool) -> bool:
     name = fmt.encoding
     if name not in CODECS or (policy.encodings is not None and name not in policy.encodings):
         return False
+    if not 1 <= fmt.sample_rate <= MAX_SAMPLE_RATE or fmt.channels not in (1, 2):
+        return False
     if name == "OPUS":
         return "OPUS" in common_sip_codecs() and (fmt.sample_rate, fmt.channels) == (48000, 2)
     if name == "G722":
@@ -92,12 +99,34 @@ def _rank(order: tuple[Geometry, ...], fmt: RtpPcmFormat) -> int:
     return order.index(geometry) if geometry in order else len(order)
 
 
-def _packet_ms(fmt: RtpPcmFormat, policy: LegPolicy, receiver: ReceiverBounds, default_ms: float = 0):
+def _fixed_times(fmt: RtpPcmFormat, formats: tuple[AudioFormat, ...] | None) -> PacketTimes | None:
+    if formats is None:
+        return None
+    rate, channels = _geometry(fmt)
+    pcm = PcmFormat.S24LE if CODECS[fmt.encoding].decodes_to_24_bit else PcmFormat.S16LE
+    return PacketTimes(explicit=tuple(dict.fromkeys(
+        item.frame_ms for item in formats
+        if (item.sample_rate, item.channels, item.pcm_format) == (rate, channels, pcm)
+    )))
+
+
+def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBounds, *,
+                       receive: bool = False, default_ms: float = 0, receive_only: bool = False):
+    formats = policy.receive_capabilities if receive else policy.send_capabilities
+    fixed = _fixed_times(fmt, formats)
+    if fixed is not None and not fixed.explicit:
+        return None
     spec = CODECS[fmt.encoding]
     return choose_transmit_packet_ms(
         spec, fmt.sample_rate, fmt.channels,
-        producible=OPUS_FRAMES if spec.octets_per_sample is None else ANY_DURATION,
-        default_ms=default_ms or policy.default_packet_ms, receiver=receiver, budget=policy.budget)
+        producible=fixed if fixed is not None else (OPUS_FRAMES if spec.octets_per_sample is None else ANY_DURATION),
+        default_ms=default_ms or policy.default_packet_ms, receiver=bounds,
+        budget=HA_AUDIO_CAPABILITIES.receive_payload_bytes if receive_only else policy.budget,
+    )
+
+
+def _codec_rank(policy: LegPolicy, fmt: RtpPcmFormat) -> int:
+    return policy.codec_order.index(fmt.encoding) if fmt.encoding in policy.codec_order else len(policy.codec_order)
 
 
 def _same_payload(left: RtpPcmFormat, right: RtpPcmFormat) -> bool:
@@ -141,6 +170,9 @@ def answer_offer(
                if _usable(fmt, policy, dahua=dahua)]
     if not offered:
         return Refusal("no offered codec is enabled and available", tuple(trace))
+    remote_direction = parse_sdp(remote_sdp)["direction"]
+    needs_send = remote_direction != "sendonly"
+    needs_receive = remote_direction != "recvonly"
     flows = parse_audio_flow_attributes(remote_sdp)
     peer_receives = [fmt for fmt in offered if flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}]
     peer_sends = [fmt for fmt in offered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
@@ -150,28 +182,36 @@ def answer_offer(
 
     in_use_send = established.send if established else None
     in_use_receive = established.receive if established else None
-    send_candidates = sorted(
-        peer_receives if directional else offered,
-        key=lambda fmt: (not kept(fmt, in_use_send), _rank(policy.send_rank, fmt), offered.index(fmt)))
+    candidates = peer_receives if directional and needs_send else peer_sends if directional else offered
+    send_candidates = sorted(candidates, key=lambda fmt: (
+        not kept(fmt, in_use_send), _codec_rank(policy, fmt),
+        _rank(policy.send_rank if needs_send else policy.receive_rank, fmt), offered.index(fmt)))
     for candidate in send_candidates:
         retained = kept(candidate, in_use_send)
-        transmit = _packet_ms(candidate, policy, ReceiverBounds(
+        transmit = _choose_local_time(candidate, policy, ReceiverBounds(
             ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms),
-            default_ms=in_use_send.frame_ms if retained else 0)
+            default_ms=in_use_send.frame_ms if retained else 0, receive=not needs_send,
+            receive_only=not needs_send)
         if transmit is None:
             trace.append(f"T3 {candidate.encoding}/{candidate.sample_rate}: no feasible packet time")
             continue
         if retained:
             trace.append("N1 kept the mapping in use to send")
-        if directional:
+        if directional and needs_receive:
             receive_from = min(peer_sends, key=lambda fmt: (
-                not kept(fmt, in_use_receive), _rank(policy.receive_rank, fmt), offered.index(fmt)))
+                not kept(fmt, in_use_receive), _codec_rank(policy, fmt),
+                _rank(policy.receive_rank, fmt), offered.index(fmt)))
         else:
             receive_from = candidate
-        asked = _packet_ms(receive_from, policy, ReceiverBounds(),
-                           default_ms=in_use_receive.frame_ms if kept(receive_from, in_use_receive) else 0)
+        legacy_time = transmit.packet_ms if directional and not supports_independent_audio_ptime(remote_sdp) else 0
+        asked = _choose_local_time(receive_from, policy, ReceiverBounds(ptime=legacy_time),
+            receive=needs_receive, receive_only=not needs_send,
+            default_ms=in_use_receive.frame_ms if kept(receive_from, in_use_receive) else 0)
         if asked is None:
             trace.append(f"R1 {receive_from.encoding}/{receive_from.sample_rate}: nothing receivable")
+            continue
+        if legacy_time and asked.packet_ms != legacy_time:
+            trace.append("R3 legacy directional peer has no common packet time")
             continue
         trace.append(f"S2 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
         trace.append(f"{transmit.rule} send {transmit.packet_ms} ms"
@@ -203,23 +243,25 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     peer_sends = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
     directional = bool(flows) and bool(peer_receives) and bool(peer_sends)
     if directional:
-        send_candidates = sorted(peer_receives, key=lambda fmt: (_rank(policy.send_rank, fmt), answered.index(fmt)))
+        send_candidates = sorted(peer_receives, key=lambda fmt: (
+            _codec_rank(policy, fmt), _rank(policy.send_rank, fmt), answered.index(fmt)))
     else:
         # RFC 3264 6.1: the offerer should send with the first format of the answer.
         send_candidates = answered
     for candidate in send_candidates:
-        transmit = _packet_ms(candidate, policy, ReceiverBounds(
+        transmit = _choose_local_time(candidate, policy, ReceiverBounds(
             ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms))
         if transmit is None:
             trace.append(f"T3 {candidate.encoding}/{candidate.sample_rate}: no feasible packet time")
             continue
         if directional:
-            receive_from = min(peer_sends, key=lambda fmt: (_rank(policy.receive_rank, fmt), answered.index(fmt)))
+            receive_from = min(peer_sends, key=lambda fmt: (
+                _codec_rank(policy, fmt), _rank(policy.receive_rank, fmt), answered.index(fmt)))
         else:
             receive_from = candidate
         own = local[_mapping(receive_from)]
         # R1: what this side asked for in its own offer stands; the answer does not change it.
-        asked = _packet_ms(own, policy, ReceiverBounds(ptime=own.frame_ms))
+        asked = _choose_local_time(own, policy, ReceiverBounds(ptime=own.frame_ms), receive=True)
         if asked is None:
             continue
         trace.append(f"S5 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
@@ -227,11 +269,15 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
         return LegContract(
             send=replace(candidate, frame_ms=transmit.packet_ms),
             # P3: packets arrive on the number of the offer, whatever number the answer used.
-            receive=_local_receiver(own, asked.packet_ms),
+            receive=replace(own, frame_ms=asked.packet_ms,
+                max_frame_ms=own.max_frame_ms or HA_AUDIO_CAPABILITIES.max_receive_packet_ms(own)),
             dtmf=_answered_dtmf(local_offer_sdp, answer_sdp, candidate),
             trace=tuple(trace),
             receive_accept=tuple(
-                local[_mapping(fmt)] for fmt in (peer_sends if directional else answered)),
+                replace(local[_mapping(fmt)], frame_ms=received.packet_ms)
+                for fmt in (peer_sends if directional else answered)
+                if (received := _choose_local_time(local[_mapping(fmt)], policy,
+                    ReceiverBounds(ptime=local[_mapping(fmt)].frame_ms), receive=True)) is not None),
         )
     return Refusal("no answered codec has a feasible packet time", tuple(trace))
 
