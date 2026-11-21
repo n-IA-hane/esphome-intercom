@@ -11,6 +11,7 @@ from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 
 from .test_automation_originate_ha import lab as lab
+from .test_trunk_calls_ha import trunks as trunks
 
 pytestmark = pytest.mark.ha
 
@@ -122,3 +123,44 @@ def test_sip_user_display_uses_the_existing_uri_parser():
     from custom_components.voip_stack.counterpart_display import counterpart_display
 
     assert counterpart_display("sips:remote%20desk@example.test;transport=tls") == "remote desk"
+
+
+def test_e164_numeric_echo_uses_the_directory_without_replacing_explicit_or_updated_names():
+    from custom_components.voip_stack.counterpart_display import counterpart_display
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+
+    directory = PhoneDirectory([RosterEntry("mobile", name="Cliente", number="+393331234567"),
+                                RosterEntry("numeric-name", name="Different contact", number="123")])
+    assert counterpart_display("+393331234567", fallback="+393331234567",
+        display_name="+393331234567", directory=directory) == "Cliente"
+    assert counterpart_display("123", fallback="service", display_name="123", directory=directory) == "123"
+    assert counterpart_display("+393331234567", fallback="+393331234567",
+        display_name="+393331234567", directory=directory, updated=True) == "+393331234567"
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("number,display,privacy,expected", [
+    ("+393331234567", "+393331234567", "", "Cliente"),
+    ("service", "123", "", "123"),
+    ("+393331234567", "Anonymous", "id", "Anonymous"),
+])
+async def test_incoming_trunk_display_preserves_real_names_and_resolves_e164_echo(trunks, number, display, privacy, expected):
+    from custom_components.voip_stack.counterpart_display import counterpart_display
+    from custom_components.voip_stack.runtime_data import sip_trunks
+    from .test_inbound_did_identity import wire_invite
+
+    lab = trunks
+    lab.runtime.directory.replace([RosterEntry("mobile", name="Cliente", number="+393331234567"),
+                                   RosterEntry("numeric-name", name="Different contact", number="123")])
+    work = sip_trunks(lab.hass)["work"]
+    request = sip.parse_message(wire_invite(body=False))
+    from_value = f'"{display}" <sip:{number}@provider.example>;tag=external'
+    headers = tuple((key, from_value if key == "From" else value) for key, value in request.headers)
+    if privacy:
+        headers += (("Privacy", privacy),)
+    request = replace(request, uri=request.uri + ";line=" + work.contact_line, headers=headers)
+    listener = lab.calls.component("udp_listener").udp_server.endpoint
+    invite = listener._parse_initial_invite(request, ("127.0.0.1", 5060), authorize=True)
+    assert invite.received_via_trunk and invite.caller_number == number and invite.caller_name == display
+    assert counterpart_display(invite.caller, fallback=invite.caller_number,
+        display_name=invite.caller_name, directory=lab.runtime.directory) == expected

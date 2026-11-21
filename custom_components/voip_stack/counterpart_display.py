@@ -40,7 +40,7 @@ def counterpart_display(value="", *, fallback="", name="", display_name="", endp
     raw_value = str(value or fallback or "").strip()
     value = label(value) or label(fallback)
     display_name = str(display_name or "").strip()
-    numeric_echo = display_name.isdecimal() and display_name == label(fallback)
+    numeric_echo = display_name.removeprefix("+").isdecimal() and display_name == label(fallback)
     if display_name == raw_value and display_name and (updated or not numeric_echo):
         return display_name
     if updated or not value or value.casefold() in {"anonymous", "restricted", "unavailable"}:
