@@ -566,6 +566,23 @@ async def park_established_sip_call(hass, call_id, parker, *, slot="", referrer=
     relay = registry.resource_for(original.call_id, "relay")
     if not isinstance(relay, SipRtpRelay):
         raise ParkingError("This call has no supported audio bridge to park")
+    generation = original.generation
+    legs = tuple((leg_id, leg, leg.dialog) for leg_id, leg in original.legs.items())
+    # A REFER can follow a hold answer before its media commit has settled.
+    # Use the dialog's existing offer owner before taking either peer snapshot.
+    ready = True
+    for _leg_id, _leg, client in legs:
+        if client is not None and not await client.async_wait_for_media_idle():
+            ready = False
+    if (not original.live or original.state != "in_call"
+            or not registry.is_generation_current(original.call_id, generation)
+            or registry.resource_for(original.call_id, "relay") is not relay
+            or registry.bridge_link_for(original.call_id) != destination_id
+            or any(original.legs.get(leg_id) is not leg or leg.dialog is not client
+                   for leg_id, leg, client in legs)):
+        raise ParkingError("The call changed while waiting for its media update")
+    if not ready:
+        raise ParkingError("The call's media update is still pending")
     side = "left" if from_callee else "right"
     retained_endpoint = str(original.metadata.get("source_endpoint_id" if from_callee else "dest_endpoint_id") or "")
     retained_leg = (next((leg for leg in original.legs.values() if leg.role == "caller" and leg.dialog is not None), None)

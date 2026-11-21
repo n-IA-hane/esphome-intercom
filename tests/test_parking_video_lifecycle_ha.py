@@ -29,7 +29,8 @@ async def av_transaction_owner(monkeypatch):
         source_endpoint_id="caller", dest_endpoint_id="callee")
     for wire_id, role in ((original.call_id, "caller"), ("transaction-destination", "callee")):
         client = SimpleNamespace(dialog_ids=SimpleNamespace(call_id=wire_id), local_ip="127.0.0.1",
-            close=AsyncMock(), terminate=AsyncMock(), on_refer=None)
+            close=AsyncMock(), terminate=AsyncMock(), on_refer=None,
+            async_wait_for_media_idle=AsyncMock(return_value=True))
         owner.add_leg(original.call_id, wire_id, role=role, state="in_call").dialog = client
     owner.set_bridge_link(original.call_id, "transaction-destination")
     audio = AudioFormat(8000, "s16le", 1, 20)
@@ -729,6 +730,132 @@ async def test_video_pickup_before_answer_failure_preserves_park_and_retry(regis
         if not pending.done():
             pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.fault
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"video": ("transfer_a", "transfer_b")}], indirect=True)
+@pytest.mark.parametrize("park_origin", ["caller", "callee"])
+@pytest.mark.parametrize("outcome", ["complete", "cancel", "terminated"])
+async def test_parking_waits_for_remote_video_commit(
+    registered_phones, trunks, monkeypatch, park_origin, outcome
+):
+    from dataclasses import replace
+    from custom_components.voip_stack.parking import get_parking_lot, park_established_sip_call
+    from custom_components.voip_stack.store import config_entry
+
+    runtime = trunks
+    entry = config_entry(runtime.hass)
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    caller, operator, _picker = registered_phones
+
+    async def wait_for(predicate):
+        async with asyncio.timeout(5):
+            while not predicate():
+                for peer in registered_phones:
+                    peer.read()
+                await asyncio.sleep(.01)
+
+    await asyncio.to_thread(caller.dial, "transfer_b")
+    await wait_for(lambda: any(session.state == "in_call" for session in runtime.calls.sessions.values()))
+    session = next(iter(runtime.calls.sessions.values()))
+    destination_id = runtime.calls.bridge_link_for(session.call_id)
+    client = runtime.calls.sip_client_for(destination_id)
+    relay = runtime.calls.resource_for(session.call_id, "relay")
+    video = relay.video_relay
+    lot = get_parking_lot(runtime.hass)
+    entered, release, waiting, settled = (asyncio.Event() for _ in range(4))
+    native_prepare, native_idle = client.on_media_update, client.async_wait_for_media_idle
+
+    async def blocked_prepare(*args):
+        # Preserve the production callback identity used by its commit guard.
+        monkeypatch.setattr(client, "on_media_update", native_prepare)
+        update = await native_prepare(*args)
+
+        async def blocked_commit():
+            entered.set()
+            await release.wait()
+            try:
+                await update.commit()
+            finally:
+                settled.set()
+
+        return replace(update, commit=blocked_commit)
+
+    async def observe_idle(**kwargs):
+        waiting.set()
+        return await native_idle(**kwargs)
+
+    monkeypatch.setattr(client, "on_media_update", blocked_prepare)
+    monkeypatch.setattr(client, "async_wait_for_media_idle", observe_idle)
+    pending = None
+    waiting_task = None
+    try:
+        await asyncio.to_thread(operator.command, "/hold")
+        await asyncio.wait_for(entered.wait(), 2)
+        stages = dict(video._staged_peers)
+        assert stages and client.dialog.remote_audio_direction == "sendrecv"
+        ports = set(runtime.runtime.rtp_port_pool["used"])
+        pending = asyncio.create_task(park_established_sip_call(
+            runtime.hass, session.call_id, "transfer_a" if park_origin == "caller" else "transfer_b"))
+        waiting_task = asyncio.create_task(waiting.wait())
+        done, _ = await asyncio.wait({pending, waiting_task}, timeout=2, return_when=asyncio.FIRST_COMPLETED)
+        assert waiting_task in done and not pending.done(), "parking overtook the pending media commit"
+        assert not lot.calls and set(runtime.calls.sessions) == {session.call_id}
+        assert runtime.calls.resource_for(session.call_id, "relay") is relay
+        assert video._staged_peers == stages and runtime.runtime.rtp_port_pool["used"] == ports
+        if outcome == "cancel":
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert not settled.is_set() and video._staged_peers == stages
+        elif outcome == "terminated":
+            runtime.calls.request_termination(session.call_id, TerminationIntent("waiting_owner_ended"),
+                                              generation=session.generation)
+            assert not session.live
+        release.set()
+        await asyncio.wait_for(settled.wait(), 2)
+        if outcome == "complete":
+            result = await asyncio.wait_for(pending, 3)
+            assert result.parked.slot == "701"
+            assert lot.calls["701"].session is result.session
+            assert not video._staged_peers
+            assert video.left.video_format.direction == video.right.video_format.direction == "inactive"
+        elif outcome == "terminated":
+            with pytest.raises(ParkingError, match="changed"):
+                await pending
+        else:
+            assert session.live and not lot.calls
+            assert runtime.calls.resource_for(session.call_id, "relay") is relay
+            assert video.right.video_format.direction == "sendonly" and not video._staged_peers
+        assert not list(runtime.calls.resource_items("replacement_grant"))
+    finally:
+        release.set()
+        if waiting_task is not None:
+            waiting_task.cancel()
+            await asyncio.gather(waiting_task, return_exceptions=True)
+        if pending is not None:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        for peer in registered_phones:
+            await asyncio.to_thread(peer.command, "/hangupall")
+        await wait_for(lambda: not runtime.calls.sessions)
+    assert not lot.calls and not runtime.runtime.rtp_port_pool["used"]
+    assert not runtime.calls.endpoint_claims_snapshot() and not runtime.calls.relays_snapshot()
+    assert not video._staged_peers and not video._transports
+
+    # The same registered phones and media pool remain reusable after waiting.
+    await asyncio.to_thread(caller.dial, "transfer_b")
+    await wait_for(lambda: any(current.state == "in_call" for current in runtime.calls.sessions.values()))
+    next_session = next(iter(runtime.calls.sessions.values()))
+    next_relay = runtime.calls.resource_for(next_session.call_id, "relay")
+    await wait_for(lambda: next_relay.left_tx_packets > 3 and next_relay.right_tx_packets > 3
+                   and next_relay.video_relay.left_tx_packets > 3 and next_relay.video_relay.right_tx_packets > 3)
+    await asyncio.to_thread(caller.hangup)
+    await wait_for(lambda: not runtime.calls.sessions)
+    assert not lot.calls and not runtime.runtime.rtp_port_pool["used"]
+    assert not runtime.calls.endpoint_claims_snapshot() and not runtime.calls.relays_snapshot()
 
 
 @pytest.mark.fault
