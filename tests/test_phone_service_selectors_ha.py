@@ -98,3 +98,104 @@ async def test_normal_phonebook_refresh_publishes_native_action_choices(managed)
         assert 'Ingresso' in current['call']['fields']['destination']['selector']['select']['options']
     finally:
         await owner.async_close()
+
+
+PHONE_ACTION_FIELDS = [
+    ('call', ('device_id',)),
+    ('set_phone_memberships', ('phone',)),
+    ('answer', ('device_id',)), ('decline', ('device_id',)),
+    ('forward', ('device_id',)), ('transfer', ('advanced', 'device_id')),
+    ('hangup', ('device_id',)), ('set_external_call_access', ('device_id',)),
+    ('set_dnd', ('device_id',)), ('set_auto_answer', ('device_id',)),
+    ('set_send_video', ('device_id',)), ('set_phone_settings', ('device_id',)),
+    ('set_ha_softphone_settings', ('device_id',)), ('play_media', ('device_id',)),
+    ('tts_say', ('advanced', 'device_id')), ('wait_unanswered', ('advanced', 'device_id')),
+    ('wait_for_dtmf', ('advanced', 'device_id')),
+    ('set_voicemail_settings', ('device_id',)), ('get_voicemail', ('mailbox',)),
+    ('transcribe_voicemail', ('mailbox',)), ('send_to_voicemail', ('mailbox',)),
+    ('park', ('device_id',)), ('start_recording', ('device_id',)),
+    ('stop_recording', ('device_id',)), ('get_recording', ('device_id',)),
+    ('delete_recording', ('device_id',)), ('get_phone_state', ('device_id',)),
+    ('pickup', ('device_id',)), ('pickup', ('target_device_id',)),
+]
+
+
+def phone_field(actions, service, path):
+    fields = actions[service]['fields']
+    for part in path[:-1]:
+        fields = fields[part]['fields']
+    return fields[path[-1]]
+
+
+@pytest.mark.parametrize('service,path', PHONE_ACTION_FIELDS)
+async def test_native_phone_action_selectors_filter_account_models(phone_lab, service, path):
+    from homeassistant.helpers.selector import DeviceSelector
+    from custom_components.voip_stack.endpoint_device import (
+        BROWSER_PHONE_DEVICE_MODEL, SIP_ACCOUNT_DEVICE_MODEL,
+    )
+    lab = phone_lab
+    async def handler(call):
+        return None
+    lab.hass.services.async_register('voip_stack', service, handler)
+    actions = (await async_get_all_descriptions(lab.hass))['voip_stack']
+    config = phone_field(actions, service, path)['selector']['device']
+    # Validate the supported HA schema itself. DeviceSelector validates IDs;
+    # its model filters are applied by the native frontend device picker.
+    selector = DeviceSelector(config)
+    assert selector.config['filter'] == [
+        {'integration': 'voip_stack', 'model': SIP_ACCOUNT_DEVICE_MODEL},
+        {'integration': 'voip_stack', 'model': BROWSER_PHONE_DEVICE_MODEL},
+    ]
+
+
+async def test_account_models_cover_managed_esp_sip_and_browser_without_claiming_generic_esp(managed):
+    from homeassistant.core import ServiceCall
+    from homeassistant.exceptions import ServiceValidationError
+    from homeassistant.helpers import device_registry as dr
+    from pytest_homeassistant.common import MockConfigEntry
+    from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
+    from custom_components.voip_stack.phone_control import PhoneOperation
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    from .test_managed_phones_ha import account_service_device
+
+    lab = managed
+    await lab.controller.async_sync()
+    registry = dr.async_get(lab.hass)
+    selected = [('managed_esp', account_service_device(lab))]
+    for kind in ('sip_account', 'browser'):
+        endpoint = PhoneEndpoint(endpoint_id='selector-' + kind, name='Selector ' + kind,
+                                 username='selector_' + kind, kind=kind)
+        lab.runtime.endpoints.register(endpoint)
+        device = async_ensure_endpoint_device(lab.hass, lab.entry, endpoint, lab.runtime.endpoints)
+        selected.append((kind, device))
+    for kind, device in selected:
+        assert device.model == 'SIP account', kind
+        assert device.config_entry_id == lab.entry.entry_id
+        assert lab.runtime.endpoints.by_device_id(device.id) is not None
+    generic_entry = MockConfigEntry(domain='esphome', data={'device_name': 'kitchen_power_strip'})
+    generic_entry.add_to_hass(lab.hass)
+    generic = registry.async_get_or_create(config_entry_id=generic_entry.entry_id,
+        identifiers={('esphome', 'kitchen-power-strip')}, name='Kitchen power strip',
+        manufacturer='Espressif', model='esp01_1m')
+    assert lab.runtime.endpoints.by_device_id(generic.id) is None
+    with pytest.raises(ServiceValidationError):
+        await lab.runtime.phones.resolve_source(ServiceCall(lab.hass, 'voip_stack', 'call',
+            {'device_id': generic.id}), PhoneOperation.ORIGINATE)
+
+
+async def test_provisioning_admin_and_trunk_selectors_keep_their_existing_scope(phone_lab):
+    lab = phone_lab
+    async def handler(call):
+        return None
+    for service in ('purge_devices', 'provision_phone', 'get_phone_provisioning_state',
+                    'rotate_phone_provisioning_token', 'call', 'send_to_voicemail'):
+        lab.hass.services.async_register('voip_stack', service, handler)
+    actions = (await async_get_all_descriptions(lab.hass))['voip_stack']
+    assert phone_field(actions, 'purge_devices', ('device_id',))['selector']['device'] == {
+        'filter': [{'integration': 'esphome'}], 'multiple': False}
+    for service in ('provision_phone', 'get_phone_provisioning_state', 'rotate_phone_provisioning_token'):
+        assert phone_field(actions, service, ('device_id',))['selector']['device'] == {'integration': 'voip_stack', 'multiple': False}
+    assert phone_field(actions, 'call', ('trunk_id',))['selector']['device'] == {
+        'filter': [{'integration': 'voip_stack', 'model': 'SIP trunk'}], 'multiple': False}
+    assert phone_field(actions, 'send_to_voicemail', ('advanced', 'device_id'))['selector']['device'] == {
+        'filter': [{'integration': 'voip_stack', 'model': 'Home Assistant softphone'}], 'multiple': False}

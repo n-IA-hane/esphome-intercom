@@ -9,7 +9,9 @@ set_phone_memberships:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     field:
       name: Group type
       required: true
@@ -332,7 +334,9 @@ answer:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     send_video:
       name: Send video
       description: Send the browser camera when video is enabled for this phone.
@@ -372,7 +376,9 @@ decline:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     advanced:
       name: Advanced options
       description: Select a specific call or customize its SIP rejection.
@@ -427,7 +433,9 @@ call:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     source_automation:
       name: Calling Automation contact
       description: >-
@@ -497,6 +505,9 @@ forward:
         device:
           filter:
             - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     destination:
       name: Destination
       description: Phonebook name, extension, group, number or SIP address.
@@ -581,6 +592,9 @@ transfer:
             device:
               filter:
                 - integration: voip_stack
+                  model: SIP account
+                - integration: voip_stack
+                  model: Home Assistant softphone
         call_id:
           name: Call ID
           description: Only needed without a native VoIP call trigger.
@@ -762,7 +776,9 @@ hangup:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     advanced:
       name: Advanced options
       description: Select a specific concurrent call.
@@ -1021,7 +1037,9 @@ set_external_call_access:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     allowed:
       name: Allow external calls
       description: Turn off to block new external trunk calls from this phone. Turn on to restore access.
@@ -1041,6 +1059,9 @@ set_dnd:
         device:
           filter:
             - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     dnd:
       name: Do not disturb
       required: true
@@ -1059,6 +1080,9 @@ set_auto_answer:
         device:
           filter:
             - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     auto_answer:
       name: Auto answer
       required: true
@@ -1077,6 +1101,9 @@ set_send_video:
         device:
           filter:
             - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     send_video:
       name: Send video
       required: true
@@ -1097,7 +1124,9 @@ set_phone_settings:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     forward_to:
       name: Always forward to
       description: Phonebook name, extension or SIP address. Leave empty to disable forwarding.
@@ -1162,6 +1191,9 @@ set_ha_softphone_settings:
         device:
           filter:
             - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     extension:
       name: Extension
       description: Optional extension number published by the Home Assistant softphone endpoint.
@@ -1380,8 +1412,9 @@ play_media:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
-
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
 tts_say:
   name: Speak to the caller
   description: Pronounce a message on the automation call. The call is selected by
@@ -1444,10 +1477,10 @@ tts_say:
           selector:
             device:
               filter:
-              - integration: voip_stack
-              - integration: esphome
-
-
+                - integration: voip_stack
+                  model: SIP account
+                - integration: voip_stack
+                  model: Home Assistant softphone
 wait_unanswered:
   name: Wait without answering
   description: Keep an unanswered Automation contact call ringing without answering
@@ -1478,8 +1511,10 @@ wait_unanswered:
           selector:
             device:
               filter:
-              - integration: voip_stack
-              - integration: esphome
+                - integration: voip_stack
+                  model: SIP account
+                - integration: voip_stack
+                  model: Home Assistant softphone
         call_id:
           name: Call ID
           description: For legacy actions outside a native VoIP trigger.
@@ -1548,9 +1583,10 @@ wait_for_dtmf:
           selector:
             device:
               filter:
-              - integration: voip_stack
-              - integration: esphome
-
+                - integration: voip_stack
+                  model: SIP account
+                - integration: voip_stack
+                  model: Home Assistant softphone
 set_voicemail_settings:
   name: Configure voicemail
   description: >-
@@ -1566,10 +1602,9 @@ set_voicemail_settings:
         device:
           filter:
             - integration: voip_stack
-              model: Home Assistant softphone
-            - integration: voip_stack
               model: SIP account
-            - integration: esphome
+            - integration: voip_stack
+              model: Home Assistant softphone
     enabled:
       name: Enable mailbox
       selector:
@@ -1616,10 +1651,9 @@ get_voicemail:
         device:
           filter:
             - integration: voip_stack
-              model: Home Assistant softphone
-            - integration: voip_stack
               model: SIP account
-            - integration: esphome
+            - integration: voip_stack
+              model: Home Assistant softphone
     message_id:
       name: Message ID
       description: Optional when triggered by Voicemail received.
@@ -1640,10 +1674,9 @@ transcribe_voicemail:
         device:
           filter:
             - integration: voip_stack
-              model: Home Assistant softphone
-            - integration: voip_stack
               model: SIP account
-            - integration: esphome
+            - integration: voip_stack
+              model: Home Assistant softphone
     message_id:
       name: Message ID
       description: Optional when triggered by Voicemail received. Select a saved message, not a call ID.
@@ -1684,10 +1717,9 @@ send_to_voicemail:
         device:
           filter:
             - integration: voip_stack
-              model: Home Assistant softphone
-            - integration: voip_stack
               model: SIP account
-            - integration: esphome
+            - integration: voip_stack
+              model: Home Assistant softphone
     skip_greeting:
       name: Skip the mailbox greeting
       description: Start with the recording tone, for example after a tts_say action.
@@ -1727,7 +1759,9 @@ park:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     slot:
       name: Parking slot
       description: Leave empty to use the first available configured slot.
@@ -1759,7 +1793,9 @@ start_recording:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     max_seconds:
       name: Maximum duration
       default: 3600
@@ -1794,7 +1830,9 @@ stop_recording:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     advanced:
       name: Advanced options
       collapsed: true
@@ -1821,7 +1859,9 @@ get_recording:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     recording_id:
       name: Recording ID
       description: Identifier returned by Start call recording or the recording_finished event.
@@ -1840,7 +1880,9 @@ delete_recording:
         device:
           filter:
             - integration: voip_stack
-            - integration: esphome
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     recording_id:
       name: Recording ID
       description: Identifier returned by Start call recording or the recording_finished event.
@@ -1858,12 +1900,10 @@ get_phone_state:
       selector:
         device:
           filter:
-          - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
-            model: SIP account
-          - integration: esphome
-
+            - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
 pickup:
   name: Pick up call
   description: Recover a ringing phone or parking slot on the selected phone.
@@ -1874,21 +1914,19 @@ pickup:
       selector:
         device:
           filter:
-          - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
-            model: SIP account
-          - integration: esphome
+            - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     target_device_id:
       name: Ringing phone
       selector:
         device:
           filter:
-          - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
-            model: SIP account
-          - integration: esphome
+            - integration: voip_stack
+              model: SIP account
+            - integration: voip_stack
+              model: Home Assistant softphone
     slot:
       name: Parking slot
       selector:
