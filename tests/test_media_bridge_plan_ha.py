@@ -97,6 +97,42 @@ def test_bridge_keeps_the_admitting_backend_receive_envelope_instead_of_preset_t
     assert plan.caller.recv.frame_ms == 20 and plan.caller.send.frame_ms == 10
 
 
+@pytest.mark.parametrize("receive_bytes", [1920, 12288])
+def test_bridge_tx_candidates_stay_configured_while_backend_rx_remains_independent(receive_bytes):
+    from custom_components.voip_stack.core.audio_capabilities import AudioCapabilities
+
+    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96 97\r\n"
+        "a=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 sendrecv\r\n"
+        "a=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 recv\r\n"
+        "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:10\r\n").encode()
+    transmit = (AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10))
+    receive = (AudioFormat(48000, frame_ms=10),)
+    backend = AudioCapabilities(receive_payload_bytes=receive_bytes)
+    caller = sdp.negotiate_directional(body, list(transmit), list(receive), local_capabilities=backend)
+    assert caller.send.audio_format == AudioFormat(16000, frame_ms=10)  # Dynamic initial admission.
+    callee = sdp.RtpPcmDirection(fmt(48000, ms=10), fmt(16000))
+    plan = plan_caller_audio(body, caller, callee, send_capabilities=transmit,
+                             receive_capabilities=receive, capabilities=backend)
+    assert plan.caller.send.audio_format == AudioFormat(48000, frame_ms=10)
+    assert plan.caller.send.audio_format in transmit
+    assert plan.caller.recv is caller.recv
+    assert plan.caller.recv.max_frame_ms == receive_bytes // 96
+
+
+def test_retained_receive_mapping_cannot_restore_bounds_above_the_actual_backend():
+    from custom_components.voip_stack.core.audio_capabilities import AudioCapabilities
+
+    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96\r\n"
+            "a=rtpmap:96 L16/48000/1\r\na=ptime:10\r\na=maxptime:60\r\n").encode()
+    preferences = (AudioFormat(48000, frame_ms=10),)
+    caller = sdp.negotiate_directional(body, list(preferences), list(preferences),
+                                     local_capabilities=HA_AUDIO_CAPABILITIES)
+    assert caller.recv.max_frame_ms == 128
+    plan = plan_caller_audio(body, caller, caller, send_capabilities=preferences,
+        receive_capabilities=preferences, capabilities=AudioCapabilities(receive_payload_bytes=1920))
+    assert plan.caller.recv.frame_ms == 20 and plan.caller.recv.max_frame_ms == 20
+
+
 @pytest.mark.parametrize("already_accepted", [True, False])
 def test_primary_no_op_retains_hard_bounds_without_hiding_a_new_cn_mapping(already_accepted):
     from dataclasses import replace

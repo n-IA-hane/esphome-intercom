@@ -1,6 +1,6 @@
 """Pure bridge planning over the media contracts of two independent SIP legs."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from .. import sdp
@@ -8,6 +8,7 @@ from ..audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
 from ..audio_format import AudioFormat, PcmFormat
 from ..codec_policy import CodecPolicy
 from ..sdp_types import RtpPcmDirection, RtpPcmFormat
+from . import leg, negotiator
 from .codecs import CODECS
 
 
@@ -100,16 +101,40 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
     recv_formats = (callee.send.audio_format, caller.recv.audio_format)
     if _pcm_shape(callee.send) == _pcm_shape(caller.recv):
         recv_formats = recv_formats[::-1]
-    selected = sdp.negotiate_directional(remote_sdp, list(dict.fromkeys(send_formats)),
-        list(dict.fromkeys(recv_formats)), allow_dahua_pcm=dahua, codec_policy=codec_policy,
-        # Carry the backend used for admission. Its preset list ranks choices;
-        # it cannot become a smaller fixed receiver on the bridge boundary.
-        local_recv_capabilities=(receive_capabilities or None) if capabilities is None else None,
-        local_capabilities=(capabilities if capabilities is not None else
-                            None if send_capabilities else HA_AUDIO_CAPABILITIES))
+    policy = negotiator.policy_for_leg(list(dict.fromkeys(send_formats)),
+        list(dict.fromkeys(recv_formats)), codec_policy=codec_policy,
+        capabilities=(capabilities if capabilities is not None else
+                      None if send_capabilities else HA_AUDIO_CAPABILITIES))
+    if send_capabilities:
+        # B2 searches only configured TX alternatives; admission stays dynamic.
+        policy = replace(policy, send_capabilities=tuple(send_formats))
+    if capabilities is None and receive_capabilities:
+        policy = replace(policy, receive_capabilities=tuple(receive_capabilities))
+    document = sdp.SdpDocument.parse(remote_sdp)
+    selected = negotiator.as_direction(leg.answer_offer(document, policy, dahua=dahua), document)
     if selected is None:
         trace.append("B2 no feasible alternative inside the caller's offer and policy")
         return result(caller)
+
+    def receive_mapping(fmt):
+        return (fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels,
+                tuple(sorted(sdp.fmtp_parameters(fmt.fmtp).items())))
+
+    previous_receives = {receive_mapping(fmt): fmt for fmt in caller.recv_formats}
+    previous_receives.setdefault(receive_mapping(caller.recv), caller.recv)
+    can_retain_receive = (capabilities is None or (
+        capabilities.supports_rtp(caller.recv, receive=True)
+        and (not caller.recv.max_frame_ms
+             or caller.recv.max_frame_ms <= capabilities.max_receive_packet_ms(caller.recv))))
+    if (capabilities is not None
+            and can_retain_receive
+            and receive_mapping(selected.recv) == receive_mapping(caller.recv)
+            and all(receive_mapping(fmt) in previous_receives for fmt in selected.recv_formats)):
+        # R1: a bridge cannot retime an unchanged admitted receiver merely
+        # because its candidate search uses the generic backend default.
+        selected = replace(selected, recv=caller.recv, recv_formats=tuple(
+            previous_receives[receive_mapping(fmt)] for fmt in selected.recv_formats))
+        trace.append("B2 unchanged receive mappings; retain admitted timing and bounds")
     if _pcm_shape(selected.recv) != _pcm_shape(caller.recv):
         original_conversions = sum((_pcm_shape(caller.recv) != _pcm_shape(callee.send),
                                     _pcm_shape(callee.recv) != _pcm_shape(caller.send)))
@@ -133,7 +158,7 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
 
     accepted = {fmt.payload_type: choice(fmt) for fmt in caller.recv_formats}
     accepted.setdefault(caller.recv.payload_type, choice(caller.recv))
-    if (choice(send) == choice(caller.send) and choice(selected.recv) == choice(caller.recv)
+    if (can_retain_receive and choice(send) == choice(caller.send) and choice(selected.recv) == choice(caller.recv)
             and all(accepted.get(fmt.payload_type) == choice(fmt) for fmt in selected.recv_formats)):
         # Recomputing backend bounds or spelling the primary as an alias is
         # not a bridge optimization. Keep the admitted quantum, hard limits

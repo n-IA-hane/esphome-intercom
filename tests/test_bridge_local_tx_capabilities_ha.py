@@ -102,6 +102,13 @@ def test_receive_geometry_comparison_does_not_construct_a_fractional_frame():
     )
     selected = bridge_source_audio(invite, destination)
     assert selected.recv_format.audio_format == source_receive
+    assert selected.recv_format is invite.recv_format
+    answer = sdp.build_answer_directional('127.0.0.1', '127.0.0.1', 40000,
+        selected.send_format, selected.recv_format, remote_sdp=invite.remote_sdp)
+    assert 'a=ptime:16\r\n' in answer
+    values = tuple(range(-128, 128))
+    assert RtpAudioReceiver(selected.recv_format).decode(96, struct.pack('!256h', *values)) == [
+        struct.pack('<256h', *values)]
 
 
 def parse_offer(body, send_formats, recv_formats):
