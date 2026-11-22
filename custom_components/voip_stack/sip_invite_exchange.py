@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Self
 
@@ -18,6 +18,12 @@ if TYPE_CHECKING:
 
 
 _LOGGER = logging.getLogger(f"{__package__}.sip_client")
+
+
+def _sip_header_token(value: str) -> str:
+    return "".join(
+        ch for ch in str(value or "").strip() if ch.isalnum() or ch in " _-."
+    ).strip()
 
 
 @dataclass(slots=True)
@@ -44,6 +50,51 @@ class InviteExchange:
             )
         )
         return cls(target, host, int(port), uri)
+
+    @staticmethod
+    def compose_request(
+        *, request_uri: str, route_set: Iterable[str], local_uri: str,
+        remote_uri: str, dialog: sip.SipDialogIds, contact_uri: str,
+        body: bytes, transport: str, via_sent_by: tuple[str, int],
+        local_name: str, target_display_name: str, answer_mode: str = "",
+        include_route_metadata: bool = False,
+        authorization_headers: Iterable[tuple[str, str]] = (),
+    ) -> bytes:
+        """Compose current transaction facts without changing client or dialog state."""
+        routing = sip.dialog_request_routing(request_uri, route_set)
+        headers = sip.dialog_headers(
+            request_uri=routing.request_uri,
+            local_uri=local_uri,
+            remote_uri=remote_uri,
+            dialog=dialog,
+            method="INVITE",
+            contact_uri=contact_uri or local_uri,
+            content_type="application/sdp" if body else None,
+            transport=transport,
+            via_sent_by=via_sent_by,
+            local_display_name=local_name,
+            remote_display_name=target_display_name,
+        )
+        headers.extend(("Route", value) for value in routing.route_headers)
+        if answer_mode:
+            headers.append(("Answer-Mode", answer_mode))
+            if answer_mode == "Auto":
+                # Explicit intercom requests also support legacy SIP phones.
+                headers.extend([
+                    ("Call-Info", f"<{local_uri}>;answer-after=0"),
+                    ("Alert-Info", "<http://127.0.0.1>;info=alert-autoanswer;delay=0"),
+                ])
+        if include_route_metadata:
+            for name, value in (
+                ("X-Voip-Stack-Caller-Name", local_name),
+                ("X-Voip-Stack-Caller-Route", sip.parse_sip_uri(local_uri).user),
+                ("X-Voip-Stack-Dest-Name", target_display_name),
+                ("X-Voip-Stack-Dest-Route", sip.parse_sip_uri(request_uri).user),
+            ):
+                if token := _sip_header_token(value):
+                    headers.append((name, token))
+        headers.extend(authorization_headers)
+        return sip.build_request("INVITE", routing.request_uri, headers, body)
 
     def next_hop(self, outbound_proxy: str, *, transport: str = "") -> sip.SipUri:
         """Resolve the signaling route separately from the called address."""

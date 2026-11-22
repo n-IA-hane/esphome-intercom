@@ -8,7 +8,7 @@ from dataclasses import replace
 
 from .audio_format import AudioFormat
 from .imageattr import serialize_imageattr
-from .sdp_audio import (
+from .sdp_audio_facts import (
     _format_dtmf_events,
     _rtp_contract_key,
     _same_rtp_audio_codec,

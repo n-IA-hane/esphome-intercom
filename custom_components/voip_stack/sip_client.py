@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .sip_capture import send_sip_datagram
 from .sip_invite_exchange import InviteExchange
+from .sip_invite_exchange import _sip_header_token as _sip_header_token
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
@@ -116,14 +117,6 @@ def _sip_decline_reason(msg: sip.SipMessage) -> str:
 
 def _is_invite_progress_response(status_code: int | None) -> bool:
     return status_code is not None and 100 < int(status_code) < 200
-
-
-def _sip_header_token(value: str) -> str:
-    return "".join(
-        ch
-        for ch in str(value or "").strip()
-        if ch.isalnum() or ch in " _-."
-    ).strip()
 
 
 @dataclass(slots=True)
@@ -1688,59 +1681,24 @@ class SipCallClient:
 
     def _build_pending_invite(self) -> bytes:
         """Build the current initial-dialog INVITE transaction request."""
-
-        routing = sip.dialog_request_routing(
-            self._pending_request_uri,
-            self._preloaded_route_set(),
-        )
-        headers = sip.dialog_headers(
-            request_uri=routing.request_uri,
+        return InviteExchange.compose_request(
+            request_uri=self._pending_request_uri,
+            route_set=self._preloaded_route_set(),
             local_uri=self._pending_local_uri,
             remote_uri=self._pending_remote_uri,
             dialog=self.dialog_ids,
-            method="INVITE",
-            contact_uri=self._pending_contact_uri or self._pending_local_uri,
-            content_type=("application/sdp" if self._pending_invite_body else None),
+            contact_uri=self._pending_contact_uri,
+            body=self._pending_invite_body,
             transport=self.signaling_transport,
             via_sent_by=(self.local_ip, self.local_sip_port),
-            local_display_name=self.local_name,
-            remote_display_name=self._pending_target_display,
-        )
-        headers.extend(("Route", value) for value in routing.route_headers)
-        if getattr(self, "_pending_answer_mode", ""):
-            headers.append(("Answer-Mode", self._pending_answer_mode))
-            if self._pending_answer_mode == "Auto":
-                # Explicit intercom requests also support legacy SIP phones.
-                headers.extend([
-                    ("Call-Info", f"<{self._pending_local_uri}>;answer-after=0"),
-                    ("Alert-Info", "<http://127.0.0.1>;info=alert-autoanswer;delay=0"),
-                ])
-        if self.include_route_metadata:
-            caller_name = _sip_header_token(self.local_name)
-            dest_name = _sip_header_token(self._pending_target_display)
-            caller_route = _sip_header_token(
-                sip.parse_sip_uri(self._pending_local_uri).user
-            )
-            dest_route = _sip_header_token(
-                sip.parse_sip_uri(self._pending_request_uri).user
-            )
-            if caller_name:
-                headers.append(("X-Voip-Stack-Caller-Name", caller_name))
-            if caller_route:
-                headers.append(("X-Voip-Stack-Caller-Route", caller_route))
-            if dest_name:
-                headers.append(("X-Voip-Stack-Dest-Name", dest_name))
-            if dest_route:
-                headers.append(("X-Voip-Stack-Dest-Route", dest_route))
-        headers.extend(
-            (header, value)
-            for header, (_challenge, value, _count) in self._pending_invite_auth.items()
-        )
-        return sip.build_request(
-            "INVITE",
-            routing.request_uri,
-            headers,
-            self._pending_invite_body,
+            local_name=self.local_name,
+            target_display_name=self._pending_target_display,
+            answer_mode=getattr(self, "_pending_answer_mode", ""),
+            include_route_metadata=self.include_route_metadata,
+            authorization_headers=tuple(
+                (header, value)
+                for header, (_challenge, value, _count) in self._pending_invite_auth.items()
+            ),
         )
 
     def _refresh_pending_invite_authorization(self, *, advance_nonce: bool = True) -> None:

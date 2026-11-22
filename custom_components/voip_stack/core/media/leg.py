@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from ..audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
 from ..audio_format import AudioFormat, MAX_SAMPLE_RATE, PcmFormat
 from ..codec_capabilities import codec_available
-from ..sdp_audio import is_rtp_pcm_mappable, offered_dtmf_formats, offered_pcm_formats
+from ..sdp_audio_facts import is_rtp_pcm_mappable, offered_dtmf_formats, offered_pcm_formats
 from ..sdp_parser import parse_audio_flow_attributes, parse_sdp, supports_independent_audio_ptime
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
 from .codecs import CODECS
