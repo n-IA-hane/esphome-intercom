@@ -32,7 +32,7 @@ def normalize_group_data(data, *, identity=""):
         raise ValueError("The extension must contain at most 32 digits")
     policy = dict(data.get("policy") or {})
     if kind == "queue":
-        from .call_queues import QueuePolicy
+        from .queue_policy import QueuePolicy
         from dataclasses import asdict
         policy = asdict(QueuePolicy.from_data(policy))
     elif policy:
