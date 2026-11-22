@@ -262,6 +262,7 @@ ha_tests=(
   tests/test_account_logbook_ha.py
   tests/test_shared_account_fork_ha.py
   tests/test_shared_account_browser_handoff_ha.py
+  tests/test_browser_retained_refer_ha.py
   tests/test_shared_account_policy_ha.py
   tests/test_shared_account_projection_ha.py
   tests/test_shared_account_codec_media_ha.py
