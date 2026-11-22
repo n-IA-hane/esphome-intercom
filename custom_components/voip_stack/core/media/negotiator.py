@@ -49,11 +49,13 @@ def answer_offer(remote_sdp, send_formats, receive_formats, *, codec_policy=None
 
 
 def apply_answer(local_offer_sdp, remote_sdp, send_formats, receive_formats, *,
-                 codec_policy=None, capabilities=None, dahua=False):
-    """Apply an answer only to the exact offer and policy that were sent."""
+                 codec_policy=None, capabilities=None, dahua=False, format_direction=None):
+    """Apply an answer to its exact offer, or to supplied capabilities for compatibility."""
+    send_formats, receive_formats = tuple(send_formats), tuple(receive_formats)
     return leg.apply_answer(local_offer_sdp, remote_sdp,
         policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities),
-        dahua=dahua)
+        dahua=dahua, format_direction=format_direction,
+        send_preferred=send_formats, receive_preferred=receive_formats)
 
 
 def renegotiate(remote_sdp, previous: LegContract, send_formats, receive_formats, **options):

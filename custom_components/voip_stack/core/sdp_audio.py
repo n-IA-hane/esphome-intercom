@@ -18,7 +18,6 @@ from .sdp_parser import (
     normalize_direction,
     parse_audio_flow_attributes,
     parse_sdp,
-    supports_independent_audio_ptime,
 )
 from .sdp_parser import (
     parse_packet_time as _packet_time,
@@ -254,50 +253,6 @@ def _rtp_compatible_audio(
     return selected
 
 
-def _best_offered_match(
-    offered: list[RtpPcmFormat],
-    local_preferred: list[AudioFormat],
-    *,
-    local_capabilities=None,
-) -> RtpPcmFormat | None:
-    for local in local_preferred:
-        for offered_fmt in offered:
-            selected = _rtp_compatible_audio(
-                offered_fmt, local, local_capabilities=local_capabilities
-            )
-            if selected is not None:
-                return _first_offered_match(
-                    [offered_fmt],
-                    local_preferred,
-                    local_capabilities=local_capabilities,
-                )
-    return None
-
-
-def _first_offered_match(
-    offered: list[RtpPcmFormat],
-    local_preferred: list[AudioFormat],
-    *,
-    local_capabilities=None,
-    receive: bool = False,
-) -> RtpPcmFormat | None:
-    for offered_fmt in offered:
-        # ptime states the receiver's preference. A min/max range permits
-        # alternatives; it must not displace an exactly supported preference.
-        for local in sorted(
-            local_preferred, key=lambda fmt: fmt.frame_ms != offered_fmt.frame_ms
-        ):
-            selected = _rtp_compatible_audio(
-                offered_fmt,
-                local,
-                local_capabilities=local_capabilities,
-                receive=receive,
-            )
-            if selected is not None:
-                return _with_receiver_parameters(selected, offered_fmt)
-    return None
-
-
 def _with_receiver_parameters(
     selected: RtpPcmFormat, receiver: RtpPcmFormat
 ) -> RtpPcmFormat:
@@ -377,93 +332,6 @@ def _dedupe_rtp_offer_encodings(
     return out
 
 
-def _bidirectional_offered_match(
-    offered: list[RtpPcmFormat],
-    local_send_preferred: list[AudioFormat],
-    local_recv_preferred: list[AudioFormat],
-    *,
-    prefer_offer_order: bool,
-    local_capabilities=None,
-) -> RtpPcmDirection | None:
-    """Select one offered payload that is usable in both RTP directions."""
-
-    candidates = (
-        (
-            (offered_fmt, local_send)
-            for offered_fmt in offered
-            for local_send in local_send_preferred
-        )
-        if prefer_offer_order
-        else (
-            (offered_fmt, local_send)
-            for local_send in local_send_preferred
-            for offered_fmt in offered
-        )
-    )
-    for offered_fmt, local_send in candidates:
-        if (
-            _rtp_compatible_audio(
-                offered_fmt, local_send, local_capabilities=local_capabilities
-            )
-            is None
-        ):
-            continue
-        send = _first_offered_match(
-            [offered_fmt], local_send_preferred, local_capabilities=local_capabilities
-        )
-        recv = _local_receive_match(
-            [offered_fmt], local_recv_preferred, local_capabilities=local_capabilities
-        )
-        if send is not None and recv is not None:
-            return RtpPcmDirection(
-                send=_with_receiver_parameters(send, offered_fmt), recv=recv
-            )
-    return None
-
-
-def _negotiate_for_local_direction(
-    offered: list[RtpPcmFormat],
-    local_send_preferred: list[AudioFormat],
-    local_recv_preferred: list[AudioFormat],
-    direction: str,
-    *,
-    prefer_offer_order: bool,
-    local_capabilities=None,
-) -> RtpPcmDirection | None:
-    direction = normalize_direction(direction)
-    if direction == "sendonly":
-        selected = (
-            _first_offered_match(
-                offered, local_send_preferred, local_capabilities=local_capabilities
-            )
-            if prefer_offer_order
-            else _best_offered_match(
-                offered, local_send_preferred, local_capabilities=local_capabilities
-            )
-        )
-        return (
-            RtpPcmDirection(send=selected, recv=selected)
-            if selected is not None
-            else None
-        )
-    if direction == "recvonly":
-        selected = _local_receive_match(
-            offered, local_recv_preferred, local_capabilities=local_capabilities
-        )
-        return (
-            RtpPcmDirection(send=selected, recv=selected)
-            if selected is not None
-            else None
-        )
-    return _bidirectional_offered_match(
-        offered,
-        local_send_preferred,
-        local_recv_preferred,
-        prefer_offer_order=prefer_offer_order,
-        local_capabilities=local_capabilities,
-    )
-
-
 def _same_rtp_audio_codec(left: RtpPcmFormat, right: RtpPcmFormat) -> bool:
     """Return whether two directional payloads identify the same codec."""
 
@@ -472,67 +340,6 @@ def _same_rtp_audio_codec(left: RtpPcmFormat, right: RtpPcmFormat) -> bool:
         and left.sample_rate == right.sample_rate
         and left.channels == right.channels
     )
-
-
-def _negotiate_answer_with_offer_payloads(
-    answered: list[RtpPcmFormat],
-    offered: list[RtpPcmFormat],
-    local_send_preferred: list[AudioFormat],
-    local_recv_preferred: list[AudioFormat],
-    direction: str,
-    *,
-    local_capabilities=None,
-) -> RtpPcmDirection | None:
-    """Negotiate the two RTP payload spaces of an RFC 3264 answer.
-
-    The answer payload identifies packets sent by the local offerer.  The
-    matching payload from the original offer identifies packets sent by the
-    remote answerer.  Keeping those independently prevents a legal payload
-    renumbering from silently decoding or transmitting with the wrong PT.
-    """
-
-    direction = normalize_direction(direction)
-    for answered_format in answered:
-        for offered_format in offered:
-            if not _same_rtp_audio_codec(answered_format, offered_format):
-                continue
-            send = _first_offered_match(
-                [answered_format],
-                local_send_preferred,
-                local_capabilities=local_capabilities,
-            )
-            recv = _first_offered_match(
-                [offered_format],
-                local_recv_preferred,
-                local_capabilities=local_capabilities,
-                receive=True,
-            )
-            if direction == "sendonly":
-                if send is not None:
-                    return RtpPcmDirection(
-                        send=send,
-                        recv=replace(
-                            send,
-                            payload_type=offered_format.payload_type,
-                            frame_ms=offered_format.frame_ms,
-                        ),
-                    )
-                continue
-            if direction == "recvonly":
-                if recv is not None:
-                    return RtpPcmDirection(
-                        send=replace(
-                            recv,
-                            payload_type=answered_format.payload_type,
-                            frame_ms=answered_format.frame_ms,
-                        ),
-                        recv=recv,
-                    )
-                continue
-
-            if send is not None and recv is not None:
-                return RtpPcmDirection(send=send, recv=recv)
-    return None
 
 
 def audio_offer_formats(
@@ -754,9 +561,7 @@ def negotiate_dtmf_answer_directional(
     answered = offered_dtmf_formats(remote_sdp)
     offered = offered_dtmf_formats(local_offer_sdp)
     if audio is not None:
-        from .media.shadow import engine_mode
-        if engine_mode() == "active":
-            send_clock_rate, receive_clock_rate = audio.send.sample_rate, audio.recv.sample_rate
+        send_clock_rate, receive_clock_rate = audio.send.sample_rate, audio.recv.sample_rate
     if send_clock_rate is not None or receive_clock_rate is not None:
         def selected(clock, receive):
             for wanted in dict.fromkeys((clock, 8000)):
@@ -828,15 +633,6 @@ def _offered_audio_mapping(parsed: dict, payload_type: int):
     return explicit
 
 
-def _local_receive_budget(fmt: RtpPcmFormat, capabilities) -> RtpPcmFormat:
-    if capabilities is None:
-        return fmt
-    maximum = capabilities.max_receive_packet_ms(fmt)
-    if fmt.max_frame_ms:
-        maximum = min(maximum, fmt.max_frame_ms)
-    return replace(fmt, max_frame_ms=maximum)
-
-
 def negotiate_directional(
     remote_sdp: str | bytes,
     local_send_preferred: list[AudioFormat],
@@ -849,75 +645,14 @@ def negotiate_directional(
     established: RtpPcmDirection | None = None,
 ) -> RtpPcmDirection | None:
     from .media import negotiator
-    from .media.shadow import engine_mode
 
     remote_sdp = SdpDocument.parse(remote_sdp)
-    if engine_mode() == "active":
-        previous = (negotiator.LegContract(established.send, established.recv, None)
-                    if established is not None else None)
-        contract = negotiator.answer_offer(remote_sdp, local_send_preferred, local_recv_preferred,
-            capabilities=local_capabilities, codec_policy=codec_policy,
-            dahua=allow_dahua_pcm, established=previous, receive_capabilities=local_recv_capabilities)
-        return negotiator.as_direction(contract, remote_sdp)
-    parsed = parse_sdp(remote_sdp)
-    local_direction = local_direction_for_offer(
-        parsed["direction"],
-        remote_connection_held=bool(parsed["connection_held"]),
-    )
-    format_direction = format_direction_for_remote(
-        parsed["direction"],
-        local_direction,
-    )
-    offered = offered_pcm_formats(remote_sdp, allow_dahua_pcm=allow_dahua_pcm)
-    if codec_policy is not None:
-        offered = list(codec_policy.audio_formats(offered))
-    if local_capabilities is not None:
-        local_send_preferred = local_capabilities.expand(local_send_preferred, offered)
-        local_recv_preferred = local_capabilities.expand(
-            local_recv_preferred, offered, receive=True
-        )
-    explicit = _negotiate_audio_flow_attributes(
-        remote_sdp,
-        offered,
-        local_send_preferred,
-        local_recv_preferred,
-        local_capabilities=local_capabilities,
-    )
-    selected = explicit or _negotiate_for_local_direction(
-        offered,
-        local_send_preferred,
-        local_recv_preferred,
-        format_direction,
-        prefer_offer_order=False,
-        local_capabilities=local_capabilities,
-    )
-    if selected is None:
-        return None
-    # The remote ptime is a recommendation, not our decoder's receive budget.
-    # Retain the selected PCM quantum, and derive capacity only from locally
-    # supported shapes for this same codec/rate/channels. Peer RX bounds apply
-    # to our transmitter and must never become our own receive capacity.
-    receive_shape = _format_key(selected.recv.audio_format)[:3]
-    receive_capabilities = (
-        local_recv_preferred
-        if local_recv_capabilities is None
-        else local_recv_capabilities
-    )
-    maximum = (
-        local_capabilities.max_receive_packet_ms(selected.recv)
-        if local_capabilities is not None
-        else max(
-            [
-                selected.recv.frame_ms,
-                *(
-                    local.frame_ms
-                    for local in receive_capabilities
-                    if _format_key(local)[:3] == receive_shape
-                ),
-            ]
-        )
-    )
-    return replace(selected, recv=replace(selected.recv, max_frame_ms=maximum))
+    previous = (negotiator.LegContract(established.send, established.recv, None)
+                if established is not None else None)
+    contract = negotiator.answer_offer(remote_sdp, local_send_preferred, local_recv_preferred,
+        capabilities=local_capabilities, codec_policy=codec_policy,
+        dahua=allow_dahua_pcm, established=previous, receive_capabilities=local_recv_capabilities)
+    return negotiator.as_direction(contract, remote_sdp)
 
 
 def negotiate_answer_directional(
@@ -931,208 +666,25 @@ def negotiate_answer_directional(
     local_capabilities=None,
     codec_policy=None,
 ) -> RtpPcmDirection | None:
-    """Negotiate one standards-compliant media contract from an SDP answer."""
-
+    """Apply an exact answer, preserving the capability-only API when no offer is supplied."""
     from .media import negotiator
-    from .media.shadow import engine_mode
 
     remote_sdp = SdpDocument.parse(remote_sdp)
     if local_offer_sdp is not None:
         local_offer_sdp = SdpDocument.parse(local_offer_sdp)
-    if engine_mode() == "active" and local_offer_sdp is not None:
-        contract = negotiator.apply_answer(local_offer_sdp, remote_sdp,
-            local_send_preferred, local_recv_preferred, capabilities=local_capabilities,
-            codec_policy=codec_policy, dahua=allow_dahua_pcm)
-        return negotiator.as_direction(contract, remote_sdp)
-
-    parsed = parse_sdp(remote_sdp)
-    local_direction = local_direction_for_offer(
-        parsed["direction"],
-        remote_connection_held=bool(parsed["connection_held"]),
-    )
-    format_direction = format_direction_for_remote(
-        parsed["direction"],
-        local_direction,
-        inactive_default=local_offer_direction,
-    )
-    answered_formats = offered_pcm_formats(
-        remote_sdp,
-        allow_dahua_pcm=allow_dahua_pcm,
-    )
-    if local_capabilities is not None:
-        local_send_preferred = local_capabilities.expand(
-            local_send_preferred, answered_formats
-        )
-        local_recv_preferred = local_capabilities.expand(
-            local_recv_preferred, answered_formats, receive=True
-        )
-    if local_offer_sdp is not None:
-        offered_formats = offered_pcm_formats(
-            local_offer_sdp, allow_dahua_pcm=allow_dahua_pcm
-        )
-        if local_capabilities is not None:
-            local_recv_preferred = local_capabilities.expand(
-                local_recv_preferred, offered_formats, receive=True
-            )
-        explicit = _negotiate_audio_flow_attributes(
-            remote_sdp,
-            answered_formats,
-            local_send_preferred,
-            local_recv_preferred,
-            receiver_formats=offered_formats,
-            local_capabilities=local_capabilities,
-        )
-        if explicit is not None:
-            # The ESP directional extension has a separate per-payload contract.
-            # The answer describes the peer receiver; HA's receive bounds are
-            # still those advertised in its own offer, not the peer's maxptime.
-            peer_receiver = next(
-                (
-                    fmt
-                    for fmt in answered_formats
-                    if fmt.payload_type == explicit.send.payload_type
-                    and _same_rtp_audio_codec(fmt, explicit.send)
-                ),
-                None,
-            )
-            local_receiver = next(
-                (
-                    fmt
-                    for fmt in offered_formats
-                    if _same_rtp_audio_codec(fmt, explicit.recv)
-                ),
-                None,
-            )
-            if peer_receiver is None or local_receiver is None:
-                return None
-            explicit = replace(
-                explicit,
-                send=_with_receiver_parameters(explicit.send, peer_receiver),
-                recv=_with_receiver_parameters(explicit.recv, local_receiver),
-            )
-            explicit = replace(
-                explicit, recv=_local_receive_budget(explicit.recv, local_capabilities)
-            )
-            return replace(
-                explicit,
-                recv_formats=(explicit.recv,)
-                if local_direction in {"recvonly", "sendrecv"}
-                else (),
-            )
-        selected = _negotiate_answer_with_offer_payloads(
-            answered_formats,
-            offered_formats,
-            local_send_preferred,
-            local_recv_preferred,
-            format_direction,
-            local_capabilities=local_capabilities,
-        )
-        if selected is None:
-            return None
-        receive = []
-        if local_direction in {"recvonly", "sendrecv"}:
-            # RFC 3264 6.1: the answerer sends any common codec using the
-            # offer's PT. Its receive preference does not select our sole RX.
-            for offered in offered_formats:
-                if not any(
-                    _same_rtp_audio_codec(offered, answer)
-                    for answer in answered_formats
-                ):
-                    continue
-                compatible = _first_offered_match(
-                    [offered],
-                    local_recv_preferred,
-                    local_capabilities=local_capabilities,
-                    receive=True,
-                )
-                if compatible is not None:
-                    receive.append(replace(offered, frame_ms=compatible.frame_ms))
-        transmit = []
-        if local_direction in {"sendonly", "sendrecv"}:
-            for answer in answered_formats:
-                if not any(
-                    _same_rtp_audio_codec(answer, offered)
-                    for offered in offered_formats
-                ):
-                    continue
-                compatible = _first_offered_match(
-                    [answer],
-                    local_send_preferred,
-                    local_capabilities=local_capabilities,
-                )
-                if compatible is not None:
-                    transmit.append(replace(answer, frame_ms=compatible.frame_ms))
-        return replace(
-            selected,
-            recv=_local_receive_budget(selected.recv, local_capabilities),
-            recv_formats=tuple(
-                _local_receive_budget(fmt, local_capabilities) for fmt in receive
-            ),
-            send_formats=tuple(transmit),
-        )
-    selected = _negotiate_for_local_direction(
-        answered_formats,
-        local_send_preferred,
-        local_recv_preferred,
-        format_direction,
-        prefer_offer_order=True,
-        local_capabilities=local_capabilities,
-    )
-    if selected is None:
-        return None
-    selected = replace(
-        selected, recv=_local_receive_budget(selected.recv, local_capabilities)
-    )
-    return replace(
-        selected,
-        recv_formats=(selected.recv,)
-        if local_direction in {"recvonly", "sendrecv"}
-        else (),
-    )
-
-
-def _negotiate_audio_flow_attributes(
-    remote_sdp: str | bytes,
-    answered: list[RtpPcmFormat],
-    local_send_preferred: list[AudioFormat],
-    local_recv_preferred: list[AudioFormat],
-    *,
-    receiver_formats: list[RtpPcmFormat] | None = None,
-    local_capabilities=None,
-) -> RtpPcmDirection | None:
-    """Apply the ESPHome directional payload extension when both flows exist."""
-
-    flows = parse_audio_flow_attributes(remote_sdp)
-    remote_recv = [
-        item
-        for item in answered
-        if flows.get(item.payload_type) in {"recv", "sendrecv"}
-    ]
-    remote_send = [
-        item
-        for item in answered
-        if flows.get(item.payload_type) in {"send", "sendrecv"}
-    ]
-    if not remote_recv or not remote_send:
-        return None
-    send = _best_offered_match(
-        remote_recv, local_send_preferred, local_capabilities=local_capabilities
-    )
-    if send is None:
-        return None
-    if not supports_independent_audio_ptime(remote_sdp):
-        local_recv_preferred = [
-            fmt for fmt in local_recv_preferred if fmt.frame_ms == send.frame_ms
-        ]
-    recv = _local_receive_match(
-        remote_send,
-        local_recv_preferred,
-        receiver_formats,
-        local_capabilities=local_capabilities,
-    )
-    return (
-        RtpPcmDirection(send, recv) if send is not None and recv is not None else None
-    )
+    format_direction = None
+    if local_offer_sdp is None:
+        parsed = parse_sdp(remote_sdp)
+        local_direction = local_direction_for_offer(parsed["direction"],
+            remote_connection_held=bool(parsed["connection_held"]))
+        format_direction = format_direction_for_remote(parsed["direction"], local_direction,
+            inactive_default=local_offer_direction)
+    contract = negotiator.apply_answer(local_offer_sdp, remote_sdp,
+        local_send_preferred, local_recv_preferred, capabilities=local_capabilities,
+        codec_policy=codec_policy, dahua=allow_dahua_pcm, format_direction=format_direction)
+    selected = negotiator.as_direction(contract, remote_sdp)
+    # Compatibility callers have no exact offer authorizing transmit alternatives.
+    return replace(selected, send_formats=()) if selected is not None and local_offer_sdp is None else selected
 
 
 def has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:
