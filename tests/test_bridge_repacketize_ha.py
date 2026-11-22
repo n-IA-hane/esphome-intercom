@@ -33,9 +33,10 @@ async def test_bridge_keeps_each_legs_own_negotiated_audio(
     lab.roster[1] = replace(lab.roster[1], metadata={
         "endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True,
         "sip_capabilities_known": True,
-        "sip_audio_tx_formats": ["L16/16000/1/20", "L16/16000/1/10"],
+        "sip_audio_tx_formats": ["L16/48000/1", "L16/16000/1"],
         "sip_audio_rx_formats": ["L16/48000/1/10", "L16/16000/1/20", "L16/16000/1/10"],
-        "sdp_features": ["directional_audio_v1", "independent_audio_ptime_v1"],
+        "sip_audio_tx_geometry_complete": True, "sip_audio_rx_geometry_complete": True,
+        "sip_audio_receiver_ptime": 10, "sip_audio_receiver_maxptime": 10,
     })
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")
     observed = {}
@@ -47,18 +48,14 @@ async def test_bridge_keeps_each_legs_own_negotiated_audio(
         send = next(fmt for fmt in offered if fmt.sample_rate == 16000)
         payloads = list(dict.fromkeys([receive.payload_type, send.payload_type]))
         mappings = f"a=rtpmap:{receive.payload_type} L16/{destination_rate}/1\r\n"
-        flows = f"a=x-voip-stack-flow:{receive.payload_type} sendrecv\r\n"
         if receive.payload_type != send.payload_type:
             mappings += f"a=rtpmap:{send.payload_type} L16/16000/1\r\n"
-            flows = (f"a=x-voip-stack-flow:{receive.payload_type} recv\r\n"
-                     f"a=x-voip-stack-flow:{send.payload_type} send\r\n")
         # Preserve either accepted destination geometry, independently of RX time.
         body = (
             "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Fixed microphone peer\r\n"
             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
             f"m=audio {target.rtp_socket.getsockname()[1]} RTP/AVP {' '.join(map(str, payloads))}\r\n"
-            f"{mappings}{flows}"
-            "a=x-voip-stack-independent-ptime:1\r\n"
+            f"{mappings}"
             "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
         ).encode()
         observed.update(target_answer=body, target_tx=send)
@@ -79,11 +76,12 @@ async def test_bridge_keeps_each_legs_own_negotiated_audio(
         username=account.username, password=account.password,
         local_rtp_port=audio.getsockname()[1],
         supported_send_formats=[AudioFormat(source_rate, frame_ms=offered_ms)]
-            + ([AudioFormat(16000, frame_ms=10)] if offer_tx10 else []),
+            + ([AudioFormat(16000, frame_ms=10)] if offer_tx10 else [])
+            + [AudioFormat(rate, frame_ms=10) for rate in (48000,16000) if rate != source_rate],
         supported_recv_formats=[AudioFormat(48000, frame_ms=10),
                                 AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10)],
-        allow_directional_audio_payloads=True, independent_audio_ptime=True,
-    )
+        supported_send_rtp_formats=(sdp.RtpPcmFormat(96,"L16",48000,1,10), sdp.RtpPcmFormat(97,"L16",16000,1,20)),
+        supported_recv_rtp_formats=(sdp.RtpPcmFormat(96,"L16",48000,1,10,max_frame_ms=10), sdp.RtpPcmFormat(97,"L16",16000,1,10,max_frame_ms=10)))
     read_response = caller._read_response
 
     async def observe_response(*args, **kwargs):

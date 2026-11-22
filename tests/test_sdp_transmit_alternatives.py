@@ -49,7 +49,7 @@ def test_answer_hard_packet_ceiling_excludes_a_fixed_longer_alternative():
     assert result.send.payload_type == 0 and result.receive.frame_ms == 20
 
 
-def test_answer_flow_attributes_only_expose_the_peers_receive_mapping_for_transmit():
+def test_unknown_flow_attributes_cannot_remove_standard_mapping_alternatives():
     offer = _description("m=audio 40000 RTP/AVP 0 96\na=rtpmap:96 L16/16000/1\na=ptime:20")
     answer = _description("m=audio 41000 RTP/AVP 0 120\na=rtpmap:120 L16/16000/1\n"
         "a=x-voip-stack-flow:0 recv\na=x-voip-stack-flow:120 send\n"
@@ -57,7 +57,7 @@ def test_answer_flow_attributes_only_expose_the_peers_receive_mapping_for_transm
     local = [audio_format.AudioFormat(rate, frame_ms=20) for rate in (8000, 16000)]
     result = negotiator.apply_answer(offer, answer, local, local)
     assert isinstance(result, negotiator.LegContract)
-    assert [(fmt.payload_type, fmt.encoding) for fmt in result.send_accept] == [(0, "PCMU")]
+    assert [(fmt.payload_type, fmt.encoding) for fmt in result.send_accept] == [(0, "PCMU"), (120, "L16")]
     selected = negotiator.as_direction(result, answer)
     assert selected.send.payload_type == 0 and selected.recv.payload_type == 96
 
@@ -74,21 +74,21 @@ def test_receive_only_answer_exposes_no_transmit_mapping():
 
 
 @pytest.mark.parametrize("flow", ["send", "recv"])
-def test_bidirectional_answer_without_one_required_flow_is_refused(flow):
+def test_unknown_flow_attributes_cannot_disable_a_bidirectional_answer(flow):
     offer = _description("m=audio 40000 RTP/AVP 0\na=ptime:20")
     answer = _description(f"m=audio 41000 RTP/AVP 0\na=x-voip-stack-flow:0 {flow}\na=ptime:20")
     local = [audio_format.AudioFormat(8000, frame_ms=20)]
     result = negotiator.apply_answer(offer, answer, local, local)
-    assert isinstance(result, negotiator.Refusal)
+    assert isinstance(result, negotiator.LegContract)
+    assert result.send.payload_type == result.receive.payload_type == 0
 
 
-@pytest.mark.parametrize(("direction", "flow", "can_send"), [
-    ("recvonly", "recv", True), ("sendonly", "send", False),
+@pytest.mark.parametrize(("direction", "can_send"), [
+    ("recvonly", True), ("sendonly", False),
 ])
-def test_one_way_answer_with_its_required_flow_remains_usable(direction, flow, can_send):
+def test_standard_one_way_answer_remains_usable(direction, can_send):
     offer = _description("m=audio 40000 RTP/AVP 0\na=ptime:20")
-    answer = _description(f"m=audio 41000 RTP/AVP 0\na=x-voip-stack-flow:0 {flow}\n"
-        f"a=ptime:20\na={direction}")
+    answer = _description(f"m=audio 41000 RTP/AVP 0\na=ptime:20\na={direction}")
     local = [audio_format.AudioFormat(8000, frame_ms=20)]
     result = negotiator.apply_answer(offer, answer, local if can_send else [], [] if can_send else local)
     assert isinstance(result, negotiator.LegContract)

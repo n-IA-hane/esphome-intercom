@@ -29,14 +29,23 @@ async def test_native_unique_identity_or_legacy_fallback_owns_the_runtime_id(pho
     lab.hass.config_entries.async_add_subentry(lab.entry, sub)
     assert endpoint_from_subentry(lab.entry, sub).endpoint_id == identity
     assert phone_subentry_by_endpoint_id(lab.entry, identity) is sub
-    update_phone_subentry(lab.hass, lab.entry, identity, {"name": "Renamed desk", "username": "renamed"})
+    update_phone_subentry(lab.hass, lab.entry, identity, {"name": "Renamed desk"})
+    with pytest.raises(ValueError, match="native account configuration"):
+        update_phone_subentry(lab.hass, lab.entry, identity, {"username": "renamed"})
     assert sub.unique_id == unique_id
     if unique_id:
         assert "endpoint_id" not in sub.data
     else:
         assert sub.data["endpoint_id"] == identity
     assert sub.data["password"] == "fixture-kept-password"
-    assert lab.runtime.endpoints.resolve("renamed").endpoint_id == identity
+    assert lab.runtime.endpoints.by_username("desk").endpoint_id == identity
+    from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
+    native_id = sub.subentry_id
+    await async_migrate_account_identities(lab.hass, lab.entry,
+        account_updates={native_id: {**sub.data, "username": "renamed", "username_source": "user"}})
+    assert sub.subentry_id == native_id and sub.unique_id == "phone:renamed"
+    assert lab.runtime.endpoints.by_username("renamed").endpoint_id == "renamed"
+    assert sub.data["password"] == "fixture-kept-password"
 
 
 async def test_account_draft_binding_reference_is_the_committed_native_identity(phone_lab):
@@ -46,13 +55,13 @@ async def test_account_draft_binding_reference_is_the_committed_native_identity(
 
     lab = phone_lab
     draft = draft_phone_subentry({"kind": "sip_account", "name": "Draft"})
-    bound_reference = phone_endpoint_id(draft)
     completed = {"kind": "sip_account", "name": "Desk", "username": "desk",
                  "password": "fixture-draft-password", "extension": "301"}
     edited = draft_phone_subentry(completed, previous=draft, title="Desk")
+    bound_reference = phone_endpoint_id(edited)
     saved = _add_phone_subentry(lab.hass, lab.entry, data=edited.data, title="Desk", draft=edited)
     assert saved.subentry_id == draft.subentry_id
-    assert saved.unique_id == "phone:sip:" + saved.subentry_id
+    assert saved.unique_id == "phone:desk"
     assert phone_endpoint_id(saved) == bound_reference and "endpoint_id" not in saved.data
     assert len(lab.entry.subentries) == 1
 
@@ -63,8 +72,8 @@ async def test_legacy_data_allocator_materialises_the_same_native_subentry_id(ph
     lab = phone_lab
     data = sip_account_phone_data({"username": "desk", "password": "fixture-data-password"})
     saved = _add_phone_subentry(lab.hass, lab.entry, data=data, title="Desk")
-    assert saved.unique_id == "phone:sip:" + saved.subentry_id
-    assert phone_endpoint_id(saved) == "sip:" + saved.subentry_id
+    assert saved.unique_id == "phone:desk"
+    assert phone_endpoint_id(saved) == "desk"
     assert "endpoint_id" not in saved.data
 
 
@@ -84,18 +93,18 @@ async def test_v7_1_identity_migration_keeps_legacy_identity_credentials_and_nat
         hass.config_entries.async_add_subentry(entry, sub)
     native_ids = (first.subentry_id, second.subentry_id)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 3
+    assert entry.version == 7 and entry.minor_version == 4
     assert (first.subentry_id, second.subentry_id) == native_ids
-    assert phone_endpoint_id(first) == "sip:first" and phone_endpoint_id(second) == "sip:second"
-    assert second.unique_id == "phone:sip:second"
+    assert phone_endpoint_id(first) == "first" and phone_endpoint_id(second) == "second"
+    assert second.unique_id == "phone:second"
     assert all("endpoint_id" not in sub.data for sub in (first, second))
-    assert first.unique_id == "phone:sip:first" and first.data["password"] == "fixture-first-password"
+    assert first.unique_id == "phone:first" and first.data["password"] == "fixture-first-password"
     saved = [deepcopy(dict(sub.data)) for sub in (first, second)]
     assert await async_migrate_entry(hass, entry)
     assert [dict(sub.data) for sub in (first, second)] == saved
     from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships, iter_phone_memberships
-    await async_set_phone_memberships(hass, entry, "sip:second", "queues", ["Support"])
-    assert dict(iter_phone_memberships(hass, entry, "queue"))["sip:second"] == ("Support",)
+    await async_set_phone_memberships(hass, entry, "second", "queues", ["Support"])
+    assert dict(iter_phone_memberships(hass, entry, "queue"))["second"] == ("Support",)
     assert "endpoint_id" not in second.data
 
 

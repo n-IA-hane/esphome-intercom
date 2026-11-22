@@ -17,8 +17,7 @@ pytestmark = pytest.mark.ha
 async def test_state_presence_discovers_unknown_route_without_inventing_formats(phone_lab):
     from custom_components.voip_stack.device_resolver import VoipDeviceResolver
     from custom_components.voip_stack.peer_snapshot import device_is_phonebook_available
-    from custom_components.voip_stack.endpoint_routing import sip_target_offer_common_audio
-    from custom_components.voip_stack.peer import Peer
+    from custom_components.voip_stack.endpoint_routing import sip_target_rtp_audio_profile
 
     lab = phone_lab
     device, = await VoipDeviceResolver(lab.hass).list_devices()
@@ -32,8 +31,8 @@ async def test_state_presence_discovers_unknown_route_without_inventing_formats(
     assert device["sip_video_codec"] is None
     assert device["tx_formats"] == device["rx_formats"] == []
     assert not device_is_phonebook_available(lab.hass, device)
-    assert sip_target_offer_common_audio(Peer(name="Entrance", host="127.0.0.2",
-        endpoint_kind="esphome", device=device), None)
+    profile = sip_target_rtp_audio_profile(None)
+    assert {fmt.encoding for fmt in profile.send_rtp_formats} >= {"L16", "PCMA", "PCMU"}
     # A missing/invalid legacy sensor cannot suppress device identity.
     legacy = er.async_get(lab.hass).async_get_or_create(
         "sensor", "esphome", "84c7bb000001-voip_endpoint", config_entry=lab.native,
@@ -98,9 +97,7 @@ async def test_authenticated_contact_and_options_are_authoritative_without_endpo
     binding, = lab.registrar.registered_contacts(phone.username)
     body = ("v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Native\r\nc=IN IP4 127.0.0.2\r\nt=0 0\r\n"
         "m=audio 0 RTP/AVP 96 97\r\na=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/48000/1\r\n"
-        "a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n"
-        "a=x-voip-stack-independent-ptime:1\r\na=x-voip-stack-audio-tx:L16/16000/1/10\r\n"
-        "a=x-voip-stack-audio-rx:L16/48000/1/10\r\na=ptime:10\r\n"
+        "a=ptime:10\r\na=maxptime:20\r\n"
         "m=video 0 RTP/AVP 26\r\na=rtcp:0 IN IP4 127.0.0.2\r\na=sendrecv\r\n")
     binding.capabilities = sdp.options_capabilities(body)
     device, = await VoipDeviceResolver(lab.hass).list_devices()
@@ -108,8 +105,8 @@ async def test_authenticated_contact_and_options_are_authoritative_without_endpo
     assert device["registered"] and device["sip_capabilities_known"]
     assert (device["host"], device["sip_port"], device["sip_transport"]) == ("127.0.0.2", 41000, "udp")
     assert device["audio_mode"] == "full_duplex"
-    assert device["sip_audio_tx_formats"] == ["L16/16000/1/10"]
-    assert device["sip_audio_rx_formats"] == ["L16/48000/1/10"]
+    assert device["sip_audio_tx_formats"] == ["L16/16000/1", "L16/48000/1"]
+    assert device["sip_audio_rx_formats"] == ["L16/16000/1/10", "L16/48000/1/10"]
     assert device["sip_video_codec"] == "jpeg" and "video" in device["capabilities"]
     with pytest.raises(sdp.SdpError):
         sdp.offered_video_formats(body)  # RTCP zero is not an ordinary media endpoint.
@@ -125,7 +122,9 @@ def test_options_derives_one_way_role_without_inventing_packet_time(direction, m
         f"a=rtpmap:96 L16/16000/1\r\na={direction}\r\n")
     caps = sdp.options_capabilities(body)
     assert caps["audio_mode"] == mode
-    assert caps["sip_audio_tx_formats"] == caps["sip_audio_rx_formats"] == []
+    assert caps["sip_audio_tx_formats"] == (["L16/16000/1"] if direction == "sendonly" else [])
+    assert caps["sip_audio_rx_formats"] == (["L16/16000/1"] if direction == "recvonly" else [])
+    assert caps["sip_audio_receiver_ptime"] == 0
 
 
 def test_ha_pcm_preferences_keep_twenty_ms_receive_and_optional_ten_ms():
@@ -145,7 +144,8 @@ def test_unusable_optional_video_does_not_erase_audio_capabilities():
         "m=video 0 RTP/AVP invalid\r\n")
     caps = sdp.options_capabilities(body)
     assert caps["audio_mode"] == "full_duplex"
-    assert caps["sip_audio_tx_formats"] == caps["sip_audio_rx_formats"] == ["L16/16000/1/10"]
+    assert caps["sip_audio_tx_formats"] == ["L16/16000/1"]
+    assert caps["sip_audio_rx_formats"] == ["L16/16000/1/10"]
     assert "sip_video_codec" not in caps
 
 

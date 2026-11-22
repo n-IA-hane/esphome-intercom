@@ -658,43 +658,25 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertTrue(hass.bus.contexts)
         self.assertTrue(all(item is context for item in hass.bus.contexts))
 
-    def test_sip_target_profile_preserves_local_selection_preferences(self) -> None:
-        audio_format = endpoint_routing.AudioFormat
-        remote_tx = [
-            audio_format(32000, "s16le", 1, 10),
-            audio_format(16000, "s16le", 1, 10),
-        ]
-        remote_rx = [
-            audio_format(48000, "s16le", 1, 10),
-            audio_format(16000, "s16le", 1, 10),
-        ]
+    def test_sip_target_profile_uses_engine_preferences_without_contact_evidence(self) -> None:
+        profile = endpoint_routing.sip_target_rtp_audio_profile(None)
+        self.assertEqual(profile.send_formats[0].sample_rate, 48000)
+        self.assertEqual(profile.send_formats[0].frame_ms, 10)
+        self.assertTrue(any(fmt.sample_rate == 16000 and fmt.frame_ms == 20 for fmt in profile.recv_formats))
+        self.assertTrue(any(fmt.encoding == "PCMU" for fmt in profile.send_rtp_formats))
+        self.assertTrue(any(fmt.encoding == "PCMA" for fmt in profile.recv_rtp_formats))
 
-        send, recv = endpoint_routing.sip_target_audio_profile(
-            remote_tx_formats=remote_tx,
-            remote_rx_formats=remote_rx,
-            target="standard-phone",
-        )
-
-        self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
-        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 20))
-        self.assertIn(audio_format(16000, "s16le", 1, 10), recv)
-        self.assertIn(audio_format(32000, "s16le", 1, 10), recv)
-        self.assertIn(audio_format(8000, "s16le", 1, 20), send)
-        self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
-
-    def test_sip_target_profile_accepts_disjoint_codecs_with_common_ptime(self) -> None:
-        audio_format = endpoint_routing.AudioFormat
-        send, recv = endpoint_routing.sip_target_audio_profile(
-            remote_tx_formats=[audio_format(16000, "s16le", 1, 10)],
-            remote_rx_formats=[audio_format(48000, "s16le", 1, 10)],
-            target="nonstandard-phone",
-        )
-
-        self.assertEqual(send[0], audio_format(48000, "s16le", 1, 10))
-        self.assertEqual(recv[0], audio_format(16000, "s16le", 1, 20))
-        self.assertIn(audio_format(16000, "s16le", 1, 10), recv)
-        self.assertIn(audio_format(8000, "s16le", 1, 20), send)
-        self.assertIn(audio_format(8000, "s16le", 1, 20), recv)
+    def test_standard_contact_retains_convertible_alternatives_in_both_directions(self) -> None:
+        body = ("v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Contact\r\n"
+            "c=IN IP4 192.0.2.2\r\nt=0 0\r\nm=audio 0 RTP/AVP 96 97\r\n"
+            "a=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/16000/1\r\n"
+            "a=ptime:10\r\na=maxptime:20\r\na=sendrecv\r\n")
+        entry = types.SimpleNamespace(metadata={"sip_capabilities_known": True,
+            **endpoint_routing.sdp.options_capabilities(body)})
+        profile = endpoint_routing.sip_target_rtp_audio_profile(entry)
+        for formats in (profile.send_rtp_formats, profile.recv_rtp_formats):
+            self.assertEqual({(fmt.encoding,fmt.sample_rate) for fmt in formats}, {("L16",48000),("L16",16000)})
+        self.assertTrue(all(not item.times.fixed for item in profile.evidence.sends))
 
     def test_peer_lookup_accepts_standard_sip_routing_identities(self) -> None:
         endpoint = peer.Peer(

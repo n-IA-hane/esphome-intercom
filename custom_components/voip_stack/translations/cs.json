@@ -2615,7 +2615,7 @@
         },
         "decline_reason": {
           "name": "Důvod odmítnutí",
-          "description": "Konečný důvod aplikace předaný v hlavičkách SIP Reason a X-Voip-Stack-Decline-Reason."
+          "description": "Důvod odeslaný se standardním odmítnutím SIP."
         }
       },
       "sections": {

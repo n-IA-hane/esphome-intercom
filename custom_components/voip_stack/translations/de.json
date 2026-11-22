@@ -2615,7 +2615,7 @@
         },
         "decline_reason": {
           "name": "Ablehnungsgrund",
-          "description": "Von der Anwendung gemeldeter Beendigungsgrund. Er wird in den SIP-Headern Reason und X-Voip-Stack-Decline-Reason übertragen."
+          "description": "Grund für die standardmäßige SIP-Ablehnung."
         }
       },
       "sections": {

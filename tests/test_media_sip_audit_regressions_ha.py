@@ -20,13 +20,9 @@ pytestmark = [pytest.mark.ha, pytest.mark.integration]
 def description(formats, *, port=40000, ptime=20):
     rows = ["v=0", "o=- 1 1 IN IP4 192.0.2.2", "s=Audit regression",
             "c=IN IP4 192.0.2.2", "t=0 0",
-            f"m=audio {port} RTP/AVP " + " ".join(str(pt) for pt, _rate, _flow in formats)]
-    for pt, rate, flow in formats:
+            f"m=audio {port} RTP/AVP " + " ".join(str(pt) for pt, _rate in formats)]
+    for pt, rate in formats:
         rows.append(f"a=rtpmap:{pt} L16/{rate}/1")
-        if flow:
-            rows.append(f"a=x-voip-stack-flow:{pt} {flow}")
-    if any(flow for _pt, _rate, flow in formats):
-        rows.append("a=x-voip-stack-independent-ptime:1")
     return "\r\n".join((*rows, f"a=ptime:{ptime}", "a=sendrecv", ""))
 
 
@@ -37,41 +33,41 @@ def apply_answer(offer, answer):
         local_offer_sdp=offer, local_capabilities=HA_AUDIO_CAPABILITIES)
 
 
-def test_answer_cannot_reverse_the_exact_offers_payload_roles():
-    offer = description(((96, 48000, "send"), (97, 16000, "recv")))
-    reversed_answer = description(((110, 16000, "recv"), (111, 48000, "send")))
+def test_answer_cannot_add_an_unoffered_mapping():
+    offer = description(((96, 48000), (97, 16000)))
+    reversed_answer = description(((110, 32000), (111, 8000)))
     assert apply_answer(offer, reversed_answer) is None
 
 
 @pytest.mark.parametrize("renumber", [False, True])
-def test_inverse_directional_answer_keeps_offer_receive_numbers(renumber):
-    offer = description(((96, 48000, "send"), (97, 16000, "recv")))
+def test_standard_answer_keeps_offer_receive_numbers(renumber):
+    offer = description(((96, 48000), (97, 16000)))
     tx, rx = (110, 111) if renumber else (96, 97)
     answer = description(((tx, 48000, "recv"), (rx, 16000, "send")), ptime=10)
     selected = apply_answer(offer, answer)
     assert selected is not None
     assert (selected.send.sample_rate, selected.send.payload_type) == (48000, tx)
     assert (selected.recv.sample_rate, selected.recv.payload_type) == (16000, 97)
-    assert [fmt.sample_rate for fmt in selected.send_formats] == [48000]
-    assert [fmt.sample_rate for fmt in selected.recv_formats] == [16000]
+    assert [fmt.sample_rate for fmt in selected.send_formats] == [48000, 16000]
+    assert [fmt.sample_rate for fmt in selected.recv_formats] == [48000, 16000]
 
 
-def test_answer_alternatives_intersect_both_exact_offer_roles():
-    offer = description(((96, 48000, "send"), (97, 16000, "recv"), (98, 8000, "sendrecv")))
-    answer = description(((110, 48000, "sendrecv"), (111, 16000, "sendrecv"),
-                          (112, 8000, "sendrecv")), ptime=10)
+def test_answer_alternatives_intersect_the_exact_standard_offer():
+    offer = description(((96, 48000), (97, 16000), (98, 8000)))
+    answer = description(((110, 48000), (111, 16000),
+                          (112, 8000)), ptime=10)
     selected = apply_answer(offer, answer)
     assert selected is not None
     assert (selected.send.sample_rate, selected.recv.sample_rate) == (48000, 16000)
     assert [(fmt.payload_type, fmt.sample_rate) for fmt in selected.send_formats] == [
-        (110, 48000), (112, 8000)]
+        (110, 48000), (111, 16000), (112, 8000)]
     assert [(fmt.payload_type, fmt.sample_rate) for fmt in selected.recv_formats] == [
-        (97, 16000), (98, 8000)]
+        (96, 48000), (97, 16000), (98, 8000)]
 
 
 def test_standard_answer_without_private_roles_still_accepts_renumbering():
-    selected = apply_answer(description(((96, 8000, ""),)),
-                            description(((110, 8000, ""),)))
+    selected = apply_answer(description(((96, 8000),)),
+                            description(((110, 8000),)))
     assert selected is not None
     assert selected.send.payload_type == 110 and selected.recv.payload_type == 96
 
@@ -144,7 +140,7 @@ async def test_unnegotiated_ip_or_payload_cannot_establish_rtp_source(host, pt, 
 @asynccontextmanager
 async def reliable_endpoint(*, update=None, send_ok=True):
     sent = []
-    offer = description(((96, 16000, ""),))
+    offer = description(((96, 16000),))
     answer = offer.replace("192.0.2.2", "192.0.2.1").replace("40000", "42000")
     commit, rollback, finalize = AsyncMock(), AsyncMock(), AsyncMock()
 

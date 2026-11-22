@@ -206,7 +206,7 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
                 local_rtp_port_index=0, uri_override=route.sip_uri or uri,
                 roster_entry_override=route.entry,
                 port_reservation=RtpPortReservation.allocate(hass),
-                policy=OutboundLegPolicy(force_common_audio=action is RouteAction.TRUNK, reuse_registered_flow=False),
+                policy=OutboundLegPolicy(reuse_registered_flow=False),
             )
             assert attempt is not None
             try:

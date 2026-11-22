@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from custom_components.voip_stack.core import rtp
+from custom_components.voip_stack.core import rtp, sdp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.phone_profile import render_phone_bundle, resolve_phone_keys
@@ -83,9 +83,10 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
     audio.setblocking(False)
     caller = SipCallClient(local_ip='127.0.0.2', local_name=p4.name, local_uri_user=p4.username,
         username=account.username, password=account.password, local_sip_port=0,
-        local_rtp_port=audio.getsockname()[1], supported_send_formats=[AudioFormat(16000, frame_ms=20)],
-        supported_recv_formats=[AudioFormat(48000, frame_ms=10)], allow_directional_audio_payloads=True,
-        independent_audio_ptime=True)
+        local_rtp_port=audio.getsockname()[1], supported_send_formats=[AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)],
+        supported_recv_formats=[AudioFormat(48000, frame_ms=10), AudioFormat(16000, frame_ms=20)],
+        supported_send_rtp_formats=(sdp.RtpPcmFormat(96, "L16", 48000, 1, 10), sdp.RtpPcmFormat(97, "L16", 16000, 1, 20)),
+        supported_recv_rtp_formats=(sdp.RtpPcmFormat(96, "L16", 48000, 1, 10, max_frame_ms=20), sdp.RtpPcmFormat(97, "L16", 16000, 1, 20, max_frame_ms=20)))
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
         lambda: SipDatagramQueueProtocol(caller.queue), local_addr=('127.0.0.2', 0))
     caller.local_sip_port = caller.transport.get_extra_info('sockname')[1]

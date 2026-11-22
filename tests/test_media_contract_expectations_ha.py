@@ -89,21 +89,20 @@ async def test_cc4_negotiated_event_mapping_clock_and_identity_reach_real_udp(so
     source,destination=udp_pair()
     wide=sdp.RtpPcmFormat(96,"L16",48000,1,10)
     narrow=sdp.RtpPcmFormat(97,"L16",16000,1,10)
-    offer=sdp.build_offer_directional("127.0.0.1","127.0.0.1",40000,[wide.audio_format],[narrow.audio_format],
-        send_rtp_formats=(wide,),recv_rtp_formats=(narrow,),allow_directional_payloads=True,
-        independent_audio_ptime=True)
-    # Independent text parsing also protects the original false-flags invariant.
+    offer=sdp.build_offer_directional("127.0.0.1","127.0.0.1",40000,[wide.audio_format,narrow.audio_format],[narrow.audio_format,wide.audio_format],
+        send_rtp_formats=(wide,narrow),recv_rtp_formats=(narrow,wide))
+    # Independently parse the standard alternatives and all event clock aliases.
     maps={int(pt):token for pt,token in re.findall(r"^a=rtpmap:(\d+) ([^\r\n]+)",offer,re.MULTILINE)}
     assert maps=={96:"L16/48000/1",97:"L16/16000/1",101:"telephone-event/8000",
                   98:"telephone-event/48000",99:"telephone-event/16000"}
     answer=("v=0\r\no=- 91 1 IN IP4 127.0.0.1\r\ns=Independent directional peer\r\n"
             "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 41000 RTP/AVP 96 97 114 115 116\r\n"
-            "a=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 recv\r\n"
-            "a=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 send\r\n"
+            "a=rtpmap:96 L16/48000/1\r\n"
+            "a=rtpmap:97 L16/16000/1\r\n"
             "a=rtpmap:114 telephone-event/48000\r\na=fmtp:114 0-15\r\n"
             "a=rtpmap:115 telephone-event/16000\r\na=fmtp:115 0-15\r\n"
             "a=rtpmap:116 telephone-event/8000\r\na=fmtp:116 0-15\r\n"
-            "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=sendrecv\r\n")
+            "a=ptime:10\r\na=maxptime:20\r\na=sendrecv\r\n")
     selected=sdp.negotiate_answer_directional(answer,[wide.audio_format],[narrow.audio_format],local_offer_sdp=offer)
     assert selected is not None
     events=sdp.negotiate_dtmf_answer_directional(answer,offer,audio=selected)

@@ -15,16 +15,25 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     """Round-trip actual SDP, then deliver the peer's actual PCM packet quantum."""
     esp_send = [audio_format.AudioFormat(16000, frame_ms=ms)
                 for ms in ((20, 10) if esp_supports_20 else (10,))]
-    esp_recv = [audio_format.AudioFormat(48000, frame_ms=10), *esp_send]
+    esp_send.append(audio_format.AudioFormat(48000, frame_ms=10))
+    esp_recv = [audio_format.AudioFormat(48000, frame_ms=10),
+                audio_format.AudioFormat(48000, frame_ms=20),
+                *[fmt for fmt in esp_send if fmt.sample_rate == 16000]]
     local = {
         "ha": (list(audio_format.HA_SIP_PCM_TX_FORMATS), list(audio_format.HA_SIP_PCM_RX_FORMATS)),
         "esp": (esp_send, esp_recv),
     }
     answerer = "ha" if initiator == "esp" else "esp"
+    offer_options = {}
+    if initiator == "esp":
+        wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10, max_frame_ms=20)
+        narrow = sdp.RtpPcmFormat(97, "L16", 16000, 1, 20 if esp_supports_20 else 10,
+                                 max_frame_ms=20 if esp_supports_20 else 10)
+        offer_options = {"send_rtp_formats": (wide, narrow), "recv_rtp_formats": (wide, narrow)}
     offer = sdp.build_offer_directional(
         "192.0.2.1", "192.0.2.1", 40000, *local[initiator],
-        allow_directional_payloads=True, independent_audio_ptime=True,
         local_capabilities=sip_client.HA_AUDIO_CAPABILITIES if initiator == "ha" else None,
+        **offer_options,
     )
     selected = sdp.negotiate_directional(
         offer, *local[answerer],
@@ -33,7 +42,7 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     assert selected is not None
     answer = sdp.build_answer_directional(
         "192.0.2.2", "192.0.2.2", 41000,
-        selected.send, selected.recv, remote_sdp=offer,
+        selected.send, selected.recv, remote_sdp=offer, recv_formats=selected.recv_formats,
     )
     accepted = sdp.negotiate_answer_directional(
         answer, *local[initiator], local_offer_sdp=offer,
@@ -45,8 +54,9 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     assert (esp.recv.sample_rate, esp.recv.frame_ms) == (48000, 10)
     assert (ha.recv.sample_rate, ha.recv.frame_ms) == (16000, 20)
     assert (esp.send.sample_rate, esp.send.frame_ms) == (16000, 20 if esp_supports_20 else 10)
-    assert sdp.supports_independent_audio_ptime(offer)
-    assert sdp.supports_independent_audio_ptime(answer)
+    for description in (offer, answer):
+        assert "x-voip-stack" not in description
+        assert {fmt.sample_rate for fmt in sdp.offered_pcm_formats(description)} >= {16000, 48000}
 
     # A 10 ms-only transmitter may ignore the receiver's 20 ms preference.
     # The existing receiver repacks its packets into the chosen local quantum.

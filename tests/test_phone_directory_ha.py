@@ -354,7 +354,8 @@ async def test_routing_uses_current_contact_and_instance_after_directory_publica
         return next(binding for binding in lab.registrar.registered_contacts(phone.username) if binding.call_id == f"directory-{index}")
 
     first = await register(1)
-    first.capabilities = {"sdp_features": ["directional_audio_v1"], "sip_audio_tx_formats": ["L16/16000/1/10"]}
+    first.capabilities = {"sip_audio_tx_formats": ["L16/16000/1"],
+        "sip_audio_tx_geometry_complete": True}
     await async_refresh_directory(lab.hass)
     published = lab.runtime.directory.get(phone.endpoint_id)
     assert published.sip_uri == first.contact_uri
@@ -366,14 +367,14 @@ async def test_routing_uses_current_contact_and_instance_after_directory_publica
     assert row.sip_uri == second.contact_uri
     assert len(row.metadata["sip_contacts"]) == 1
     assert row.metadata["sip_capabilities_known"] is False
-    assert not row.metadata.get("sdp_features")
+    assert not row.metadata.get("sip_audio_tx_formats")
     assert lab.runtime.directory.get(phone.endpoint_id) == published
     lab.registrar.remove_registration(phone.username)
     offline = next(entry for entry in roster_from_peers(lab.hass, [], [])
                    if entry.metadata.get("endpoint_id") == phone.endpoint_id)
     assert not offline.address and not offline.sip_uri
     assert offline.metadata["registered"] is False
-    assert not offline.metadata.get("sdp_features")
+    assert not offline.metadata.get("sip_audio_tx_formats")
 
 
 @pytest.mark.parametrize("retired", ["runtime", "directory", "later-refresh", "close"])

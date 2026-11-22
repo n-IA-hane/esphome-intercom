@@ -24,10 +24,10 @@ def test_production_entry_points_apply_the_captured_audio_contract(step):
 
 def test_directional_audio_selects_and_advertises_each_event_clock():
     body = ("v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=ESP\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
-        "m=audio 5000 RTP/AVP 96 97 101 102 103\r\n"
-        "a=rtpmap:96 L16/16000/1\r\na=x-voip-stack-flow:96 send\r\n"
-        "a=rtpmap:97 L16/48000/1\r\na=x-voip-stack-flow:97 recv\r\n"
-        "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\n"
+        "m=audio 5000 RTP/AVP 97 96 101 102 103\r\n"
+        "a=rtpmap:96 L16/16000/1\r\n"
+        "a=rtpmap:97 L16/48000/1\r\n"
+        "a=ptime:10\r\n"
         "a=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\n"
         "a=rtpmap:102 telephone-event/16000\r\na=fmtp:102 0-15\r\n"
         "a=rtpmap:103 telephone-event/48000\r\na=fmtp:103 0-15\r\n").encode()
@@ -44,8 +44,9 @@ def test_directional_audio_selects_and_advertises_each_event_clock():
     peer = invite_rtp_peer(invite)
     assert (peer.dtmf_payload_type, peer.dtmf_clock_rate) == (102, 16000)
     assert (peer.outbound_dtmf_payload_type, peer.outbound_dtmf_clock_rate) == (103, 48000)
-    assert source_dtmf_formats(invite) == (invite.recv_dtmf_format,)
+    assert source_dtmf_formats(invite)[0] == invite.recv_dtmf_format
+    assert {fmt.sample_rate for fmt in source_dtmf_formats(invite)} == {8000, 16000, 48000}
     answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 4000,
         invite.send_format, invite.recv_format, dtmf=invite.send_dtmf_format, remote_sdp=body)
-    assert {item.sample_rate for item in sdp.offered_dtmf_formats(answer)} == {16000, 48000}
+    assert {item.sample_rate for item in sdp.offered_dtmf_formats(answer)} == {8000, 16000, 48000}
     assert (invite.send_format.frame_ms, invite.recv_format.frame_ms) == (10, 20)

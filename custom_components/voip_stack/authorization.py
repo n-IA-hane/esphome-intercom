@@ -38,7 +38,6 @@ def _require_entity_permission(hass: Any, user: Any, policy: str, *, context: An
 
 def _endpoint_permission_entity_ids(hass: Any, endpoint: Any) -> tuple[str, ...]:
     """Return live HA entities which represent one logical phone."""
-    endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip()
     entity_ids = {
         str(entity_id or "").strip()
         for entity_id in (getattr(endpoint, "entity_ids", ()) or ())

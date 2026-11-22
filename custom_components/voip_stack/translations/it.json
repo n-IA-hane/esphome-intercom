@@ -2615,7 +2615,7 @@
         },
         "decline_reason": {
           "name": "Motivo del rifiuto",
-          "description": "Motivo finale dell'applicazione propagato nelle intestazioni SIP Reason e X-Voip-Stack-Decline-Reason."
+          "description": "Motivo inviato con il rifiuto SIP standard."
         }
       },
       "sections": {

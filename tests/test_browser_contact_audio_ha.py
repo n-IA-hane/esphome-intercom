@@ -25,7 +25,7 @@ CAPS = BASE_CAPS + b"a=ptime:10\r\n"
 pytestmark = pytest.mark.ha
 
 
-@pytest.mark.parametrize("profile", ["d1", "standard", "changed", "unknown"])
+@pytest.mark.parametrize("profile", ["standard-pcm", "standard", "changed", "unknown"])
 async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab, monkeypatch, profile):
     """Public browser call to a generic SIP account, without ESP identity rules."""
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
@@ -81,7 +81,7 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
                     options.set()
                     if profile == "unknown":
                         return  # No OPTIONS answer must not block an ordinary call.
-                    body = CAPS if profile in {"d1", "changed"} else (
+                    body = CAPS if profile in {"standard-pcm", "changed"} else (
                         b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Generic phone\r\n"
                         b"c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 0 RTP/AVP 0\r\n"
                         b"a=rtpmap:0 PCMU/8000/1\r\na=ptime:20\r\na=sendrecv\r\n")
@@ -91,14 +91,13 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
                         acks.put_nowait(message)
                         return
                     if message.method == "INVITE":
-                        if profile == "d1":
+                        if profile == "standard-pcm":
                             receive = re.search(rb"a=rtpmap:(\d+) L16/48000(?:/1)?\r", message.body)[1].decode()
                             send = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
-                            assert b"a=ptime:10\r\n" in message.body
-                            assert b"a=x-voip-stack-flow:" in message.body
+                            assert b"a=ptime:20\r\n" in message.body
+                            assert b"x-voip-stack" not in message.body
                             audio = (f"m=audio 35000 RTP/AVP {receive} {send}\r\n"
                                 f"a=rtpmap:{receive} L16/48000/1\r\na=rtpmap:{send} L16/16000/1\r\n"
-                                f"a=x-voip-stack-flow:{receive} recv\r\na=x-voip-stack-flow:{send} send\r\n"
                                 "a=ptime:10\r\na=sendrecv\r\n")
                         else:
                             payload = re.search(rb"a=rtpmap:(\d+) PCMU/8000(?:/1)?\r", message.body)[1].decode()
@@ -163,9 +162,9 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
             call_ids.append(call_id)
             client = lab.calls.sip_client_for(call_id)
             assert client.dialog is not None
-            if profile == "d1":
+            if profile == "standard-pcm":
                 assert client.dialog.send_format.sample_rate == 48000 and client.dialog.recv_format.sample_rate == 16000
-                assert client.dialog.send_format.frame_ms == client.dialog.recv_format.frame_ms == 10
+                assert (client.dialog.send_format.frame_ms, client.dialog.recv_format.frame_ms) == (10, 20)
             else:
                 assert client.dialog.send_format.encoding == client.dialog.recv_format.encoding == "PCMU"
                 assert client.dialog.send_format.sample_rate == client.dialog.recv_format.sample_rate == 8000

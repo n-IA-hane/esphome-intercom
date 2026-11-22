@@ -18,7 +18,6 @@ from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot
 from custom_components.voip_stack.phone_config import (
     endpoint_from_data, endpoint_from_subentry, sync_registry_from_entry,
 )
-from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
 from custom_components.voip_stack.runtime_diagnostics import runtime_resource_snapshot
 from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.trigger import PhoneStateTrigger
@@ -64,7 +63,6 @@ async def logical_browser(trunks, registered_phones, request, monkeypatch):
     peer_snapshot.async_build_peer_snapshot.side_effect = async_build_peer_snapshot
     monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
     monkeypatch.setattr(invite_router, "_roster_from_peers", roster_from_peers)
-    setup_phone_policy_events(trunks.hass, entry)
     trunks.browser_subentry = subentry
     assert not trunks.runtime.softphone_presence
     # The independent peers have completed real REGISTER before this fixture.

@@ -152,11 +152,9 @@ def softphone_originate(monkeypatch):
                 or ("" if getattr(entry, "metadata", {}).get("capabilities") else None),
             "device_formats": Mock(return_value=[]),
             "roster_entry_formats": Mock(return_value=[]),
-            "sip_target_audio_profile": Mock(return_value=([], [])),
-            "sip_target_rtp_audio_profile": Mock(return_value=None),
-            "sip_target_offer_common_audio": Mock(return_value=False),
-            "supports_directional_audio_payloads": Mock(return_value=False),
-            "supports_independent_audio_ptime": Mock(return_value=False),
+            "sip_target_rtp_audio_profile": Mock(return_value=SimpleNamespace(
+                send_formats=(), recv_formats=(), send_rtp_formats=(), recv_rtp_formats=(),
+                include_dahua_pcm=False, match_received_codec=False)),
         },
         "esphome_actions": {
             "async_call_action": AsyncMock(),

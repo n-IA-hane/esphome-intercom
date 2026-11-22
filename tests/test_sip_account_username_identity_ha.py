@@ -237,7 +237,7 @@ async def test_older_release_login_and_native_subentry_survive_upgrade(hass, ver
     identity = row.subentry_id
     assert await async_migrate_entry(hass, entry)
     assert entry.minor_version == 4 and row.subentry_id == identity
-    assert phone_endpoint_id(row) == row.data['username'] == 'ha_browser_retained'
+    assert phone_endpoint_id(row) == row.data['username'] == ('Display' if kind == 'browser' else 'ha_browser_retained')
     assert row.data['password'] == 'fixture-kept-password'
 
 
@@ -316,8 +316,12 @@ async def test_automation_created_before_upgrade_keeps_native_account_selector_o
     assert automation.raw_config == before
     session = lab.runtime.sip.upsert('post-upgrade-ring', state='ringing', owner='router',
         caller='Standard SIP caller', callee='Casa', dest_endpoint_id='Casa')
+    lab.runtime.sip.add_leg(session.call_id, 'post-upgrade-callee', role='callee',
+        state='ringing', endpoint_id='Casa')
     lab.runtime.sip.claim_endpoint(session.call_id, 'Casa', role='destination')
     await lab.hass.async_block_till_done()
+    from custom_components.voip_stack.phone_state import phone_states
+    assert phone_states(lab.hass)['Casa']['state'] == 'ringing'
     lab.hass.bus.async_fire(CALL_EVENT, {'call_id': session.call_id, 'generation': session.generation})
     await lab.hass.async_block_till_done()
     assert seen == [{'message': 'kept-trigger'}]

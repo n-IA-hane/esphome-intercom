@@ -1,6 +1,7 @@
 """Preflight and commit native account references using existing SIP logins."""
 
 from copy import deepcopy
+from builtins import BaseExceptionGroup
 import asyncio
 import re
 from collections.abc import Mapping
@@ -177,19 +178,26 @@ def automation_account_fields(hass, payload):
     if runtime is None:
         return result
     entry = config_entry(hass)
+
+    def endpoint_for(canonical, legacy):
+        if canonical is not None:
+            return runtime.endpoints.by_username(canonical) if canonical else None
+        if not legacy:
+            return None
+        return runtime.endpoints.get(legacy) or resolve_ha_endpoint(runtime.endpoints, legacy, entry=entry)
+
     for side, prefix in (('caller', 'source_'), ('destination', 'dest_')):
-        identity = payload.get(prefix + 'account_username') or payload.get(prefix + 'endpoint_id')
-        if not identity and side == 'destination':
-            identity = payload.get('target_account_username') or payload.get('target_endpoint_id')
-        if not identity and payload.get('direction') == ('outgoing' if side == 'caller' else 'incoming'):
-            identity = payload.get('account_username') or payload.get('endpoint_id')
-        endpoint = resolve_ha_endpoint(runtime.endpoints, identity, entry=entry) if identity else None
+        canonical, legacy = payload.get(prefix + 'account_username'), payload.get(prefix + 'endpoint_id')
+        if canonical is None and not legacy and side == 'destination':
+            canonical, legacy = payload.get('target_account_username'), payload.get('target_endpoint_id')
+        if canonical is None and not legacy and payload.get('direction') == ('outgoing' if side == 'caller' else 'incoming'):
+            canonical, legacy = payload.get('account_username'), payload.get('endpoint_id')
+        endpoint = endpoint_for(canonical, legacy)
         if endpoint is not None:
             result[prefix + 'account_username'] = endpoint.username
             result[prefix + 'extension'] = endpoint.extension
         if payload.get('direction') == ('outgoing' if side == 'caller' else 'incoming'):
-            owner = payload.get('account_username') or payload.get('endpoint_id')
-            owner = resolve_ha_endpoint(runtime.endpoints, owner, entry=entry) if owner else None
+            owner = endpoint_for(payload.get('account_username'), payload.get('endpoint_id'))
             if owner is not None:
                 result[side + '_account_username'] = owner.username
                 if endpoint is None:
@@ -212,7 +220,8 @@ def ha_event_payload(hass, payload):
         field = prefix + "endpoint_id"
         identity = result.get(prefix + "account_username") or result.get(field)
         if isinstance(identity, str) and identity:
-            canonical = mapping.get(identity, identity)
+            canonical = (result[prefix + 'account_username'] if prefix + 'account_username' in result
+                         else canonical_ha_destination(hass, identity, device_selector=True))
             result[prefix + "account_username"] = canonical
             result[field] = reverse.get(canonical, identity)
     if isinstance(result.get("participant_endpoint_ids"), (list, tuple)):
@@ -323,9 +332,11 @@ class AccountIdentityMigrationPlan:
                 except BaseException as rollback_error:
                     failures.append(rollback_error)
             for identity, unique_id in reversed(old_entities):
-                restore(lambda: entities.async_update_entity(identity, new_unique_id=unique_id))
+                if entities.async_get(identity).unique_id != unique_id:
+                    restore(lambda: entities.async_update_entity(identity, new_unique_id=unique_id))
             for identity, identifiers in reversed(old_devices):
-                restore(lambda: devices.async_update_device(identity, new_identifiers=identifiers))
+                if devices.async_get(identity).identifiers != identifiers:
+                    restore(lambda: devices.async_update_device(identity, new_identifiers=identifiers))
             for row, data, unique_id in reversed(snapshots):
                 restore(lambda: self.hass.config_entries.async_update_subentry(self.entry, row, data=data, unique_id=unique_id))
             for row in self.creations:

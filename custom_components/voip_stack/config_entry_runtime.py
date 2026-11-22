@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 
-from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS
+from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, CONF_REGISTRAR_ENABLED
 from .phone_config import (
     CONF_ESPHOME_PHONE_POLICIES,
     CONF_PHONE_KIND,
@@ -64,6 +64,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
             "esphome_phone_memberships",
             "phone_services",
             "phone_provisioning",
+            "group_membership_version", "legacy_phone_references", CONF_REGISTRAR_ENABLED,
         }
     }
 
@@ -127,6 +128,11 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = tuple(
         entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
     )
+    from .config import entry_transport_config
+    registrar_enabled = bool(entry_transport_config(entry).get(CONF_REGISTRAR_ENABLED))
+    runtime.transport_config[CONF_REGISTRAR_ENABLED] = registrar_enabled
+    if registrar := sip_registrar(hass):
+        registrar.enabled = registrar_enabled
     runtime_signature = entry_runtime_signature(entry)
     from .contact_config import contact_dicts
 

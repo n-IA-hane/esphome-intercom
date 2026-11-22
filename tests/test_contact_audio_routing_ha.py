@@ -102,7 +102,8 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         await wait_until(lambda: registrar.registered_contacts("caps")[0].capabilities is not None)
         bindings = registrar.registered_contacts("caps")
         assert len(bindings) == 2
-        assert bindings[0].capabilities["sdp_features"] == ["directional_audio_v1"]
+        assert "sdp_features" not in bindings[0].capabilities
+        assert bindings[0].capabilities["sip_audio_tx_geometry_complete"]
         assert bindings[1].capabilities is None
         runtime.roster.extend(roster_from_peers(runtime.hass, [], registrar.registered_roster_entries()))
         runtime.roster.append(RosterEntry("ContactGroup", metadata={"group_type": "ring", "members": ["caps"]}))
@@ -138,8 +139,8 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
                 "uri": request.uri, "headers": request.headers, "body": request.body.decode(),
                 "binding": bindings[index].flow_key,
             }, indent=2))
-        assert b"a=x-voip-stack-flow:" in peers[0].offers[0][0].body
-        assert b"a=x-voip-stack-flow:" not in peers[1].offers[0][0].body
+        assert b"x-voip-stack" not in peers[0].offers[0][0].body
+        assert b"x-voip-stack" not in peers[1].offers[0][0].body
         peers[winner].finish()
         assert await caller.wait_for_final(timeout=2) == "in_call"
         assert caller.dialog.send_format.sample_rate == 16000

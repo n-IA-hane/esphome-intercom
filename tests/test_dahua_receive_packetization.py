@@ -233,11 +233,11 @@ def test_local_offer_receive_capacity_and_explicit_limit(encoding, rate, pt, exp
 def test_explicit_esp_receiver_contract_is_unchanged(frame_ms):
     send = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
     recv = sdp.RtpPcmFormat(97, "L16", 16000, 1, frame_ms, max_frame_ms=frame_ms)
-    args = ("127.0.0.1", "127.0.0.1", 40000, [send.audio_format], [recv.audio_format])
+    receiver_wide = replace(send, frame_ms=frame_ms, max_frame_ms=frame_ms)
+    args = ("127.0.0.1", "127.0.0.1", 40000, [send.audio_format,recv.audio_format], [recv.audio_format,receiver_wide.audio_format])
     options = dict(
-        send_rtp_formats=(send,), recv_rtp_formats=(recv,),
-        allow_directional_payloads=True, independent_audio_ptime=True,
-    )
+        send_rtp_formats=(send,recv), recv_rtp_formats=(recv,receiver_wide),
+        )
     previous = sdp.build_offer_directional(*args, **options)
     current = sdp.build_offer_directional(
         *args, **options, local_capabilities=sip_client.HA_AUDIO_CAPABILITIES,

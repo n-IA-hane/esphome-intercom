@@ -80,9 +80,9 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
                 data["endpoint_id"] = row.unique_id.removeprefix("phone:")
             try:
                 from .sip_account_identity import async_migrate_account_identities
-                if entry.version < 3:
-                    # Preserve the default identity until the pre-subentry
-                    # converter has consumed its supported source records.
+                if entry.version < 7 or entry.minor_version < 4:
+                    # The original migration owner must preflight missing
+                    # logins and references before changing account keys.
                     if row.unique_id:
                         data.pop('endpoint_id', None)
                     self.hass.config_entries.async_update_subentry(entry, row, data=data, title=values['name'])

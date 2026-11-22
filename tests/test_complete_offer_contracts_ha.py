@@ -51,9 +51,9 @@ def test_sendonly_offer_projects_its_real_sender_quantum_without_any_receiver():
 
 
 class IndependentPeer(asyncio.DatagramProtocol):
-    def __init__(self,port,*,legacy_wide=False):
+    def __init__(self,port,*,wide_pcm=False):
         self.port=port
-        self.legacy_wide=legacy_wide
+        self.wide_pcm=wide_pcm
         self.invites=[]
         self.transport=None
     def connection_made(self,transport): self.transport=transport
@@ -72,15 +72,15 @@ class IndependentPeer(asyncio.DatagramProtocol):
             self.invites.append(request.body)
             # The independent peer requires the explicit PT or its actual fixed
             # legacy packet time, rather than echoing the production planner.
-            mapping=re.search(rb"^a=rtpmap:(\d+) L16/48000/1\r?$",request.body,re.MULTILINE) if self.legacy_wide else None
-            accepted=(mapping is not None and b"a=ptime:10\r\n" in request.body) if self.legacy_wide else b"a=rtpmap:110 OPUS/48000/2\r\n" in request.body
+            mapping=re.search(rb"^a=rtpmap:(\d+) L16/48000/1\r?$",request.body,re.MULTILINE) if self.wide_pcm else None
+            accepted=(mapping is not None and b"a=ptime:10\r\n" in request.body) if self.wide_pcm else b"a=rtpmap:110 OPUS/48000/2\r\n" in request.body
             if not accepted:
                 self.transport.sendto(sip.build_response(488,"Not Acceptable Here",headers),address)
                 return
-            payload=int(mapping[1]) if self.legacy_wide else 110
-            encoding="L16/48000/1" if self.legacy_wide else "OPUS/48000/2"
-            parameters="" if self.legacy_wide else f"a=fmtp:{payload} stereo=0;maxaveragebitrate=24000\r\n"
-            packet_ms=10 if self.legacy_wide else 20
+            payload=int(mapping[1]) if self.wide_pcm else 110
+            encoding="L16/48000/1" if self.wide_pcm else "OPUS/48000/2"
+            parameters="" if self.wide_pcm else f"a=fmtp:{payload} stereo=0;maxaveragebitrate=24000\r\n"
+            packet_ms=10 if self.wide_pcm else 20
             body=("v=0\r\no=- 71 1 IN IP4 127.0.0.1\r\ns=Independent peer\r\n"
                   "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
                   f"m=audio {self.port} RTP/AVP {payload}\r\na=rtpmap:{payload} {encoding}\r\n"
@@ -186,11 +186,11 @@ def test_receive_only_offer_never_allocates_a_transmit_encoder(monkeypatch):
         codec_capabilities.codec_available.cache_clear()
 
 
-def test_legacy_directional_ptime_fits_every_advertised_sender_not_only_the_first_codec():
+def test_standard_receiver_ptime_keeps_every_advertised_sender_bounded():
     from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_FORMATS, UDP_SAFE_PAYLOAD_BYTES
     formats=list(HA_SIP_PCM_FORMATS)
     body=sdp.build_offer_directional("127.0.0.1","127.0.0.1",40000,formats,formats,
-        include_common_codecs=True,allow_directional_payloads=True,independent_audio_ptime=False)
+        include_common_codecs=True,)
     assert "a=ptime:10\r\n" in body
     offered=sdp.offered_pcm_formats(body)
     wide=next(fmt for fmt in offered if (fmt.encoding,fmt.sample_rate,fmt.channels)==("L16",48000,1))
@@ -202,7 +202,7 @@ def test_legacy_directional_ptime_fits_every_advertised_sender_not_only_the_firs
         encoder.close()
 
 
-async def test_actual_legacy_d1_offer_has_10_ms_wideband_sip_and_rtp(hass,socket_enabled):
+async def test_actual_standard_offer_has_10_ms_wideband_sip_and_rtp(hass,socket_enabled):
     from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS
     loop=asyncio.get_running_loop()
     source=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -211,13 +211,13 @@ async def test_actual_legacy_d1_offer_has_10_ms_wideband_sip_and_rtp(hass,socket
         sock.bind(("127.0.0.1", 0))
         sock.setblocking(False)
     transport, peer = await loop.create_datagram_endpoint(
-        lambda: IndependentPeer(destination.getsockname()[1], legacy_wide=True),
+        lambda: IndependentPeer(destination.getsockname()[1], wide_pcm=True),
         local_addr=("127.0.0.1", 0),
     )
-    client=SipCallClient(local_ip="127.0.0.1",local_name="Legacy D1",local_sip_port=0,
+    client=SipCallClient(local_ip="127.0.0.1",local_name="Fixed10 receiver",local_sip_port=0,
         local_rtp_port=source.getsockname()[1],supported_send_formats=list(HA_SIP_PCM_TX_FORMATS),
-        supported_recv_formats=list(HA_SIP_PCM_RX_FORMATS),
-        include_common_codecs=True,allow_directional_audio_payloads=True,independent_audio_ptime=False)
+        supported_recv_formats=[AudioFormat(48000,frame_ms=10),*HA_SIP_PCM_RX_FORMATS],
+        include_common_codecs=True)
     client.transport,client.protocol=await loop.create_datagram_endpoint(lambda:SipDatagramQueueProtocol(client.queue),local_addr=("127.0.0.1",0))
     client.local_sip_port=client.transport.get_extra_info("sockname")[1]
     encoder=None
@@ -263,20 +263,22 @@ def test_unconfigured_codec_policy_preserves_input_order_and_explicit_order_is_h
     assert "a=fmtp:110 stereo=0;maxaveragebitrate=24000\r\n" in explicit
 
 
-def test_legacy_d1_prunes_only_automatic_geometry_and_explains_its_hard_limit():
+def test_standard_alternatives_keep_actual_receiver_capacity_and_bounded_transmit():
     from custom_components.voip_stack.core.media import negotiator
+    from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
+
     wide=AudioFormat(48000,"s16le",1,10)
     stereo20=AudioFormat(48000,"s16le",2,20)
     narrow=AudioFormat(16000,"s16le",1,10)
-    plan=negotiator.create_offer([stereo20,wide],[stereo20,narrow],
-        directional=True,independent=False)
-    assert plan.packet_ms==10
-    assert {(fmt.sample_rate,fmt.channels) for fmt in plan.formats}=={(48000,1),(16000,1)}
-    assert any("R3 omitted automatic receive L16/48000/2" in line for line in plan.trace)
+    plan=negotiator.create_offer([stereo20,wide,narrow],[stereo20,wide,narrow],
+        capabilities=HA_AUDIO_CAPABILITIES)
+    assert plan.packet_ms==20
+    assert {(fmt.sample_rate,fmt.channels) for fmt in plan.formats}=={(48000,2),(48000,1),(16000,1)}
     assert all(fmt.audio_format.nominal_frame_bytes<=1200 for fmt in plan.send_formats)
-    # The same geometry is mandatory when supplied as an explicit RTP row.
-    with pytest.raises(ValueError,match="common packet time"):
-        negotiator.create_offer([wide],[stereo20,narrow],directional=True,independent=False,
+    assert any(fmt.audio_format.nominal_frame_bytes>1200 for fmt in plan.receive_formats)
+    # Strict explicit catalogs with no shared mapping cannot form sendrecv SDP.
+    with pytest.raises(ValueError,match="required local directions"):
+        negotiator.create_offer([wide],[stereo20,narrow],capabilities=HA_AUDIO_CAPABILITIES,
             send_rtp_formats=(sdp.RtpPcmFormat(96,"L16",48000,1,10),),
             recv_rtp_formats=(sdp.RtpPcmFormat(97,"L16",48000,2,20),sdp.RtpPcmFormat(99,"L16",16000,1,10)))
 
@@ -288,8 +290,7 @@ def test_explicit_independent_receiver_maxptime_is_visible_and_enforced(quantum)
     send=sdp.RtpPcmFormat(96,"L16",48000,1,10)
     receive=sdp.RtpPcmFormat(97,"L16",16000,1,quantum,max_frame_ms=quantum)
     body=sdp.build_offer_directional("127.0.0.1","127.0.0.1",40000,[send.audio_format],[receive.audio_format],
-        send_rtp_formats=(send,),recv_rtp_formats=(receive,),allow_directional_payloads=True,
-        independent_audio_ptime=True,local_capabilities=HA_AUDIO_CAPABILITIES)
+        send_rtp_formats=(send,receive),recv_rtp_formats=(receive,send),local_capabilities=HA_AUDIO_CAPABILITIES)
     assert f"a=maxptime:{quantum}\r\n" in body
     rx=next(fmt for fmt in sdp.offered_pcm_formats(body) if fmt.payload_type==97)
     receiver=RtpAudioReceiver(rx)

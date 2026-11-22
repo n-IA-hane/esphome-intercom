@@ -160,12 +160,9 @@ async def test_two_no_answer_destinations_then_automation_keep_the_browser_calle
     from homeassistant.core import callback
     from custom_components.voip_stack.automation_call import automation_call
     from custom_components.voip_stack.phone_policy import PhonePolicy
-    from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
-    from custom_components.voip_stack.store import config_entry
     from custom_components.voip_stack.websocket_api import CALL_EVENT
 
     lab = browser_lab
-    setup_phone_policy_events(lab.hass, config_entry(lab.hass))
     for index, target in ((0, "sip:bedroom1"), (1, "Wakeup-Caller")):
         lab.phones[index].auto_answer = False
         lab.runtime.endpoints.update(f"sip:bedroom{index}", policy=PhonePolicy.from_data({

@@ -143,7 +143,7 @@ class SipEndpointParseTest(unittest.TestCase):
             assert parsed is not None
             self.assertEqual(parsed["sip_video_codec"], expected)
 
-    def test_parses_standard_rtp_audio_codec_extras(self) -> None:
+    def test_audio_codec_extras_remain_opaque_diagnostics(self) -> None:
         endpoint = (
             "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex | "
             "16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101 | "
@@ -153,13 +153,11 @@ class SipEndpointParseTest(unittest.TestCase):
         parsed = device_resolver.parse_voip_endpoint(endpoint)
         self.assertIsNotNone(parsed)
         assert parsed is not None
-        self.assertEqual(parsed["sip_audio_tx_formats"], ["OPUS/48000/2/20"])
-        self.assertEqual(
-            parsed["sip_audio_rx_formats"],
-            ["OPUS/48000/2/20", "G722/8000/1/20"],
-        )
+        self.assertIn("audio_tx=opus/48000/2/20", parsed["extras"])
+        self.assertNotIn("sip_audio_tx_formats", parsed)
+        self.assertNotIn("sip_audio_rx_formats", parsed)
 
-    def test_parses_compact_rtp_audio_codec_extras(self) -> None:
+    def test_compact_codec_extras_cannot_become_contact_capabilities(self) -> None:
         endpoint = (
             "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex |  |  | "
             "sip_udp | 101 | at=o/48/2/10,l/16/1/10 | "
@@ -168,28 +166,20 @@ class SipEndpointParseTest(unittest.TestCase):
         parsed = device_resolver.parse_voip_endpoint(endpoint)
         self.assertIsNotNone(parsed)
         assert parsed is not None
-        self.assertEqual(
-            parsed["sip_audio_tx_formats"],
-            ["OPUS/48000/2/10", "L16/16000/1/10"],
-        )
-        self.assertEqual(
-            parsed["sip_audio_rx_formats"],
-            ["OPUS/48000/2/10", "L16/48000/1/10"],
-        )
-        self.assertEqual(parsed["sdp_features"], ["directional_audio_v1"])
+        self.assertIn("at=o/48/2/10,l/16/1/10", parsed["extras"])
+        self.assertNotIn("sip_audio_tx_formats", parsed)
+        self.assertNotIn("sip_audio_rx_formats", parsed)
+        self.assertNotIn("sdp_features", parsed)
 
-    def test_packet_time_upgrade_keeps_legacy_endpoint_feature(self) -> None:
+    def test_unknown_endpoint_extras_cannot_enable_private_media(self) -> None:
         base = "Phone | 192.0.2.2 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101"
-        for extras, expected in [
-            (" | sf=d1", ["directional_audio_v1"]),
-            (" | sf=d1 | ip=1", ["directional_audio_v1", "independent_audio_ptime_v1"]),
-            (" | ip=1 | sf=d1", ["directional_audio_v1", "independent_audio_ptime_v1"]),
-            (" | sf=d1 | ip=0", ["directional_audio_v1"]),
-        ]:
+        for extras in (" | sf=d1", " | sf=d1 | ip=1", " | ip=1 | sf=d1", " | sf=d1 | ip=0"):
             with self.subTest(extras=extras):
                 parsed = device_resolver.parse_voip_endpoint(base + extras)
                 self.assertIsNotNone(parsed)
-                self.assertEqual(parsed["sdp_features"], expected)
+                self.assertNotIn("sdp_features", parsed)
+                self.assertNotIn("sip_audio_tx_formats", parsed)
+                self.assertEqual(parsed["extras"], [value.strip() for value in extras.split("|") if value.strip()])
 
     def test_parses_transitional_pcm_and_compact_codec_endpoint(self) -> None:
         endpoint = (
@@ -211,10 +201,8 @@ class SipEndpointParseTest(unittest.TestCase):
             [fmt.wire_token() for fmt in parsed["rx_formats"]],
             ["48000:s16le:1:10"],
         )
-        self.assertEqual(
-            parsed["sip_audio_tx_formats"],
-            ["OPUS/48000/2/20", "OPUS/48000/2/10", "L16/16000/1/10"],
-        )
+        self.assertNotIn("sip_audio_tx_formats", parsed)
+        self.assertIn("at=o/48/2/20,o/48/2/10,l/16/1/10", parsed["extras"])
         self.assertEqual(parsed["extension"], "1000")
 
     def test_identity_only_endpoint_remains_routable(self) -> None:
@@ -229,8 +217,8 @@ class SipEndpointParseTest(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["tx_formats"], [])
         self.assertEqual(parsed["rx_formats"], [])
-        self.assertEqual(parsed["sip_audio_tx_formats"], [])
-        self.assertEqual(parsed["sip_audio_rx_formats"], [])
+        self.assertNotIn("sip_audio_tx_formats", parsed)
+        self.assertNotIn("sip_audio_rx_formats", parsed)
         self.assertEqual(parsed["extension"], "1040")
 
     def test_does_not_parse_group_membership_from_endpoint_extras(self) -> None:

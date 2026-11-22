@@ -343,10 +343,7 @@ async def test_stopping_script_while_ringing_cancels_call(lab, monkeypatch):
 
 async def test_phone_deadline_cancels_real_sip_invite_before_action_deadline(lab, monkeypatch):
     from custom_components.voip_stack.phone_policy import PhonePolicy
-    from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
-    from custom_components.voip_stack.store import config_entry
 
-    setup_phone_policy_events(lab.hass, config_entry(lab.hass))
     lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1, "no_answer": {"kind": "hangup"},
     }))
@@ -400,11 +397,8 @@ async def test_final_sip_answer_wins_timeout_while_media_is_starting(lab, monkey
     from homeassistant.core import callback
     from custom_components.voip_stack.local_call_media import LocalCallMedia
     from custom_components.voip_stack.phone_policy import PhonePolicy
-    from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
-    from custom_components.voip_stack.store import config_entry
     from custom_components.voip_stack.websocket_api import CALL_EVENT
 
-    setup_phone_policy_events(lab.hass, config_entry(lab.hass))
     lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1, "no_answer": {"kind": "hangup"},
     }))
@@ -515,10 +509,7 @@ async def test_no_answer_policy_retargets_outgoing_announcement_without_replacin
     from functools import partial
     from custom_components.voip_stack.call_forwarder import async_forward_existing_call
     from custom_components.voip_stack.phone_policy import PhonePolicy
-    from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
-    from custom_components.voip_stack.store import config_entry
 
-    setup_phone_policy_events(lab.hass, config_entry(lab.hass))
     lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1,
         "no_answer": {"kind": "contact", "target": "sip:bedroom1"},
@@ -557,10 +548,7 @@ async def test_retarget_failure_or_cancellation_releases_both_attempts(lab, monk
     from functools import partial
     from custom_components.voip_stack.call_forwarder import async_forward_existing_call
     from custom_components.voip_stack.phone_policy import PhonePolicy
-    from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
-    from custom_components.voip_stack.store import config_entry
 
-    setup_phone_policy_events(lab.hass, config_entry(lab.hass))
     lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": "sip:bedroom1"},
     }))

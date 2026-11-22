@@ -48,7 +48,11 @@ async def test_startup_consumes_saved_membership_command_before_queue_reconcile(
     monkeypatch.setattr(lab.hass.config_entries, "async_forward_entry_setups", AsyncMock())
 
     async def start(_hass):
-        lab.entry.runtime_data.sip = lab.runtime.sip
+        from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+        calls = SipEndpointRuntime(allow_dark_sessions=True)
+        calls.attach_component("registrar", lab.registrar)
+        calls.activate()
+        lab.entry.runtime_data.sip = calls
         return True
 
     monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", start)
@@ -62,6 +66,7 @@ async def test_startup_consumes_saved_membership_command_before_queue_reconcile(
         assert manager.resolve("New team").members == ("first",)
     finally:
         await manager.close()
+        await lab.entry.runtime_data.sip.shutdown()
 
 
 async def test_first_stable_group_materialization_migrates_existing_name_keyed_agent_intent(phone_lab, monkeypatch):

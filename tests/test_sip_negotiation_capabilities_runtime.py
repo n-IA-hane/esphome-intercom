@@ -20,7 +20,6 @@ from custom_components.voip_stack.core.audio_format import (
     UDP_SAFE_PAYLOAD_BYTES,
 )
 from custom_components.voip_stack.endpoint_routing import (
-    sip_target_audio_profile,
     sip_target_rtp_audio_profile,
 )
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
@@ -74,12 +73,8 @@ def _local_formats(discovered_sdp=None):
         else {}
     )
     entry = SimpleNamespace(metadata=metadata)
-    profile = sip_target_rtp_audio_profile(None, entry)
-    if profile is not None:
-        return list(profile.send_formats), list(profile.recv_formats)
-    return sip_target_audio_profile(
-        remote_tx_formats=None, remote_rx_formats=None, target="regression-peer"
-    )
+    profile = sip_target_rtp_audio_profile(entry)
+    return list(profile.send_formats), list(profile.recv_formats)
 
 
 @pytest.mark.parametrize("discovery_known", [False, True], ids=["unknown", "known"])
@@ -157,10 +152,8 @@ def test_peer_maxptime_limits_tx_without_narrowing_local_rx(preference, maximum)
 def test_native_default_sends_48k_10ms_and_receives_16k_20ms():
     offer = (
         "v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Independent native peer\r\n"
-        "c=IN IP4 192.0.2.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 110 111\r\n"
+        "c=IN IP4 192.0.2.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 111 110\r\n"
         "a=rtpmap:110 L16/16000/1\r\na=rtpmap:111 L16/48000/1\r\n"
-        "a=x-voip-stack-flow:110 send\r\na=x-voip-stack-flow:111 recv\r\n"
-        "a=x-voip-stack-independent-ptime:1\r\n"
         "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
     )
     selected = _negotiate(offer)

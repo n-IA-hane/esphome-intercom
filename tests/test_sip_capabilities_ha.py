@@ -33,30 +33,27 @@ class WirePeer(asyncio.DatagramProtocol):
 
 
 CAPS = ("v=0\r\no=- 3 3 IN IP4 127.0.0.1\r\ns=Independent capabilities\r\n"
-    "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 0 RTP/AVP 96 97\r\n"
-    "a=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/48000/1\r\n"
-    "a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n").encode()
+    "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 0 RTP/AVP 97 96\r\n"
+    "a=rtpmap:97 L16/48000/1\r\na=rtpmap:96 L16/16000/1\r\na=sendrecv\r\n").encode()
 
 
-INDEPENDENT_CAPS = (
-    b"a=x-voip-stack-independent-ptime:1\r\n"
-    b"a=x-voip-stack-audio-tx:L16/16000/1/20,L16/16000/1/10\r\n"
-    b"a=x-voip-stack-audio-rx:L16/48000/1/10,L16/16000/1/20,L16/16000/1/10\r\n"
-)
+def capability_body(receive_twenty=False, *, ptime=None):
+    body = CAPS + f"a=maxptime:{20 if receive_twenty else 10}\r\n".encode()
+    return body + (f"a=ptime:{ptime}\r\n".encode() if ptime is not None else b"")
 
 
 class RegisteredPeer(WirePeer):
-    def __init__(self, outcome, *, independent=False):
+    def __init__(self, outcome, *, receive_twenty=False):
         super().__init__()
         self.outcome = outcome
-        self.independent = independent
+        self.receive_twenty = receive_twenty
         self.options = asyncio.Queue()
         self.invites = asyncio.Queue()
 
     def answer(self, request, address, status=200, body=b"", content_type="application/sdp"):
         headers = [(key, request.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
         headers.append(("To", request.header("To") if ";tag=" in request.header("To")
-            else request.header("To") + ";tag=independent"))
+            else request.header("To") + ";tag=receive_twenty"))
         if body:
             headers.append(("Content-Type", content_type))
         self.transport.sendto(sip.build_response(status, "OK" if status == 200 else "Rejected",
@@ -75,9 +72,8 @@ class RegisteredPeer(WirePeer):
             elif self.outcome == "empty":
                 self.answer(request, address)
             else:
-                self.answer(request, address, body=(CAPS.replace(b"flow:96 send\r\n", b"flow:96 sendrecv\r\n")
-                    if self.independent else CAPS) + (INDEPENDENT_CAPS if self.independent else b"")
-                    + (b"a=ptime:10\r\n" if self.outcome == "known" else b""),
+                self.answer(request, address, body=capability_body(self.receive_twenty,
+                    ptime=10 if self.outcome == "known" else None),
                     content_type="text/plain" if self.outcome == "wrong-type" else "application/sdp")
         elif request.method == "INVITE":
             self.invites.put_nowait(request)
@@ -126,9 +122,9 @@ async def register_peer(lab, peer, username="caps", *, call_id="registration", c
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("source", ["managed-capabilities", "registered-contact"])
-@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("receive_twenty", [False, True])
 async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime(
-    trunks, monkeypatch, source, independent, record_property,
+    trunks, monkeypatch, source, receive_twenty, record_property,
 ):
     """Real public origination and answer parsing cannot downgrade48/10 to16/10."""
     import re
@@ -157,9 +153,7 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
             f"m=audio {media_port} RTP/AVP {wide} {narrow}\r\n"
             f"a=rtpmap:{wide} L16/48000/1\r\na=rtpmap:{narrow} L16/16000/1\r\n"
-            f"a=x-voip-stack-flow:{wide} recv\r\na=x-voip-stack-flow:{narrow} send\r\n"
-            + ("a=x-voip-stack-independent-ptime:1\r\n" if independent else "")
-            + "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n").encode()
+            f"a=ptime:10\r\na=maxptime:{20 if receive_twenty else 10}\r\na=sendrecv\r\n").encode()
 
     transport = None
     if source == "registered-contact":
@@ -167,7 +161,7 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         registrar.enabled = True
         registrar.update_accounts([*registrar.accounts.values(), SipAccount("caps", "Caps", "fixture-only")])
         transport, peer = await lab.hass.loop.create_datagram_endpoint(
-            lambda: RegisteredPeer("known", independent=independent), local_addr=("127.0.0.1", 0))
+            lambda: RegisteredPeer("known", receive_twenty=receive_twenty), local_addr=("127.0.0.1", 0))
         receive = peer.datagram_received
 
         def datagram_received(raw, address):
@@ -193,9 +187,8 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         monkeypatch.setattr(phone, "answer", answer)
         lab.roster[1] = replace(lab.roster[1], metadata={
             **lab.roster[1].metadata, "endpoint_kind": "esphome",
-            "tx_formats": (["16000:s16le:1:20"] if independent else []) + ["16000:s16le:1:10"],
+            "tx_formats": (["16000:s16le:1:20"] if receive_twenty else []) + ["16000:s16le:1:10"],
             "rx_formats": ["48000:s16le:1:10", "16000:s16le:1:20", "16000:s16le:1:10"],
-            "sdp_features": ["directional_audio_v1"] + (["independent_audio_ptime_v1"] if independent else []),
         })
         destination = "bedroom0"
     lab.runtime.directory.replace(lab.roster)
@@ -217,16 +210,17 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         dialog = lab.calls.sip_client_for(call_id).dialog
         record_property("wire_offer", offers[0])
         assert (dialog.send_format.sample_rate, dialog.send_format.frame_ms) == (48000, 10)
-        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 20 if independent else 10)
+        assert (dialog.recv_format.sample_rate, dialog.recv_format.frame_ms) == (16000, 20)
         receiver = RtpAudioReceiver(dialog.recv_format, dialog.recv_formats)
-        for count in ((160, 320) if independent else (160,)):
+        for count in (160, 320):
             samples = [1000, -2000] * (count // 2)
             assert b"".join(receiver.decode(dialog.recv_format.payload_type,
                 struct.pack(f">{count}h", *samples))) == struct.pack(f"<{count}h", *samples)
         limit = rtp.audio_payload_size_limit(dialog.recv_format)
         with pytest.raises(rtp.RtpError, match="too large"):
             receiver.decode(dialog.recv_format.payload_type, b"\0" * (limit + 2))
-        assert f"a=ptime:{20 if independent else 10}\r\n" in offers[0]
+        assert "a=ptime:20\r\n" in offers[0]
+        assert "x-voip-stack" not in offers[0]
         mapping_order = re.findall(r"a=rtpmap:\d+ L16/(16000|48000)/1", offers[0])
         assert mapping_order.index("48000") < mapping_order.index("16000")
     finally:
@@ -240,8 +234,8 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
     assert not lab.calls.sessions
 
 
-@pytest.mark.parametrize("independent", [False, True])
-async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_video(socket_enabled, independent):
+@pytest.mark.parametrize("receive_twenty", [False, True])
+async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_video(socket_enabled, receive_twenty):
     from custom_components.voip_stack.core.audio_format import (
         HA_SIP_PCM_FORMATS, HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS,
     )
@@ -252,7 +246,7 @@ async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_vi
     async def answer(invite):
         accepted.append(invite)
         body = sdp.build_answer_directional("127.0.0.1", "127.0.0.1", 35000,
-            invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp)
+            invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp, recv_formats=invite.recv_formats)
         return SipInviteResult(200, "OK", answer_sdp=body)
 
     endpoint = SipUdpEndpoint(local_ip="127.0.0.1", local_rtp_port=35000,
@@ -267,11 +261,9 @@ async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_vi
     endpoint.local_sip_port = listener[1]
     uri = f"sip:ha@127.0.0.1:{listener[1]}"
     offer = ("v=0\r\no=- 7 1 IN IP4 127.0.0.1\r\ns=Independent ESP-shaped offer\r\n"
-        "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 36000 RTP/AVP 96 97\r\n"
+        "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 36000 RTP/AVP 97 96\r\n"
         "a=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/48000/1\r\n"
-        "a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n"
-        + ("a=x-voip-stack-independent-ptime:1\r\n" if independent else "")
-        + "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
+        f"a=ptime:10\r\na=maxptime:{20 if receive_twenty else 10}\r\na=sendrecv\r\n"
         "m=video 36002 RTP/AVP 102\r\na=rtpmap:102 H264/90000\r\na=sendrecv\r\n")
 
     async def response(status):
@@ -282,16 +274,17 @@ async def test_peer_origin_full_sdp_uses_ha_receiver_quantum_and_rejects_only_vi
                     return message
 
     headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{address[1]};branch=z9hG4bK-ptime;rport"),
-        ("From", "<sip:independent@127.0.0.1>;tag=peer"), ("To", "<sip:ha@127.0.0.1>"),
-        ("Call-ID", "independent-receiver-ptime"), ("CSeq", "1 INVITE"),
-        ("Contact", f"<sip:independent@127.0.0.1:{address[1]}>"), ("Content-Type", "application/sdp")]
+        ("From", "<sip:receive_twenty@127.0.0.1>;tag=peer"), ("To", "<sip:ha@127.0.0.1>"),
+        ("Call-ID", "receive_twenty-receiver-ptime"), ("CSeq", "1 INVITE"),
+        ("Contact", f"<sip:receive_twenty@127.0.0.1:{address[1]}>"), ("Content-Type", "application/sdp")]
     try:
         transport.sendto(sip.build_request("INVITE", uri, headers, offer.encode()), listener)
         answered = await response(200)
         invite, = accepted
         assert (invite.send_format.sample_rate, invite.send_format.frame_ms) == (48000, 10)
-        assert (invite.recv_format.sample_rate, invite.recv_format.frame_ms) == (16000, 20 if independent else 10)
-        assert f"a=ptime:{20 if independent else 10}\r\n" in answered.body.decode()
+        assert (invite.recv_format.sample_rate, invite.recv_format.frame_ms) == (16000, 20)
+        assert "a=ptime:20\r\n" in answered.body.decode()
+        assert b"x-voip-stack" not in answered.body
         assert "m=video 0 RTP/AVP 102\r\n" in answered.body.decode()
         dialog_headers = [(key, value) for key, value in headers if key not in {"To", "CSeq", "Content-Type"}]
         dialog_headers.append(("To", answered.header("To")))
@@ -383,7 +376,7 @@ async def test_late_discovery_publishes_only_to_its_current_binding_lifetime(mon
     future.set_result(sip.parse_message(sip.build_response(200, "OK", [("Content-Type", "application/sdp")], CAPS)))
     await task
     if change == "renewal":
-        assert registrar.registered_contacts("caps")[0].capabilities["sdp_features"] == ["directional_audio_v1"]
+        assert "sdp_features" not in registrar.registered_contacts("caps")[0].capabilities
         refresh.assert_awaited_once()
     else:
         assert all(item.capabilities is None for item in registrar.registered_contacts("caps"))
@@ -407,7 +400,7 @@ async def test_two_accounts_on_same_udp_tuple_do_not_share_capabilities(trunks):
         peer.answer(first_request, first_address, body=CAPS + b"a=ptime:10\r\n")
         peer.answer(second_request, second_address, 405)
         await wait_until(lambda: not lab.runtime.capability_probes)
-        assert registrar.registered_contacts("first")[0].capabilities["sdp_features"] == ["directional_audio_v1"]
+        assert "sdp_features" not in registrar.registered_contacts("first")[0].capabilities
         assert registrar.registered_contacts("second")[0].capabilities is None
         first = registrar.registered_contacts("first")[0]
         generation, cached = first.capability_generation, first.capabilities
@@ -423,16 +416,18 @@ async def test_two_accounts_on_same_udp_tuple_do_not_share_capabilities(trunks):
 async def test_incomplete_options_never_invents_packet_quantum(ptime):
     body = CAPS + (f"a=ptime:{ptime}\r\n".encode() if ptime is not None else b"")
     capabilities = sdp.options_capabilities(body)
-    assert capabilities == {"sip_audio_tx_formats": [], "sip_audio_rx_formats": [],
-        "sdp_features": ["directional_audio_v1"], "audio_mode": "full_duplex"}
+    assert capabilities["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
+    assert capabilities["sip_audio_rx_formats"] == ["L16/48000/1", "L16/16000/1"]
+    assert capabilities["sip_audio_receiver_ptime"] == 0
+    assert "sdp_features" not in capabilities
     with pytest.raises(sdp.SdpError):
         sdp.parse_sdp(body)
 
 
-async def test_directional_provenance_cannot_come_from_video_section():
-    body = CAPS.replace(b"a=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n", b"")
-    body += b"m=video 0 RTP/AVP 96 97\r\na=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n"
-    assert sdp.options_capabilities(body)["sdp_features"] == []
+async def test_unknown_video_attributes_cannot_change_audio_capability_evidence():
+    # Preserve an unknown-attribute interoperability witness without enabling it.
+    body = CAPS + b"m=video 0 RTP/AVP 96 97\r\na=x-voip-stack-flow:96 send\r\na=x-voip-stack-flow:97 recv\r\n"
+    assert sdp.options_capabilities(body) == sdp.options_capabilities(CAPS)
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
@@ -462,8 +457,9 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
             await wait_until(lambda: not lab.runtime.capability_probes)
         binding = registrar.registered_contacts("caps")[0]
         if outcome in {"known", "no-ptime"}:
-            assert binding.capabilities["sdp_features"] == ["directional_audio_v1"]
-            assert binding.capabilities["sip_audio_tx_formats"] == (["L16/16000/1/10"] if outcome == "known" else [])
+            assert "sdp_features" not in binding.capabilities
+            assert binding.capabilities["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
+            assert binding.capabilities["sip_audio_tx_geometry_complete"]
         else:
             assert binding.capabilities is None
         # Use the real registrar export as routing input; no manual capability
@@ -475,7 +471,7 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
             result = await caller.wait_for_final(timeout=2)
         assert result == "in_call"
         offer = await asyncio.wait_for(peer.invites.get(), 1)
-        assert (b"a=x-voip-stack-flow:" in offer.body) == (outcome in {"known", "no-ptime"})
+        assert b"x-voip-stack" not in offer.body
         assert caller.dialog.send_format.sample_rate == 16000
         assert caller.dialog.send_format.frame_ms == 20
         assert caller.dialog.recv_format.frame_ms == 20
@@ -555,8 +551,9 @@ async def test_registered_tcp_discovery_reuses_authenticated_connection_and_has_
         writer.write(sip.build_response(200, "OK", headers, CAPS))
         await writer.drain()
         await wait_until(lambda: binding.capabilities is not None)
-        assert binding.capabilities["sdp_features"] == ["directional_audio_v1"]
-        assert not binding.capabilities["sip_audio_tx_formats"]
+        assert "sdp_features" not in binding.capabilities
+        assert binding.capabilities["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
+        assert binding.capabilities["sip_audio_receiver_ptime"] == 0
         assert not lab.calls.sessions
         from custom_components.voip_stack.runtime_data import sip_endpoint_manager
         manager = sip_endpoint_manager(lab.hass)
@@ -624,7 +621,7 @@ async def test_options_wire_describes_audio_without_allocating_a_call(socket_ena
             assert response.header("Content-Type") == "application/sdp"
             assert b"m=audio 0 RTP/AVP " in response.body
             assert b"L16/16000/1" in response.body and b"L16/48000/1" in response.body
-            assert b"a=x-voip-stack-flow:" in response.body
+            assert b"x-voip-stack" not in response.body
         else:
             assert not response.body and not response.header("Content-Type")
         assert b"m=video" not in response.body
@@ -641,57 +638,52 @@ async def test_options_wire_describes_audio_without_allocating_a_call(socket_ena
         await asyncio.sleep(0)
 
 
-@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("receive_twenty", [False, True])
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_capability_upgrade_replaces_previous_contact_generation(trunks, independent):
+async def test_capability_upgrade_replaces_previous_contact_generation(trunks, receive_twenty):
     lab = trunks
     registrar = lab.calls.component("registrar")
     registrar.enabled = True
     registrar.update_accounts([*registrar.accounts.values(), SipAccount("caps", "Caps", "fixture-only")])
     transport, peer = await lab.hass.loop.create_datagram_endpoint(
-        lambda: RegisteredPeer("no-ptime", independent=not independent), local_addr=("127.0.0.1", 0))
+        lambda: RegisteredPeer("no-ptime", receive_twenty=not receive_twenty), local_addr=("127.0.0.1", 0))
     try:
         await register_peer(lab, peer, call_id="firmware-before")
         await wait_until(lambda: registrar.registered_contacts("caps")[0].capabilities is not None)
         old = registrar.registered_contacts("caps")[0]
-        assert ("independent_audio_ptime_v1" in old.capabilities["sdp_features"]) == (not independent)
-        peer.independent = independent
+        assert old.capabilities["sip_audio_receiver_maxptime"] == (10 if receive_twenty else 20)
+        peer.receive_twenty = receive_twenty
         await register_peer(lab, peer, call_id="firmware-after")
         await wait_until(lambda: (current := registrar.registered_contacts("caps")[0]).capability_generation
             != old.capability_generation and current.capabilities is not None)
         current = registrar.registered_contacts("caps")[0]
         assert current.call_id == "firmware-after"
-        assert ("independent_audio_ptime_v1" in current.capabilities["sdp_features"]) == independent
+        assert current.capabilities["sip_audio_receiver_maxptime"] == (20 if receive_twenty else 10)
+        assert "sdp_features" not in current.capabilities
         assert current.capabilities is not old.capabilities
     finally:
         await register_peer(lab, peer, call_id="firmware-after", cseq=3, expires=0)
         transport.close()
 
 
-@pytest.mark.parametrize("independent", [False, True])
-def test_options_packet_quanta_override_stale_managed_peer(independent):
+@pytest.mark.parametrize("receive_twenty", [False, True])
+def test_options_receiver_envelope_does_not_invent_transmitter_quanta(receive_twenty):
     from custom_components.voip_stack.endpoint_routing import sip_target_rtp_audio_profile
-    from custom_components.voip_stack.peer import Peer
 
-    # Fresh authenticated Contact capabilities have a10ms receiver. Its
-    # transmitter preferences must come from its explicit TX list, not ptime.
-    body = (CAPS.replace(b"flow:96 send\r\n", b"flow:96 sendrecv\r\n")
-        if independent else CAPS) + (INDEPENDENT_CAPS if independent else b"") + b"a=ptime:10\r\n"
+    # A Contact's receiver ceiling constrains our sender. Its ptime cannot
+    # establish fixed quanta for its own transmitter.
+    body = capability_body(receive_twenty, ptime=10)
     capabilities = sdp.options_capabilities(body)
-    stale = Peer(name="managed", host="192.0.2.2",
-        sip_audio_tx_formats=("L16/16000/1/10",),
-        sip_audio_rx_formats=("L16/48000/1/10",),
-        sdp_features=frozenset({"directional_audio_v1"}
-            | ({"independent_audio_ptime_v1"} if not independent else set())))
     selected_contact = SimpleNamespace(metadata={**capabilities, "sip_capabilities_known": True})
-    profile = sip_target_rtp_audio_profile(stale, selected_contact)
+    profile = sip_target_rtp_audio_profile(selected_contact)
     assert profile is not None
-    assert ("independent_audio_ptime_v1" in profile.sdp_features) == independent
+    assert all(not item.times.fixed for item in profile.evidence.sends)
     assert (profile.send_rtp_formats[0].sample_rate, profile.send_rtp_formats[0].frame_ms) == (48000, 10)
-    assert (profile.recv_rtp_formats[0].sample_rate, profile.recv_rtp_formats[0].frame_ms) == (16000, 20 if independent else 10)
+    assert any((fmt.sample_rate, fmt.frame_ms) == (16000, 20) for fmt in profile.recv_rtp_formats)
+    assert profile.evidence.receive_geometry_complete and profile.evidence.send_geometry_complete
 
 
 def test_options_valid_packet_time_is_not_limited_by_offer_presets():
     result = sdp.options_capabilities(CAPS + b"a=ptime:30\r\n")
-    assert result["sip_audio_tx_formats"] == ["L16/16000/1/30"]
-    assert result["sip_audio_rx_formats"] == ["L16/48000/1/30"]
+    assert result["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
+    assert result["sip_audio_rx_formats"] == ["L16/48000/1/30", "L16/16000/1/30"]

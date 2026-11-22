@@ -1076,12 +1076,13 @@ async def test_audio_parking_pickup_rejects_only_new_jpeg_offer(trunks, monkeypa
             video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             video.bind(("127.0.0.1", 0))
             sockets.extend((audio, video))
-            tx = [AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10)]
+            tx = [AudioFormat(16000, frame_ms=20), AudioFormat(16000, frame_ms=10), AudioFormat(48000, frame_ms=10)]
             rx = [AudioFormat(48000, frame_ms=10), *tx]
             peer = SipCallClient(local_ip="127.0.0.1", local_name=name, local_uri_user=name,
                 local_sip_port=0, local_rtp_port=audio.getsockname()[1], username=name,
                 auth_username=name, password=PASSWORD, supported_send_formats=tx, supported_recv_formats=rx,
-                allow_directional_audio_payloads=True, independent_audio_ptime=True,
+                supported_send_rtp_formats=(sdp.RtpPcmFormat(96, "L16", 48000, 1, 10), sdp.RtpPcmFormat(97, "L16", 16000, 1, 20)),
+                supported_recv_rtp_formats=(sdp.RtpPcmFormat(96, "L16", 48000, 1, 10, max_frame_ms=20), sdp.RtpPcmFormat(97, "L16", 16000, 1, 20, max_frame_ms=20)),
                 local_video_rtp_port=video.getsockname()[1] if index == 1 and picker_video else 0,
                 video_format=sdp.RtpVideoFormat(payload_type=26, encoding="JPEG"))
             peers.append(peer)

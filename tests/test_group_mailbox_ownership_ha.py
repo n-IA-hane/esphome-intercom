@@ -11,7 +11,6 @@ from homeassistant.core import callback
 from custom_components.voip_stack.call_queues import QueuePolicy
 from custom_components.voip_stack.group_config import normalize_group_data
 from custom_components.voip_stack.phone_policy import PhonePolicy
-from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.websocket_api import CALL_EVENT
@@ -52,7 +51,6 @@ async def test_member_noanswer_mailbox_does_not_steal_group_winner_media(
             title=member, unique_id="phone:"+member, data=data))
         lab.runtime.endpoints.update(member, **({"queues": (name,)} if kind == "queue" else {"ring_group": name}))
     lab.runtime.endpoints.update("transfer_b", policy=PhonePolicy.from_data(member_policy))
-    setup_phone_policy_events(lab.hass, entry)
     if kind == "queue":
         lab.manager.entry = entry
         lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],

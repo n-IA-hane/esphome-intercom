@@ -1,4 +1,4 @@
-"""Preserve ambiguous saved logins and fill absent logins on native HA owners."""
+"""Upgrade proven automatic logins while retaining explicit users and native HA owners."""
 
 from copy import deepcopy
 import json
@@ -88,12 +88,15 @@ async def test_absent_login_upgrade_preserves_every_other_account_field(
     parent, options = encoded(dict(entry.data)), encoded(dict(entry.options))
     assert await async_migrate_entry(hass, entry)
     assert subentry.data["username"] == name
-    assert encoded({key: value for key, value in subentry.data.items() if key != "username"}) == encoded(
-        {key: value for key, value in before.items() if key != "username"})
-    assert entry.version == 7 and entry.minor_version == 3
-    assert phone_endpoint_id(subentry) == identity and subentry.unique_id == "phone:" + identity
-    assert encoded(dict(entry.data)) == parent and encoded(dict(entry.options)) == options
-    assert devices.async_get(device.id).identifiers == device.identifiers
+    expected = {**before, "username": name, "username_source": "user",
+        "call_policy": {"ringing_timeout": 25, "no_answer": {"kind": "voicemail", "target": name}}}
+    assert encoded(dict(subentry.data)) == encoded(expected)
+    assert entry.version == 7 and entry.minor_version == 4
+    assert phone_endpoint_id(subentry) == name and subentry.unique_id == "phone:" + name
+    expected_parent = json.loads(parent)
+    expected_parent.update(legacy_phone_references={identity: name}, sip_registrar_enabled=True)
+    assert encoded(dict(entry.data)) == encoded(expected_parent) and encoded(dict(entry.options)) == options
+    assert devices.async_get(device.id).identifiers == {("voip_stack", "phone_endpoint:" + name)}
     assert er.async_get(hass).async_get(entity.entity_id).id == entity.id
     account, = sip_accounts(hass)
     assert account.password == before["password"]
@@ -125,7 +128,7 @@ async def test_repair_conflict_reports_existing_issue_before_any_account_write(h
     assert issue is not None and issue.translation_placeholders == {"phone": name, "route": name}
     hass.config_entries.async_update_subentry(entry, other, data={**other.data, "username": "desk-login"})
     assert await async_migrate_entry(hass, entry)
-    assert first.data["username"] == "ha_browser_first" and second.data["username"] == name
+    assert first.data["username"] == "Reception" and second.data["username"] == name
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is None
 
 
@@ -157,17 +160,18 @@ async def test_interrupted_login_repair_retries_without_rotating_credentials(has
     monkeypatch.setattr(hass.config_entries, "async_update_subentry", update)
     assert await async_migrate_entry(hass, entry)
     for subentry, original, username in zip((first, second), saved, ("Reception", "Casa"), strict=True):
-        assert dict(subentry.data) == {**original, "username": username}
+        assert dict(subentry.data) == {**original, "username": username, "username_source": "user",
+            "call_policy": {"ringing_timeout": 25, "no_answer": {"kind": "voicemail", "target": username}}}
 
 
 @pytest.mark.parametrize("username,binding,expected", [
     ("custom-login", "browser:legacy", "custom-login"),
     ("ha_browser_legacy", "browser:other", "ha_browser_legacy"),
-    ("ha_browser_legacy", None, "ha_browser_legacy"),
-    ("ha_browser_legacy", "browser:legacy", "ha_browser_legacy"),
-    ("ha_browser_legacy_2", "browser:legacy", "ha_browser_legacy_2"),
-    ("ha_phone_legacy", "browser:legacy", "ha_phone_legacy"),
-    ("ha_phone_legacy_2", "browser:legacy", "ha_phone_legacy_2"),
+    ("ha_browser_legacy", None, "Casa"),
+    ("ha_browser_legacy", "browser:legacy", "Casa"),
+    ("ha_browser_legacy_2", "browser:legacy", "Casa"),
+    ("ha_phone_legacy", "browser:legacy", "Casa"),
+    ("ha_phone_legacy_2", "browser:legacy", "Casa"),
 ])
 async def test_saved_logins_are_preserved_regardless_of_shape_or_migration_reference(hass, username, binding, expected):
     from custom_components.voip_stack import async_migrate_entry
@@ -183,12 +187,16 @@ async def test_saved_logins_are_preserved_regardless_of_shape_or_migration_refer
         data={**subentry.data, "ha_bindings": associations})
     before = deepcopy(dict(subentry.data))
     assert await async_migrate_entry(hass, entry)
-    assert dict(subentry.data) == {**before, "username": expected}
-    # Once the upgrade is complete, an explicit later login is user-owned.
-    hass.config_entries.async_update_subentry(entry, subentry,
-        data={**subentry.data, "username": "ha_browser_legacy"})
-    assert await async_migrate_entry(hass, entry)
-    assert subentry.data["username"] == "ha_browser_legacy"
+    source = "ha_name" if expected == "Casa" else "user"
+    assert dict(subentry.data) == {**before, "username": expected, "username_source": source,
+        "call_policy": {"ringing_timeout": 25, "no_answer": {"kind": "voicemail", "target": expected}}}
+    # A later explicit choice uses the same migration owner, never a raw key edit.
+    from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
+    native_id, password = subentry.subentry_id, subentry.data["password"]
+    await async_migrate_account_identities(hass, entry, account_updates={native_id: {
+        **subentry.data, "username": "ha_browser_legacy", "username_source": "user"}})
+    assert subentry.subentry_id == native_id and subentry.data["username"] == "ha_browser_legacy"
+    assert subentry.data["password"] == password
 
 
 async def test_fresh_browser_upgrade_keeps_an_explicit_generated_shaped_login(hass):
@@ -199,7 +207,7 @@ async def test_fresh_browser_upgrade_keeps_an_explicit_generated_shaped_login(ha
     entry.add_to_hass(hass)
     subentry = add_account(hass, entry, "browser:legacy")
     hass.config_entries.async_update_subentry(entry, subentry,
-        data={**subentry.data, "kind": "browser", "ha_bindings": []})
+        data={**subentry.data, "kind": "browser", "ha_bindings": [], "username_source": "user"})
     password = subentry.data["password"]
     assert await async_migrate_entry(hass, entry)
     assert subentry.data["username"] == "ha_browser_legacy"
@@ -235,19 +243,25 @@ async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_s
     async_setup(hass)
     manager = repairs_flow_manager(hass)
     result = await manager.async_init("voip_stack", context={"issue_id": issue_id})
-    assert result["type"] == "form" and result["step_id"] == "confirm"
-    result = await manager.async_configure(result["flow_id"], {})
+    assert result["type"] == "form" and result["step_id"] == "init"
+    result = await manager.async_configure(result["flow_id"], {"account": other.subentry_id})
+    assert result["type"] == "form" and result["step_id"] == "edit_account"
+    result = await manager.async_configure(result["flow_id"], {"name": "Desk", "username": "casa", "extension": "222"})
     assert result["type"] == "form" and result["errors"] == {"base": "migration_retry_failed"}
     assert entry.state is ConfigEntryState.MIGRATION_ERROR and entry.minor_version == 2
-    assert [encoded(sub.as_dict()) for sub in (absent, other)] == before
+    assert absent.data["username"] == "" and absent.data["password"]
+    assert other.data["username"] == "casa" and other.data["username_source"] == "user"
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is not None
     setup.assert_not_awaited()
-    # The Repair retries migration; correction remains on the existing config owner.
-    hass.config_entries.async_update_subentry(entry, other, data={**other.data, "username": "desk-login"})
-    result = await manager.async_configure(result["flow_id"], {})
+    # Correction is editable in Repairs even while the integration cannot load.
+    native_ids = absent.subentry_id, other.subentry_id
+    passwords = absent.data["password"], other.data["password"]
+    result = await manager.async_configure(result["flow_id"], {"name": "Desk", "username": "desk-login", "extension": "222"})
     assert result["type"] == "create_entry"
-    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 3
+    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 4
     assert absent.data["username"] == "Casa"
+    assert (absent.subentry_id, other.subentry_id) == native_ids
+    assert (absent.data["password"], other.data["password"]) == passwords
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is None
     setup.assert_awaited_once_with(hass, entry)
 
@@ -269,7 +283,7 @@ async def test_absent_login_reaches_existing_provisioning_line_without_rebinding
     physical = ConfigSubentry(subentry_type="physical_phone", title=hardware["name"],
         unique_id="physical_phone:" + hardware["phone_id"], data=hardware)
     lab.hass.config_entries.async_add_subentry(lab.entry, physical)
-    before = encoded(physical.as_dict())
+    before = deepcopy(physical.as_dict())
     password = account.data["password"]
     lab.runtime.endpoints = async_setup_endpoint_registry(lab.hass, lab.entry)
     assert await async_migrate_entry(lab.hass, lab.entry)
@@ -284,4 +298,42 @@ async def test_absent_login_reaches_existing_provisioning_line_without_rebinding
     assert context["lines"][0]["password"] == password
     files, _ = render_phone_bundle(profile, templates, context)
     assert files["001122334455.cfg"].splitlines()[0] == b"sip.username=Casa"
-    assert encoded(physical.as_dict()) == before
+    before["data"]["lines"][0]["endpoint_id"] = "Casa"
+    assert encoded(physical.as_dict()) == encoded(before)
+
+
+async def test_cold_legacy_repair_edits_default_account_before_native_subentries_exist(hass, monkeypatch):
+    from unittest.mock import AsyncMock
+    from homeassistant.components.repairs import repairs_flow_manager
+    from homeassistant.components.repairs.issue_handler import async_setup
+    from homeassistant.config_entries import ConfigEntryState
+    from custom_components import voip_stack
+
+    name = hass.config.location_name
+    password = 'fixture-cold-manual-password'
+    entry = MockConfigEntry(domain='voip_stack', version=2,
+        data={'sip_accounts': [{'username': name, 'display_name': 'Manual SIP phone',
+                                'password': password, 'extension': '222'}]})
+    entry.add_to_hass(hass)
+    setup = AsyncMock(return_value=True)
+    monkeypatch.setattr(voip_stack, 'async_setup_entry', setup)
+    hass.config.components.add('voip_stack')
+    assert await hass.config_entries.async_setup(entry.entry_id) is False
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+    assert not entry.subentries
+    hass.data.setdefault('repairs', {})
+    async_setup(hass)
+    manager = repairs_flow_manager(hass)
+    result = await manager.async_init('voip_stack', context={'issue_id': 'account_route_conflict_' + entry.entry_id})
+    assert result['step_id'] == 'init'
+    result = await manager.async_configure(result['flow_id'], {'account': 'legacy_ha_default'})
+    assert result['step_id'] == 'edit_account'
+    result = await manager.async_configure(result['flow_id'], {
+        'name': name, 'username': name + ' intercom', 'extension': '223'})
+    assert result['type'] == 'create_entry'
+    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 4
+    accounts = {row.data['username']: row for row in entry.subentries.values() if row.subentry_type == 'phone'}
+    assert set(accounts) == {name, name + ' intercom'}
+    assert accounts[name].data['password'] == password
+    assert accounts[name + ' intercom'].data['username_source'] == 'user'
+    setup.assert_awaited_once_with(hass, entry)

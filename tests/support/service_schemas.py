@@ -55,6 +55,10 @@ def load_service_schemas() -> dict[str, vol.Schema]:
         "    from homeassistant.helpers.selector import MediaSelector\n",
         "",
     )
+    source = source.replace(
+        "from homeassistant.helpers.selector import MediaSelector\n",
+        "",
+    )
     # HA runtime tests exercise the actual selector. This facade only keeps
     # non-HA service/field contract tests independent from HA dependencies.
     namespace = {

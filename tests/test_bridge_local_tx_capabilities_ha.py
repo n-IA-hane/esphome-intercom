@@ -22,8 +22,7 @@ OFFER = (
     "v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Independent peer\r\n"
     "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 96 97\r\n"
     "a=rtpmap:96 L16/16000/1\r\na=rtpmap:97 L16/48000/1\r\n"
-    "a=x-voip-stack-flow:96 sendrecv\r\na=x-voip-stack-flow:97 recv\r\n"
-    "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
+    "a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n"
 )
 
 
@@ -44,7 +43,7 @@ def parse_with_send_formats(formats):
 
 @pytest.mark.parametrize("other", [None, AudioFormat(16000, "s24le", 1, 10),
                                   AudioFormat(16000, "s16le", 2, 10)])
-def test_bridge_never_invents_16k_mono_s16_10ms_for_restricted_listener(other):
+def test_bridge_uses_real_dynamic_backend_without_inventing_local_capability_rows(other):
     formats = [AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)]
     if other is not None:
         formats.append(other)
@@ -56,7 +55,7 @@ def test_bridge_never_invents_16k_mono_s16_10ms_for_restricted_listener(other):
         send_format=sdp.RtpPcmFormat(101, "L16", 48000, 1, 10),
     )
     selected = bridge_source_audio(invite, destination)
-    assert (selected.send_format.sample_rate, selected.send_format.frame_ms) == (48000, 10)
+    assert (selected.send_format.sample_rate, selected.send_format.frame_ms) == (16000, 10)
     assert selected.local_send_capabilities is invite.local_send_capabilities
     assert selected.local_recv_capabilities is invite.local_recv_capabilities
 
@@ -134,8 +133,7 @@ def test_uncompressed_caller_keeps_its_receive_rate_when_the_destination_sends_l
         "v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Wideband receiver\r\n"
         "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 96 97\r\n"
         "a=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/16000/1\r\n"
-        "a=x-voip-stack-flow:96 recv\r\na=x-voip-stack-flow:97 sendrecv\r\n"
-        "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=sendrecv\r\n",
+        "a=ptime:10\r\na=sendrecv\r\n",
         HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS,
     )
     assert (invite.send_format.sample_rate, invite.send_format.frame_ms) == (48000, 10)

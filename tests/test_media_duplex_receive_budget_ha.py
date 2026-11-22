@@ -20,17 +20,15 @@ TX = AudioFormat(16000, "s16le", 1, 20)
 
 
 
-def directional_sdp(rate=44100, channels=2, *, local=False, ptime=20, maximum=0,
+def multiformat_sdp(rate=44100, channels=2, *, ptime=20, maximum=0,
                     transmit_payload=96, receive_payload=97):
     rows = [
         "v=0", "o=- 1 1 IN IP4 192.0.2.2", "s=Duplex receiver",
         "c=IN IP4 192.0.2.2", "t=0 0",
         f"m=audio 5000 RTP/AVP {transmit_payload} {receive_payload}",
         f"a=rtpmap:{transmit_payload} L16/16000/1",
-        f"a=x-voip-stack-flow:{transmit_payload} {'send' if local else 'recv'}",
         f"a=rtpmap:{receive_payload} L16/{rate}/{channels}",
-        f"a=x-voip-stack-flow:{receive_payload} {'recv' if local else 'send'}",
-        "a=x-voip-stack-independent-ptime:1", f"a=ptime:{ptime}", "a=sendrecv",
+        f"a=ptime:{ptime}", "a=sendrecv",
     ]
     if maximum:
         rows.append(f"a=maxptime:{maximum}")
@@ -39,7 +37,7 @@ def directional_sdp(rate=44100, channels=2, *, local=False, ptime=20, maximum=0,
 
 def test_duplex_receive_44100_stereo20_fits_rx_envelope_without_using_tx_budget():
     """F1: 3528 RX bytes fit 12 KiB while the independent TX remains 640 bytes."""
-    body = directional_sdp()
+    body = multiformat_sdp()
     result = sdp.negotiate_directional(body, [TX], [AudioFormat(44100, "s16le", 2, 20)],
         local_capabilities=HA_AUDIO_CAPABILITIES)
     assert result is not None
@@ -58,8 +56,8 @@ def test_duplex_receive_44100_stereo20_fits_rx_envelope_without_using_tx_budget(
 @pytest.mark.parametrize("rate,channels", [(44100, 2), (48000, 1)])
 def test_apply_answer_preserves_the_offered_receive_time_and_bounds(rate, channels):
     """R1 and P3: the remote RX preference cannot rewrite the local RX contract."""
-    offer = directional_sdp(rate, channels, local=True, maximum=20)
-    answer = directional_sdp(rate, channels, ptime=10, maximum=10,
+    offer = multiformat_sdp(rate, channels, maximum=20)
+    answer = multiformat_sdp(rate, channels, ptime=10, maximum=10,
         transmit_payload=110, receive_payload=111)
     result = sdp.negotiate_answer_directional(answer, [TX], [AudioFormat(rate, "s16le", channels, 20)],
         local_offer_sdp=offer, local_capabilities=HA_AUDIO_CAPABILITIES)
@@ -67,13 +65,14 @@ def test_apply_answer_preserves_the_offered_receive_time_and_bounds(rate, channe
     assert (result.send.payload_type, result.send.frame_ms) == (110, 10)
     assert (result.recv.payload_type, result.recv.sample_rate, result.recv.channels,
             result.recv.frame_ms, result.recv.max_frame_ms) == (97, rate, channels, 20, 20)
-    assert {(fmt.payload_type, fmt.frame_ms, fmt.max_frame_ms) for fmt in result.recv_formats} == {(97, 20, 20)}
+    assert {(fmt.payload_type, fmt.sample_rate) for fmt in result.recv_formats} == {(96, 16000), (97, rate)}
+    assert all(fmt.frame_ms == 20 and fmt.max_frame_ms == 20 for fmt in result.recv_formats)
 
 
 @pytest.mark.parametrize("receive_bytes,expected_ms", [(2000, 10), (1000, None)])
 def test_duplex_receive_obeys_the_actual_receiver_budget(receive_bytes, expected_ms):
     capabilities = AudioCapabilities(receive_payload_bytes=receive_bytes)
-    result = sdp.negotiate_directional(directional_sdp(), [TX], [AudioFormat(44100, "s16le", 2, 20)],
+    result = sdp.negotiate_directional(multiformat_sdp(), [TX], [AudioFormat(44100, "s16le", 2, 20)],
         local_capabilities=capabilities)
     if expected_ms is None:
         assert result is None
@@ -86,16 +85,16 @@ def test_duplex_receive_obeys_the_actual_receiver_budget(receive_bytes, expected
 
 def test_apply_answer_refuses_an_unusable_offered_receive_time_instead_of_retiming_it():
     """An inconsistent offer/capability input must not rewrite the advertised RX."""
-    offer = directional_sdp(48000, 1, local=True, maximum=20)
-    answer = directional_sdp(48000, 1, ptime=10, maximum=10)
+    offer = multiformat_sdp(48000, 1, maximum=20)
+    answer = multiformat_sdp(48000, 1, ptime=10, maximum=10)
     result = sdp.negotiate_answer_directional(answer, [TX], [AudioFormat(48000, "s16le", 1, 20)],
         local_offer_sdp=offer, local_capabilities=AudioCapabilities(receive_payload_bytes=1000))
     assert result is None
 
 
 def test_directional_offer_tries_the_next_feasible_receive_mapping():
-    body = directional_sdp().replace(b"RTP/AVP 96 97", b"RTP/AVP 96 97 98")
-    body += b"a=rtpmap:98 L16/8000/1\r\na=x-voip-stack-flow:98 send\r\n"
+    body = multiformat_sdp().replace(b"RTP/AVP 96 97", b"RTP/AVP 96 97 98")
+    body += b"a=rtpmap:98 L16/8000/1\r\n"
     result = sdp.negotiate_directional(body, [TX],
         [AudioFormat(44100, "s16le", 2, 20), AudioFormat(8000, "s16le", 1, 20)],
         local_capabilities=AudioCapabilities(receive_payload_bytes=1000))
@@ -114,13 +113,12 @@ def test_apply_answer_preserves_opus_receive_times_supported_by_the_public_offer
     receive_pcm = receiver.audio_format
     assert HA_AUDIO_CAPABILITIES.supports_rtp(receiver, receive=True)
     offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 4000,
-        [TX], [receive_pcm], send_rtp_formats=(RtpPcmFormat(96, "L16", 16000, 1, 20),),
-        recv_rtp_formats=(receiver,), allow_directional_payloads=True,
-        independent_audio_ptime=True, local_capabilities=HA_AUDIO_CAPABILITIES)
+        [TX], [receive_pcm], send_rtp_formats=(RtpPcmFormat(96, "L16", 16000, 1, 20), replace(receiver, frame_ms=20)),
+        recv_rtp_formats=(receiver, RtpPcmFormat(96, "L16", 16000, 1, 20)), local_capabilities=HA_AUDIO_CAPABILITIES)
     assert f"a=ptime:{receive_ms}\r\n" in offer
     offered_receiver = next(fmt for fmt in sdp.offered_pcm_formats(offer) if fmt.encoding == "OPUS")
     assert (offered_receiver.frame_ms, offered_receiver.max_frame_ms) == (receive_ms, 120)
-    answer = directional_sdp(48000, 2, ptime=20,
+    answer = multiformat_sdp(48000, 2, ptime=20,
         transmit_payload=110, receive_payload=111).replace("L16/48000/2".encode(), b"OPUS/48000/2")
     result = sdp.negotiate_answer_directional(answer, [TX], [receive_pcm],
         local_offer_sdp=offer, local_capabilities=HA_AUDIO_CAPABILITIES)
@@ -128,8 +126,9 @@ def test_apply_answer_preserves_opus_receive_times_supported_by_the_public_offer
     assert (result.send.payload_type, result.send.frame_ms) == (110, 20)
     assert (result.recv.payload_type, result.recv.encoding, result.recv.frame_ms,
             result.recv.max_frame_ms) == (offered_receiver.payload_type, "OPUS", receive_ms, 120)
-    assert {(fmt.payload_type, fmt.frame_ms, fmt.max_frame_ms) for fmt in result.recv_formats} == {
-        (offered_receiver.payload_type, receive_ms, 120)}
+    assert any(fmt.payload_type == offered_receiver.payload_type and fmt.frame_ms == receive_ms
+               and fmt.max_frame_ms == 120 for fmt in result.recv_formats)
+    assert {fmt.encoding for fmt in result.recv_formats} == {"L16", "OPUS"}
 
 
 @pytest.mark.parametrize("rate,channels,peer_ptime,transmit_ms", [

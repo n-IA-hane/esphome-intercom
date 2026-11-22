@@ -40,8 +40,7 @@ def test_transmitted_caller_is_frozen_before_reading_any_new_offer_or_policy():
 def test_free_pcm_caller_keeps_48k_receive_contract_and_resamples_both_directions():
     body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96 97\r\n"
             "a=rtpmap:96 L16/48000/1\r\na=rtpmap:97 L16/16000/1\r\n"
-            "a=x-voip-stack-flow:96 recv\r\na=x-voip-stack-flow:97 sendrecv\r\n"
-            "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\n").encode()
+            "a=ptime:10\r\n").encode()
     caller = sdp.negotiate_directional(body, list(HA_SIP_PCM_TX_FORMATS), list(HA_SIP_PCM_RX_FORMATS))
     assert caller is not None
     callee = sdp.RtpPcmDirection(fmt(48000, ms=10), fmt(16000, pt=97))
@@ -101,10 +100,10 @@ def test_bridge_keeps_the_admitting_backend_receive_envelope_instead_of_preset_t
 def test_bridge_tx_candidates_stay_configured_while_backend_rx_remains_independent(receive_bytes):
     from custom_components.voip_stack.core.audio_capabilities import AudioCapabilities
 
-    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96 97\r\n"
-        "a=rtpmap:96 L16/48000/1\r\na=x-voip-stack-flow:96 sendrecv\r\n"
-        "a=rtpmap:97 L16/16000/1\r\na=x-voip-stack-flow:97 recv\r\n"
-        "a=x-voip-stack-independent-ptime:1\r\na=ptime:10\r\na=maxptime:10\r\n").encode()
+    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 97 96\r\n"
+        "a=rtpmap:96 L16/48000/1\r\n"
+        "a=rtpmap:97 L16/16000/1\r\n"
+        "a=ptime:10\r\na=maxptime:10\r\n").encode()
     transmit = (AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10))
     receive = (AudioFormat(48000, frame_ms=10),)
     backend = AudioCapabilities(receive_payload_bytes=receive_bytes)

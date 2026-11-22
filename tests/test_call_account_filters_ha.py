@@ -44,6 +44,8 @@ async def test_account_selector_retains_native_device_id_and_follows_username_re
     await async_migrate_account_identities(lab.hass, lab.entry,
         account_updates={row.subentry_id: {**row.data, "username": "Renamed, Account%"}})
     assert device.id == native_id and row.subentry_id == subentry_id
+    assert row.data["username"] == "Renamed, Account%"
+    assert lab.runtime.endpoints.by_username("Account @ one") is None
     assert matches_call({"source_account_username": "Renamed, Account%"}, options, hass=lab.hass)
     assert not matches_call({"source_account_username": "Account @ one"}, options, hass=lab.hass)
 

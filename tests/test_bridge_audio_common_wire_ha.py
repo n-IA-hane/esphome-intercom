@@ -23,7 +23,7 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("source_rate,receive_rates,source_receive_rates,known,directional", [
+@pytest.mark.parametrize("source_rate,receive_rates,source_receive_rates,known,asymmetric", [
     pytest.param(16000, (48000, 16000), (48000, 16000), True, True, id="explicit-capabilities"),
     pytest.param(16000, (48000, 16000), (48000, 16000), False, True, id="unknown-capabilities"),
     pytest.param(16000, (48000,), (48000, 16000), False, True, id="receiver-requires-48k"),
@@ -32,40 +32,36 @@ pytestmark = pytest.mark.ha
     pytest.param(16000, (48000, 16000), (16000,), False, False, id="ordinary-sip"),
 ])
 async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
-    trunks, monkeypatch, source_rate, receive_rates, source_receive_rates, known, directional,
+    trunks, monkeypatch, source_rate, receive_rates, source_receive_rates, known, asymmetric,
     caller_discovery=None,
 ):
     lab = trunks
     target = lab.phones[0]
     metadata = {"endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True}
     if known:
-        metadata.update(sip_audio_tx_formats=["L16/16000/1/10"],
+        metadata.update(sip_capabilities_known=True,
+            sip_audio_tx_formats=[f"L16/{rate}/1" for rate in (48000,16000)],
             sip_audio_rx_formats=[f"L16/{rate}/1/10" for rate in receive_rates],
-            sdp_features=["directional_audio_v1"])
+            sip_audio_tx_geometry_complete=True, sip_audio_rx_geometry_complete=True,
+            sip_audio_receiver_ptime=10, sip_audio_receiver_maxptime=20)
     lab.roster[1] = replace(lab.roster[1], metadata=metadata)
     lab.runtime.endpoints.update("sip:bedroom0", availability="available")
     observed = {}
 
     def answer():
         request = target.last_request
-        # A registered account alone never authorizes the private D1 profile.
-        if not known:
-            assert b"a=x-voip-stack-flow:" not in request.body
+        assert b"x-voip-stack" not in request.body
         offered = [fmt for fmt in sdp.offered_pcm_formats(request.body) if fmt.encoding == "L16"]
         # Independent endpoint: receive the first compatible payload, transmit
         # the fixed 16 kHz microphone stream. No production negotiation helper.
         receive = next(fmt for fmt in offered if fmt.sample_rate in receive_rates)
         send = next(fmt for fmt in offered if fmt.sample_rate == 16000)
-        if not directional:
+        if not asymmetric:
             send = receive
         observed.update(receive=receive, send=send, offer=request.body)
         selected = list(dict.fromkeys((receive, send)))
         payloads = " ".join(str(fmt.payload_type) for fmt in selected)
         mappings = "".join(f"a=rtpmap:{fmt.payload_type} L16/{fmt.sample_rate}/1\r\n" for fmt in selected)
-        if directional:
-            mappings += "".join(f"a=x-voip-stack-flow:{fmt.payload_type} "
-                f"{'sendrecv' if send == receive else 'recv' if fmt == receive else 'send'}\r\n"
-                for fmt in selected)
         body = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Fixed microphone phone\r\n"
             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
             f"m=audio {target.rtp_socket.getsockname()[1]} RTP/AVP {payloads}\r\n"
@@ -82,9 +78,11 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         username=account.username if account is not None else "",
         password=account.password if account is not None else "",
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
-        supported_send_formats=[AudioFormat(source_rate, frame_ms=10)],
+        supported_send_formats=[AudioFormat(source_rate, frame_ms=10)]
+            + [AudioFormat(rate,frame_ms=10) for rate in source_receive_rates if rate != source_rate],
         supported_recv_formats=[AudioFormat(rate, frame_ms=10) for rate in source_receive_rates],
-        allow_directional_audio_payloads=directional)
+        supported_send_rtp_formats=tuple(sdp.RtpPcmFormat(96+index,"L16",rate,1,10) for index,rate in enumerate(source_receive_rates)),
+        supported_recv_rtp_formats=tuple(sdp.RtpPcmFormat(96+index,"L16",rate,1,10,max_frame_ms=10) for index,rate in enumerate(source_receive_rates)))
     class CallerProtocol(SipDatagramQueueProtocol):
         def __init__(self):
             super().__init__(caller.queue)
@@ -119,7 +117,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
 
         def native_offer():
             # The actual caller explicitly limits receive packets to 10 ms.
-            # SipCallClient otherwise omits redundant maxptime in D1 offers.
+            # The receiver ceiling constrains incoming packets, not its TX.
             if b"a=maxptime:" not in caller._pending_invite_body:
                 caller._pending_invite_body = re.sub(
                     rb"a=ptime:[^\r\n]+\r\n", b"a=ptime:10\r\na=maxptime:10\r\n",
@@ -141,7 +139,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         assert result == "in_call" and caller.dialog is not None
         session = lab.calls.get_session(caller.dialog_ids.call_id)
         relay = lab.calls.resource_for(session.call_id, "relay")
-        expected_receive = source_rate if source_rate in receive_rates else receive_rates[0]
+        expected_receive = receive_rates[0]
         assert observed["receive"].sample_rate == expected_receive
         assert caller.dialog.send_format.sample_rate == source_rate
         target_rate = observed["send"].sample_rate
@@ -298,8 +296,9 @@ async def restore_managed_caller(lab, caller, discovery):
     entry = registrar.registered_roster_entries()[0]
     assert entry.metadata["sip_capabilities_known"] is True
     if discovery == "no-ptime":
-        assert entry.metadata["sip_audio_tx_formats"] == entry.metadata["sip_audio_rx_formats"] == []
-        assert entry.metadata["sdp_features"] == ["directional_audio_v1"]
+        assert entry.metadata["sip_audio_tx_formats"] == entry.metadata["sip_audio_rx_formats"] == ["L16/48000/1", "L16/16000/1"]
+        assert "sdp_features" not in entry.metadata
+        assert entry.metadata["sip_audio_rx_geometry_complete"]
     peers = await build_real_peer_snapshot(lab.hass)
     peer = next(item for item in peers if item.endpoint_id == restored.endpoint_id)
     assert peer.host == "127.0.0.2" and peer.sip_uri_user == restored.username

@@ -2615,7 +2615,7 @@
         },
         "decline_reason": {
           "name": "Decline reason",
-          "description": "Application terminal reason propagated in SIP Reason and X-Voip-Stack-Decline-Reason headers."
+          "description": "Reason sent with the standard SIP rejection."
         }
       },
       "sections": {

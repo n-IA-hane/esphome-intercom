@@ -241,16 +241,18 @@ OUTBOUND = {
 }
 
 
-@pytest.mark.parametrize("directional", [False, True], ids=["one-payload", "directional"])
+@pytest.mark.parametrize("reverse_receive_order", [False, True], ids=["native-order", "reversed-receive-order"])
 @pytest.mark.parametrize("profile", sorted(OUTBOUND))
-def test_every_answer_to_our_offer_is_accepted_within_the_wire_rules(profile, directional):
+def test_every_answer_to_our_offer_is_accepted_within_the_wire_rules(profile, reverse_receive_order):
     """Whichever offered payload and packet time the peer answers, the call proceeds."""
     send, receive, dahua = OUTBOUND[profile]
+    if reverse_receive_order:
+        receive = tuple(reversed(receive))
     offer = sdp.build_offer_directional(
         "127.0.0.1", "127.0.0.1", 40000, list(send), list(receive), include_common_codecs=True,
-        include_dahua_pcm=dahua, allow_directional_payloads=directional,
-        independent_audio_ptime=directional, local_capabilities=HA_AUDIO_CAPABILITIES)
+        include_dahua_pcm=dahua, local_capabilities=HA_AUDIO_CAPABILITIES)
     offered = sdp.offered_pcm_formats(offer, allow_dahua_pcm=dahua)
+    assert "x-voip-stack" not in offer
     assert len(offered) >= 5
     violations, accepted = [], 0
     for fmt, packet_ms, max_packet_ms in product(offered, (None, 10, 20, 30, 40, 60), MAX_PACKET_TIMES):

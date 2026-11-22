@@ -14,7 +14,6 @@ from custom_components.voip_stack.core import rtp
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.phone_policy import PhonePolicy
-from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
 from custom_components.voip_stack.runtime_diagnostics import runtime_resource_snapshot
 from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.websocket_api import CALL_EVENT, _ha_softphone_store
@@ -48,7 +47,6 @@ async def test_two_browser_answer_arbitrates_with_committed_voicemail(
         kind=EndpointKind.BROWSER, availability="available",
         capabilities=frozenset({"audio", "dtmf"}),
     ))
-    setup_phone_policy_events(current.hass, entry)
     ringing = asyncio.Event()
     recording = asyncio.Event()
     projections = []

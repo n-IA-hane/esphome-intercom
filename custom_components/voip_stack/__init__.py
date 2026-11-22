@@ -6,6 +6,7 @@ the central phonebook and routed through HA as SIP dialogs when needed.
 """
 
 import logging
+from builtins import ExceptionGroup
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, CoreState, Event, ServiceCall

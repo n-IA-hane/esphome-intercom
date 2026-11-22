@@ -1115,10 +1115,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                 CONF_PHONE_CONFERENCE_GROUP,
                 default=list(membership_names('ring_group', current.get(CONF_PHONE_CONFERENCE_GROUP))),
             ): SelectSelector({'options': conference_choices, 'multiple': True, 'custom_value': True, 'mode': 'dropdown'}),
-            visible_required(
+            vol.Required(
                 CONF_PHONE_CONFERENCE_RING,
                 default=bool(current.get(CONF_PHONE_CONFERENCE_RING, False)),
-                visible={"field": CONF_PHONE_CONFERENCE_GROUP, "operator": "not_eq", "value": []},
             ): BooleanSelector(),
             vol.Required(
                 CONF_PHONE_VIDEO_ENABLED,
@@ -1481,7 +1480,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
 
     async def async_step_reconfigure(self, user_input=None):
         """Keep endpoint identity and kind stable while editing settings."""
-        record = self._get_reconfigure_subentry()
         self._reconfigure = True
         self._kind = EndpointKind.SIP_ACCOUNT
         return await self.async_step_sip_account(user_input)

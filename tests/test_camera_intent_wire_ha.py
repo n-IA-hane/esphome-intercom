@@ -117,7 +117,6 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
                             "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
                             f"m=audio 35000 RTP/AVP {receive} {send}\r\n"
                             f"a=rtpmap:{receive} L16/48000/1\r\na=rtpmap:{send} L16/16000/1\r\n"
-                            f"a=x-voip-stack-flow:{receive} recv\r\na=x-voip-stack-flow:{send} send\r\n"
                             f"a=ptime:10\r\na=sendrecv\r\n{video}").encode()
                         port = self.transport.get_extra_info("sockname")[1]
                         headers.append(("Contact", f"<sip:{receiver.username}@127.0.0.1:{port};transport=udp>"))

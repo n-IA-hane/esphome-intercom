@@ -194,7 +194,8 @@ async def test_public_browser_call_accepts_generic_8000_32ms_peer(
         assert binding.user_agent == peer.user_agent
         assert (binding.capabilities is not None) is discovery_known
         if discovery_known:
-            assert binding.capabilities["sdp_features"] == []
+            assert "sdp_features" not in binding.capabilities
+            assert binding.capabilities["sip_audio_tx_formats"] == ["L16/8000/1"]
             assert binding.capabilities["sip_audio_rx_formats"] == ["L16/8000/1/32"]
         assert not lab.calls.sessions
         lab.roster.extend(registrar.registered_roster_entries())

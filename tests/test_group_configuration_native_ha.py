@@ -330,3 +330,32 @@ async def test_membership_actions_adapt_native_group_devices_and_reject_wrong_gr
         await async_set_phone_memberships_service(ServiceCall(lab.hass, 'voip_stack', 'set_phone_memberships', {
             'phone': phone_device.id, 'field': 'queues', 'value': [page_device.id]}))
     assert dict(queue_row.data) == before
+
+
+async def test_registrar_activation_is_immediate_and_later_global_off_uses_same_live_owner(phone_lab, monkeypatch):
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import config_entry_runtime, phone_services, trunk_runtime
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sip_account_phone_data
+
+    lab = phone_lab
+    key = 'sip_registrar_enabled'
+    lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=4,
+        data={**lab.entry.data, key: False, 'group_membership_version': 1}, options={key: False})
+    lab.runtime.transport_config[key] = False
+    lab.registrar.enabled = False
+    _add_phone_subentry(lab.hass, lab.entry, title='Desk', data=sip_account_phone_data({
+        'username': 'Desk', 'password': 'fixture-activation-password'}))
+    assert lab.entry.data[key] is True and lab.entry.options[key] is True
+    assert lab.runtime.transport_config[key] is True and lab.registrar.enabled is True
+    reload_entry = AsyncMock()
+    monkeypatch.setattr(lab.hass.config_entries, 'async_reload', reload_entry)
+    monkeypatch.setattr(config_entry_runtime, 'async_refresh_and_push_phonebook', AsyncMock())
+    monkeypatch.setattr(trunk_runtime, 'async_reconcile_trunks', AsyncMock())
+    monkeypatch.setattr(phone_services, 'async_reconcile_phone_services', AsyncMock())
+    lab.runtime.entry_runtime_signature = config_entry_runtime.entry_runtime_signature(lab.entry)
+    lab.runtime.entry_phone_signature = config_entry_runtime.entry_phone_signature(lab.entry)
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, key: False}, options={key: False})
+    await config_entry_runtime.async_config_entry_updated(lab.hass, lab.entry)
+    assert lab.runtime.transport_config[key] is False and lab.registrar.enabled is False
+    assert lab.entry.data[key] is False and lab.entry.options[key] is False
+    reload_entry.assert_not_awaited()

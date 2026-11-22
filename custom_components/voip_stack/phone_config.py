@@ -74,6 +74,14 @@ def async_enable_registrar_for_new_account(hass, entry):
         options[CONF_REGISTRAR_ENABLED] = True
     if data != dict(entry.data) or options != dict(entry.options):
         hass.config_entries.async_update_entry(entry, data=data, options=options)
+    # New ESP accounts can REGISTER immediately from their native RPC. Keep
+    # the existing runtime projection current before that first request.
+    runtime = getattr(entry, 'runtime_data', None)
+    if runtime is not None:
+        runtime.transport_config[CONF_REGISTRAR_ENABLED] = True
+        registrar = runtime.sip.component('registrar') if runtime.sip is not None else None
+        if registrar is not None:
+            registrar.enabled = True
 
 
 class PhoneIdentityConflict(ValueError):

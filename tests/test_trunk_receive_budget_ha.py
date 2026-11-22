@@ -36,10 +36,10 @@ class DirectionalPhone(ContactPeer):
         rx = re.search(rb'a=rtpmap:(\d+) L16/48000/1', request.body)[1].decode()
         tx = re.search(rb'a=rtpmap:(\d+) L16/16000/1', request.body)[1].decode()
         self.payload_type = int(rx)
-        body = ('v=0\r\no=- 4 4 IN IP4 127.0.0.1\r\ns=D1phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n'
+        body = ('v=0\r\no=- 4 4 IN IP4 127.0.0.1\r\ns=Standard PCM phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n'
             f'm=audio {self.rtp_socket.getsockname()[1]} RTP/AVP {rx} {tx}\r\n'
-            f'a=rtpmap:{rx} L16/48000/1\r\na=x-voip-stack-flow:{rx} recv\r\n'
-            f'a=rtpmap:{tx} L16/16000/1\r\na=x-voip-stack-flow:{tx} send\r\n'
+            f'a=rtpmap:{rx} L16/48000/1\r\n'
+            f'a=rtpmap:{tx} L16/16000/1\r\n'
             'a=ptime:10\r\na=maxptime:10\r\na=sendrecv\r\n').encode()
         self.answer(request,address,body=body)
 
