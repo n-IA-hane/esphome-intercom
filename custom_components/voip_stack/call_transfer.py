@@ -379,6 +379,22 @@ async def async_transfer_target(
         session = calls.get_session(calls.resolve_session_id(call_id)) if calls else None
         if session is None or not session.live:
             return SipTransferResult(False, 0, "call_not_found")
+        if hass is not None:
+            from .local_softphone_runtime import PendingLocalSource
+            endpoint = runtime.endpoints.get(str(session.metadata.get("source_endpoint_id") or ""))
+            leg = session.legs.get(source_client.dialog_ids.call_id)
+            browser_source = calls.resource_for(session.call_id, "browser_source")
+            browser_origin = (session.owner == "ha_softphone" and leg is not None
+                              and leg.role == "ha_softphone" and session.artifacts.caller_invite is None)
+            if (endpoint is not None and endpoint.supports_ha_client
+                    and (browser_origin or isinstance(browser_source, PendingLocalSource))
+                    and endpoint.endpoint_id in session.endpoint_claims
+                    and leg is not None and leg.dialog is source_client
+                    and leg.role in {"ha_softphone", "callee"}
+                    and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                    and session.state in {"in_call", "held"}):
+                from .browser_transfer import transfer_browser_target
+                return await transfer_browser_target(hass, runtime, session, source_client, target)
         candidates = {
             id(leg.dialog): leg.dialog for leg in session.legs.values()
             if isinstance(leg.dialog, SipCallClient) and leg.dialog is not source_client

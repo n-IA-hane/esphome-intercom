@@ -254,6 +254,9 @@ class ForwardOperation:
             raise RuntimeError("target Home Assistant phone is busy")
         if endpoint.availability is EndpointAvailability.UNAVAILABLE:
             raise RuntimeError("target Home Assistant phone is disabled")
+        if local_source is not None and local_source.outgoing and local_source.established:
+            await local_source.forward_to_browser(self.runtime, endpoint, timeout=self.plan.ring_timeout or 30)
+            return TransferResult("connected", destination)
         if (
             application is not None
             and application.media is not None

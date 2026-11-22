@@ -62,6 +62,7 @@ def start_local_softphone_call(
     preserve_controller: bool = False,
     policy_endpoint_ids: tuple[str, ...] | None = None,
     outbound_trunk_id: str | None = None,
+    answered_owner_id: str | None = None,
 ) -> LocalCallSnapshot:
     """Create one local call with HA provenance bound before its first event."""
     bridge = local_softphone_bridge(hass)
@@ -94,6 +95,7 @@ def start_local_softphone_call(
             request_video=request_video,
             enable_caller_video_send=enable_caller_video_send,
             caller_owner_id=caller_owner_id,
+            answered_owner_id=answered_owner_id,
         )
     except BaseException:
         EndpointTerminationHandler(hass).request_reason(
@@ -275,7 +277,7 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
     if event.event_type in {LocalBridgeEventType.STARTED, LocalBridgeEventType.REDIRECTED}:
         registry.upsert(
             snapshot.call_id,
-            state="ringing",
+            state=snapshot.callee_state.value,
             owner="local_bridge",
             caller=_name(
                 _endpoint(hass, snapshot.caller_endpoint_id),
@@ -298,14 +300,14 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             snapshot.call_id,
             f"local:{snapshot.caller_endpoint_id}",
             role="local_phone",
-            state="calling",
+            state=snapshot.caller_state.value,
             endpoint_id=snapshot.caller_endpoint_id,
         )
         registry.add_leg(
             snapshot.call_id,
             f"local:{snapshot.callee_endpoint_id}",
             role="local_phone",
-            state="ringing",
+            state=snapshot.callee_state.value,
             endpoint_id=snapshot.callee_endpoint_id,
         )
         media = {
@@ -421,12 +423,12 @@ class BrowserSourceIdentity:
 
 
 class PendingLocalSource:
-    """Move a ringing browser source into the existing RTP call owners."""
+    """Adapt an existing browser source to the session-owned RTP call owners."""
 
     def __init__(
         self, hass: HomeAssistant, snapshot: LocalCallSnapshot | None,
         local_ip: str, sip_port: int, *, call_id: str = "", retained_endpoint_id: str = "",
-        video_peer_format=None,
+        video_peer_format=None, established_client=None,
     ) -> None:
         from .core import sdp, sip
         from .sip_listener import SipInvite
@@ -439,7 +441,7 @@ class PendingLocalSource:
         self.retired = False
         self.established = bool(retained_endpoint_id)
         session = self.registry.get_session(snapshot.call_id if snapshot else call_id)
-        if self.established:
+        if self.established and not self.outgoing:
             if (snapshot is None or snapshot.caller_state is not LocalCallState.IN_CALL
                     or snapshot.callee_state is not LocalCallState.IN_CALL or snapshot.video_active
                     or retained_endpoint_id not in {snapshot.caller_endpoint_id, snapshot.callee_endpoint_id}):
@@ -448,9 +450,16 @@ class PendingLocalSource:
                                and snapshot.callee_state is not LocalCallState.RINGING):
             raise RuntimeError("local call is no longer ringing")
         if self.outgoing:
-            self.previous_client = self.registry.sip_client_for(call_id)
-            if (session.owner != "ha_softphone" or session.state not in {"calling", "connecting", "remote_ringing"}
-                    or self.previous_client is None or self.previous_client.dialog is not None):
+            self.previous_client = established_client or self.registry.sip_client_for(call_id)
+            valid = (session.owner == "ha_softphone" and session.state in {"calling", "connecting", "remote_ringing"}
+                     and self.previous_client is not None and self.previous_client.dialog is None)
+            if established_client is not None:
+                valid = (self.established and session.live and session.state in {"in_call", "held"}
+                         and session.metadata.get("source_endpoint_id") == retained_endpoint_id
+                         and retained_endpoint_id in session.endpoint_claims
+                         and established_client.dialog is not None
+                         and self.registry.sip_client_for(established_client.dialog_ids.call_id) is established_client)
+            if not valid:
                 raise RuntimeError("outgoing browser call is no longer ringing")
             self.call = BrowserSourceIdentity(
                 session.call_id, str(session.metadata.get("source_endpoint_id") or ""),

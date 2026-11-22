@@ -760,6 +760,7 @@ class _ForwardAdmission:
             if (
                 local_source is not None
                 and local_source.outgoing
+                and not local_source.established
                 and not local_source.retired
                 and local_source.previous_client.dialog is not None
             ):

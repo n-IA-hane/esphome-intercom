@@ -389,12 +389,14 @@ class LocalSoftphoneBridge:
         request_video: bool = False,
         enable_caller_video_send: bool = False,
         caller_owner_id: object = "",
+        answered_owner_id: object | None = None,
     ) -> LocalCallSnapshot:
         """Claim two idle endpoints and create calling/ringing logical legs.
 
         Outgoing video is opt-in. When supplied, ``caller_owner_id``
         atomically pins the originating browser instance before any bridge
-        event is emitted.
+        event is emitted. ``answered_owner_id`` adopts an already accepted
+        destination without publishing another ringing state.
         """
         caller = self._registry.require(caller_endpoint_id)
         callee = self._registry.require(callee_endpoint_id)
@@ -440,15 +442,15 @@ class LocalSoftphoneBridge:
                 call_id=logical_call_id,
                 caller_endpoint_id=caller.endpoint_id,
                 callee_endpoint_id=callee.endpoint_id,
-                caller_state=LocalCallState.CALLING,
-                callee_state=LocalCallState.RINGING,
+                caller_state=LocalCallState.CALLING if answered_owner_id is None else LocalCallState.IN_CALL,
+                callee_state=LocalCallState.RINGING if answered_owner_id is None else LocalCallState.IN_CALL,
                 video_requested=video_requested,
                 video_enabled=video_enabled,
                 caller_video_send=bool(
                     video_enabled and enable_caller_video_send
                 ),
                 callee_video_send=False,
-                answer_owner_id="",
+                answer_owner_id=str(answered_owner_id or ""),
                 caller_media=self._new_endpoint_media(caller.endpoint_id),
                 callee_media=self._new_endpoint_media(callee.endpoint_id),
             )
@@ -457,6 +459,8 @@ class LocalSoftphoneBridge:
                 _lease, caller_media_acquired = self._acquire_media(
                     call, caller.endpoint_id, owner
                 )
+            if answered_owner_id:
+                self._acquire_media(call, callee.endpoint_id, str(answered_owner_id))
             self._calls[logical_call_id] = call
         except Exception:
             self._registry.release_call(callee.endpoint_id, logical_call_id)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 import logging
 from types import MappingProxyType
@@ -285,7 +286,8 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
                 if current():
                     delivered[device_id] = value
 
-    session.create_task(notify(), name=f"voip-media-route-{session.call_id}")
+    task = asyncio.create_task(notify(), name=f"voip-media-route-{session.call_id}")
+    data.sip.replace_task(session.call_id, task, name=f"voip-media-route-{session.call_id}")
 
 
 def stage_phone_termination_projection(

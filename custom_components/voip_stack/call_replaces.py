@@ -60,13 +60,17 @@ def prepare_replacement_grant(runtime, call_id, target, source_client):
         raise ReplacementRejected(481)
     if target.replaces.early_only:
         raise ReplacementRejected(486)
-    from_callee = (source_client is not None and source_client.dialog_ids.call_id
-                   == original.metadata.get("bridge_dest_call_id"))
+    source_leg = original.legs.get(source_client.dialog_ids.call_id) if source_client is not None else None
+    from_callee = (source_client is not None and (
+        source_client.dialog_ids.call_id == original.metadata.get("bridge_dest_call_id")
+        or (source_leg is not None and source_leg.dialog is source_client and source_leg.role == "ha_softphone")))
     sender_key, receiver_key = (
         ("dest_endpoint_id", "source_endpoint_id") if from_callee
         else ("source_endpoint_id", "dest_endpoint_id")
     )
     sender = original.metadata.get(sender_key)
+    if from_callee and not sender:
+        sender = original.metadata.get("target_endpoint_id")
     receiver = original.metadata.get(receiver_key)
     if not sender or sender != consultation.metadata.get("source_endpoint_id"):
         raise ReplacementRejected(403)
@@ -193,6 +197,11 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
     _source, destination_id = calls.bridge_for(old.call_id)
     client = calls.sip_client_for(destination_id)
     relay = calls.resource_for(old.call_id, "relay")
+    if client is None:
+        from .browser_replacement import prepare_browser_replacement
+        browser = await prepare_browser_replacement(hass, runtime, invite, local_ip, old, grant)
+        if browser is not None:
+            return browser
     if client is None or client.dialog is None or relay is None:
         grant.release()
         return SipInviteResult(488, "Not Acceptable Here")
