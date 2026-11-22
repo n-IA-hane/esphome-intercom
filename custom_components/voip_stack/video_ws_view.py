@@ -18,15 +18,21 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp, sdp
-from .core.sip_stun import is_stun_message
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING
 from .media_debug import merge_media_debug
 from .media_call_lifetime import active_media_call, listen_for_media_call_end
 from .media_ws_session import (
     async_claimed_media_websocket,
+    async_wait_for_media_workers, async_stop_media_workers,
     async_prepare_media_websocket_request,
 )
+from .video_ws_io import (
+    _ByteBudgetQueue as _ByteBudgetQueue,
+    _RtpVideoProtocol as _RtpVideoProtocol,
+    async_open_video_receiver, async_open_receive_transcoder,
+)
+from .video_rtp_keepalive import run_symmetric_video_keepalive
 from .queue_utils import drain_queue
 from .runtime_data import (
     call_projection,
@@ -34,7 +40,6 @@ from .runtime_data import (
     require_runtime_data,
     sip_endpoint_manager,
 )
-from .session_cleanup import async_wait_for_cleanup
 from .core.video_rtcp import (
     RtcpError,
     build_fir,
@@ -54,7 +59,6 @@ from .core.video_rtp import (
     RtpSenderState,
     VideoAccessUnit,
     split_annex_b,
-    unknown_dynamic_payload_type,
 )
 from .core.imageattr import constraints_payload
 from .browser_phone_data import _ha_softphone_store
@@ -212,99 +216,8 @@ def _video_pipeline_signature(session: _VideoMediaSession) -> tuple[object, ...]
     )
 
 
-class _ByteBudgetQueue(asyncio.Queue):
-    """An asyncio queue bounded by both item count and retained payload bytes."""
-
-    def __init__(
-        self,
-        *,
-        maxsize: int,
-        max_bytes: int,
-        item_size: Callable[[object], int],
-    ) -> None:
-        super().__init__(maxsize=maxsize)
-        self.max_bytes = int(max_bytes)
-        self.queued_bytes = 0
-        self._item_size = item_size
-
-    def _put(self, item) -> None:
-        self.queued_bytes += max(0, int(self._item_size(item)))
-        super()._put(item)
-
-    def _get(self):
-        item = super()._get()
-        self.queued_bytes = max(
-            0,
-            self.queued_bytes - max(0, int(self._item_size(item))),
-        )
-        return item
-
-    def can_fit(self, item) -> bool:
-        size = max(0, int(self._item_size(item)))
-        return size <= self.max_bytes and self.queued_bytes + size <= self.max_bytes
-
-    def put_nowait(self, item) -> None:
-        """Enforce the byte invariant even when a future caller forgets can_fit."""
-
-        if not self.can_fit(item):
-            raise asyncio.QueueFull
-        super().put_nowait(item)
 
 
-class _RtpVideoProtocol(asyncio.DatagramProtocol):
-    def __init__(
-        self,
-        queue: _ByteBudgetQueue,
-        *,
-        source_allowed: Callable[[str], bool],
-        min_datagram_bytes: int,
-        max_datagram_bytes: int = _MAX_VIDEO_DATAGRAM_BYTES,
-    ) -> None:
-        self.queue = queue
-        self.source_allowed = source_allowed
-        self.min_datagram_bytes = int(min_datagram_bytes)
-        self.max_datagram_bytes = int(max_datagram_bytes)
-        self.dropped_packets = 0
-        self._queue_drops = 0
-        self._source_drops = 0
-        self._size_drops = 0
-
-    def _record_drop(self, reason: str) -> None:
-        self.dropped_packets += 1
-        if reason == "queue":
-            self._queue_drops += 1
-        elif reason == "source":
-            self._source_drops += 1
-        else:
-            self._size_drops += 1
-
-    def take_drop_counts(self) -> tuple[int, int, int]:
-        """Return new queue/source/size drops since the preceding snapshot."""
-
-        counts = (self._queue_drops, self._source_drops, self._size_drops)
-        self._queue_drops = 0
-        self._source_drops = 0
-        self._size_drops = 0
-        return counts
-
-    def datagram_received(self, data: bytes, addr) -> None:
-        if is_stun_message(data):
-            return
-        if not self.min_datagram_bytes <= len(data) <= self.max_datagram_bytes:
-            self._record_drop("size")
-            return
-        if not self.source_allowed(str(addr[0])):
-            self._record_drop("source")
-            return
-        item = (data, addr)
-        while self.queue.full() or not self.queue.can_fit(item):
-            try:
-                self.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                self._record_drop("size")
-                return
-            self._record_drop("queue")
-        self.queue.put_nowait(item)
 
 
 
@@ -958,34 +871,15 @@ async def _run_video_session(
     loop = asyncio.get_running_loop()
     transport: asyncio.DatagramTransport | None = None
 
-    def close_detached_sockets() -> None:
-        if session.rtp_socket is not None:
-            session.rtp_socket.close()
-            session.rtp_socket = None
-        if session.rtcp_socket is not None:
-            session.rtcp_socket.close()
-            session.rtcp_socket = None
-
     try:
-        if session.rtp_socket is not None:
-            transport, _ = await loop.create_datagram_endpoint(
-                lambda: protocol,
-                sock=session.rtp_socket,
-            )
-        else:
-            transport, _ = await loop.create_datagram_endpoint(
-                lambda: protocol,
-                local_addr=("0.0.0.0", int(session.local_rtp_port)),
-            )
+        transport = await async_open_video_receiver(session, protocol)
     except asyncio.CancelledError:
         if transport is not None:
             transport.close()
-        close_detached_sockets()
         raise
     except (OSError, RuntimeError, ValueError) as err:
         if transport is not None:
             transport.close()
-        close_detached_sockets()
         _LOGGER.warning(
             "HA softphone video websocket rejected call_id=%s local_rtp=%s: %s",
             session.call_id,
@@ -997,7 +891,6 @@ async def _run_video_session(
     except BaseException:
         if transport is not None:
             transport.close()
-        close_detached_sockets()
         raise
 
     assert transport is not None
@@ -1009,15 +902,18 @@ async def _run_video_session(
     transcoder: FfmpegVideoTranscoder | None = None
     jpeg_normalizer: _BrowserJpegNormalizer | None = None
 
-    async def close_setup_resources() -> None:
-        """Release media acquired before the long-lived task guard exists."""
-
+    def close_setup_io() -> None:
+        """Release I/O before awaiting potentially slow codec shutdown."""
         transport.close()
         if session.rtcp_socket is not None:
             session.rtcp_socket.close()
             session.rtcp_socket = None
         if transcode_transport is not None:
             transcode_transport.close()
+
+    async def close_setup_resources() -> None:
+        """Release media acquired before the long-lived task guard exists."""
+        close_setup_io()
         if transcoder is not None:
             await transcoder.async_close()
         if jpeg_normalizer is not None:
@@ -1025,28 +921,15 @@ async def _run_video_session(
 
     if session.requires_receive_transcoding:
         try:
-            transcode_queue = _ByteBudgetQueue(
-                maxsize=_VIDEO_RTP_PACKET_QUEUE,
-                max_bytes=_VIDEO_RTP_QUEUE_BYTES,
-                item_size=lambda item: len(item[0]),
+            pipeline = await async_open_receive_transcoder(
+                hass, session, transcoder_factory=FfmpegVideoTranscoder,
+                max_packets=_VIDEO_RTP_PACKET_QUEUE, max_bytes=_VIDEO_RTP_QUEUE_BYTES,
+                close_parent_io=close_setup_io,
             )
-            transcode_protocol = _RtpVideoProtocol(
-                transcode_queue,
-                source_allowed=lambda host: host in {"127.0.0.1", "::1"},
-                min_datagram_bytes=rtp.RTP_HEADER_SIZE,
-            )
-            transcode_transport, _ = await loop.create_datagram_endpoint(
-                lambda: transcode_protocol,
-                local_addr=("127.0.0.1", 0),
-            )
-            output_port = int(transcode_transport.get_extra_info("sockname")[1])
-            transcoder = FfmpegVideoTranscoder(
-                hass=hass,
-                call_id=session.call_id,
-                input_format=session.recv_video_format,
-                output_port=output_port,
-            )
-            await transcoder.async_start()
+            transcode_transport = pipeline.transport
+            transcode_protocol = pipeline.protocol
+            transcoder = pipeline.transcoder
+            transcode_queue = pipeline.queue
         except asyncio.CancelledError:
             await close_setup_resources()
             raise
@@ -1879,128 +1762,6 @@ async def _run_video_session(
                 )
 
 
-    async def symmetric_rtp_keepalive() -> None:
-        """Open and refresh the RTP mapping for the whole video session.
-
-        SIP media relays commonly use symmetric RTP when an endpoint is behind
-        NAT. A recvonly answer, delayed camera permission, or a browser with
-        Send Camera disabled can otherwise leave the advertised private RTP
-        port unreachable. RFC 6263 section 4.6 defines a zero-payload RTP
-        packet on an unnegotiated dynamic payload type for this purpose; it
-        carries no video media but lets the relay learn the symmetric RTP
-        source tuple.
-        """
-
-        attempt = 0
-        last_warning_at = 0.0
-        observed_generation = -1
-        keepalive_payload_type: int | None = None
-        generation_rx_packets = 0
-        generation_tx_packets = 0
-        while not closed.is_set():
-            keepalive_updated.clear()
-            generation = int(session.media_generation)
-            if generation != observed_generation:
-                negotiated_payload_types = {
-                    *session.remote_video_payload_types,
-                    session.send_video_format.payload_type,
-                    session.recv_video_format.payload_type,
-                }
-                keepalive_payload_type = unknown_dynamic_payload_type(
-                    negotiated_payload_types
-                )
-                counters["video_symmetric_rtp_keepalive_payload_type"] = int(
-                    keepalive_payload_type or 0
-                )
-                observed_generation = generation
-                attempt = 0
-                generation_rx_packets = counters["video_rtp_rx_packets"]
-                generation_tx_packets = counters["video_rtp_tx_packets"]
-                if keepalive_payload_type is None:
-                    _LOGGER.warning(
-                        "SIP video symmetric RTP keepalive unavailable call_id=%s: all dynamic payload types negotiated",
-                        session.call_id,
-                    )
-            if session.remote_connection_held:
-                try:
-                    await asyncio.wait_for(
-                        keepalive_updated.wait(), timeout=_SYMMETRIC_RTP_REFRESH_INTERVAL
-                    )
-                except TimeoutError:
-                    pass
-                continue
-            if keepalive_payload_type is None:
-                try:
-                    await asyncio.wait_for(
-                        keepalive_updated.wait(), timeout=_SYMMETRIC_RTP_REFRESH_INTERVAL
-                    )
-                except TimeoutError:
-                    pass
-                continue
-            probing = bool(
-                attempt < _SYMMETRIC_RTP_KEEPALIVE_ATTEMPTS
-                and counters["video_rtp_rx_packets"] == generation_rx_packets
-                and counters["video_rtp_tx_packets"] == generation_tx_packets
-            )
-            interval = (
-                _SYMMETRIC_RTP_KEEPALIVE_INTERVAL
-                if probing
-                else _SYMMETRIC_RTP_REFRESH_INTERVAL
-            )
-            if not probing:
-                try:
-                    await asyncio.wait_for(keepalive_updated.wait(), timeout=interval)
-                except TimeoutError:
-                    pass
-                if closed.is_set():
-                    return
-                if keepalive_updated.is_set():
-                    continue
-                if (
-                    sender.last_regular_rtp_tx_at
-                    and loop.time() - sender.last_regular_rtp_tx_at < interval
-                ):
-                    continue
-            try:
-                async with rtp_send_lock:
-                    keepalive = rtp_source.build_keepalive(
-                        keepalive_payload_type,
-                        now=loop.time(),
-                    )
-                    # build_keepalive advances the shared source even if the
-                    # datagram send fails; keep the browser sender aligned.
-                    sender.sequence = int(rtp_source.sequence)
-                    transport.sendto(keepalive, (remote_host, remote_port))
-            except (OSError, RuntimeError, ValueError) as err:
-                counters["video_keepalive_task_errors"] += 1
-                attempt += 1
-                now = loop.time()
-                if now - last_warning_at >= _SYMMETRIC_RTP_REFRESH_INTERVAL:
-                    _LOGGER.warning(
-                        "HA softphone video RTP keepalive failed call_id=%s error=%s",
-                        session.call_id,
-                        err,
-                    )
-                    last_warning_at = now
-                store_counters()
-                retry_delay = min(
-                    _SYMMETRIC_RTP_REFRESH_INTERVAL,
-                    _SYMMETRIC_RTP_KEEPALIVE_INTERVAL * (2 ** min(attempt, 6)),
-                )
-                try:
-                    await asyncio.wait_for(keepalive_updated.wait(), timeout=retry_delay)
-                except TimeoutError:
-                    pass
-                continue
-            counters["video_symmetric_rtp_keepalives"] += 1
-            attempt += 1
-            if probing:
-                try:
-                    await asyncio.wait_for(
-                        keepalive_updated.wait(), timeout=_SYMMETRIC_RTP_KEEPALIVE_INTERVAL
-                    )
-                except TimeoutError:
-                    pass
 
     rx_task = asyncio.create_task(rtp_to_access_units())
     ws_task = asyncio.create_task(
@@ -2018,7 +1779,15 @@ async def _run_video_session(
         store_counters=store_counters, jpeg_normalizer=jpeg_normalizer,
     ))
     keepalive_task = asyncio.create_task(
-        symmetric_rtp_keepalive(), name=f"voip-video-keepalive-{session.call_id}"
+        run_symmetric_video_keepalive(
+            session, closed=closed, keepalive_updated=keepalive_updated,
+            counters=counters, sender=sender, rtp_send_lock=rtp_send_lock,
+            rtp_source=rtp_source, transport=transport,
+            destination=lambda: (remote_host, remote_port), store_counters=store_counters,
+            probe_interval=_SYMMETRIC_RTP_KEEPALIVE_INTERVAL,
+            probe_attempts=_SYMMETRIC_RTP_KEEPALIVE_ATTEMPTS,
+            refresh_interval=_SYMMETRIC_RTP_REFRESH_INTERVAL,
+        ), name=f"voip-video-keepalive-{session.call_id}"
     )
 
     rtcp_task.add_done_callback(
@@ -2053,36 +1822,12 @@ async def _run_video_session(
         }
         if transcode_input_task is not None:
             critical_tasks.add(transcode_input_task)
-        done, _pending = await asyncio.wait(
-            critical_tasks,
-            return_when=asyncio.FIRST_COMPLETED,
+        await async_wait_for_media_workers(
+            critical_tasks=critical_tasks, browser_task=browser_task,
+            lifetime_task=lifetime_task, websocket=ws,
+            websocket_transport=websocket_transport,
+            call_id=session.call_id, channel="video",
         )
-        media_task_ended = bool(done - {browser_task, lifetime_task})
-        if media_task_ended:
-            for task in done - {browser_task, lifetime_task}:
-                if task.cancelled():
-                    continue
-                error = task.exception()
-                if error is not None:
-                    _LOGGER.warning(
-                        "HA softphone video media task failed call_id=%s task=%s error=%s",
-                        session.call_id,
-                        task.get_name(),
-                        error,
-                    )
-        if lifetime_task in done or media_task_ended:
-            # Do not let a browser that vanished without a close handshake
-            # retain the SIP RTP/RTCP ports after the dialog is gone.
-            # This is a dedicated media WebSocket, so closing its HTTP
-            # transport is the deterministic way to wake aiohttp's pending
-            # receive before releasing the RTP resources.
-            ws.force_close()
-            if websocket_transport is not None:
-                websocket_transport.close()
-            browser_task.cancel()
-            await asyncio.gather(browser_task, return_exceptions=True)
-        if browser_task in done and not browser_task.cancelled():
-            browser_task.result()
     finally:
         closed.set()
         if active_sessions.get(active_key) is session:
@@ -2102,18 +1847,9 @@ async def _run_video_session(
             tasks.append(transcode_input_task)
         if keyframe_task is not None:
             tasks.append(keyframe_task)
-        for task in tasks:
-            task.cancel()
-        transport.close()
-        if transcode_transport is not None:
-            transcode_transport.close()
-        if rtcp_transport is not None:
-            rtcp_transport.close()
-        caller_cancelled = False
-        try:
-            await async_wait_for_cleanup(asyncio.gather(*tasks, return_exceptions=True))
-        except asyncio.CancelledError:
-            caller_cancelled = True
+        caller_cancelled = await async_stop_media_workers(
+            tasks, (transport, transcode_transport, rtcp_transport)
+        )
         try:
             if transcoder is not None:
                 await transcoder.async_close()

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.ha
 @pytest.mark.parametrize('caller_video,picker_video,answer_race', [
     (True, True, False), (False, True, False), (True, False, False), (True, True, True)])
 async def test_ringing_local_browser_camera_reaches_jpeg_picker(
-    lab, monkeypatch, tmp_path, caller_video, picker_video, answer_race, advertised_host,
+    lab, monkeypatch, tmp_path, caplog, caller_video, picker_video, answer_race, advertised_host,
 ):
     from aiohttp import WSMsgType
     from custom_components.voip_stack.directory_runtime import async_refresh_directory
@@ -65,7 +65,7 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
     monkeypatch.setattr(peer_snapshot, 'async_build_peer_snapshot', AsyncMock(return_value=[]))
     monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, '_roster_from_peers', lambda *_args: lab.roster)
-    assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
+    assert await endpoint_runtime.async_start_sip_endpoint(lab.hass), caplog.text
     async_setup_local_softphone_bridge(lab.hass)
     video_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     video_socket.bind(('127.0.0.2', 0))

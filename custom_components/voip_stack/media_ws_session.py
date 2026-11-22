@@ -25,6 +25,41 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+async def async_wait_for_media_workers(
+    *, critical_tasks, browser_task, lifetime_task, websocket,
+    websocket_transport=None, call_id: str, channel: str,
+) -> None:
+    """Stop the browser reader when its call or a required media worker ends."""
+    done, _pending = await asyncio.wait(critical_tasks, return_when=asyncio.FIRST_COMPLETED)
+    failed_workers = done - {browser_task, lifetime_task}
+    for task in failed_workers:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _LOGGER.warning("HA softphone %s media task failed call_id=%s task=%s error=%s",
+                            channel, call_id, task.get_name(), error)
+    if lifetime_task in done or failed_workers:
+        websocket.force_close()
+        if websocket_transport is not None:
+            websocket_transport.close()
+        browser_task.cancel()
+        await asyncio.gather(browser_task, return_exceptions=True)
+    if browser_task in done and not browser_task.cancelled():
+        browser_task.result()
+
+
+async def async_stop_media_workers(tasks, transports) -> bool:
+    """Close I/O before joining workers; report deferred caller cancellation."""
+    for task in tasks:
+        task.cancel()
+    for transport in transports:
+        if transport is not None:
+            transport.close()
+    try:
+        await async_wait_for_cleanup(asyncio.gather(*tasks, return_exceptions=True))
+    except asyncio.CancelledError:
+        return True
+    return False
+
+
 @dataclass(slots=True)
 class MediaWebSocketSession:
     """One claimed audio/video owner plus an optional local bridge lease."""
