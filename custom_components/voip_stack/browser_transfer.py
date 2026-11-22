@@ -62,7 +62,8 @@ class RetainedBrowserSource(PendingLocalSource):
         def done(_task=None):
             session = self.registry.get_session(self.token.call_id, generation=self.token.generation)
             if session is not None and session.live:
-                session.create_task(retire(), name="browser-transfer-retirement")
+                session.create_task(retire(),
+                    name=f"browser-transfer-retirement-{self.previous_client.dialog_ids.call_id}")
         if self.transaction is not None and not self.transaction.done():
             self.transaction.add_done_callback(done)
         else:

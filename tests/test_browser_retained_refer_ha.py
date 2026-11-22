@@ -12,6 +12,7 @@ from custom_components.voip_stack.roster import RosterEntry
 from .test_trunk_calls_ha import lab as lab, trunks as trunks
 from .test_automation_originate_ha import assert_call_resources_released
 from .test_sip_phone_transfers_ha import registered_phones as registered_phones
+from .test_phone_state_ha import phones as phones
 
 pytestmark = pytest.mark.ha
 
@@ -363,3 +364,177 @@ async def test_overlapping_route_publication_coalesces_without_cancelling_browse
         browser.force_close()
         media.cancel()
         await asyncio.gather(media, return_exceptions=True)
+
+
+@pytest.fixture
+async def browser_replacement_owner(hass, phones, socket_enabled, request):
+    from types import SimpleNamespace
+    from custom_components.voip_stack.core import sdp
+    from custom_components.voip_stack.core.sip_transfer import SipReplaces
+    from custom_components.voip_stack.sip_listener import SipInvite
+
+    calls = phones.calls
+    phones.runtime.transport_config.update(sip_port=5060, rtp_port=18000)
+    fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+    previous = SipInvite(source_host="127.0.0.1", source_port=5060,
+        request_uri=sip.parse_sip_uri("sip:kitchen@127.0.0.1"),
+        caller_uri=sip.parse_sip_uri("sip:office@127.0.0.1"), target="Kitchen", caller="Office",
+        call_id="answered-browser", cseq="1 INVITE", remote_sdp=(
+            "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Owned peer\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+            "m=audio 19000 RTP/AVP 96\r\na=rtpmap:96 L16/16000\r\na=ptime:20\r\n").encode(),
+        send_format=fmt, recv_format=fmt, remote_rtp_host="127.0.0.1", remote_rtp_port=19000,
+        identified_source_endpoint_id="office")
+    initial = "ringing" if getattr(request.node, "callspec", None) and request.node.callspec.params.get("failure") == "owner" else "in_call"
+    old = calls.upsert(previous.call_id, state=initial, owner="ha_softphone",
+        caller="Office", callee="Kitchen", source_endpoint_id="office", dest_endpoint_id="kitchen")
+    calls.claim_endpoint(old.call_id, "office", role="source")
+    calls.claim_endpoint(old.call_id, "kitchen", role="destination")
+    media = {"invite": previous, "local_rtp_port": 18000, "local_video_rtp_port": 0,
+             "endpoint_id": "kitchen", "media_client_id": "kitchen-owner"}
+    calls.attach_media(old.call_id, media)
+    from dataclasses import replace
+    invite = replace(previous, call_id="browser-successor",
+                     replaces=SipReplaces(old.call_id, "local-tag", "remote-tag"))
+    return SimpleNamespace(hass=hass, calls=calls, runtime=phones.runtime, old=old,
+                           previous=previous, invite=invite, media=media)
+
+
+@pytest.mark.parametrize("failure", ["video", "owner", "claim", "answer", "upsert", "publish"])
+async def test_rejected_browser_replacement_releases_automatic_grant_and_allows_retry(browser_replacement_owner, monkeypatch, failure):
+    from dataclasses import replace
+    from custom_components.voip_stack import browser_replacement, call_replaces
+    from custom_components.voip_stack.core import sdp
+    from custom_components.voip_stack.core.sip_transfer import SipReferTarget
+
+    lab = browser_replacement_owner
+    candidate = lab.invite
+    if failure == "video":
+        candidate = replace(candidate, video_format=sdp.RtpVideoFormat(103, "VP8"))
+    elif failure == "claim":
+        lab.calls.release_endpoint_claim(lab.old.call_id, "kitchen")
+    with monkeypatch.context() as inject:
+        if failure in {"answer", "upsert", "publish"}:
+            def fail(*_args, **_kwargs):
+                raise ValueError("injected preparation failure")
+            if failure == "publish":
+                snapshot = lab.calls._state_snapshot
+                fired = False
+                def fail_publication(session):
+                    nonlocal fired
+                    if session.call_id == lab.invite.call_id and not fired:
+                        fired = True
+                        raise ValueError("injected preparation failure")
+                    return snapshot(session)
+                inject.setattr(lab.calls, "_state_snapshot", fail_publication)
+            else:
+                inject.setattr(browser_replacement if failure == "answer" else lab.calls,
+                               "build_answer_directional" if failure == "answer" else "upsert", fail)
+            with pytest.raises(ValueError, match="injected preparation failure"):
+                await call_replaces._prepare_replacement_locked(lab.hass, candidate, "127.0.0.1", lab.previous)
+        else:
+            result = await call_replaces._prepare_replacement_locked(lab.hass, candidate, "127.0.0.1", lab.previous)
+            assert result.status == 488
+    assert lab.calls.resource_for(lab.old.call_id, "replacement_grant") is None
+    assert lab.old.live and list(lab.calls.sessions.values()) == [lab.old]
+    assert lab.calls.resource_for(lab.old.call_id, "softphone_media") is lab.media
+    assert not lab.runtime.rtp_port_pool.get("used")
+    lab.calls.transition(lab.old.call_id, state="in_call")
+    lab.calls.claim_endpoint(lab.old.call_id, "kitchen", role="destination")
+    monkeypatch.setattr(call_replaces, "replacement_invite", lambda _runtime, key:
+                        lab.previous if key == lab.invite.replaces else None)
+    retry = call_replaces.prepare_replacement_grant(lab.runtime, lab.old.call_id,
+        SipReferTarget("sip:kitchen@127.0.0.1", lab.invite.replaces), None)
+    assert retry.current(), "The rejected attempt must not block a new legitimate REFER with 491"
+    retry.release()
+    result = await call_replaces._prepare_replacement_locked(lab.hass, lab.invite, "127.0.0.1", lab.previous)
+    assert result.status == 200
+    await result.rollback()
+    assert lab.old.live and list(lab.calls.sessions.values()) == [lab.old]
+
+
+async def test_browser_replacement_rollback_cancellation_never_cancels_owned_cleanup(browser_replacement_owner):
+    from custom_components.voip_stack.call_replaces import _prepare_replacement_locked
+    from custom_components.voip_stack.endpoint_session import CleanupStage, TerminationIntent
+
+    lab = browser_replacement_owner
+    result = await _prepare_replacement_locked(lab.hass, lab.invite, "127.0.0.1", lab.previous)
+    assert result.status == 200
+    new = lab.calls.get_session(lab.invite.call_id)
+    entered, release = asyncio.Event(), asyncio.Event()
+    closed = []
+    async def close(reason):
+        closed.append(reason)
+        entered.set()
+        await release.wait()
+    new.add_resource("blocked-replacement-cleanup", release, close, stage=CleanupStage.MEDIA)
+    rollback = asyncio.create_task(result.rollback())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        barrier = lab.calls.request_termination(new.call_id, TerminationIntent("replacement_failed"))
+        rollback.cancel()
+        await asyncio.sleep(0)
+        rollback.cancel()
+        await asyncio.sleep(0)
+        assert not rollback.done() and barrier.cancelling() == 0
+        release.set()
+        completed = (await asyncio.gather(rollback, return_exceptions=True))[0]
+        assert isinstance(completed, asyncio.CancelledError)
+        assert new.terminated.is_set() and closed == ["replacement_failed"]
+        await result.rollback()
+        assert lab.old.live and list(lab.calls.sessions.values()) == [lab.old]
+        assert lab.calls.resource_for(lab.old.call_id, "softphone_media") is lab.media
+        assert lab.calls.resource_for(lab.old.call_id, "replacement_grant") is None
+    finally:
+        release.set()
+        await asyncio.gather(rollback, return_exceptions=True)
+
+
+async def test_consecutive_browser_transfer_retirements_keep_distinct_owned_tasks(hass, phones):
+    from custom_components.voip_stack.browser_transfer import RetainedBrowserSource
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from .test_ha_call_transfer import _established
+
+    calls = phones.calls
+    session = calls.upsert("retained-browser", state="in_call", owner="ha_softphone",
+        caller="Office", callee="Kitchen", source_endpoint_id="office", target_endpoint_id="kitchen")
+    calls.claim_endpoint(session.call_id, "office", role="source")
+    gates = [asyncio.Event(), asyncio.Event()]
+    entered = [asyncio.Event(), asyncio.Event()]
+    closed, clients = [], []
+    try:
+        for index in range(2):
+            wire = f"retired-operator-{index}"
+            client = _established(wire, f"remote-{index}", "kitchen")
+            clients.append(client)
+            session.update_metadata(target_endpoint_id="kitchen")
+            calls.add_leg(session.call_id, wire, role="callee", state="in_call")
+            calls.attach_sip_client(session.call_id, wire, client, role="callee", state="in_call")
+            async def close(_reason, index=index):
+                closed.append(index)
+                entered[index].set()
+                await gates[index].wait()
+            session.legs[wire].closer = close
+            source = RetainedBrowserSource(hass, session, client, "127.0.0.1", 5060)
+            source.transaction = None
+            source.commit()
+            source.after_refer(source.close_referrer)
+            await asyncio.wait_for(entered[index].wait(), 2)
+        tasks = tuple(task for name, task in session.named_tasks.items()
+                      if name.startswith("browser-transfer-retirement"))
+        assert len(tasks) == 2 and len({task.get_name() for task in tasks}) == 2
+        teardown = calls.request_termination(session.call_id, TerminationIntent("test_done"))
+        await asyncio.sleep(0)
+        assert not teardown.done() and sorted(closed) == [0, 1]
+        for gate in gates:
+            gate.set()
+        await asyncio.wait_for(teardown, 2)
+        assert all(task.done() for task in tasks) and sorted(closed) == [0, 1]
+        assert not calls.sessions and not calls.endpoint_claims_snapshot()
+    finally:
+        for gate in gates:
+            gate.set()
+        leftovers = [task for task in asyncio.all_tasks() if task.get_name().startswith("browser-transfer-retirement")]
+        if leftovers:
+            await asyncio.gather(*leftovers, return_exceptions=True)
+        for client in clients:
+            await client.close()
