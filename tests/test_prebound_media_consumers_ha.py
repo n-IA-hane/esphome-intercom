@@ -81,17 +81,17 @@ async def test_public_automation_reads_first_peer_packet_once_on_reserved_fd(lab
     sockets = observe_reserved_sockets(monkeypatch)
     phone = lab.phones[0]
     captured, decoded, consumed = {}, [], []
-    payload = struct.pack("!320h", *([2345] * 320))
+    peer_payload = struct.pack("!320h", *([2345] * 320))
     expected = struct.pack("<320h", *([2345] * 320))
-    original_decode = RtpAudioReceiver.decode
+    original_decode_packet = RtpAudioReceiver.decode_packet
 
-    def decode(receiver, pt, value):
-        result = original_decode(receiver, pt, value)
-        if value == payload:
-            decoded.extend(result)
+    def decode_packet(receiver, payload_type: int, payload: bytes) -> bytes:
+        result = original_decode_packet(receiver, payload_type, payload)
+        if payload == peer_payload:
+            decoded.append(result)
         return result
 
-    monkeypatch.setattr(RtpAudioReceiver, "decode", decode)
+    monkeypatch.setattr(RtpAudioReceiver, "decode_packet", decode_packet)
     original_packet = local_call_media._LocalRtpProtocol.datagram_received
 
     def packet(protocol, raw, address):
@@ -113,7 +113,7 @@ async def test_public_automation_reads_first_peer_packet_once_on_reserved_fd(lab
             assert offered["ptime"] > 0 and offered["maxptime"] >= 20
             captured["receive_bytes"] = int(offered["ptime"] * 16 * 2)
             captured.update(port=port, socket=sockets[port], fd=sockets[port].fileno())
-            captured["raw"] = rtp.build_packet(rtp.RtpPacket(pt, 4001, 320, 0x314159, payload))
+            captured["raw"] = rtp.build_packet(rtp.RtpPacket(pt, 4001, 320, 0x314159, peer_payload))
             if arrival == "invite":
                 phone.rtp_socket.sendto(captured["raw"], ("127.0.0.1", port))
                 assert captured["socket"].recv(4096, socket.MSG_PEEK) == captured["raw"]
@@ -129,7 +129,11 @@ async def test_public_automation_reads_first_peer_packet_once_on_reserved_fd(lab
         assert media.transport.get_extra_info("socket").fileno() == captured["fd"]
         assert consumed == [captured["raw"]]
         assert b"".join(decoded) == expected
-        assert all(len(frame) == captured["receive_bytes"] for frame in decoded)
+        assert decoded == [expected]  # One validated 16 kHz/20 ms native PCM packet.
+        # The validated packet precedes duration conversion. Keep the local
+        # receive quantum tied to the actual SDP, independently of wire ptime.
+        assert media.decoder.selected_format.audio_format.nominal_frame_bytes == captured["receive_bytes"]
+        assert media.rx_converter.src.nominal_frame_bytes == captured["receive_bytes"]
         await lab.calls.terminate_call_wait(result["call_id"], reason="test_done")
         assert captured["socket"].fileno() < 0
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
