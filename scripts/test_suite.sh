@@ -167,6 +167,7 @@ ha_tests=(
   tests/test_inbound_did_ha.py
   tests/test_inbound_did_bridge_ha.py
   tests/test_paging_ha.py
+  tests/test_paging_autoanswer_interop_ha.py
   tests/test_browser_paging_ha.py
   tests/test_browser_paging_source_ha.py
   tests/test_queue_call_ha.py

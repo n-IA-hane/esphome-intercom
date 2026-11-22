@@ -1716,6 +1716,12 @@ class SipCallClient:
         headers.extend(("Route", value) for value in routing.route_headers)
         if getattr(self, "_pending_answer_mode", ""):
             headers.append(("Answer-Mode", self._pending_answer_mode))
+            if self._pending_answer_mode == "Auto":
+                # Explicit intercom requests also support legacy SIP phones.
+                headers.extend([
+                    ("Call-Info", f"<{self._pending_local_uri}>;answer-after=0"),
+                    ("Alert-Info", "<http://127.0.0.1>;info=alert-autoanswer;delay=0"),
+                ])
         if self.include_route_metadata:
             caller_name = _sip_header_token(self.local_name)
             dest_name = _sip_header_token(self._pending_target_display)
