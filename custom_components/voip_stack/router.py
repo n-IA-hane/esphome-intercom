@@ -237,6 +237,14 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
         directory_target = matches[0]
     target_class = classify_target(target)
     if target_class is TargetClass.SIP_URI:
+        uri = to_sip_uri(target)
+        # Only the complete configured address inherits phonebook policy and access.
+        matches = [entry for entry in entries if _entry_uri(entry) and to_sip_uri(_entry_uri(entry)) == uri]
+        if len(matches) > 1:
+            return RouteDecision(RouteAction.REJECT, target=target, status=485,
+                                 reason=RouteReason.AMBIGUOUS_DESTINATION, source="phonebook")
+        if matches:
+            return _route_ha_entry(matches[0], target, trunk_ready=trunk_ready)
         return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
     try:
         entry = directory_target or find_entry(
