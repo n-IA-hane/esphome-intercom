@@ -159,9 +159,14 @@ async def test_bridge_keeps_each_legs_own_negotiated_audio(
         )), ("127.0.0.1", target_port))
         async with asyncio.timeout(2):
             returned = [rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096)) for _ in range(2)]
-        # Nominal TX follows the answer; the real packets above retain source_ms.
-        assert (caller.dialog.send_format.sample_rate, caller.dialog.send_format.frame_ms) == (
-            source_rate, sdp.parse_sdp(observed["source_answer"])["ptime"])
+        # T1 honors the remote RX request only inside the sender's hard budget.
+        requested_ms = sdp.parse_sdp(observed["source_answer"])["ptime"]
+        assert caller.dialog.send_format.sample_rate == source_rate
+        if source_rate * requested_ms * 2 // 1000 <= 1200:
+            assert caller.dialog.send_format.frame_ms == requested_ms
+        else:
+            assert caller.dialog.send_format.frame_ms == 10
+            assert source_rate * caller.dialog.send_format.frame_ms * 2 // 1000 <= 1200
         # HA must retain the already accepted destination receiver.
         assert (relay.right.outbound_rtp_format.sample_rate, relay.right.outbound_rtp_format.frame_ms) == (destination_rate, 10)
         assert all(len(packet.payload) == destination_rate * 10 // 1000 * 2 for packet in forwarded)
@@ -171,7 +176,8 @@ async def test_bridge_keeps_each_legs_own_negotiated_audio(
         if source_rate == destination_rate:
             assert b"".join(packet.payload for packet in forwarded) == forward
         if source_rate == destination_rate == 48000:
-            assert forwarded[0].payload == forward
+            assert [packet.payload for packet in forwarded] == [
+                forward[offset:offset + 960] for offset in range(0, len(forward), 960)]
         # The caller offered 48 kHz first for its receiver: it gets that, at 10 ms,
         # whatever the destination transmits. HA converts instead of lowering the leg.
         assert (relay.left.outbound_rtp_format.sample_rate, relay.left.outbound_rtp_format.frame_ms) == (48000, 10)

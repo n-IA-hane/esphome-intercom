@@ -99,12 +99,19 @@ def test_complete_known_peer_excluding_l24_is_not_expanded():
     evidence = PeerEvidence.from_tokens(
         ["PCMU/8000/1/20"], ["PCMU/8000/1/20"], complete=True
     )
+    with pytest.raises(ValueError, match="No enabled audio codec"):
+        # Complete evidence narrows the enabled catalogue; it cannot add PCMU
+        # when the caller explicitly leaves common-codec expansion disabled.
+        negotiator.create_offer(HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS, evidence,
+            codec_policy=CodecPolicy(audio=("PCMU", "L24")), capabilities=HA_AUDIO_CAPABILITIES,
+            common=False)
     reduced = negotiator.create_offer(
         HA_SIP_PCM_TX_FORMATS,
         HA_SIP_PCM_RX_FORMATS,
         evidence,
         codec_policy=CodecPolicy(audio=("PCMU", "L24")),
         capabilities=HA_AUDIO_CAPABILITIES,
+        common=True,
     )
     assert {mapping[0] for _, mapping in reduced.payloads} == {
         "PCMU",
@@ -117,6 +124,7 @@ def test_complete_known_peer_excluding_l24_is_not_expanded():
             evidence,
             codec_policy=CodecPolicy(audio=("L24",)),
             capabilities=HA_AUDIO_CAPABILITIES,
+            common=True,
         )
 
 

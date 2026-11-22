@@ -57,11 +57,14 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
     runtime.runtime.trunk_configs.pop('work')
     runtime.runtime.trunk_configs['home'].update(trunk_inbound_mode='direct',trunk_inbound_default_target='caps')
     if narrow_presets:
-        endpoint=sip_trunks(runtime.hass)['home'].inbound_endpoint
-        assert endpoint is not None
+        from custom_components.voip_stack.runtime_data import sip_endpoint_manager
+
         # Presets rank this actual listener's admission; its HA backend is dynamic.
-        monkeypatch.setattr(endpoint,'supported_send_formats',[AudioFormat(48000,'s16le',1,10)])
-        monkeypatch.setattr(endpoint,'supported_recv_formats',[AudioFormat(48000,'s16le',1,10)])
+        endpoints=tuple(sip_endpoint_manager(runtime.hass)._dialog_endpoints())
+        assert endpoints
+        for endpoint in endpoints:
+            monkeypatch.setattr(endpoint,'supported_send_formats',[AudioFormat(48000,'s16le',1,10)])
+            monkeypatch.setattr(endpoint,'supported_recv_formats',[AudioFormat(48000,'s16le',1,10)])
     target_audio=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     target_audio.bind(('127.0.0.1',0))
     target_audio.setblocking(False)
@@ -91,6 +94,7 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
     monkeypatch.setattr(caller,'_build_pending_invite',build)
     def select(invite,dialog):
         observed['source_before']=asdict(invite.recv_format)
+        observed['receive_presets']=[fmt.wire_token() for fmt in invite.local_recv_capabilities]
         result=original_select(invite,dialog)
         observed['source_after']=asdict(result.recv_format)
         return result
@@ -114,8 +118,10 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         observed['relay_receiver']=asdict(relay.left.inbound_rtp_format)
         receive_limit=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(relay.left.inbound_rtp_format)
         assert receive_limit==128
-        assert sdp.parse_sdp(observed['answer'])['ptime']==20
+        if narrow_presets:
+            assert observed['receive_presets']==['48000:s16le:1:10']
         assert sdp.parse_sdp(observed['answer'])['maxptime']==128
+        assert sdp.parse_sdp(observed['answer'])['ptime']==20
         assert observed['source_before']['max_frame_ms']==observed['source_after']['max_frame_ms']==128
         values=tuple(range(-480,480))
         payload=struct.pack('!960h',*values)
@@ -151,6 +157,13 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         updated=owner.invite_for_call(session.call_id)
         assert updated.local_recv_capabilities==original_capabilities and updated.recv_format.max_frame_ms==receive_limit
         assert updated.local_audio_capabilities is original_backend
+        # Exercise the real snapshot/diagnostics consumers without a serializer shim.
+        from custom_components.voip_stack.diagnostics import async_get_config_entry_diagnostics
+        from custom_components.voip_stack.store import config_entry
+        assert 'local_audio_capabilities' not in json.dumps(runtime.calls.snapshot())
+        diagnostics=await async_get_config_entry_diagnostics(runtime.hass,config_entry(runtime.hass))
+        assert 'local_audio_capabilities' not in json.dumps(diagnostics)
+        assert 'local_audio_capabilities' not in config_entry(runtime.hass).data
         assert relay.left.inbound_rtp_format.max_frame_ms==receive_limit
         assert relay.right.outbound_rtp_format.frame_ms==10 and relay.right.outbound_rtp_format.max_frame_ms==10
         again=rtp.build_packet(rtp.RtpPacket(126,124,24960,9876,payload[:960]))[:12]+payload
@@ -159,7 +172,6 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         assert [len(item.payload) for item in resumed]==[960,960]
         assert b''.join(item.payload for item in resumed)==payload
         from custom_components.voip_stack.parking import park_established_sip_call,get_parking_lot
-        from custom_components.voip_stack.store import config_entry
         entry=config_entry(runtime.hass)
         runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
         parked=await park_established_sip_call(runtime.hass,session.call_id,'caps')
@@ -251,5 +263,9 @@ def test_bridge_receive_geometry_changes_only_when_conversion_count_improves(
 
     assert (selected is invite)==kept
     assert selected.send_format.sample_rate==selected.recv_format.sample_rate==48000
-    assert selected.send_format.frame_ms==selected.recv_format.frame_ms==10
+    assert selected.send_format.frame_ms==10  # The peer's receiver asks for10ms.
+    assert selected.recv_format.frame_ms==(10 if kept else 20)  # Keep admitted RX, else apply R1.
+    answer=sdp.build_answer_directional('127.0.0.1','127.0.0.1',40000,
+        selected.send_format,selected.recv_format,remote_sdp=body)
+    assert re.search(rf'^a=ptime:{10 if kept else 20}\r?$',answer,re.MULTILINE)
     assert selected.recv_format.payload_type==96

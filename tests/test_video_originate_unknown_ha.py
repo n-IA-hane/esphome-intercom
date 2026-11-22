@@ -1,6 +1,7 @@
 """A compliant independent UDP peer proves unknown-video offer policy publicly."""
 
 import asyncio
+import re
 import secrets
 import socket
 import struct
@@ -375,7 +376,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         local_rtp_port=source_audio.getsockname()[1],
         supported_send_formats=[AudioFormat(16000, frame_ms=10)],
         supported_recv_formats=[AudioFormat(48000, frame_ms=10)],
-        allow_directional_audio_payloads=True,
+        supported_recv_rtp_formats=(sdp.RtpPcmFormat(97, 'L16', 48000, 1, 10),),
+        allow_directional_audio_payloads=True, independent_audio_ptime=True,
         local_video_rtp_port=source_video.getsockname()[1], video_formats=(jpeg,), video_direction=direction)
     observed = {}
 
@@ -487,6 +489,10 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         assert caller.dialog.send_format.sample_rate == 16000
         assert caller.dialog.recv_format.sample_rate == 48000
         assert caller.dialog.send_format.frame_ms == 20
+        # The exact wire offer, rather than a PCM preset, authorizes RX10.
+        caller_offer = lab.calls.get_session(call_id).artifacts.caller_invite.remote_sdp
+        assert b'a=x-voip-stack-independent-ptime:1\r\n' in caller_offer
+        assert re.search(rb'^a=ptime:10\r?$', caller_offer, re.MULTILINE)
         assert caller.dialog.recv_format.frame_ms == 10
         relay = lab.calls.resource_for(call_id, 'relay')
         if has_video:

@@ -65,7 +65,7 @@ PROFILES = {
 }
 # One RTP packet must fit an Ethernet frame with its headers.
 PAYLOAD_BUDGET_BYTES = 1200
-# Packet time used when the peer states none: 10 ms at 48 kHz, 20 ms otherwise.
+# TX fallback when the peer states none: 10 ms at 48 kHz, 20 ms otherwise.
 DEFAULT_PACKET_MS = {48000: 10, 16000: 20, 8000: 20}
 
 
@@ -168,12 +168,16 @@ def test_every_offer_is_answered_within_the_wire_rules(profile):
 
 @pytest.mark.parametrize("name", ["L16/8000", "L16/16000", "L16/48000", "PCMU", "PCMA", "G722"])
 def test_packet_time_defaults_follow_the_sample_rate(name):
-    """Without ptime or maxptime from the peer, each rate has one packet time."""
+    """TX respects its wire budget; R1 keeps the independent default RX20 policy."""
     invite = parse_offer(offer_sdp((name,), None, None), "phone")
     assert invite is not None
     decoded_rate = invite.send_format.audio_format.sample_rate
     assert invite.send_format.frame_ms == DEFAULT_PACKET_MS[decoded_rate], describe(invite.send_format)
-    assert invite.recv_format.frame_ms == DEFAULT_PACKET_MS[decoded_rate], describe(invite.recv_format)
+    assert invite.recv_format.frame_ms == 20, describe(invite.recv_format)
+    answer = sdp.build_answer_directional('127.0.0.1', '127.0.0.1', 40000,
+        invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp)
+    assert 'a=ptime:20\r\n' in answer
+    assert invite.recv_format.max_frame_ms == HA_AUDIO_CAPABILITIES.max_receive_packet_ms(invite.recv_format)
 
 
 DESTINATIONS = {
