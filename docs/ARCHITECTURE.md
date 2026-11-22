@@ -117,7 +117,7 @@ core owns its participants, media resources and termination.
 | Operation | Implementation | State and resource owner |
 | --- | --- | --- |
 | SDP interpretation | `core/sdp_document.py`, `core/sdp_parser.py` | An immutable input document retains the raw text and ordered media lines. |
-| Audio and video negotiation | `core/sdp_audio.py`, `core/sdp_video.py` | Functions return media contracts; the SIP dialog commits the selected contract. |
+| Audio and video negotiation | `core/media/leg.py`, `core/media/negotiator.py`, `core/sdp_video.py` | One engine returns media contracts; the SIP dialog commits the selected contract. Neutral audio facts live below the engine in `core/sdp_audio_facts.py`. |
 | SDP serialization | `core/sdp_composer.py` | Offers and answers use the negotiated contracts and the existing payload order. |
 | Initial outgoing INVITE | `sip_client.py`, `sip_invite_exchange.py` | `SipCallClient` owns the socket, transaction and dialog. `InviteExchange` contains temporary request and next-hop data. |
 | Forwarding | `call_forwarder.py`, `forward_plan.py`, `forward_operation.py`, `forward_group.py` | The existing call session owns one forward task, staged media, rollback and cleanup. |
@@ -127,6 +127,8 @@ core owns its participants, media resources and termination.
 | ESPHome account provisioning | `esphome_provisioning.py`, `esphome_native.py` | The provisioner checks its revision and borrows the MAC-verified native connection and action inventory. Ordinary user commands use public HA services. |
 | Browser audio | `voip-stack-engine.js`, `voip-stack-audio-session.js` | The engine owns the call and socket; `BrowserAudioSession` owns the physical audio graph, tracks and worklets. |
 | Browser video | `voip-stack-video.js`, `voip-stack-video-sender.js`, `voip-stack-video-receiver.js` | One parent owns the socket and common generation. Sender and receiver own camera/encoder and decoder/presentation resources respectively. |
+| Browser video on HA | `video_ws_view.py`, `video_ws_io.py`, `video_rtp_keepalive.py`, `media_ws_session.py` | The existing media session owns resources. Bounded datagram admission, partial acquisition rollback, RTP keepalives and worker shutdown have separate implementation boundaries. |
+| Queue configuration | `queue_policy.py`, `group_config.py`, `call_queues.py` | Configuration and runtime share one immutable policy parser; waiting, reservation, offer and conversation ownership remain distinct. |
 
 `core.sdp` is the public import entry point for SDP. Its exports refer to the
 same functions and immutable types implemented in the leaf modules. The parser,

@@ -129,7 +129,7 @@ produces a failed source comparison. To repeat
 an exact run, select its backend revision and supply the complete artifact JSON
 as the manual workflow's `component_manifest` input.
 
-`software-full` verifies the official ESPHome revision in
+`software-full` first runs the same pinned Ruff command as CI, then verifies the official ESPHome revision in
 `requirements-firmware-test.txt` before collecting the firmware-backed tests.
 The mutation score includes changes that have no covering test in its denominator.
 
@@ -146,6 +146,18 @@ checkout. This checkout manifest complements the local `candidate-lock.json`,
 which also records toolchain and dependency identities. Neither manifest is a
 physical qualification receipt. Replay a historical manifest with the matching
 runner/schema rather than treating it as a current partial manifest.
+
+A publishable candidate requires clean coordinated repositories. Diagnostic
+locks created with `--allow-dirty` also hash tracked and nonignored untracked
+input bytes, executable modes and deletions. Editing the same checkout changes
+its candidate identity even when its commit does not change.
+
+The release packager accepts only the integration directory of the recorded
+commit and rejects modified, missing or extra package files. It reads archive
+bytes and LICENSE from immutable Git objects. Package manifests use schema 2;
+the release verifier independently compares every ZIP member to the tag tree,
+in addition to checking archive hashes, qualification and exact CI sources.
+Matching metadata or an archive hash alone cannot qualify unrelated source.
 
 The ESP component's `contract` job uploads `native.xml`. Its permanent REFER
 socket regressions exercise production response dispatch and retired-transaction

@@ -41,6 +41,21 @@ A softphone named `Casa` gets the SIP username `Casa`. A softphone named
 had no SIP credentials. VoIP Stack creates a password when one is
 needed and keeps any existing credentials. The card signs in through HA.
 
+Configuration upgrade 7.3 preserves every saved login, including values that
+resemble retired generated names. A migration association does not prove who
+chose the current login. Upgrades from older versions follow the same rule;
+new accounts without an explicit login still derive it from their name.
+An account routing conflict is reported in Home Assistant Repairs. Correct the
+conflicting configuration, then confirm its retry action to ask HA to repeat
+the migration. A retry does not invent replacement credentials.
+
+Account snapshots and updates contain only calls belonging to the selected
+account. Global diagnostics require their administrative interface; enabling
+debug logging does not broaden an account reader's permissions. A held call
+remains active: its duration and permitted Hang up action stay available until
+the call actually ends. Merely observing the account does not acquire browser
+microphone or media ownership.
+
 Existing card configurations, including `mode: ha_softphone`, `card_mode` and
 `device_id`, keep their meaning. ESP mirror and directory cards retain their own
 roles. The integration and frontend update together; reload an already open HA

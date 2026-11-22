@@ -321,6 +321,11 @@ ha_tests=(
   tests/test_softphone_video_intent_concurrency_ha.py
   tests/test_video_keepalive_runtime.py
   tests/test_video_socket_gap.py
+  tests/test_video_io_lifecycle_ha.py
+  tests/test_media_sip_audit_regressions_ha.py
+  tests/test_account_projection_privacy_ha.py
+  tests/test_held_account_projection_ha.py
+  tests/test_replaces_route_projection_ha.py
   tests/test_video_transcoder.py
   tests/test_sip_video_relay.py
   tests/test_accept_video_service_ha.py
@@ -370,6 +375,7 @@ case "$MODE" in
     pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow and not diagnostic_reference")
     ;;
   software-full)
+    "$PYTHON" -m ruff check custom_components/voip_stack scripts tests tools/esp_profile.py
     "$PYTHON" - <<'PY'
 import importlib.metadata
 import json
