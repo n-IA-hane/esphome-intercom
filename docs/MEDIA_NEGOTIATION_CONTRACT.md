@@ -1,10 +1,8 @@
 # Media negotiation contract
 
-Status: the leg engine and complete outgoing offer planner are connected to the production
-SDP entry points and enabled by default in the local consolidation candidate. The candidate
-is not promoted until its frozen software and device qualification completes. Every production
-adapter uses this single engine. Historical behavior remains only in the immutable corpus
-recording, with no runtime engine selector or parallel comparison algorithm.
+The leg engine and complete outgoing offer planner serve the production SDP entry points.
+Every adapter uses this single engine. Historical behavior remains only in the immutable
+corpus recording, with no runtime engine selector or parallel comparison algorithm.
 
 This is the single written contract for how VoIP Stack negotiates audio codecs, sample rates,
 packet times, payload numbers, DTMF and media direction on every SIP leg, in the Home Assistant
