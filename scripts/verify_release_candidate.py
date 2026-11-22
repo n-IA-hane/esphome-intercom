@@ -11,6 +11,10 @@ import subprocess
 import zipfile
 
 from scripts.package_release_candidate import sha256
+from scripts.release_source import committed_members, members_digest
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 REQUIRED_CI_JOBS = frozenset({
@@ -101,10 +105,12 @@ def verify_release(
     package: dict[str, object],
     qualification: dict[str, object],
     archive: Path,
+    *,
+    source_repository: Path = ROOT,
 ) -> list[str]:
     errors: list[str] = []
     archive_record = package.get("archive")
-    if package.get("schema_version") != 1:
+    if package.get("schema_version") != 2:
         errors.append("release package schema is unsupported")
     if qualification.get("schema_version") != 1:
         errors.append("qualification manifest schema is unsupported")
@@ -126,6 +132,18 @@ def verify_release(
         errors.append("release archive size differs from package manifest")
     if archive_record.get("sha256") != sha256(archive):
         errors.append("release archive hash differs from package manifest")
+    try:
+        expected = committed_members(source_repository, tag_sha)
+        if package.get("source_tree_sha256") != members_digest(expected):
+            errors.append("release source digest differs from the tag tree")
+        with zipfile.ZipFile(archive) as bundle:
+            names = bundle.namelist()
+            if len(names) != len(set(names)) or set(names) != {name for name, _ in expected}:
+                errors.append("release archive members differ from the tag tree")
+            elif any(bundle.read(name) != data for name, data in expected):
+                errors.append("release archive bytes differ from the tag tree")
+    except (OSError, ValueError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
+        errors.append(f"release source could not be verified: {type(error).__name__}")
     return errors
 
 
@@ -138,6 +156,7 @@ def main() -> int:
     parser.add_argument("--ci-run-id", type=int, required=True)
     parser.add_argument("--ci-ref", required=True)
     parser.add_argument("--repository", default="n-IA-hane/esphome-intercom")
+    parser.add_argument("--source-repository", type=Path, default=ROOT)
     args = parser.parse_args()
     qualification = json.loads(args.qualification.read_text(encoding="utf-8"))
     errors = verify_release(
@@ -145,6 +164,7 @@ def main() -> int:
         json.loads(args.package.read_text(encoding="utf-8")),
         qualification,
         args.archive,
+        source_repository=args.source_repository,
     )
     try:
         run, jobs = load_ci_run(args.repository, args.ci_run_id)

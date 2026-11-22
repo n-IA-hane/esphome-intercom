@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
@@ -40,10 +41,34 @@ def _run(*command: str, cwd: Path | None = None) -> str:
 def _repository(path: Path) -> dict[str, object]:
     if not _is_worktree(path):
         raise RuntimeError(f"candidate repository is unavailable: {path}")
-    return {
+    record = {
         "commit": _run("git", "rev-parse", "HEAD", cwd=path),
         "dirty": bool(_run("git", "status", "--porcelain", cwd=path)),
     }
+    if record["dirty"]:
+        record["worktree_sha256"] = _worktree_digest(path)
+    return record
+
+
+def _worktree_digest(path: Path) -> str:
+    """Hash tracked and nonignored untracked inputs, including modes/deletions."""
+    listing = subprocess.check_output(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=path
+    )
+    index = []
+    for raw in sorted(set(filter(None, listing.split(b"\0")))):
+        item = path / os.fsdecode(raw)
+        if item.is_symlink():
+            mode, content = "120000", os.fsencode(os.readlink(item))
+        elif item.is_file():
+            mode = "100755" if item.stat().st_mode & 0o111 else "100644"
+            content = item.read_bytes()
+        elif not item.exists():
+            mode, content = "deleted", b""
+        else:
+            raise RuntimeError(f"unsupported candidate input: {os.fsdecode(raw)}")
+        index.append((raw.hex(), mode, hashlib.sha256(content).hexdigest()))
+    return hashlib.sha256(json.dumps(index, separators=(",", ":")).encode()).hexdigest()
 
 
 def _is_worktree(path: Path) -> bool:

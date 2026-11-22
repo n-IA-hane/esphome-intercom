@@ -29,12 +29,14 @@ def _records(archive: Path) -> tuple[dict[str, object], dict[str, object]]:
     return package, qualification
 
 
-def test_exact_qualified_release_archive_is_accepted(tmp_path: Path) -> None:
+def test_hash_only_archive_is_not_a_source_attestation(tmp_path: Path) -> None:
     archive = tmp_path / "voip_stack.zip"
     archive.write_bytes(b"qualified archive")
     package, qualification = _records(archive)
 
-    assert verify_release("head", package, qualification, archive) == []
+    errors = verify_release("head", package, qualification, archive)
+    assert "release package schema is unsupported" in errors
+    assert any(error.startswith("release source could not be verified:") for error in errors)
 
 
 def test_wrong_tag_or_modified_archive_is_rejected(tmp_path: Path) -> None:

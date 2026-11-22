@@ -8,8 +8,9 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts.build_hacs_zip import build_archive
+from scripts.build_hacs_zip import write_archive
 from scripts.candidate_lock import candidate_id as compute_candidate_id
+from scripts.release_source import members_digest, source_members
 
 
 def sha256(path: Path) -> str:
@@ -38,11 +39,19 @@ def package_candidate(
         raise RuntimeError("candidate identity is invalid")
     if not head or intercom.get("commit") != head:
         raise RuntimeError("release package does not match candidate head")
-    build_archive(source, archive)
+    if any(not isinstance(record, dict) or record.get("dirty") is not False
+           for record in repositories.values()):
+        raise RuntimeError("release packages require clean coordinated sources")
+    archive = archive.resolve()
+    if source.resolve() == archive or source.resolve() in archive.parents:
+        raise ValueError("release archive output must be outside the integration tree")
+    members = source_members(source, head)
+    write_archive(members, archive)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "head": head,
         "candidate_id": candidate_value,
+        "source_tree_sha256": members_digest(members),
         "archive": {
             "name": archive.name,
             "bytes": archive.stat().st_size,

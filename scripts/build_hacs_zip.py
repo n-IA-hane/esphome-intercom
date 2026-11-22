@@ -81,6 +81,12 @@ def build_archive(source: Path, output: Path) -> None:
     if source == output or source in output.parents:
         raise ValueError("release archive output must be outside the integration tree")
 
+    write_archive(_archive_members(source), output)
+
+
+def write_archive(members: list[tuple[str, bytes]], output: Path) -> None:
+    """Write already captured source bytes without reopening mutable inputs."""
+
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp")
     temporary.unlink(missing_ok=True)
@@ -91,7 +97,7 @@ def build_archive(source: Path, output: Path) -> None:
             compression=zipfile.ZIP_DEFLATED,
             compresslevel=9,
         ) as archive:
-            for name, data in _archive_members(source):
+            for name, data in members:
                 info = zipfile.ZipInfo(name, date_time=ARCHIVE_TIMESTAMP)
                 info.create_system = 3
                 info.compress_type = zipfile.ZIP_DEFLATED
