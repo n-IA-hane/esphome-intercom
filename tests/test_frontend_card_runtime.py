@@ -493,6 +493,25 @@ ws3Mirror._onMirroredBridgeStateEvent({{ data: {{
   peer_name: "Waveshare S3 Audio", dest_device_id: "device-ws3",
 }} }});
 assert.equal(ws3Mirror._mirroredConnectedPeer, "CG Casa");
+// Mirror labels follow the actual answering endpoint during establishment,
+// hold and answer progress, and retire it when the next call starts ringing.
+for (const state of ["in_call", "held", "answering"]) {{
+  const groupMirror = makeCard();
+  groupMirror.config = {{mode:"esp_mirror", name:"Kitchen"}};
+  groupMirror._activeDeviceInfo = {{device_id:"device-kitchen",name:"Kitchen",softphone:false}};
+  groupMirror._getEspState = () => state;
+  groupMirror._mirroredConnectedPeer = "Family Ring";
+  groupMirror._onMirroredBridgeStateEvent({{data:{{scope:"sip_bridge",state,
+    call_id:"group-answer",direction:"outgoing",caller:"Kitchen",callee:"Family Ring",
+    connected_party:"Office",answered_by:"Office",source_device_id:"device-kitchen"}}}});
+  assert.equal(groupMirror._mirroredConnectedPeer,"Office");
+  if (state !== "answering") assert.equal(groupMirror._mirroredCallId,"group-answer");
+  assert.equal(groupMirror._lastEndInfo,null);
+  groupMirror._onMirroredBridgeStateEvent({{data:{{scope:"sip_bridge",state:"ringing",
+    call_id:"next-call",source_device_id:"device-kitchen"}}}});
+  assert.equal(groupMirror._mirroredConnectedPeer,"");
+  assert.equal(groupMirror._mirroredCallId,"");
+}}
 ws3Mirror._videoSendSwitchEntityId = "switch.p4_send_video";
 ws3Mirror._hass.states["switch.p4_send_video"] = {{ state: "on" }};
 const mirrorVideoCallsBefore = serviceCalls.length;

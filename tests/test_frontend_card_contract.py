@@ -806,7 +806,9 @@ class FrontendCardContractTest(unittest.TestCase):
     def test_ring_group_mirror_replaces_group_with_answering_endpoint(self) -> None:
         source = CARD.read_text()
         handler = _method_body(source, "_onMirroredBridgeStateEvent")
-        self.assertIn('state === "in_call" || state === "answering"', handler)
+        self.assertIn('isEstablishedCallState(state) || state === "answering"', handler)
+        self.assertIn('export function isEstablishedCallState(state)', self.model_source)
+        self.assertIn('["in_call", "held"].includes(', self.model_source)
         self.assertIn("mirroredEndpointPeerLabel", handler)
         self.assertIn('this._mirroredConnectedPeer = ""', handler)
         self.assertIn(

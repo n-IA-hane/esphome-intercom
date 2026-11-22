@@ -268,8 +268,29 @@ class GroupCallMatrixTest(unittest.TestCase):
 
     def test_debug_snapshot_exposes_cleanup_ownership_only_when_enabled(self) -> None:
         hass = _FakeHass()
-        hass.runtime.media.owners["audio"] = {"audio-call": object()}
-        hass.runtime.media.owners["video"] = {"video-call": object()}
+        phone = _load_module("phone_endpoint").PhoneEndpoint
+        for endpoint_id in ("default", "foreign"):
+            hass.runtime.endpoints.register(phone(
+                endpoint_id=endpoint_id, name=endpoint_id.title(),
+                kind="sip_account", username=endpoint_id, availability="available",
+            ))
+        registry = websocket_api.call_registry(hass)
+        own_calls = ("audio-call", "video-call", "transcoded-call")
+        foreign_calls = ("foreign-audio-call", "foreign-video-call", "foreign-transcoded-call")
+        for endpoint_id, call_ids in (("default", own_calls), ("foreign", foreign_calls)):
+            for call_id in call_ids:
+                # Native accounts may retain established source dialogs while
+                # opening consultation calls. Claims remain session-owned.
+                registry.upsert(call_id, state="in_call", owner="bridge",
+                    source_endpoint_id=endpoint_id)
+                self.assertTrue(registry.claim_endpoint(call_id, endpoint_id, role="source"))
+                self.assertIn(endpoint_id, registry.get_session(call_id).endpoint_claims)
+        hass.runtime.media.owners["audio"] = {
+            "audio-call": object(), "foreign-audio-call": object(),
+        }
+        hass.runtime.media.owners["video"] = {
+            "video-call": object(), "foreign-video-call": object(),
+        }
         hass.runtime.media.transcoder = types.SimpleNamespace(
             call_id="transcoded-call"
         )
@@ -288,6 +309,16 @@ class GroupCallMatrixTest(unittest.TestCase):
             debug["media_debug"]["video_transcoder_call_id"],
             "transcoded-call",
         )
+        self.assertEqual(debug["media_debug"]["call_registry"]["call_ids"], sorted(own_calls))
+        self.assertEqual(
+            set(debug["media_debug"]["call_registry"]["endpoint_claims"]), set(own_calls),
+        )
+        hass.runtime.media.transcoder = types.SimpleNamespace(call_id="foreign-transcoded-call")
+        with patch.object(browser_phone_projection, "current_debug_mode", return_value=True):
+            foreign_transcoder = websocket_api._ha_softphone_state(hass, "default")
+        self.assertEqual(foreign_transcoder["media_debug"]["video_transcoder_call_id"], "")
+        self.assertEqual(foreign_transcoder["media_debug"]["audio_ws_owner_call_ids"], ["audio-call"])
+        self.assertEqual(foreign_transcoder["media_debug"]["video_ws_owner_call_ids"], ["video-call"])
 
     def test_unregistered_sip_accounts_are_not_exported_to_esp_phonebooks(
         self,
