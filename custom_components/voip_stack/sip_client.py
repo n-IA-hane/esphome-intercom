@@ -21,7 +21,6 @@ from .sip_invite_exchange import InviteExchange
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core.codec_capabilities import supports_dahua_pcm
-from .core.media.shadow import shadow_answer
 from .core.media.payload_map import PayloadConflict, PayloadMap, RtpMapping
 from .core.rtp_payload import (
     RtpPayloadDecoder as RtpPayloadDecoder,
@@ -1476,8 +1475,6 @@ class SipCallClient:
     ) -> tuple[SipDialog, str] | None:
         """Build the media replacement for a remote offer or delayed answer."""
 
-        from .core.media.shadow import engine_mode
-
         current = current or self.dialog
         if current is None:
             return None
@@ -1508,10 +1505,8 @@ class SipCallClient:
             )
             if selected is None:
                 return None
-            receive_formats = (selected.recv_formats if engine_mode() == "active" or local_offer_sdp
-                               else (selected.recv,))
-            send_formats = (selected.send_formats if engine_mode() == "active" or local_offer_sdp
-                            else (selected.send,))
+            receive_formats = selected.recv_formats
+            send_formats = selected.send_formats
             audio_payloads = _audio_payload_update(current.audio_payloads,
                 send=selected.send_formats or (selected.send,),
                 receive=receive_formats)
@@ -1594,11 +1589,9 @@ class SipCallClient:
             )
             if dtmf_direction is not None:
                 dtmf_recv, dtmf_send = dtmf_direction.recv, dtmf_direction.send
-            elif engine_mode() == "active":
+            else:
                 dtmf_recv = sdp.dtmf_format_for_clock(request.body, selected.recv.sample_rate)
                 dtmf_send = sdp.dtmf_format_for_clock(request.body, selected.send.sample_rate)
-            else:
-                dtmf_recv = dtmf_send = next(iter(dtmf_formats), None)
             answer = local_offer_sdp or sdp.build_answer_directional(
                 self.local_ip,
                 self.media_ip,
@@ -1906,7 +1899,24 @@ class SipCallClient:
                     return True
                 if rseq != previous + 1:
                     return False
+            if process_early_media and response.body and not self._commit_200_ok(
+                response,
+                self._pending_target,
+                self._pending_remote_host or addr[0],
+                self._pending_remote_sip_port,
+                self._pending_request_uri,
+                self._pending_local_uri,
+                self._pending_remote_uri,
+                provisional=True,
+            ):
+                return False
             current = self.dialog or self.early_dialogs.get(remote_tag)
+            prack_body = (
+                current.local_sdp_body.encode()
+                if process_early_media and self._initial_delayed_offer
+                and response.body and current is not None
+                else b""
+            )
             local_uri = (
                 current.local_uri if current is not None else self._pending_local_uri
             )
@@ -1941,6 +1951,8 @@ class SipCallClient:
                         f"{rseq} {invite_cseq.number} {invite_cseq.method}",
                     ),
                 ),
+                content_type="application/sdp" if prack_body else "",
+                body=prack_body,
             )
             next_host, next_port = self._dialog_next_hop(
                 request.routing.next_hop_uri,
@@ -1948,17 +1960,6 @@ class SipCallClient:
                 addr[1],
             )
         except (TypeError, ValueError, sip.SipError):
-            return False
-        if process_early_media and response.body and not self._commit_200_ok(
-            response,
-            self._pending_target,
-            self._pending_remote_host or addr[0],
-            self._pending_remote_sip_port,
-            self._pending_request_uri,
-            self._pending_local_uri,
-            self._pending_remote_uri,
-            provisional=True,
-        ):
             return False
         try:
             if self._dialog_dispatcher is not None:
@@ -4200,6 +4201,8 @@ class SipCallClient:
             candidate.route_set = route_set
             self.dialog_ids.remote_tag = remote_tag
             self.dialog = candidate
+            if self._initial_delayed_offer:
+                self._local_sdp_body = candidate.local_sdp_body
             self.early_dialogs.clear()
             return self._send_ack(
                 remote_host,
@@ -4224,24 +4227,27 @@ class SipCallClient:
                     route_set=route_set,
                 )
             return False
-        if self._initial_delayed_offer and not provisional:
+        if self._initial_delayed_offer and (
+            not provisional or "100rel" in sip.option_tags(msg, "Require")
+        ):
             if (
                 not msg.body
                 or msg.header("Content-Type").split(";", 1)[0].strip().lower()
                 != "application/sdp"
             ):
-                self._reject_confirmed_dialog(
-                    remote_tag=remote_tag,
-                    remote_host=remote_host,
-                    remote_sip_port=remote_sip_port,
-                    remote_target_uri=remote_target_uri,
-                    local_uri=local_uri,
-                    remote_uri=remote_uri,
-                    route_set=route_set,
-                )
+                if not provisional:
+                    self._reject_confirmed_dialog(
+                        remote_tag=remote_tag,
+                        remote_host=remote_host,
+                        remote_sip_port=remote_sip_port,
+                        remote_target_uri=remote_target_uri,
+                        local_uri=local_uri,
+                        remote_uri=remote_uri,
+                        route_set=route_set,
+                    )
                 return False
             seed_format = self.supported_send_formats[0]
-            seed = SipDialog(
+            seed = self.early_dialogs.get(remote_tag) or SipDialog(
                 target=target,
                 remote_host=remote_host,
                 remote_sip_port=int(remote_sip_port),
@@ -4260,20 +4266,24 @@ class SipCallClient:
             )
             prepared = self._answer_remote_offer(msg, current=seed)
             if prepared is None:
-                self._reject_confirmed_dialog(
-                    remote_tag=remote_tag,
-                    remote_host=remote_host,
-                    remote_sip_port=remote_sip_port,
-                    remote_target_uri=remote_target_uri,
-                    local_uri=local_uri,
-                    remote_uri=remote_uri,
-                    route_set=route_set,
-                )
+                if not provisional:
+                    self._reject_confirmed_dialog(
+                        remote_tag=remote_tag,
+                        remote_host=remote_host,
+                        remote_sip_port=remote_sip_port,
+                        remote_target_uri=remote_target_uri,
+                        local_uri=local_uri,
+                        remote_uri=remote_uri,
+                        route_set=route_set,
+                    )
                 return False
             candidate, answer = prepared
             candidate.peer_supports_from_change = sip.supports_option(
                 msg, "from-change"
             )
+            if provisional:
+                self.early_dialogs[remote_tag] = candidate
+                return True
             self.dialog_ids.remote_tag = remote_tag
             self.dialog = candidate
             self.early_dialogs.clear()
@@ -4317,9 +4327,6 @@ class SipCallClient:
                 allow_dahua_pcm=self.include_dahua_pcm,
                 local_capabilities=HA_AUDIO_CAPABILITIES,
             )
-            # Reports only: the new engine never changes what is applied here.
-            shadow_answer(self.dialog_ids.call_id, self._local_sdp_body, msg.body, selected,
-                          dahua=self.include_dahua_pcm)
             if selected is not None:
                 payload_owner = self.early_dialogs.get(remote_tag) or self.dialog
                 audio_payloads = _audio_payload_update(payload_owner.audio_payloads if payload_owner else PayloadMap(),

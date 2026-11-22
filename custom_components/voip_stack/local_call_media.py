@@ -126,8 +126,7 @@ def source_dtmf_formats(source):
 
     if isinstance(source, LocalAudioContract):
         return (RtpDtmfFormat(source.dtmf_payload_type, source.dtmf_clock_rate, source.dtmf_events),) if source.dtmf_payload_type is not None else ()
-    from .core.media.shadow import engine_mode
-    if engine_mode() == "active" and isinstance(source, SipInvite):
+    if isinstance(source, SipInvite):
         return (source.recv_dtmf_format,) if source.recv_dtmf_format is not None else ()
     return tuple(offered_dtmf_formats(source.remote_sdp))
 

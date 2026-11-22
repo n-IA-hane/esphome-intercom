@@ -12,7 +12,6 @@ import pytest
 from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.core.media.payload_map import PayloadMap
 from custom_components.voip_stack.core.rtp_payload import RtpPayloadDecoder, RtpPayloadEncoder
 from custom_components.voip_stack.sip_client import SipCallClient
@@ -21,14 +20,6 @@ from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 pytestmark = pytest.mark.ha
 
 
-@pytest.fixture(autouse=True)
-def active():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 def test_explicit_payload_precedes_a_conventional_number_but_never_history_or_static():

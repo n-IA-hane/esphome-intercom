@@ -246,11 +246,19 @@ def test_ordinary_g722_answer_keeps_explicit_receive_preference(monkeypatch):
 
 @pytest.mark.parametrize("shared_explicit", [False, True])
 def test_false_flags_do_not_expand_or_change_explicit_mapping(monkeypatch, shared_explicit):
-    def forbidden(*args, **kwargs):
-        raise AssertionError("False flags must not enter codec expansion")
-    for operation in (sdp.build_offer_directional, sdp.audio_offer_formats):
-        monkeypatch.setattr(import_module(operation.__module__), "_common_codec_offer_formats", forbidden)
+    planner = import_module("custom_components.voip_stack.core.media.offers")
+    catalog = planner._catalog
+    directions = []
+
+    def explicit_only(formats, explicit, **options):
+        assert explicit is not None, "False flags must not enter codec expansion"
+        assert not options["common"] and not options["dahua"]
+        directions.append(options["receive"])
+        return catalog(formats, explicit, **options)
+
+    monkeypatch.setattr(planner, "_catalog", explicit_only)
     body = offer(common=False, all_formats=(WIDE, NARROW) if shared_explicit else None)
+    assert sorted(directions) == [False, True]
     # CC-4/P5 keeps both directional clocks; P2 reserves the free 8 kHz event PT 101.
     # No primary codec is added by the false expansion flag.
     assert wire_maps(body) == {96: "L16/48000/1", 97: "L16/16000/1",

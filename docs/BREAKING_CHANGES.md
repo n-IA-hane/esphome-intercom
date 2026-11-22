@@ -39,6 +39,16 @@ See [incoming SIP access](SIP_TRUNK.md#who-can-call-home-assistant).
 The older firmware migration sections below describe earlier transitions.
 For the current preview's component choices, use the maintained board recipe.
 
+The preview uses one media negotiation engine. Remove the retired
+`VOIP_STACK_MEDIA_ENGINE` override from service environments. Ordinary outgoing
+offers include all enabled codecs supported by the installed backend; narrowing
+requires complete evidence for that exact peer binding. The dynamic HA receiver
+requests 20 ms packets independently of the peer's receive preference. Fixed
+device capabilities and the older shared packet-time profile retain their own
+constraints. These deliberate SDP changes preserve saved codec choices and the
+seven-codec default; optional codecs remain opt-in. See the
+[media contract](MEDIA_NEGOTIATION_CONTRACT.md) for the packet-time rules.
+
 ## 2026.11.1-dev: optional browser call popups
 
 Reload the HA frontend or reset the Companion frontend cache after updating.

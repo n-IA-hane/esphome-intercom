@@ -11,7 +11,6 @@ from custom_components.voip_stack.core.audio_format import (
     AudioFormat, HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS, HA_TRUNK_AUDIO_FORMATS,
 )
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.core.rtp_payload import RtpPayloadEncoder
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 from custom_components.voip_stack.sip_client import SipCallClient
@@ -25,14 +24,6 @@ def description(rate, packet_ms, direction):
             f"a=rtpmap:110 L16/{rate}/1\r\na=ptime:{packet_ms}\r\na={direction}\r\n")
 
 
-@pytest.fixture(autouse=True)
-def active_engine():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 @pytest.mark.parametrize("local_direction,remote_direction,rate,packet_ms", [

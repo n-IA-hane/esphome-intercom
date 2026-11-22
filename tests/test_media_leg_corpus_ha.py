@@ -1,8 +1,8 @@
-"""The new leg negotiator over the media corpus. It is not used by production yet.
+"""The production leg negotiator over normative cases and a frozen historical reference.
 
 Two guarantees for every step of every case:
-- it meets the contract, except where a declared change is not implemented yet;
-- where it differs from the engine in production, the differential ledger declares that field.
+- it meets the contract;
+- where it differs from the historical reference, the ledger declares that field.
 """
 
 import json
@@ -18,8 +18,6 @@ pytestmark = pytest.mark.ha
 STEPS = load_steps()
 LEDGER = json.loads((CORPUS / "ledger.json").read_text())
 LEGACY = json.loads(GOLDEN.read_text())
-# Declared changes this engine does not implement yet. Their cases keep failing on purpose.
-NOT_YET = {}
 COMPARED = ("outcome", "send.codec", "send.ptime", "send.payload", "recv.codec", "recv.ptime",
             "recv.payload", "dtmf.clock", "dtmf.payload")
 
@@ -49,15 +47,13 @@ def negotiate(step) -> dict:
 
 
 @pytest.mark.parametrize("step", STEPS, ids=lambda step: step.name)
-def test_new_engine_meets_the_contract(step):
-    deferred = {row["field"] for row in LEDGER if row["step"] == step.name and row["cc"] in NOT_YET}
-    found = [item for item in mismatches(step.expect, negotiate(step))
-             if item.split(":", 1)[0] not in deferred]
+def test_leg_engine_meets_the_contract(step):
+    found = mismatches(step.expect, negotiate(step))
     assert not found, "\n".join(found)
 
 
 @pytest.mark.parametrize("step", STEPS, ids=lambda step: step.name)
-def test_new_engine_differs_from_production_only_as_declared(step):
+def test_leg_engine_differs_from_frozen_reference_only_as_declared(step):
     new, old = negotiate(step), LEGACY[step.name]
     declared = {row["field"] for row in LEDGER if row["step"] == step.name}
     if "outcome" in declared:

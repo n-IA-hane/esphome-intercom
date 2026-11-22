@@ -12,15 +12,6 @@ policy = importlib.import_module("custom_components.voip_stack.core.codec_policy
 capabilities = importlib.import_module("custom_components.voip_stack.core.audio_capabilities").HA_AUDIO_CAPABILITIES
 
 
-@pytest.fixture(autouse=True)
-def active_engine():
-    shadow = importlib.import_module("custom_components.voip_stack.core.media.shadow")
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 def description(*, cn_pt=13, primary="PCMU/8000", direction="sendrecv", cn=True):

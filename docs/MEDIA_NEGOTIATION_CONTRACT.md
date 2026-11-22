@@ -2,9 +2,9 @@
 
 Status: the leg engine and complete outgoing offer planner are connected to the production
 SDP entry points and enabled by default in the local consolidation candidate. The candidate
-is not promoted until its frozen software and device qualification completes. Legacy and
-shadow are temporary comparison lanes. Once migration is complete this document replaces
-`AUDIO_NEGOTIATION.md`.
+is not promoted until its frozen software and device qualification completes. Every production
+adapter uses this single engine. Historical behavior remains only in the immutable corpus
+recording, with no runtime engine selector or parallel comparison algorithm.
 
 This is the single written contract for how VoIP Stack negotiates audio codecs, sample rates,
 packet times, payload numbers, DTMF and media direction on every SIP leg, in the Home Assistant
@@ -12,8 +12,9 @@ integration and in the ESP firmware. Every rule has an identifier. Tests cite th
 defend. A behaviour that is not written here is not part of the contract.
 
 The cases in `tests/media_corpus` state what this contract requires for real descriptions.
-`tests/media_corpus/ledger.json` lists, field by field, where the engine in production differs
-and which declared change excuses each difference.
+`tests/media_corpus/ledger.json` lists, field by field, where the frozen historical recording
+differs and which declared change explains each difference. Production is checked directly
+against the normative cases.
 
 ## 1. Terms
 
@@ -311,7 +312,7 @@ First review: `CODEX_REVIEW_MEDIA_CONTRACT_20261121.md`, against draft one.
 | B2 | Directional tie break; preserve an uncompressed caller rate | B2 |
 | CC-4, CC-5, CC-7, CC-8 | Details per direction and per attribute; no fallback to an excluded codec | P5, P6, CC-7, CC-8, section 6 |
 | Registry | Keep the working domain; probes per direction; later additions declared | Section 7 |
-| Gate | Differential ledger; shadow owns no side effects; switch at a dialog boundary | `tests/media_corpus/ledger.json`; shadow rules in the plan |
+| Gate | Differential ledger against the frozen reference; one production engine | `tests/media_corpus/ledger.json`; normative production corpus tests |
 
 Second review: `CODEX_REVIEW_MEDIA_CONTRACT_20261121_R2.md`, against draft two.
 

@@ -193,8 +193,7 @@ def sip_target_offer_common_audio(
     device: dict | None = None,
 ) -> bool:
     """Keep a complete offer unless this Contact declared its full fixed set."""
-    from .core.media.shadow import engine_mode
-    return not (engine_mode() == "active" and _binding_audio_evidence(peer, entry, device).complete)
+    return not _binding_audio_evidence(peer, entry, device).complete
 
 
 def _binding_audio_evidence(peer, entry, device=None):
@@ -241,9 +240,8 @@ def sip_target_rtp_audio_profile(
     recv_rtp = _assign_capability_payloads(expand_configured_linear_formats(
         recv_rtp, HA_SIP_PCM_RX_FORMATS, codec_policy, receive=True), shared_payloads)
     from .core.media.capability import constrain_formats
-    from .core.media.shadow import engine_mode
     evidence = _binding_audio_evidence(peer, entry, device)
-    if engine_mode() == "active" and evidence.complete:
+    if evidence.complete:
         send_rtp = constrain_formats(send_rtp, evidence.receives)
         recv_rtp = constrain_formats(recv_rtp, evidence.sends)
     return SipAudioCapabilityProfile.from_rtp(

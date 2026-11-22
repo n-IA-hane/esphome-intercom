@@ -5,20 +5,11 @@ import pytest
 from custom_components.voip_stack.core import sdp
 from custom_components.voip_stack.core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from custom_components.voip_stack.core.codec_policy import CodecPolicy, DEFAULT_AUDIO_CODECS
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.sip_client import SipCallClient
 
 pytestmark = pytest.mark.ha
 
 
-@pytest.fixture(autouse=True)
-def active():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 def actual_offer(codecs):

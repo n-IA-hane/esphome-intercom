@@ -1,9 +1,4 @@
-"""Load media corpus cases and run them through the engine in production today.
-
-The corpus states what the written contract requires. This module answers what the current
-engine does, so a test can compare the two and a golden snapshot can prove that a refactoring
-changed nothing.
-"""
+"""Run normative corpus inputs through production and load its frozen historical reference."""
 
 from __future__ import annotations
 
@@ -12,7 +7,6 @@ import json
 from pathlib import Path
 
 from custom_components.voip_stack.core import sdp, sip
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.audio_format import (
     HA_SIP_PCM_RX_FORMATS,
@@ -90,7 +84,7 @@ def _audio_lines(description: str) -> list[str]:
     return lines
 
 
-def legacy_answer_offer(step: Step) -> dict:
+def production_answer_offer(step: Step) -> dict:
     """Answer a remote offer exactly as the listener does for an initial INVITE."""
     send, receive = POLICIES[step.policy]
     endpoint = SipUdpEndpoint(
@@ -136,7 +130,7 @@ def legacy_answer_offer(step: Step) -> dict:
     }
 
 
-def legacy_apply_answer(step: Step) -> dict:
+def production_apply_answer(step: Step) -> dict:
     """Apply a remote answer to the description this side offered."""
     send, receive = POLICIES[step.policy]
     try:
@@ -159,18 +153,12 @@ def legacy_apply_answer(step: Step) -> dict:
 
 
 def run_production(step: Step) -> dict:
-    return {"answer_offer": legacy_answer_offer, "apply_answer": legacy_apply_answer}[step.op](step)
+    return {"answer_offer": production_answer_offer, "apply_answer": production_apply_answer}[step.op](step)
 
 
 def run_legacy(step: Step) -> dict:
-    """Keep the reference lane stable while the installation uses the active engine."""
-    mode = shadow.engine_mode()
-    if mode == "active":
-        shadow.set_engine_mode("legacy")
-    try:
-        return run_production(step)
-    finally:
-        shadow.set_engine_mode(mode)
+    """Read a case from the immutable pre-migration recording, never run another engine."""
+    return json.loads(GOLDEN.read_text())[step.name]
 
 
 def mismatches(expect: dict, actual: dict, path: str = "") -> list[str]:
@@ -211,26 +199,6 @@ OFFER_PRESETS = {
 }
 
 
-def legacy_offers() -> dict[str, str]:
-    """Write the local offer for every preset, complete and byte exact."""
-    mode = shadow.engine_mode()
-    if mode == "active":
-        shadow.set_engine_mode("legacy")
-    try:
-        return {
-            f"offer:{name}": sdp.build_offer_directional(
-                "192.0.2.1", "192.0.2.1", 40000, list(send), list(receive),
-                include_common_codecs=True, include_dahua_pcm=dahua,
-                allow_directional_payloads=directional, independent_audio_ptime=directional,
-                local_capabilities=HA_AUDIO_CAPABILITIES)
-            for name, (send, receive, dahua, directional) in OFFER_PRESETS.items()
-        }
-    finally:
-        shadow.set_engine_mode(mode)
-
-
-def legacy_snapshot() -> dict:
-    return {**{step.name: run_legacy(step) for step in load_steps()}, **legacy_offers()}
 
 
 ENTRY_POINTS = {"answer_offer": "inbound initial offer", "apply_answer": "answer to a local offer"}
@@ -294,14 +262,3 @@ def ledger_problems(ledger: list[dict], steps: list[Step], observed: dict[str, d
         if step is not None and field not in {item.split(":", 1)[0] for item in mismatches(step.expect, observed[name])}:
             problems.append(f"stale row: {name} {field}")
     return problems
-
-
-if __name__ == "__main__":
-    # Writing the reference is a deliberate, separate act: the test only compares.
-    import sys
-
-    if sys.argv[1:] != ["--write-golden"]:
-        raise SystemExit("usage: python -m tests.media_corpus_support --write-golden")
-    GOLDEN.parent.mkdir(parents=True, exist_ok=True)
-    GOLDEN.write_text(json.dumps(legacy_snapshot(), indent=1, sort_keys=True) + "\n")
-    print(f"wrote {GOLDEN}")

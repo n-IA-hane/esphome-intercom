@@ -12,21 +12,12 @@ import pytest
 from custom_components.voip_stack.core import sdp
 from custom_components.voip_stack.core.audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.audio_format import AudioFormat, HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
-from custom_components.voip_stack.core.media import shadow
 
 pytestmark = pytest.mark.ha
 
 TX = AudioFormat(16000, "s16le", 1, 20)
 
 
-@pytest.fixture(autouse=True)
-def active_engine():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 def directional_sdp(rate=44100, channels=2, *, local=False, ptime=20, maximum=0,

@@ -1,14 +1,14 @@
-"""The media corpus against the engine in production.
+"""Validate the frozen migration reference and its differential ledger.
 
 Guarantees:
 - every case is well formed and carries no private address;
-- the current engine differs from the written contract only where the differential ledger says
+- the recorded historical engine differs from the written contract only where the ledger says
   so, field by field. A difference the ledger does not list is a defect or an undeclared contract
   change. A listed difference that disappears means the rule was implemented and its ledger
   entry must be removed.
 
-A golden snapshot records what the current engine answers for every case, so a refactoring
-that claims to change nothing can prove it.
+Production is independently checked against the normative cases in
+``test_media_active_entrypoints_ha.py``. The historical algorithm is retired.
 """
 
 import copy
@@ -21,7 +21,7 @@ from tests.media_corpus_support import (
     CORPUS,
     GOLDEN,
     ledger_problems,
-    legacy_snapshot,
+    OFFER_PRESETS,
     load_steps,
     run_legacy,
 )
@@ -60,7 +60,7 @@ def test_case_is_well_formed(path):
         assert not PRIVATE_ADDRESS.search(extra.read_bytes()), f"{extra.name} carries a private address"
 
 
-def test_engine_differs_from_the_contract_only_as_the_ledger_declares():
+def test_frozen_reference_differs_from_the_contract_only_as_the_ledger_declares():
     problems = ledger_problems(LEDGER, STEPS, OBSERVED)
     assert not problems, "\n".join(problems)
 
@@ -95,10 +95,6 @@ def test_an_error_is_not_accepted_where_a_refusal_was_declared():
     assert any("prior is 'error'" in problem for problem in ledger_problems(LEDGER, STEPS, observed))
 
 
-def test_current_engine_matches_its_golden_snapshot():
-    """Complete written descriptions included. Regenerate only with
-    ``python -m tests.media_corpus_support --write-golden`` and review the diff."""
-    actual = legacy_snapshot()
+def test_frozen_reference_covers_every_case_and_recorded_offer():
     golden = json.loads(GOLDEN.read_text())
-    changed = sorted(name for name in actual.keys() | golden.keys() if actual.get(name) != golden.get(name))
-    assert not changed, "engine output differs from the golden snapshot for: " + ", ".join(changed)
+    assert set(golden) == {step.name for step in STEPS} | {"offer:" + name for name in OFFER_PRESETS}

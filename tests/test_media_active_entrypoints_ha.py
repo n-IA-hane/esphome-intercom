@@ -4,7 +4,6 @@ import pytest
 
 from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.local_call_media import source_dtmf_formats
 from custom_components.voip_stack.sip_bridge import invite_rtp_peer
 from custom_components.voip_stack.sip_listener import SipUdpEndpoint
@@ -13,14 +12,6 @@ from tests.media_corpus_support import load_steps, mismatches, run_production
 pytestmark = pytest.mark.ha
 
 
-@pytest.fixture(autouse=True)
-def active_engine():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 @pytest.mark.parametrize("step", load_steps(), ids=lambda step: step.name)

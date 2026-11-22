@@ -11,6 +11,8 @@ run a second audio negotiation.
 budgets. The PCM lists in `core/audio_format.py` order preferences; they are not
 an exhaustive table of accepted rate/packet-time combinations. The normal HA
 preferences remain 48 kHz mono TX and 16 kHz mono RX at 10 ms.
+The advertised receive packet time is a separate leg policy: dynamic HA
+receivers request 20 ms in SDP, subject to the negotiated capability constraints.
 
 Discovery and OPTIONS can rank an outgoing proposal. They cannot add an
 unsupported local codec or invalidate a compatible authoritative INVITE or

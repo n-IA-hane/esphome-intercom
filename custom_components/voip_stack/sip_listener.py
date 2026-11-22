@@ -33,7 +33,6 @@ from .core.sip_stun import binding_keepalive_response
 from .core.codec_policy import CodecPolicy
 from .core.sip_auth import DigestChallengeTracker, SipDigestCredentials
 from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox, bind_flow_usage
-from .core.media.shadow import shadow_inbound_offer
 from .core.sip_dialog import (
     PreparedDialogIdentity,
     SubscriptionDialog,
@@ -135,15 +134,11 @@ class SipInvite:
     @property
     def recv_dtmf_format(self) -> sdp.RtpDtmfFormat | None:
         """The event clock follows the peer's transmitted audio on this leg."""
-        from .core.media.shadow import engine_mode
-        return (sdp.dtmf_format_for_clock(self.remote_sdp, self.recv_format.sample_rate)
-                if engine_mode() == "active" else sdp.first_offered_dtmf_format(self.remote_sdp))
+        return sdp.dtmf_format_for_clock(self.remote_sdp, self.recv_format.sample_rate)
 
     @property
     def send_dtmf_format(self) -> sdp.RtpDtmfFormat | None:
-        from .core.media.shadow import engine_mode
-        return (sdp.dtmf_format_for_clock(self.remote_sdp, self.send_format.sample_rate)
-                if engine_mode() == "active" else sdp.first_offered_dtmf_format(self.remote_sdp))
+        return sdp.dtmf_format_for_clock(self.remote_sdp, self.send_format.sample_rate)
 
     @property
     def send_video_format(self) -> sdp.RtpVideoFormat | None:
@@ -3930,12 +3925,6 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
             )
-            if not local_offer_sdp:
-                # The optional shadow comparison cannot change the decision
-                # already made by the selected negotiation engine above.
-                shadow_inbound_offer(
-                    request.header("Call-ID"), request.body, selected,
-                    dahua=peer_profile == "dahua", codec_policy=codec_policy)
             if selected is None:
                 call_id = request.header("Call-ID")
                 if call_id not in self._logged_incompatible_invites:

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.voip_stack.core import sdp
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.endpoint_routing import sip_target_offer_common_audio, sip_target_rtp_audio_profile
 from custom_components.voip_stack.sip_client import SipCallClient
 
@@ -19,14 +18,6 @@ CAPABILITIES = {
 }
 
 
-@pytest.fixture(autouse=True)
-def active_engine():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 def actual_offer(metadata):

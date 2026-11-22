@@ -8,7 +8,6 @@ import pytest
 from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.rtp_payload import RtpPayloadDecoder
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
-from custom_components.voip_stack.core.media import shadow
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.sip_client import SipCallClient
@@ -22,14 +21,6 @@ from .test_trunk_calls_ha import lab as lab, trunks as trunks, sip_test_account
 pytestmark = pytest.mark.ha
 
 
-@pytest.fixture(autouse=True)
-def active_engine():
-    previous = shadow.engine_mode()
-    shadow.set_engine_mode("active")
-    try:
-        yield
-    finally:
-        shadow.set_engine_mode(previous)
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

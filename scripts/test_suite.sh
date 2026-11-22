@@ -133,6 +133,7 @@ path_mode=$(
 pytest_args=(tests -q --tb=short)
 ha_tests=(
   tests/test_media_contract_expectations_ha.py
+  tests/test_media_duplex_receive_budget_ha.py
   tests/test_replacement_grant_owner_ha.py
   tests/test_dahua_offer_payload_seed_ha.py
   tests/test_community_independent_peer_ha.py
@@ -246,6 +247,7 @@ ha_tests=(
   tests/test_account_consolidation_ha.py
   tests/test_account_settings_transactions_ha.py
   tests/test_account_identity_ha.py
+  tests/test_account_login_migration_ha.py
   tests/test_account_client_snapshot_ha.py
   tests/test_authorization_registry_ha.py
   tests/test_native_phone_primitives_ha.py
@@ -284,7 +286,9 @@ ha_tests=(
   tests/test_media_packet_time_ha.py
   tests/test_media_payload_map_ha.py
   tests/test_media_leg_corpus_ha.py
-  tests/test_media_shadow_ha.py
+  tests/test_media_single_engine_ha.py
+  tests/test_reliable_initial_offer_ha.py
+  tests/test_media_unanchored_answer_ha.py
   tests/test_media_offer_plan_ha.py
   tests/test_media_renegotiation_rules_ha.py
   tests/test_media_offer_mirror_ha.py

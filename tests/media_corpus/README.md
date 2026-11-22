@@ -38,7 +38,12 @@ of what a peer sends. Do not reformat them.
 1. Save the description exactly as received.
 2. Replace addresses with documentation addresses and remove names. Record it in `redaction`.
 3. Write the expected contract from the rules, not from what the code answers today.
-4. Run `tests/test_media_corpus_ha.py`. If the legacy engine disagrees, name the contract change.
+4. Run `tests/test_media_active_entrypoints_ha.py` against production. State expectations from
+   the written contract, independently of the engine's current output.
+
+The historical algorithm is retired. `golden/legacy.json` and the captured SDP files are frozen
+evidence, checked by fixed hashes in `test_media_single_engine_ha.py`. The ledger and its negative
+controls compare that reference with the normative cases; they do not execute a second engine.
 
 ## What the corpus covers today
 
