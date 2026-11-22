@@ -632,8 +632,10 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         cases = (
             ([], dial_fork.DialDisposition.UNAVAILABLE, 480),
             ([dial_fork.DialDisposition.BUSY, dial_fork.DialDisposition.DND], dial_fork.DialDisposition.BUSY, 486),
-            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.BUSY], dial_fork.DialDisposition.BUSY, 486),
-            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.DECLINED], dial_fork.DialDisposition.UNAVAILABLE, 480),
+            # Approved contract: an expired ringing leg is no-answer even
+            # when another candidate was busy or explicitly declined.
+            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.BUSY], dial_fork.DialDisposition.TIMEOUT, 408),
+            ([dial_fork.DialDisposition.TIMEOUT, dial_fork.DialDisposition.DECLINED], dial_fork.DialDisposition.TIMEOUT, 408),
             (
                 [dial_fork.DialDisposition.DECLINED] * 2,
                 dial_fork.DialDisposition.DECLINED,

@@ -155,7 +155,7 @@ class QueueCall(LocalCallApplication):
                 if members:
                     endpoints = [self.manager.endpoints.get(identity) for identity in members]
                     entry = RosterEntry(id=f"queue-attempt:{definition.queue_id}", name=definition.name,
-                        ha_bridge=True, metadata={"group_type": "ring", "members": [endpoint.name for endpoint in endpoints if endpoint]})
+                        ha_bridge=True, metadata={"group_type": "ring", "members": [endpoint.username for endpoint in endpoints if endpoint]})
                     decision = RouteDecision(RouteAction.GROUP, target=definition.name, entry=entry)
                     try:
                         task = await registry.forward_call(call_id=self.session.call_id, destination=definition.name,

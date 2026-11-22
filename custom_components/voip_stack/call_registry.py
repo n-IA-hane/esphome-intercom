@@ -510,6 +510,8 @@ class CallRuntimeApi:
         if session is None:
             session = self.ensure_session(call_id, event_only=True)
         context = session.event_context
+        if str(action or "").strip() in {"forward", "bridge"}:
+            context.route_hops += 1
         context.route_history.append(
             {
                 "action": str(action or "").strip(),

@@ -168,7 +168,7 @@ def stage_bridge_presentation(session, **details):
     return True
 
 
-def _bind_esp_media_route(hass, registry, session) -> None:
+def _bind_media_route_diagnostics(hass, registry, session) -> None:
     """Keep the existing projection attached to its current relay owner."""
     from .sip_rtp_bridge import SipRtpRelay
 
@@ -188,7 +188,7 @@ def _bind_esp_media_route(hass, registry, session) -> None:
                     or registry.get_session(token.call_id, generation=token.generation) is not session
                     or not any(item is resource and item.value is relay for item in session.resources)):
                 return
-            publish_esp_media_route(hass, session.call_id, route)
+            publish_media_route(hass, session.call_id, route)
 
         def close(_reason, *, relay=relay, callback=changed):
             if relay.on_media_route_changed is callback:
@@ -201,8 +201,8 @@ def _bind_esp_media_route(hass, registry, session) -> None:
         bind(resource)
 
 
-def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> None:
-    """Project a committed media owner's decision onto its physical call legs."""
+def publish_media_route(hass: HomeAssistant, call_id: str, route: str) -> None:
+    """Keep the committed bridge decision in PBX diagnostics only."""
     if route not in {"direct", "ha_transcoding"}:
         raise ValueError("invalid committed media route")
     data = runtime_data(hass)
@@ -211,7 +211,7 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
     session = data.sip.get_session(call_id)
     if session is None or not session.live or session.state != "in_call":
         return
-    _bind_esp_media_route(hass, data.sip, session)
+    _bind_media_route_diagnostics(hass, data.sip, session)
     # Local media endpoints such as Assist share relay lifecycle ownership,
     # but do not expose a relay's media-route decision.
     if any(
@@ -221,73 +221,6 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
     ):
         route = "ha_transcoding"
     session.update_metadata(committed_media_route=route)
-    token = session.token
-    targets: dict[str, str] = {}
-    destination_id = str(session.metadata.get("dest_endpoint_id") or "")
-    destination_call_id = str(session.metadata.get("bridge_dest_call_id") or "")
-    endpoint_ids = set(session.endpoint_claims)
-    endpoint_ids.update(
-        str(session.metadata.get(key) or "")
-        for key in ("source_endpoint_id", "dest_endpoint_id", "target_endpoint_id")
-    )
-    for endpoint_id in endpoint_ids - {""}:
-        endpoint = data.endpoints.get(endpoint_id)
-        if endpoint is None or not endpoint.device_id:
-            continue
-        leg_call_id = next(
-            (leg.sip_call_id for leg in session.legs.values()
-             if leg.endpoint_id == endpoint_id and leg.sip_call_id),
-            destination_call_id if endpoint_id == destination_id and destination_call_id else session.call_id,
-        )
-        targets[endpoint.device_id] = leg_call_id
-    if not targets:
-        return
-    media_owners = tuple(
-        (resource, resource.value, getattr(resource.value, "on_media_route_changed", None))
-        for resource in session.resources if resource.name.startswith("relay:")
-    )
-
-    def current() -> bool:
-        if (not session.owns(token) or session.state != "in_call"
-                or data.sip.get_session(token.call_id, generation=token.generation) is not session
-                or session.metadata.get("committed_media_route") != route):
-            return False
-        return all(
-            any(item is resource and item.value is owner for item in session.resources)
-            and (not hasattr(owner, "on_media_route_changed")
-                 or callback is not None and owner.on_media_route_changed is callback)
-            for resource, owner, callback in media_owners
-        )
-
-    async def notify() -> None:
-        from .device_resolver import get_resolver
-        from .esphome_actions import async_call_action, has_action
-
-        devices = await get_resolver(hass).list_devices()
-        for device in devices:
-            device_id = str(device.get("device_id") or "")
-            leg_call_id = targets.get(device_id)
-            if not leg_call_id or not has_action(hass, device, "set_media_route"):
-                continue
-            if not current():
-                return
-            delivered = session.metadata.setdefault("esp_media_routes", {})
-            value = (leg_call_id, route)
-            if delivered.get(device_id) == value:
-                continue
-            try:
-                await async_call_action(hass, device, "set_media_route", {
-                    "call_id": leg_call_id, "route": route,
-                })
-            except Exception:
-                # Presentation must never fail an established media session.
-                _LOGGER.debug("ESP media route projection failed", exc_info=True)
-            else:
-                if current():
-                    delivered[device_id] = value
-
-    task = asyncio.create_task(notify(), name=f"voip-media-route-{session.call_id}")
-    data.sip.replace_task(session.call_id, task, name=f"voip-media-route-{session.call_id}")
 
 
 def stage_phone_termination_projection(

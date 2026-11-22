@@ -15,10 +15,14 @@ from . import sip
 class GruuTokens:
     """Temporary tokens carry encrypted binding identity without an alias cache."""
 
-    def __init__(self):
-        # Registrations are volatile. Restart invalidates temporary GRUUs along
-        # with those bindings; public instance identifiers remain deterministic.
-        self._cipher = AESGCM(AESGCM.generate_key(bit_length=128))
+    def __init__(self, key: bytes | None = None):
+        self._key = key if key is not None else AESGCM.generate_key(bit_length=128)
+        self._cipher = AESGCM(self._key)
+
+    @property
+    def persistence_key(self) -> bytes:
+        """Return the instance-routing key to the registrar's private store."""
+        return self._key
 
     @staticmethod
     def public_id(account: str, instance: str) -> str:

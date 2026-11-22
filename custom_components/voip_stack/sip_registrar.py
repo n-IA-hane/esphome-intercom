@@ -156,6 +156,8 @@ def normalize_username(value: str) -> str:
     cleaned = (value or "").strip()
     if not cleaned:
         raise ValueError("username is required")
+    if len(cleaned.encode("utf-8")) > 64:
+        raise ValueError("SIP username exceeds 64 UTF-8 bytes")
     if any(byte < 32 or byte == 127 for byte in cleaned.encode()):
         raise ValueError("SIP username contains a control character")
     return cleaned
@@ -435,7 +437,7 @@ class SipRegistrar:
                 try:
                     observer(frozenset(changed))
                 except Exception as error:
-                    _LOGGER.warning("Account observer stopped (%s)", type(error).__name__)
+                    _LOGGER.exception("SIP account observer failed")
 
     def authentication_generation(self, username):
         """One private account lifetime, independent of Contact reachability."""
@@ -456,7 +458,7 @@ class SipRegistrar:
             try:
                 observer(usernames)
             except Exception as error:  # Keep registrar transactions independent of HA observers.
-                _LOGGER.warning("Contact observer failed (%s)", type(error).__name__)
+                _LOGGER.exception("SIP Contact observer failed")
 
     def _registration(self, username: str) -> SipRegistration | None:
         registrations = self._registrations(username)
@@ -555,6 +557,17 @@ class SipRegistrar:
         if removed_username:
             self._notify_registration_change(removed_username, False)
             self._contacts_changed({removed_username})
+
+    def remove_contact(self, flow_key: tuple) -> bool:
+        """Revoke one exact authenticated binding without disturbing shared clients."""
+        for key, registration in tuple(self.registrations.items()):
+            if registration.flow_key == flow_key:
+                self.registrations.pop(key)
+                if not self._registrations(registration.username):
+                    self._notify_registration_change(registration.username, False)
+                self._contacts_changed({registration.username})
+                return True
+        return False
 
     def remove_flow(self, host: str, port: int, transport: str) -> bool:
         """Remove Contact bindings whose authenticated signaling flow closed."""
@@ -669,12 +682,6 @@ class SipRegistrar:
         return bool(nonce and nonce in self.nonces)
 
     @staticmethod
-    def _modern_challenges(challenge: str) -> tuple[str, ...]:
-        """Build opt-in RFC 8760 challenges without changing the legacy default."""
-
-        return (challenge.replace("algorithm=MD5", "algorithm=SHA-256"), challenge)
-
-    @staticmethod
     def _register_fingerprint(
         request: sip.SipMessage,
         addr: tuple[str, int],
@@ -721,6 +728,8 @@ class SipRegistrar:
                 realm=REALM,
                 nonce=nonce,
                 body=request.body,
+                offered_algorithms=frozenset({"MD5"}),
+                offered_qops=frozenset({"auth"}),
             )
         except (TypeError, ValueError):
             return _AuthorizationStatus.INVALID
@@ -1004,7 +1013,7 @@ class SipRegistrar:
         if was_registered != is_registered:
             self._notify_registration_change(account.username, is_registered)
         if is_registered:
-            _LOGGER.info(
+            _LOGGER.debug(
                 "SIP registrar updated user=%s transport=%s active_contacts=%s request_contacts=%s",
                 account.username,
                 transport.upper(),

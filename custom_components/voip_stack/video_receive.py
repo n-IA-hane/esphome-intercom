@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from typing import TYPE_CHECKING
 
@@ -12,6 +12,7 @@ from .core import rtp, sdp
 from .core.video_rtp import VideoAccessUnit, split_annex_b
 from .video_receive_state import VideoDepacketizer, VideoReceiveState
 from .video_ws_io import _ByteBudgetQueue
+from .queue_utils import drain_queue
 
 if TYPE_CHECKING:
     from .pbx_runtime import SipEndpointRuntime
@@ -48,6 +49,40 @@ class VideoReceiveWorkers:
     hooks: VideoReceiveHooks
     max_access_unit_bytes: int
     receive_burst_packets: int
+    receive_state: rtp.RtpReceiveState = field(default_factory=rtp.RtpReceiveState)
+    transcoded_receive_state: rtp.RtpReceiveState = field(default_factory=rtp.RtpReceiveState)
+    receive_generation: int = -1
+
+    def admit_source(self, packet, now, *, transcoded=False):
+        """Validate a same-generation RTP source transition before reordering."""
+        if self.receive_generation != self.state.applied_media_generation:
+            self.receive_generation = self.state.applied_media_generation
+            self.receive_state = rtp.RtpReceiveState()
+            self.transcoded_receive_state = rtp.RtpReceiveState()
+        receiver = self.transcoded_receive_state if transcoded else self.receive_state
+        if not transcoded and receiver.ssrc is None and self.state.route.latched_ssrc is not None:
+            receiver.ssrc = self.state.route.latched_ssrc
+        if not receiver.admit(packet):
+            counter = "video_duplicate_packets" if packet.ssrc == receiver.ssrc else "video_drop_addr"
+            self.state.counters[counter] += 1
+            return False
+        if not transcoded:
+            self.state.route.latched_ssrc = packet.ssrc
+        if receiver.changed:
+            self.state.reorder.reset()
+            if not transcoded:
+                self.state.input_reorder.reset()
+                self.state.route.latched_rtcp_source = None
+            if self.state.depacketizer is not None:
+                self.state.depacketizer.reset()
+            self.state.extended_sequence.reset()
+            self.state.highest_sequence = 0
+            self.state.needs_key_frame = self.state.browser_format.encoding != "JPEG"
+            self.state.counters["video_access_unit_queue_drops"] += drain_queue(self.access_units)
+            self.state.last_keyframe_feedback = 0.0
+            if transcoded:
+                self.request_key_frame(now)
+        return True
 
     def queue_access_unit(self, access_unit: VideoAccessUnit, now: float) -> None:
         if len(access_unit.data) > self.max_access_unit_bytes:
@@ -194,8 +229,10 @@ class VideoReceiveWorkers:
                     self.state.counters["video_drop_payload_type"] += 1
                     continue
                 source = (str(addr[0]), int(addr[1]))
-                if self.state.route.latched_ssrc is not None and packet.ssrc != self.state.route.latched_ssrc:
-                    self.state.counters["video_drop_addr"] += 1
+                if not self.session.can_receive:
+                    self.state.counters["video_drop_direction"] += 1
+                    continue
+                if not self.admit_source(packet, local_loop.time()):
                     continue
                 if self.state.route.latched_source is None:
                     self.state.route.latched_source = source
@@ -205,14 +242,14 @@ class VideoReceiveWorkers:
                         self.state.route.remote_rtcp_host = source[0]
                         self.state.route.remote_rtcp_port = source[1] + self.state.route.remote_rtcp_offset
                     self.request_key_frame(local_loop.time())
-                elif source[0] != self.state.route.latched_source[0]:
-                    self.state.counters["video_drop_addr"] += 1
-                    continue
-                elif source[1] != self.state.route.latched_source[1]:
+                else:
                     self.state.route.latched_source = source
-                    self.state.route.remote_port = source[1]
+                    self.state.route.remote_host, self.state.route.remote_port = source
                     if self.state.route.latched_rtcp_source is None and not self.state.route.remote_rtcp_host_explicit:
+                        self.state.route.remote_rtcp_host = source[0]
                         self.state.route.remote_rtcp_port = source[1] + self.state.route.remote_rtcp_offset
+                if self.receive_state.changed:
+                    self.request_key_frame(local_loop.time())
                 self.state.counters["video_rtp_rx_packets"] += 1
                 self.state.counters["video_rtp_rx_bytes"] += len(data)
                 lost_before = self.state.input_reorder.lost
@@ -272,6 +309,11 @@ class VideoReceiveWorkers:
                     self.state.counters["video_drop_payload_type"] += 1
                     continue
                 if self.session.requires_receive_transcoding:
+                    if str(addr[0]) not in {"127.0.0.1", "::1"}:
+                        self.state.counters["video_drop_addr"] += 1
+                        continue
+                    if not self.admit_source(packet, loop.time(), transcoded=True):
+                        continue
                     lost_before = self.state.reorder.lost
                     for ordered in self.state.reorder.push(packet.sequence, packet, loop.time()):
                         self.consume_ordered(ordered, loop.time())
@@ -285,8 +327,7 @@ class VideoReceiveWorkers:
                     self.state.counters["video_drop_addr"] += 1
                     continue
                 source = (str(addr[0]), int(addr[1]))
-                if self.state.route.latched_ssrc is not None and packet.ssrc != self.state.route.latched_ssrc:
-                    self.state.counters["video_drop_addr"] += 1
+                if not self.admit_source(packet, loop.time()):
                     continue
                 if self.state.route.latched_source is None:
                     self.state.route.latched_source = source
@@ -302,14 +343,14 @@ class VideoReceiveWorkers:
                         self.state.route.remote_rtcp_host = source[0]
                         self.state.route.remote_rtcp_port = source[1] + self.state.route.remote_rtcp_offset
                     self.request_key_frame(loop.time())
-                elif source[0] != self.state.route.latched_source[0]:
-                    self.state.counters["video_drop_addr"] += 1
-                    continue
-                elif source[1] != self.state.route.latched_source[1]:
+                else:
                     self.state.route.latched_source = source
-                    self.state.route.remote_port = source[1]
+                    self.state.route.remote_host, self.state.route.remote_port = source
                     if self.state.route.latched_rtcp_source is None and not self.state.route.remote_rtcp_host_explicit:
+                        self.state.route.remote_rtcp_host = source[0]
                         self.state.route.remote_rtcp_port = source[1] + self.state.route.remote_rtcp_offset
+                if self.receive_state.changed:
+                    self.request_key_frame(loop.time())
                 self.state.counters["video_rtp_rx_packets"] += 1
                 self.state.counters["video_rtp_rx_bytes"] += len(data)
                 lost_before = self.state.reorder.lost

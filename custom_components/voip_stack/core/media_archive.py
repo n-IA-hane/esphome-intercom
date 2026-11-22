@@ -1,4 +1,4 @@
-"""Private, bounded WAV storage shared by mailboxes and call recordings.
+"""Bounded WAV storage shared by mailboxes and call recordings.
 
 SIP sessions own their recording handles. This module only owns queued disk
 writes, quota reservations and persisted media, with no signaling or audio
@@ -370,6 +370,50 @@ class ArchiveWriter:
         return await async_wait_for_cleanup(self._finish_task)
 
 
+class _PreparedAccountRebind:
+    """Commit only validated archive metadata while preserving every WAV segment."""
+
+    def __init__(self, owner, previous, future):
+        self.owner, self.previous, self.future = owner, previous, future
+        self.committed = False
+
+    async def commit(self):
+        async with self.owner._lock:
+            if self.owner._active or any(self.owner._entries.get(key) != value for key, value in self.previous.items()):
+                raise ArchiveError("Media archive changed during account migration")
+            def write():
+                written = []
+                try:
+                    for identity, data in self.previous.items():
+                        if _read_entry(self.owner.root / f"{identity}.json", identity) != data:
+                            raise ArchiveError("Media archive metadata changed during account migration")
+                    for identity, data in self.future.items():
+                        _atomic_json(self.owner.root / f"{identity}.json", data)
+                        written.append(identity)
+                except BaseException:
+                    for identity in reversed(written):
+                        _atomic_json(self.owner.root / f"{identity}.json", self.previous[identity])
+                    raise
+            async def apply():
+                await self.owner.run_io(write)
+                self.owner._entries.update(deepcopy(self.future))
+                self.committed = True
+            await async_wait_for_cleanup(asyncio.create_task(apply(), name="voip-archive-account-rebind"))
+
+    async def rollback(self):
+        if not self.committed:
+            return
+        async with self.owner._lock:
+            def write():
+                for identity, data in self.previous.items():
+                    _atomic_json(self.owner.root / f"{identity}.json", data)
+            async def apply():
+                await self.owner.run_io(write)
+                self.owner._entries.update(deepcopy(self.previous))
+                self.committed = False
+            await async_wait_for_cleanup(asyncio.create_task(apply(), name="voip-archive-account-rebind-rollback"))
+
+
 class MediaArchive:
     def __init__(self, root: Path, run_io, *, quota_bytes: int = 1024 ** 3):
         self.root, self.run_io = Path(root), run_io
@@ -397,6 +441,39 @@ class MediaArchive:
             raise
         self._used = used
         self._usage_dirty = False
+
+    async def prepare_account_rebind(self, mapping, *, load_from_storage=False):
+        """Prepare exact mailbox ownership updates using the existing archive owner."""
+        async with self._lock:
+            if self._active:
+                raise ArchiveError("Cannot migrate an active media archive")
+            if load_from_storage:
+                def read():
+                    entries = {}
+                    for path in self.root.glob('*.json'):
+                        identity = path.stem.removesuffix('.pending')
+                        if not _IDENTITY.fullmatch(identity):
+                            continue
+                        entry = _read_entry(path, identity)
+                        if path.stem.endswith('.pending'):
+                            if mapping.get(entry['mailbox_id'], entry['mailbox_id']) != entry['mailbox_id']:
+                                raise ArchiveError("Recover the interrupted mailbox before account migration")
+                            continue
+                        for segment in entry['segments']:
+                            if not _segment_path(self.root, identity, segment['file']).is_file():
+                                raise ArchiveError("Missing recording segment during account migration")
+                        entries[identity] = entry
+                    return entries
+                self._entries = await self.run_io(read)
+            previous, future = {}, {}
+            for identity, entry in self._entries.items():
+                target = mapping.get(entry['mailbox_id'], entry['mailbox_id'])
+                if not isinstance(target, str) or not 1 <= len(target) <= 255:
+                    raise ArchiveError("Invalid migrated mailbox identity")
+                if target != entry['mailbox_id']:
+                    previous[identity] = deepcopy(entry)
+                    future[identity] = {**deepcopy(entry), 'mailbox_id': target}
+            return _PreparedAccountRebind(self, previous, future)
 
     def _reserve(self, count):
         if self._used + self._reserved + count > self.quota_bytes:

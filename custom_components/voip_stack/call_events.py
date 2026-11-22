@@ -147,10 +147,13 @@ def fire_with_call_context(
 ) -> None:
     """Publish with call provenance while preserving context-free test buses."""
 
+    from .sip_account_identity import ha_event_payload
+
+    projected = ha_event_payload(hass, payload)
     if context is None:
-        hass.bus.async_fire(event_type, payload)
+        hass.bus.async_fire(event_type, projected)
     else:
-        hass.bus.async_fire(event_type, payload, context=context)
+        hass.bus.async_fire(event_type, projected, context=context)
 
 
 def fire_call_event(
@@ -232,6 +235,10 @@ def fire_call_event(
     )
     event["ingress"] = call_origin
     event["origin"] = call_origin
+    # Arm the session-owned policy before publishing the HA event projection.
+    from .phone_policy_runtime import apply_phone_policy_state
+
+    apply_phone_policy_state(hass, event)
     terminal_summary = is_logbook_call_summary(event)
     context = registry.ha_context(call_id)
     if context is None and terminal_summary:

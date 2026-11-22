@@ -95,42 +95,22 @@ export function isPagingAutoAnswer(snapshot = {}) {
 
 export function terminalPeerLabel(snapshot = {}) {
   const direction = String(snapshot.direction || "").trim().toLowerCase();
-  if (direction === "incoming") {
-    return String(
-      snapshot.caller || snapshot.peer_name || snapshot.target ||
-      snapshot.dialed_target || snapshot.callee || "",
-    );
-  }
-  if (direction === "outgoing") {
-    return String(
-      snapshot.connected_party || snapshot.answered_by || snapshot.peer_name ||
-      snapshot.callee || snapshot.target || snapshot.dialed_target || snapshot.caller || "",
-    );
-  }
-  return String(
-    snapshot.connected_party || snapshot.answered_by || snapshot.peer_name ||
-    snapshot.callee || snapshot.caller || snapshot.target || snapshot.dialed_target || "",
-  );
+  const names = direction === "incoming"
+    ? [snapshot.caller_name, snapshot.caller, snapshot.peer_name, snapshot.callee_name, snapshot.callee]
+    : [snapshot.connected_party_name, snapshot.connected_party, snapshot.answered_by_name,
+      snapshot.peer_name, snapshot.callee_name, snapshot.callee, snapshot.caller_name, snapshot.caller];
+  return String(names.find((value) => String(value || "").trim()) || "");
 }
 
 export function mirroredEndpointPeerLabel(snapshot = {}, localName = "") {
-  const normalise = (value) => String(value || "")
-    .normalize("NFKC")
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "");
-  const local = normalise(localName);
-  const callerIsLocal = local && normalise(snapshot.caller) === local;
-  const calleeIsLocal = local && [snapshot.callee, snapshot.peer_name, snapshot.local_name]
-    .some((value) => normalise(value) === local);
-  const candidates = callerIsLocal
-    ? [snapshot.connected_party, snapshot.answered_by, snapshot.callee,
-      snapshot.peer_name, snapshot.target, snapshot.dialed_target]
-    : calleeIsLocal
-      ? [snapshot.caller, snapshot.connected_party, snapshot.answered_by,
-        snapshot.target, snapshot.dialed_target]
-      : [terminalPeerLabel(snapshot), snapshot.caller, snapshot.callee];
-  return String(candidates.find((value) => value && (!local || normalise(value) !== local)) || "");
+  const local = String(localName || "").trim();
+  const direction = String(snapshot.direction || "").trim().toLowerCase();
+  const incoming = direction === "incoming" || (!direction && snapshot.callee === local);
+  const candidates = incoming
+    ? [snapshot.caller_name, snapshot.caller, snapshot.peer_name, snapshot.connected_party]
+    : [snapshot.connected_party_name, snapshot.connected_party, snapshot.answered_by_name,
+      snapshot.peer_name, snapshot.callee_name, snapshot.callee, snapshot.caller_name, snapshot.caller];
+  return String(candidates.find((value) => value && String(value).trim() !== local) || "");
 }
 
 const ACTIVE_CALL_STATES = new Set([

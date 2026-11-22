@@ -256,24 +256,11 @@ class EspHomePhoneAdapter:
         *,
         call: ServiceCall,
     ) -> PhoneActionResult:
-        if call.data.get("trunk_id"):
-            from .esphome_origination import originate_with_trunk
-            call_id = await originate_with_trunk(call, phone, request.destination)
-            return PhoneActionResult(operation=PhoneOperation.ORIGINATE, phone=phone,
-                destination=request.destination, call_id=call_id)
-        device = phone.transport_data
-        await async_call_action(
-            call.hass,
-            device,
-            "start_call",
-            {"dest": request.destination},
-            context=request.context,
-        )
-        return PhoneActionResult(
-            operation=PhoneOperation.ORIGINATE,
-            phone=phone,
-            destination=request.destination,
-        )
+        from .esphome_origination import originate_phone_call
+
+        await originate_phone_call(call, phone, request.destination)
+        return PhoneActionResult(operation=PhoneOperation.ORIGINATE, phone=phone,
+                                 destination=request.destination)
 
     async def control(
         self,
@@ -444,15 +431,19 @@ class PhoneAdapterRegistry:
                 bound = {item.endpoint_id for item in self._endpoints.endpoints if item.kind is EndpointKind.BROWSER}
                 preferred = select_preferred_phone(self._endpoints, self._preferred_phone_device_id,
                                                    ha_bound_endpoint_ids=bound)
-            selector = preferred.device_id if preferred is not None else ""
+            selector = preferred.ha_device_id if preferred is not None else ""
         if not selector:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="phone_selection_required",
             )
-        endpoint = resolve_service_phone(self._endpoints, selector)
+        endpoint = resolve_service_phone(self._endpoints, selector, hass=self._hass)
         if endpoint is not None:
-            if endpoint.kind is EndpointKind.SIP_ACCOUNT:
+            hardware_control = bool(endpoint.account_device_id and (
+                selector == endpoint.device_id
+                or (operation is PhoneOperation.ORIGINATE and endpoint.device_id != endpoint.account_device_id
+                    and not call.data.get("media_client_id"))))
+            if endpoint.kind is EndpointKind.SIP_ACCOUNT and not hardware_control:
                 from .runtime_data import runtime_data
                 from .browser_phone_projection import _account_browser_media
                 runtime = runtime_data(self._hass)
@@ -493,7 +484,7 @@ class PhoneAdapterRegistry:
                 str(device.get("device_id") or "")
             )
             capabilities = set()
-            if has_action(self._hass, device, "start_call"):
+            if has_action(self._hass, device, "start_call_on_line"):
                 capabilities.add(PhoneOperation.ORIGINATE)
             if has_action(self._hass, device, "answer_call"):
                 capabilities.add(PhoneOperation.ANSWER)
@@ -505,7 +496,7 @@ class PhoneAdapterRegistry:
                 endpoint_id=str(
                     getattr(live_endpoint, "endpoint_id", "")
                     or device.get("endpoint_id")
-                    or f"esphome:{device.get('device_id') or ''}"
+                    or device.get("endpoint_username") or device.get("sip_uri_user") or ""
                 ),
                 device_id=str(device.get("device_id") or ""),
                 name=str(device.get("name") or "ESPHome phone"),
@@ -526,7 +517,7 @@ class PhoneAdapterRegistry:
     ) -> PhoneHandle:
         return PhoneHandle(
             endpoint_id=str(getattr(endpoint, "endpoint_id", "") or ""),
-            device_id=str(getattr(endpoint, "device_id", "") or ""),
+            device_id=str(getattr(endpoint, "ha_device_id", getattr(endpoint, "device_id", "")) or ""),
             name=str(getattr(endpoint, "name", "") or "Home Assistant"),
             kind=getattr(endpoint, "kind", EndpointKind.BROWSER),
             capabilities=capabilities,

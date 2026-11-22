@@ -8,7 +8,6 @@ from homeassistant.helpers.condition import Condition
 from .automation_context import current_execution
 from .endpoint_lifecycle import call_registry
 from .phone_endpoint import EndpointAvailability
-from .runtime_data import endpoint_directory
 
 
 class CallStateCondition(Condition):
@@ -80,7 +79,12 @@ class PhoneAvailableCondition(Condition):
         self._phone = config.options["phone"]
 
     def _async_check(self, **kwargs):
-        phone = endpoint_directory(self._hass).resolve(self._phone)
+        from .phone_state import resolve_phone
+        from homeassistant.exceptions import ServiceValidationError
+        try:
+            phone = resolve_phone(self._hass, self._phone)
+        except ServiceValidationError:
+            return False
         return (
             phone is not None
             and phone.availability is EndpointAvailability.AVAILABLE

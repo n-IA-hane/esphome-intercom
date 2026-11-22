@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 
 from homeassistant.core import HomeAssistant
 
 from .config import transport_config
 from .const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
 from .core import sdp
+from .core.sip_transaction import reinvite_retry_delay
 from .core.sdp import DEFAULT_VIDEO_FORMATS, browser_video_send_supported
 from .endpoint_lifecycle import call_registry
 from .media_ports import RtpPortReservation, reserve_sip_video_media
@@ -75,7 +75,7 @@ async def _prepare_client_reinvite(client, *, port: int, formats: tuple, directi
     )
     if candidate is not None or int(getattr(client, "last_sip_status_code", 0)) != 491:
         return candidate
-    await asyncio.sleep(random.uniform(2.1, 4.0))
+    await asyncio.sleep(reinvite_retry_delay(owns_call_id=True))
     return await client.async_prepare_video_reinvite(
         local_video_rtp_port=port,
         video_formats=formats,
@@ -101,7 +101,7 @@ async def _prepare_endpoint_reinvite(
     status, _reason = manager.video_reinvite_result(call_id)
     if prepared is not None or status != 491:
         return prepared
-    await asyncio.sleep(random.uniform(2.1, 4.0))
+    await asyncio.sleep(reinvite_retry_delay(owns_call_id=False))
     return await manager.async_prepare_video_reinvite(
         call_id,
         local_video_rtp_port=port,

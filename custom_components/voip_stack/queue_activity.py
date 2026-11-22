@@ -256,7 +256,8 @@ async def _service(call, query):
 
     await async_require_service_admin(call.hass, call)
     data = dict(call.data)
-    ref = str(data.pop("queue")).strip()
+    from .service_endpoints import resolve_service_group_reference
+    ref = str(resolve_service_group_reference(call.hass, data.pop("queue"), kind="queue")).strip()
     manager = get_queue_manager(call.hass)
     queue = manager.resolve(ref) if manager is not None else None
     identity = queue.queue_id if queue is not None else ref.removeprefix("service:queue:").removeprefix("queue:")

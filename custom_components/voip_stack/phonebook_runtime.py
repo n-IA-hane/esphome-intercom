@@ -1,20 +1,15 @@
-"""Runtime helpers for publishing the HA-managed SIP phonebook."""
+"""Runtime projections for the existing Home Assistant phonebook sensor."""
 
 from __future__ import annotations
-
-import logging
 
 from homeassistant.core import HomeAssistant
 
 from .peer import Peer
-from .runtime_data import runtime_data, sip_registrar
-from .esphome_phone_inventory import _get_voip_devices
-
-_LOGGER = logging.getLogger(__name__)
+from .runtime_data import sip_registrar
 
 
 def format_entry_unified(peer: Peer) -> str:
-    """Return the compact ESP phonebook row for a peer."""
+    """Return the compact row retained by the existing HA phonebook sensor."""
     name = peer.name
     peer_ip = peer.host or ""
     if not peer_ip:
@@ -50,75 +45,3 @@ def available_esphome_services(hass: HomeAssistant) -> set[str]:
     if isinstance(services, dict):
         return set(services)
     return set(services or [])
-
-
-async def push_roster_json_to_esps(
-    hass: HomeAssistant,
-    roster_json: str,
-    *,
-    target_services: set[str] | None = None,
-) -> None:
-    """Push the canonical JSON roster to every online ESP endpoint."""
-    if not roster_json:
-        return
-    runtime = runtime_data(hass)
-    if runtime is None:
-        return
-    coordinator = runtime.phonebook
-    directory = runtime.directory
-    generation = directory.generation if directory is not None else None
-
-    def current():
-        return (runtime_data(hass) is runtime and runtime.directory is directory
-                and runtime.phonebook is coordinator and (coordinator is None or not coordinator.closed)
-                and (directory is None or (not directory.closed and directory.generation == generation)))
-
-    async with runtime.phonebook_push_lock:
-        devices = await _get_voip_devices(hass)
-        if not current():
-            return
-        services = available_esphome_services(hass)
-        for device in devices:
-            if not current():
-                return
-            # Use the owning ESPHome entry resolved by the device registry.
-            # Its API connection may use a different address from SIP discovery.
-            slug = str(device.get("route_id") or "").strip()
-            if not slug:
-                _LOGGER.warning(
-                    "Phonebook push skipped for %s: no resolved ESPHome service identity",
-                    device.get("name"),
-                )
-                continue
-            service_name = f"{slug}_set_roster_json"
-            if target_services is not None and service_name not in target_services:
-                continue
-            if service_name not in services:
-                _LOGGER.debug(
-                    "Phonebook push skipped for %s: missing esphome.%s",
-                    device.get("name"),
-                    service_name,
-                )
-                continue
-            if runtime.phonebook_delivered_roster.get(service_name) == roster_json:
-                continue
-            try:
-                await hass.services.async_call(
-                    "esphome",
-                    service_name,
-                    {"roster_json": roster_json},
-                    blocking=True,
-                )
-            except Exception as err:
-                _LOGGER.error(
-                    "Phonebook JSON push to %s failed: %s", device.get("name"), err
-                )
-                continue
-            if not current():
-                return
-            runtime.phonebook_delivered_roster[service_name] = roster_json
-            _LOGGER.info(
-                "Phonebook JSON pushed to %s via esphome.%s",
-                device.get("name"),
-                service_name,
-            )

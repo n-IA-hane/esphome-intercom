@@ -49,6 +49,7 @@ from .phone_config import (
     CONF_PHONE_OFFLINE_POLICY,
     CONF_PHONE_PASSWORD,
     CONF_PHONE_RING_GROUP,
+    CONF_PHONE_QUEUES,
     CONF_PHONE_SEND_VIDEO,
     CONF_PHONE_USERNAME,
     CONF_PHONE_VIDEO_ENABLED,
@@ -441,7 +442,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
     VERSION = 7
-    MINOR_VERSION = 3
+    MINOR_VERSION = 4
     _base_input: dict | None = None
 
     @classmethod
@@ -475,6 +476,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         return current_entry, current_entry.data if current_entry is not None else {}
 
     def _store_entry(self, data: dict):
+        registrar_choice = data.get(CONF_REGISTRAR_ENABLED)
         current_entry, _existing = self._current_entry_data()
         if current_entry is not None:
             data = {**current_entry.data, **data}
@@ -500,13 +502,43 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_update_and_abort(
                 current_entry,
                 data=data,
+                options={**current_entry.options, **({CONF_REGISTRAR_ENABLED: bool(registrar_choice)}
+                    if registrar_choice is not None and CONF_REGISTRAR_ENABLED in current_entry.options else {})},
                 reason="reconfigure_successful",
             )
         return self.async_create_entry(title="VoIP Stack", data=data)
 
     async def async_step_reconfigure(self, user_input=None):
         """Reconfigure the existing VoIP Stack entry from HA's native menu."""
-        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail", "phone_services", "phone_provisioning"])
+        return self.async_show_menu(step_id="reconfigure", menu_options=["user", "parking", "voicemail", "phone_services", "phone_provisioning", "esphome_enrollment"])
+
+    async def async_step_esphome_enrollment(self, user_input=None):
+        """Explicitly re-enroll an ESP whose managed account was removed."""
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers.selector import DeviceSelector, DeviceSelectorConfig
+        from .managed_phones import CONF_ESPHOME_ENROLLMENTS
+
+        entry = self._current_entry()
+        errors = {}
+        if user_input is not None and entry is not None:
+            device_id = user_input["device_id"]
+            receipts = dict(entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}))
+            receipt = receipts.get(device_id)
+            device = dr.async_get(self.hass).async_get(device_id)
+            if (device is None or not isinstance(receipt, dict) or "endpoint_id" in receipt
+                    or device.config_entry_id != receipt.get("origin_entry_id")):
+                errors["base"] = "managed_esphome_missing"
+            else:
+                receipts.pop(device_id)
+                result = self.async_update_and_abort(entry,
+                    data_updates={CONF_ESPHOME_ENROLLMENTS: receipts}, reason="reconfigure_successful")
+                runtime = getattr(entry, "runtime_data", None)
+                if runtime is not None and runtime.phone_provisioning is not None:
+                    runtime.phone_provisioning.schedule()
+                return result
+        return self.async_show_form(step_id="esphome_enrollment", errors=errors, data_schema=vol.Schema({
+            vol.Required("device_id"): DeviceSelector(DeviceSelectorConfig(integration="esphome")),
+        }))
 
     async def async_step_phone_provisioning(self, user_input=None):
         """Download an optional index only after explicit opt-in."""
@@ -1010,7 +1042,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class PhoneSubentryFlowHandler(ConfigSubentryFlow):
-    """Add or reconfigure one logical browser/SIP phone."""
+    """Add or reconfigure one logical SIP account."""
 
     _kind: EndpointKind | None = None
     _reconfigure = False
@@ -1026,10 +1058,36 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
     def _current_data(self) -> Mapping[str, Any]:
         if not self._reconfigure:
             return {}
-        return phone_subentry_data(self._get_reconfigure_subentry())
+        from .phone_queue_membership import project_phone_memberships
+        row = self._get_reconfigure_subentry()
+        return project_phone_memberships(self._get_entry(), phone_endpoint_id(row), phone_subentry_data(row))
 
     def _common_schema(self, *, sip_account: bool) -> vol.Schema:
+        from .group_flow import destination_options
+        from .group_config import group_records
+        from .phone_queue_membership import membership_names, normalize_phone_queues
+        from .phone_policy import DestinationKind
+
         current = self._current_data()
+        entry = self._get_entry()
+        destinations = destination_options(self.hass, entry)
+        group_choices = {kind: [{'value': row['name'], 'label': row['name']}
+                               for row in group_records(entry, kind).values()] for kind in ('ring', 'queue')}
+        runtime = getattr(entry, 'runtime_data', None)
+        directory = getattr(runtime, 'directory', None)
+        conferences = {row.name for row in directory.snapshot() if row.metadata.get('group_type') == 'conference'} if directory is not None else set()
+        conference_choices = [{'value': name, 'label': name} for name in sorted(conferences)]
+        policy = persisted_phone_policy(current)
+
+        def action(destination):
+            return 'none' if destination is None else 'forward' if destination.kind is DestinationKind.CONTACT else destination.kind.value
+
+        def target(destination):
+            return destination.target if destination is not None else ''
+
+        def destination_selector():
+            return SelectSelector({'options': destinations, 'custom_value': True, 'mode': 'dropdown'})
+
         fields: dict[Any, Any] = {
             vol.Required(
                 CONF_PHONE_NAME,
@@ -1049,16 +1107,18 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             ): BooleanSelector(),
             vol.Optional(
                 CONF_PHONE_RING_GROUP,
-                default=str(current.get(CONF_PHONE_RING_GROUP) or ""),
-            ): TextSelector(),
+                default=list(membership_names('ring_group', current.get(CONF_PHONE_RING_GROUP))),
+            ): SelectSelector({'options': group_choices['ring'], 'multiple': True, 'custom_value': True, 'mode': 'dropdown'}),
+            vol.Optional(CONF_PHONE_QUEUES, default=list(normalize_phone_queues(current.get(CONF_PHONE_QUEUES)))):
+                SelectSelector({'options': group_choices['queue'], 'multiple': True, 'custom_value': True, 'mode': 'dropdown'}),
             vol.Optional(
                 CONF_PHONE_CONFERENCE_GROUP,
-                default=str(current.get(CONF_PHONE_CONFERENCE_GROUP) or ""),
-            ): TextSelector(),
+                default=list(membership_names('ring_group', current.get(CONF_PHONE_CONFERENCE_GROUP))),
+            ): SelectSelector({'options': conference_choices, 'multiple': True, 'custom_value': True, 'mode': 'dropdown'}),
             visible_required(
                 CONF_PHONE_CONFERENCE_RING,
                 default=bool(current.get(CONF_PHONE_CONFERENCE_RING, False)),
-                visible={"field": CONF_PHONE_CONFERENCE_GROUP, "operator": "not_eq", "value": ""},
+                visible={"field": CONF_PHONE_CONFERENCE_GROUP, "operator": "not_eq", "value": []},
             ): BooleanSelector(),
             vol.Required(
                 CONF_PHONE_VIDEO_ENABLED,
@@ -1066,30 +1126,16 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             ): BooleanSelector(),
         }
         if sip_account:
-            unavailable = persisted_phone_policy(current).unavailable
-            offline_target = unavailable.target if unavailable is not None else ""
-            offline_policy = OfflinePolicy.FORWARD.value if offline_target else OfflinePolicy.UNAVAILABLE.value
-            fields.update(
-                {
-                    vol.Required(
-                        CONF_PHONE_OFFLINE_POLICY,
-                        default=offline_policy,
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=[
-                                OfflinePolicy.UNAVAILABLE.value,
-                                OfflinePolicy.FORWARD.value,
-                            ],
-                            mode="dropdown",
-                        )
-                    ),
-                    visible_optional(
-                        CONF_PHONE_OFFLINE_FORWARD_TARGET,
-                        default=offline_target,
-                        visible={"field": CONF_PHONE_OFFLINE_POLICY, "value": OfflinePolicy.FORWARD.value},
-                    ): TextSelector(),
-                }
-            )
+            for field, slot in (('forward', 'always'), ('busy', 'busy'), ('unavailable', 'unavailable')):
+                destination = getattr(policy, slot)
+                fields[vol.Optional(field + '_action', default=action(destination))] = SelectSelector({
+                    'options': ['none', 'forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
+                fields[vol.Optional(field + '_to', default=target(destination))] = destination_selector()
+            fields[vol.Optional('ringing_timeout', default=policy.ringing_timeout or 0)] = NumberSelector({
+                'min': 0, 'max': 3600, 'step': 0.1, 'unit_of_measurement': 's', 'mode': 'box'})
+            fields[vol.Optional('no_answer_action', default=action(policy.no_answer) if policy.no_answer else 'forward')] = SelectSelector({
+                'options': ['forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
+            fields[vol.Optional('no_answer_to', default=target(policy.no_answer))] = destination_selector()
             if not self._suggested_password:
                 self._suggested_password = str(
                     current.get(CONF_PHONE_PASSWORD) or generate_password()
@@ -1144,7 +1190,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         )
         entry = self._get_entry()
         return not route_namespace_conflicts(
-            candidate_routes=(name, extension, username),
+            candidate_routes=(extension,) if username else (name, extension),
+            candidate_username=username,
             candidate_mailbox_routes=mailbox_route_aliases({
                 **self._current_data(), "name": name, "extension": extension, "username": username,
                 "voicemail": voicemail,
@@ -1167,8 +1214,20 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         kind: EndpointKind,
     ) -> tuple[dict[str, Any], dict[str, str]]:
         errors: dict[str, str] = {}
+        from .phone_queue_membership import membership_names, normalize_phone_queues
+        from .phone_policy import PhonePolicy
+        from .sip_account_identity import canonical_ha_destination
+        from .service_endpoints import resolve_public_phone
         current = self._current_data()
         values = {**current, **user_input}
+        membership_values = {}
+        for field in (CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES, CONF_PHONE_CONFERENCE_GROUP):
+            try:
+                names = normalize_phone_queues(values.get(field)) if field == CONF_PHONE_QUEUES else membership_names('ring_group', values.get(field))
+                membership_values[field] = list(names) if field == CONF_PHONE_QUEUES else ', '.join(names)
+            except ValueError:
+                membership_values[field] = [] if field == CONF_PHONE_QUEUES else ''
+                errors[field] = 'phone_groups_invalid'
         unavailable = persisted_phone_policy(current).unavailable
         previous_offline_target = unavailable.target if unavailable is not None else ""
         offline_target = str(user_input.get(CONF_PHONE_OFFLINE_FORWARD_TARGET, previous_offline_target) or "").strip()
@@ -1203,17 +1262,15 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             name=name,
             extension=extension,
             username=username,
-            ring_group=str(values.get(CONF_PHONE_RING_GROUP) or "").strip(),
-            conference_group=str(
-                values.get(CONF_PHONE_CONFERENCE_GROUP) or ""
-            ).strip(),
+            ring_group=membership_values[CONF_PHONE_RING_GROUP],
+            conference_group=membership_values[CONF_PHONE_CONFERENCE_GROUP],
             voicemail=voicemail,
         ):
             errors["base"] = "phone_alias_conflict"
         endpoint_id = str(current.get(CONF_PHONE_ENDPOINT_ID) or "")
-        if not endpoint_id:
+        if not self._reconfigure and not errors:
             self._account_draft = draft_phone_subentry(
-                {CONF_PHONE_KIND: kind.value, CONF_PHONE_NAME: name}, previous=self._account_draft, title=name)
+                {CONF_PHONE_KIND: kind.value, CONF_PHONE_NAME: name, CONF_PHONE_USERNAME: username}, previous=self._account_draft, title=name)
             endpoint_id = phone_endpoint_id(self._account_draft)
         data = {
             **current,
@@ -1223,17 +1280,13 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             CONF_PHONE_NAME: name,
             CONF_PHONE_EXTENSION: extension,
             CONF_PHONE_USERNAME: username,
+            'username_source': 'user',
             CONF_PHONE_PASSWORD: password,
             CONF_PHONE_ENABLED: bool(values.get(CONF_PHONE_ENABLED, True)),
             CONF_PHONE_DND: bool(values.get(CONF_PHONE_DND, False)),
-            CONF_PHONE_RING_GROUP: str(
-                values.get(CONF_PHONE_RING_GROUP) or ""
-            ).strip(),
-            CONF_PHONE_CONFERENCE_GROUP: str(
-                values.get(CONF_PHONE_CONFERENCE_GROUP) or ""
-            ).strip(),
+            **membership_values,
             CONF_PHONE_CONFERENCE_RING: bool(
-                values.get(CONF_PHONE_CONFERENCE_RING, False)
+                membership_values[CONF_PHONE_CONFERENCE_GROUP] and values.get(CONF_PHONE_CONFERENCE_RING, False)
             ),
             CONF_PHONE_VIDEO_ENABLED: bool(
                 values.get(CONF_PHONE_VIDEO_ENABLED, True)
@@ -1250,16 +1303,82 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                     }
                 else:
                     policy_data.pop("unavailable", None)
+            runtime = getattr(self._get_entry(), 'runtime_data', None)
+
+            def selected_target(value, field):
+                selected = canonical_ha_destination(self.hass, str(value or '').strip())
+                from homeassistant.exceptions import ServiceValidationError
+                try:
+                    endpoint = resolve_public_phone(runtime.endpoints, selected, directory=runtime.directory) if runtime is not None and selected else None
+                except ServiceValidationError:
+                    errors[field] = 'phone_alias_conflict'
+                    return ''
+                return endpoint.endpoint_id if endpoint is not None else selected
+
+            def destination(field, selected_action):
+                if selected_action == 'none':
+                    return None
+                if selected_action == 'hangup':
+                    return {'kind': 'hangup'}
+                selected = selected_target(user_input.get(field + '_to', ''), field + '_to')
+                if not selected:
+                    errors.setdefault(field + '_to', 'phone_forward_target_required')
+                    return None
+                if selected_action == 'forward' and selected.casefold() in {username.casefold(), endpoint_id.casefold()}:
+                    errors[field + '_to'] = 'phone_forward_loop'
+                if selected_action == 'voicemail':
+                    from .mailbox import mailbox_settings
+                    enabled = bool(voicemail.get('enabled')) if selected.casefold() == username.casefold() else (
+                        bool(mailbox_settings(self.hass, selected).get('enabled')) if runtime is not None else False)
+                    if not enabled:
+                        errors[field + '_to'] = 'phone_mailbox_required'
+                return {'kind': 'voicemail' if selected_action == 'voicemail' else 'contact', 'target': selected}
+
+            for field, slot in (('forward', 'always'), ('busy', 'busy'), ('unavailable', 'unavailable')):
+                if field + '_action' in user_input or field + '_to' in user_input:
+                    selected = destination(field, user_input.get(field + '_action', 'forward'))
+                    if selected is None:
+                        policy_data.pop(slot, None)
+                    else:
+                        policy_data[slot] = selected
+            if 'ringing_timeout' in user_input or 'no_answer_action' in user_input or 'no_answer_to' in user_input:
+                try:
+                    timeout = float(user_input.get('ringing_timeout', policy_data.get('ringing_timeout') or 0))
+                except (TypeError, ValueError):
+                    errors['ringing_timeout'] = 'phone_policy_invalid'
+                    timeout = 0
+                if timeout == 0:
+                    policy_data.pop('ringing_timeout', None)
+                    policy_data.pop('no_answer', None)
+                else:
+                    policy_data['ringing_timeout'] = timeout
+                    policy_data['no_answer'] = destination('no_answer', user_input.get('no_answer_action', 'forward'))
+            try:
+                PhonePolicy.from_data(policy_data)
+            except (ValueError, TypeError):
+                errors['base'] = 'phone_policy_invalid'
+            data.pop(CONF_PHONE_OFFLINE_POLICY, None)
+            data.pop(CONF_PHONE_OFFLINE_FORWARD_TARGET, None)
         data.update({CONF_PHONE_AUTO_ANSWER: bool(values.get(CONF_PHONE_AUTO_ANSWER, False)),
                      CONF_PHONE_SEND_VIDEO: bool(values.get(CONF_PHONE_SEND_VIDEO, False))})
         data[CONF_PHONE_POLICY] = policy_data
         codec_errors, _inherited = normalize_codec_form(data, user_input, current, inherit=True)
         errors.update(codec_errors)
-        if not self._reconfigure:
+        if not self._reconfigure and not errors:
             self._account_draft = draft_phone_subentry(data, previous=self._account_draft, title=name)
         return data, errors
 
     async def _finish(self, data: dict[str, Any], *, remove_mailbox: bool = False, physical_bindings=None):
+        from .phone_queue_membership import GROUP_MEMBERSHIP_VERSION, _apply_membership_updates
+
+        def apply_memberships(identity):
+            if self._get_entry().data.get(GROUP_MEMBERSHIP_VERSION) == 1:
+                fields = {field: data[field] for field in ("ring_group", "queues") if field in data}
+                if fields:
+                    _apply_membership_updates(self.hass, self._get_entry(), {identity: fields})
+                data.pop("ring_group", None)
+                data.pop("queues", None)
+
         from .physical_phone import (
             account_physical_bindings_from_form, async_prepare_account_bindings, apply_account_bindings,
         )
@@ -1274,9 +1393,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                     errors={"base": str(error)})
         try:
             validate_phone_subentry_data(self._get_entry(), data)
-        except ValueError:
+        except ValueError as error:
             return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
-                                        errors={"base": "phone_alias_conflict"})
+                                        errors={"base": "phone_forward_loop" if str(error) == 'phone_forward_loop' else "phone_alias_conflict"})
         if self._reconfigure:
             if remove_mailbox and self._current_data().get("voicemail", {}).get("enabled"):
                 from .mailbox import async_remove_mailbox
@@ -1296,9 +1415,25 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             # final synchronous boundary rather than committing an old draft.
             try:
                 validate_phone_subentry_data(self._get_entry(), data)
-            except ValueError:
+            except ValueError as error:
                 return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
-                                            errors={"base": "phone_alias_conflict"})
+                                            errors={"base": "phone_forward_loop" if str(error) == 'phone_forward_loop' else "phone_alias_conflict"})
+            current = self._get_reconfigure_subentry()
+            if data.get(CONF_PHONE_USERNAME) and data[CONF_PHONE_USERNAME] != phone_endpoint_id(current):
+                from .sip_account_identity import async_migrate_account_identities, _typed_data
+
+                try:
+                    mapping = await async_migrate_account_identities(self.hass, self._get_entry(),
+                        account_updates={current.subentry_id: data})
+                except ValueError:
+                    return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
+                                                errors={"base": "phone_alias_conflict"})
+                prepared = tuple((row, _typed_data(values, 'physical_phone', mapping)) for row, values in prepared)
+                apply_memberships(data[CONF_PHONE_USERNAME])
+                apply_account_bindings(self.hass, self._get_entry(), prepared)
+                self.hass.config_entries.async_schedule_reload(self._get_entry().entry_id)
+                return self.async_abort(reason="reconfigure_successful")
+            apply_memberships(data[CONF_PHONE_ENDPOINT_ID])
             result = self.async_update_and_abort(
                 self._get_entry(),
                 self._get_reconfigure_subentry(),
@@ -1307,19 +1442,19 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             )
             apply_account_bindings(self.hass, self._get_entry(), prepared)
             return result
-        from .phone_config import _add_phone_subentry
-        _add_phone_subentry(self.hass, self._get_entry(), data=data,
-                            title=str(data[CONF_PHONE_NAME]), draft=self._account_draft)
+        apply_memberships(data[CONF_PHONE_ENDPOINT_ID])
         apply_account_bindings(self.hass, self._get_entry(), prepared)
-        return self.async_abort(reason="phone_configured")
+        # The native manager creates the subentry and owns flow completion.
+        # Physical bindings refer to the canonical username, never a draft ID.
+        draft = draft_phone_subentry(data, previous=self._account_draft, title=str(data[CONF_PHONE_NAME]))
+        if data.get(CONF_PHONE_ENABLED, True):
+            from .phone_config import async_enable_registrar_for_new_account
+            async_enable_registrar_for_new_account(self.hass, self._get_entry())
+        return self.async_create_entry(title=draft.title, data=draft.data, unique_id=draft.unique_id)
 
     async def async_step_user(self, user_input=None):
         """Every managed phone is one ordinary SIP account."""
         self._kind = EndpointKind.SIP_ACCOUNT
-        return await self.async_step_sip_account(user_input)
-
-    async def async_step_browser(self, user_input=None):
-        """Keep the former native step name as an account editor entry point."""
         return await self.async_step_sip_account(user_input)
 
     async def async_step_sip_account(self, user_input=None):
@@ -1347,14 +1482,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
     async def async_step_reconfigure(self, user_input=None):
         """Keep endpoint identity and kind stable while editing settings."""
         record = self._get_reconfigure_subentry()
-        if record.data.get("kind") == EndpointKind.ESPHOME.value:
-            from .managed_phones import managed_records
-
-            phone = managed_records(self._get_entry()).get(record.data["device_id"])
-            if phone is None:
-                return self.async_abort(reason="managed_esphome_missing")
-            return self.async_abort(reason="managed_esphome_account", description_placeholders={
-                "device_id": phone.device_id, "username": phone.username})
         self._reconfigure = True
         self._kind = EndpointKind.SIP_ACCOUNT
         return await self.async_step_sip_account(user_input)

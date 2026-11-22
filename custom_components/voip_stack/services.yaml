@@ -1,6 +1,7 @@
 set_phone_memberships:
   name: Set phone group membership
-  description: Change a phone's ring groups, queues or memberships in existing paging groups. Paging membership requires an administrator.
+  description: Change a phone's ring groups, queues or memberships in existing paging groups. Paging membership
+    requires an administrator.
   fields:
     phone:
       name: Phone
@@ -8,45 +9,57 @@ set_phone_memberships:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     field:
       name: Group type
       required: true
       selector:
         select:
           options:
-            - label: Ring groups
-              value: ring_group
-            - label: Queues
-              value: queues
-            - label: Paging groups
-              value: paging_groups
+          - label: Ring groups
+            value: ring_group
+          - label: Queues
+            value: queues
+          - label: Paging groups
+            value: paging_groups
     value:
-      name: Group names
-      description: Ring groups and queues use names. Paging groups use existing group IDs, as a list or comma-separated. Empty removes memberships without deleting groups.
+      name: Groups
+      description: Choose groups matching the selected group type. Empty removes this account from that type of
+        group.
       required: true
       selector:
-        text:
-
+        device:
+          multiple: true
+          filter:
+          - integration: voip_stack
+            model: Ring group
+          - integration: voip_stack
+            model: Call queue
+          - integration: voip_stack
+            model: Paging group
 set_phone_queues:
   name: Set phone queues
-  description: Set the queue declarations of one phone. New names create automatic queue devices.
+  description: Choose the native queues for this SIP account.
   fields:
     phone:
       name: Phone
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP account
     queues:
       name: Queues
-      description: Comma-separated queue names, or an empty value to leave all queues.
+      description: Choose the queues for this account, or clear the selection to leave all queues.
       required: true
       selector:
-        text:
-
+        device:
+          multiple: true
+          filter:
+          - integration: voip_stack
+            model: Call queue
 set_queue_agent_state:
   name: Set queue operator state
   description: Log a configured member in or out, or pause and resume queue assignments.
@@ -55,30 +68,35 @@ set_queue_agent_state:
       name: Queue
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: Call queue
     phone:
       name: Phone
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP account
     state:
       name: Operator state
       required: true
       selector:
         select:
           options:
-            - label: Logged in and available
-              value: available
-            - label: Paused
-              value: paused
-            - label: Logged out
-              value: logged_out
+          - label: Logged in and available
+            value: available
+          - label: Paused
+            value: paused
+          - label: Logged out
+            value: logged_out
     reason:
       name: Pause reason
       description: Optional operator reason, retained until the next state change.
       selector:
-        text:
-
+        text: null
 get_queue_activity:
   name: Get queue activity
   description: Read semantic queue events from Home Assistant Recorder. Administrative access is required.
@@ -87,48 +105,56 @@ get_queue_activity:
       name: Queue
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: Call queue
     since:
       name: Since
       description: ISO timestamp with timezone. Defaults to 24 hours before Until.
       selector:
-        text:
+        text: null
     until:
       name: Until
       description: ISO timestamp with timezone. Defaults to the current time. Maximum window is 31 days.
       selector:
-        text:
+        text: null
     limit:
       name: Event limit
       default: 100
       selector:
-        number: {min: 1, max: 1000, mode: box}
+        number:
+          min: 1
+          max: 1000
+          mode: box
     cursor:
       name: Next page cursor
       description: Use next_cursor from the previous response, keeping the same queue and window.
       selector:
-        text:
-
+        text: null
 get_queue_metrics:
   name: Get queue metrics
-  description: Read admission-cohort counts, waits and operator workload from Recorder as of Until. Recorder retention applies. Administrative access is required.
+  description: Read admission-cohort counts, waits and operator workload from Recorder as of Until. Recorder retention
+    applies. Administrative access is required.
   fields:
     queue:
       name: Queue
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: Call queue
     since:
       name: Since
       description: ISO timestamp with timezone. Defaults to 24 hours before Until.
       selector:
-        text:
+        text: null
     until:
       name: Until
       description: ISO timestamp with timezone. Defaults to the current time. Maximum window is 31 days.
       selector:
-        text:
-
+        text: null
 get_queue_state:
   name: Get queue state
   description: Return the queue policy, waiting callers and current member availability.
@@ -137,13 +163,18 @@ get_queue_state:
       name: Queue
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: Call queue
     phone:
       name: Phone
       description: Optional member filter.
       selector:
-        text:
-
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP account
 configure_queue:
   name: Configure queue
   description: Update an existing queue. The same settings are available on its VoIP Stack device.
@@ -152,95 +183,147 @@ configure_queue:
       name: Queue
       required: true
       selector:
-        text:
+        device:
+          filter:
+          - integration: voip_stack
+            model: Call queue
     enabled:
       name: Enabled
       selector:
-        boolean:
+        boolean: null
     max_waiting:
       name: Maximum waiting callers
       selector:
-        number: {min: 1, max: 64, mode: box}
+        number:
+          min: 1
+          max: 64
+          mode: box
     max_wait:
       name: Maximum wait
       selector:
-        number: {min: 1, max: 3600, unit_of_measurement: s, mode: box}
+        number:
+          min: 1
+          max: 3600
+          unit_of_measurement: s
+          mode: box
     ring_timeout:
       name: Ring time per attempt
       selector:
-        number: {min: 1, max: 120, unit_of_measurement: s, mode: box}
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: s
+          mode: box
     no_agent_wait:
       name: Wait without operators
       selector:
-        number: {min: 0, max: 120, unit_of_measurement: s, mode: box}
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: s
+          mode: box
     retry_delay:
       name: Retry delay
       selector:
-        number: {min: 0.1, max: 120, unit_of_measurement: s, mode: box}
+        number:
+          min: 0.1
+          max: 120
+          unit_of_measurement: s
+          mode: box
+          step: 0.1
     wrap_up:
       name: Pause after a conversation
       selector:
-        number: {min: 0, max: 3600, unit_of_measurement: s, mode: box}
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: s
+          mode: box
     fallback:
       name: Fallback destination
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     hold_media:
-      name: Hold audio URI
+      name: Hold audio
       selector:
-        text:
+        media:
+          accept:
+          - audio/*
     strategy:
       name: Distribution strategy
       selector:
         select:
-          options: [ring_all, round_robin, longest_idle, ordered]
-    agent_order:
-      name: Preferred phone order
-      description: Ordered stable phone identities. Remaining queue members follow; this does not change membership.
-      selector:
-        object:
+          options:
+          - ring_all
+          - round_robin
+          - longest_idle
+          - ordered
     auto_pause_after:
       name: Pause after unanswered rings
-      description: 0 disables automatic pause. Use 3 for three consecutive unanswered ringing attempts. Busy, offline and cancellations do not count.
+      description: 0 disables automatic pause. Use 3 for three consecutive unanswered ringing attempts. Busy, offline
+        and cancellations do not count.
       selector:
-        number: {min: 0, max: 100, mode: box}
+        number:
+          min: 0
+          max: 100
+          mode: box
     fallback_full:
       name: Fallback for full
       description: Overrides the common fallback for this condition. Empty inherits the common destination.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     fallback_timeout:
       name: Fallback for timeout
       description: Overrides the common fallback for this condition. Empty inherits the common destination.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     fallback_no_agents:
       name: Fallback for no agents
       description: Overrides the common fallback for this condition. Empty inherits the common destination.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     fallback_disabled:
       name: Fallback for disabled
       description: Overrides the common fallback for this condition. Empty inherits the common destination.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     fallback_removed:
       name: Fallback for removed
       description: Overrides the common fallback for this condition. Empty inherits the common destination.
       selector:
-        text:
-
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
 announce:
   name: Announce
   description: Deliver one TTS message or audio file to phones or paging groups. Busy phones are skipped.
   fields:
     targets:
       name: Phones or paging groups
-      description: Endpoint IDs, device IDs, names or paging group IDs.
+      description: Choose account or paging destinations, or enter an existing public destination.
       required: true
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
           multiple: true
+          mode: dropdown
     tts_entity_id:
       name: TTS provider
       selector:
@@ -254,33 +337,41 @@ announce:
     language:
       name: Language
       selector:
-        text:
+        text: null
     options:
       name: TTS options
       selector:
-        object:
+        object: null
     media:
       name: Audio file
       description: Use instead of a TTS provider and message.
       selector:
         media:
-          accept: [audio/*]
+          accept:
+          - audio/*
     answer_timeout:
       name: Answer window
       default: 5
       selector:
-        number: {min: 1, max: 120, unit_of_measurement: s, mode: box}
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: s
+          mode: box
     timeout:
       name: Total time limit
       default: 120
       selector:
-        number: {min: 1, max: 600, unit_of_measurement: s, mode: box}
+        number:
+          min: 1
+          max: 600
+          unit_of_measurement: s
+          mode: box
     wait:
       name: Wait until finished
       default: true
       selector:
-        boolean:
-
+        boolean: null
 stop_announcement:
   name: Stop announcement
   description: Stop only the identified announcement and release its recipient calls.
@@ -289,61 +380,28 @@ stop_announcement:
       name: Announcement ID
       required: true
       selector:
-        text:
-
-purge_devices:
-  name: Purge stale devices (disabled)
-  description: >-
-    Disabled because VoIP Stack does not own ESPHome devices and must never
-    remove them from Home Assistant's device registry.
-  fields:
-    device_id:
-      name: Device
-      description: Optional specific VoIP ESPHome device to purge immediately.
-      required: false
-      selector:
-        device:
-          filter:
-            - integration: esphome
-    min_unavailable_hours:
-      name: Minimum Hours Unavailable
-      description: >-
-        Only purge devices that have been unavailable for at least this many
-        hours. Default 0 = purge immediately. Use a higher value (e.g. 1) to
-        avoid wiping devices that are only briefly offline (OTA updates,
-        reboots).
-      required: false
-      default: 0
-      selector:
-        number:
-          min: 0
-          max: 168
-          step: 0.5
-          unit_of_measurement: h
-          mode: box
-
+        text: null
 answer:
   name: Answer call
-  description: Answer the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.
+  description: Answer the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible
+    phone.
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant or ESPHome phone device.
+      description: Optional logical SIP account.
       required: false
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     send_video:
       name: Send video
       description: Send the browser camera when video is enabled for this phone.
       required: false
       default: false
       selector:
-        boolean:
+        boolean: null
     advanced:
       name: Advanced options
       description: Select a specific concurrent call.
@@ -354,31 +412,29 @@ answer:
           description: Select a specific call when more than one call is ringing.
           required: false
           selector:
-            text:
+            text: null
         accept_video:
           name: Accept video
-          description: Accept offered video on a browser phone. Turn off to answer with audio only, independently of the local camera preference.
+          description: Accept offered video on a browser phone. Turn off to answer with audio only, independently
+            of the local camera preference.
           required: false
           default: true
           selector:
-            boolean:
-
-
+            boolean: null
 decline:
   name: Decline call
-  description: Decline the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.
+  description: Decline the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible
+    phone.
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant or ESPHome phone device.
+      description: Optional logical SIP account.
       required: false
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     advanced:
       name: Advanced options
       description: Select a specific call or customize its SIP rejection.
@@ -388,12 +444,12 @@ decline:
           name: Physical phone line
           description: Optional configured line slot when selecting a managed physical SIP phone.
           selector:
-            text:
+            text: null
         call_id:
           name: Call ID
           required: false
           selector:
-            text:
+            text: null
         status:
           name: SIP status
           required: false
@@ -409,21 +465,18 @@ decline:
           required: false
           default: Decline
           selector:
-            text:
+            text: null
         decline_reason:
           name: Automation reason
           required: false
           default: declined
           selector:
-            text:
-
+            text: null
 call:
   name: Call
-  description: >-
-    Call a destination from a phone, or originate a backend audio call from an
-    Automation contact. With an Automation source, this action waits for the
-    destination to answer. Subsequent actions use this execution's call automatically.
-    A response variable is optional for advanced explicit selection. No browser is needed.
+  description: Call a destination from a phone, or originate a backend audio call from an Automation contact. With
+    an Automation source, this action waits for the destination to answer. Subsequent actions use this execution's
+    call automatically. A response variable is optional for advanced explicit selection. No browser is needed.
   fields:
     device_id:
       name: Calling phone
@@ -432,32 +485,27 @@ call:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     source_automation:
       name: Calling Automation contact
-      description: >-
-        Name or extension of an enabled Automation contact, such as Wakeup-Caller.
-        Use instead of Calling phone for a backend audio call. Requires
-        administrator or automation access; no response variable is needed.
+      description: Name or extension of an enabled Automation contact, such as Wakeup-Caller. Use instead of Calling
+        phone for a backend audio call. Requires administrator or automation access; no response variable is needed.
       selector:
-        text:
+        text: null
     trunk_id:
       name: Outgoing SIP trunk
-      description: Optional line for a Home Assistant phone or backend announcement. Omit to use the phone preference or default trunk. No automatic fallback to another line.
+      description: Optional line for a Home Assistant phone or backend announcement. Omit to use the phone preference
+        or default trunk. No automatic fallback to another line.
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     answer_timeout:
       name: Wait for answer
-      description: >-
-        Maximum seconds to wait for the called party to answer an Automation-originated
-        call. Ringing and early media do not count as an answer. Failure stops the
-        action and releases the call.
+      description: Maximum seconds to wait for the called party to answer an Automation-originated call. Ringing
+        and early media do not count as an answer. Failure stops the action and releases the call.
       default: 30
       selector:
         number:
@@ -480,7 +528,14 @@ call:
       required: false
       default: false
       selector:
-        boolean:
+        boolean: null
+    receive_video:
+      name: Receive video
+      description: Request remote video independently of sending the browser camera.
+      required: false
+      default: false
+      selector:
+        boolean: null
     advanced:
       name: Advanced options
       description: Explicit routing controls.
@@ -491,8 +546,7 @@ call:
           required: false
           default: false
           selector:
-            boolean:
-
+            boolean: null
 forward:
   name: Forward call
   description: Forward the current ringing or active call to another destination.
@@ -504,10 +558,8 @@ forward:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     destination:
       name: Destination
       description: Phonebook name, extension, group, number or SIP address.
@@ -525,17 +577,18 @@ forward:
       selector:
         select:
           options:
-            - resume
-            - terminate
-            - busy
+          - resume
+          - terminate
+          - busy
     trunk_id:
       name: Outgoing SIP trunk
-      description: Optional line for an external forwarding destination. Omit to retain the call's trunk choice or phone preference.
+      description: Optional line for an external forwarding destination. Omit to retain the call's trunk choice
+        or phone preference.
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     advanced:
       name: Advanced options
       description: Select a specific concurrent call or reject stale automation decisions.
@@ -545,7 +598,7 @@ forward:
           name: Call ID
           required: false
           selector:
-            text:
+            text: null
         expected_generation:
           name: Call generation
           description: Supplied automatically by native VoIP triggers. Only enter it for legacy explicit-call automations.
@@ -558,7 +611,7 @@ forward:
           name: Expected state
           required: false
           selector:
-            text:
+            text: null
         expected_sequence:
           name: Expected sequence
           required: false
@@ -568,7 +621,6 @@ forward:
               min: 0
               step: 1
               mode: box
-
 transfer:
   name: Transfer call
   description: Transfer an established SIP call. A native VoIP trigger selects the call automatically.
@@ -591,38 +643,31 @@ transfer:
           selector:
             device:
               filter:
-                - integration: voip_stack
-                  model: SIP account
-                - integration: voip_stack
-                  model: Home Assistant softphone
+              - integration: voip_stack
+                model: SIP account
         call_id:
           name: Call ID
           description: Only needed without a native VoIP call trigger.
           selector:
-            text:
+            text: null
         replaces_call_id:
           name: Consultation call ID
           description: Use the established consultation call for an attended transfer.
           selector:
-            text:
-
+            text: null
 set_deadline:
-  name: "Advanced: Set call deadline"
-  description: Arm an explicit calling or ringing deadline. Expiry emits an automation event but never changes routing by itself.
+  name: 'Advanced: Set call deadline'
+  description: Arm an explicit calling or ringing deadline. Expiry emits an automation event but never changes routing
+    by itself.
   fields:
-    call_id:
-      name: Call ID
-      required: true
-      selector:
-        text:
     phase:
       name: Phase
       required: true
       selector:
         select:
           options:
-            - calling
-            - ringing
+          - calling
+          - ringing
     timeout:
       name: Timeout
       description: Seconds before the timeout-requested event is emitted if the call has not changed state.
@@ -634,43 +679,46 @@ set_deadline:
           step: 0.1
           unit_of_measurement: s
           mode: box
-    expected_state:
-      name: Expected state
-      description: Optional stale-automation guard copied from the call event.
-      required: false
-      selector:
-        text:
-    expected_sequence:
-      name: Expected sequence
-      description: Optional stale-automation guard copied from the call event.
-      required: false
-      default: 0
-      selector:
-        number:
-          min: 0
-          step: 1
-          mode: box
-
+    advanced:
+      name: Advanced options
+      description: Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection.
+      collapsed: true
+      fields:
+        call_id:
+          name: Call ID
+          selector:
+            text: null
+        expected_state:
+          name: Expected state
+          description: Optional stale-automation guard copied from the call event.
+          selector:
+            text: null
+        expected_sequence:
+          name: Expected sequence
+          description: Optional stale-automation guard copied from the call event.
+          default: 0
+          selector:
+            number:
+              min: 0
+              step: 1
+              mode: box
 cancel_deadline:
-  name: "Advanced: Cancel call deadline"
+  name: 'Advanced: Cancel call deadline'
   description: Cancel a previously armed deadline without changing the call.
   fields:
-    call_id:
-      name: Call ID
-      required: true
-      selector:
-        text:
-
+    advanced:
+      name: Advanced options
+      description: Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection.
+      collapsed: true
+      fields:
+        call_id:
+          name: Call ID
+          selector:
+            text: null
 route:
-  name: "Advanced: Apply route decision"
+  name: 'Advanced: Apply route decision'
   description: Apply an automation dial-plan decision to a pending inbound SIP route.
   fields:
-    call_id:
-      name: Call ID
-      description: Pending SIP Call-ID from the route_requested Event Entity occurrence.
-      required: true
-      selector:
-        text:
     action:
       name: Action
       required: false
@@ -678,13 +726,13 @@ route:
       selector:
         select:
           options:
-            - answer_ha
-            - decline
-            - busy
-            - forward
-            - bridge
-            - default
-            - cancel
+          - answer_ha
+          - decline
+          - busy
+          - forward
+          - bridge
+          - default
+          - cancel
     destination:
       name: Destination
       description: Contact ID/name, number, user@host, or sip:user@host URI for forward/bridge.
@@ -710,14 +758,23 @@ route:
       description: SIP reason phrase.
       required: false
       selector:
-        text:
+        text: null
     decline_reason:
       name: Decline reason
       description: Application terminal reason propagated in SIP Reason and X-Voip-Stack-Decline-Reason headers.
       required: false
       selector:
-        text:
-
+        text: null
+    advanced:
+      name: Advanced options
+      description: Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection.
+      collapsed: true
+      fields:
+        call_id:
+          name: Call ID
+          description: Pending SIP Call-ID from the route_requested Event Entity occurrence.
+          selector:
+            text: null
 select_inbound_destination:
   name: Select inbound call destination
   description: Send a new inbound call to a phone, group, extension or Assist. Normally only Destination is needed.
@@ -742,18 +799,18 @@ select_inbound_destination:
           selector:
             device:
               filter:
-                - integration: voip_stack
-                  model: SIP trunk
+              - integration: voip_stack
+                model: SIP trunk
         call_id:
           name: Call ID
           required: false
           selector:
-            text:
+            text: null
         expected_state:
           name: Expected state
           required: false
           selector:
-            text:
+            text: null
         expected_sequence:
           name: Expected sequence
           required: false
@@ -763,22 +820,19 @@ select_inbound_destination:
               min: 0
               step: 1
               mode: box
-
 hangup:
   name: Hang up
   description: End the call on the selected phone. Omit the phone to use the preferred or sole compatible phone.
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant or ESPHome phone device.
+      description: Optional logical SIP account.
       required: false
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     advanced:
       name: Advanced options
       description: Select a specific concurrent call.
@@ -788,21 +842,21 @@ hangup:
           name: Physical phone line
           description: Optional configured line slot when selecting a managed physical SIP phone.
           selector:
-            text:
+            text: null
         call_id:
           name: Call ID
           required: false
           selector:
-            text:
+            text: null
         expected_generation:
           name: Call generation
-          description: Optional advanced selection paired with call_id. A single outgoing Automation call is selected automatically.
+          description: Optional advanced selection paired with call_id. A single outgoing Automation call is selected
+            automatically.
           selector:
             number:
               min: 0
               max: 2147483647
               mode: box
-
 add_contact:
   name: Add Phonebook Contact
   description: Add or replace one manual contact in the central JSON phonebook.
@@ -813,8 +867,8 @@ add_contact:
       selector:
         select:
           options:
-            - contact
-            - automation
+          - contact
+          - automation
     fallback_destination:
       name: Automation fallback
       description: Optional destination when no automation handles the call before its timeout.
@@ -837,68 +891,74 @@ add_contact:
       description: Contact name. If ID is omitted, this is also used as the contact ID.
       required: true
       selector:
-        text:
+        text: null
     id:
       name: Optional ID
       description: Optional stable ID. Defaults to Name.
       required: false
       selector:
-        text:
+        text: null
     address:
       name: Optional Address
-      description: Optional IP or host for a direct local SIP endpoint. Use with SIP Port and Transport when the contact is directly reachable.
+      description: Optional IP or host for a direct local SIP endpoint. Use with SIP Port and Transport when the
+        contact is directly reachable.
       required: false
       selector:
-        text:
+        text: null
     sip_uri:
       name: Optional SIP URI
-      description: Optional complete SIP URI, for example sip:kitchen@192.168.1.50:5060;transport=udp. When omitted, HA resolves the contact by name, extension, registration or trunk number.
+      description: Optional complete SIP URI, for example sip:kitchen@192.168.1.50:5060;transport=udp. When omitted,
+        HA resolves the contact by name, extension, registration or trunk number.
       required: false
       selector:
-        text:
+        text: null
     sip_profile:
       name: SIP compatibility profile
-      description: Auto keeps peer detection. Select Dahua for a static Dahua door station, without inventing a registration or User-Agent.
+      description: Auto keeps peer detection. Select Dahua for a static Dahua door station, without inventing a
+        registration or User-Agent.
       selector:
         select:
           options:
-            - label: Auto
-              value: auto
-            - label: Dahua
-              value: dahua
+          - label: Auto
+            value: auto
+          - label: Dahua
+            value: dahua
     dahua_audio:
       name: Dahua audio compatibility
-      description: Requires the Dahua profile for an explicit audio choice. PCM adds proprietary PCM/16000 to the offer. Symmetric also transmits with a validated received codec when negotiated for TX. Auto retains User-Agent detection.
+      description: Requires the Dahua profile for an explicit audio choice. PCM adds proprietary PCM/16000 to the
+        offer. Symmetric also transmits with a validated received codec when negotiated for TX. Auto retains User-Agent
+        detection.
       selector:
         select:
           options:
-            - label: Auto by User-Agent
-              value: auto
-            - label: Standard SIP codecs
-              value: standard
-            - label: Standard + Dahua PCM
-              value: pcm
-            - label: Dahua PCM, match received codec
-              value: symmetric
+          - label: Auto by User-Agent
+            value: auto
+          - label: Standard SIP codecs
+            value: standard
+          - label: Standard + Dahua PCM
+            value: pcm
+          - label: Dahua PCM, match received codec
+            value: symmetric
     extension:
       name: Optional Extension
-      description: Optional local/internal dial-plan alias such as 101. Inbound DTMF and internal callers resolve this field before external numbers.
+      description: Optional local/internal dial-plan alias such as 101. Inbound DTMF and internal callers resolve
+        this field before external numbers.
       required: false
       selector:
-        text:
+        text: null
     number:
       name: Optional Number
       description: Optional external/public number used for trunk calls.
       required: false
       selector:
-        text:
+        text: null
     ha_bridge:
       name: Optional Bridge Via HA
       description: Force HA routing even when the contact has a direct SIP endpoint.
       required: false
       default: false
       selector:
-        boolean:
+        boolean: null
     transport:
       name: Optional SIP Transport
       description: Optional signaling transport for a direct SIP endpoint. RTP remains UDP.
@@ -906,9 +966,9 @@ add_contact:
       selector:
         select:
           options:
-            - tcp
-            - tls
-            - udp
+          - tcp
+          - tls
+          - udp
     port:
       name: Optional SIP Port
       description: Optional SIP signaling port for address-based contacts. Defaults to 5060.
@@ -934,25 +994,25 @@ add_contact:
       description: Optional manual TX sample-rate metadata. Use auto when omitted.
       required: false
       selector:
-        text:
+        text: null
     rx_rate:
       name: Optional RX Rate
       description: Optional manual RX sample-rate metadata. Use auto when omitted.
       required: false
       selector:
-        text:
+        text: null
     tx_formats:
       name: Optional TX Formats
       description: Optional TX RTP PCM format tokens, for example 16000:s16le:1:20.
       required: false
       selector:
-        text:
+        text: null
     rx_formats:
       name: Optional RX Formats
       description: Optional RX RTP PCM format tokens, for example 48000:s16le:1:10.
       required: false
       selector:
-        text:
+        text: null
     max_payload_bytes:
       name: Optional Max RTP Payload Bytes
       description: Optional RTP PCM payload limit. Default is 1200 when omitted.
@@ -965,24 +1025,26 @@ add_contact:
           mode: box
     conference_group:
       name: Optional Conference Group
-      description: Adds this contact as a member of one or more VoIP conference groups. Use a comma-separated list for multiple groups.
+      description: Adds this contact as a member of one or more VoIP conference groups. Use a comma-separated list
+        for multiple groups.
       required: false
       selector:
-        text:
+        text: null
     conference_ring:
       name: Ring On Conference Start
-      description: Rings this contact when another participant starts its conference group. The contact can still join manually when this is off.
+      description: Rings this contact when another participant starts its conference group. The contact can still
+        join manually when this is off.
       required: false
       default: false
       selector:
-        boolean:
+        boolean: null
     ring_group:
       name: Optional Ring Group
-      description: Adds this contact as a member of one or more VoIP ring groups. Use a comma-separated list for multiple groups.
+      description: Set this public destination membership in native ring groups. The group editor owns the saved
+        ordered members.
       required: false
       selector:
-        text:
-
+        text: null
 remove_contact:
   name: Remove Phonebook Contact
   description: Remove one manual contact from the central JSON phonebook by name.
@@ -991,11 +1053,11 @@ remove_contact:
       name: Name
       required: true
       selector:
-        text:
-
+        text: null
 set_contacts:
   name: Set Phonebook Contacts
-  description: Replace manual contacts with a JSON roster document.
+  description: Replace manual contacts through the administrator JSON import. Explicit ring_group fields update
+    native group membership.
   fields:
     roster_json:
       name: Roster JSON
@@ -1003,31 +1065,21 @@ set_contacts:
       selector:
         text:
           multiline: true
-
 clear_contacts:
   name: Clear Phonebook Contacts
   description: Clear manual contacts from the central JSON phonebook.
-
 export_phonebook:
   name: Export Phonebook
   description: Return the current central JSON phonebook privately to the administrator.
-
 push_phonebook:
-  name: Push Phonebook
-  description: >-
-    Push the current central JSON phonebook to all online ESP endpoints. The
-    normal path is automatic: phonebook changes trigger a push, and HA refreshes
-    again when an ESPHome *_set_roster_json service registers after reboot.
-    Use this for diagnostics or manual recovery.
-
+  name: Refresh phone directory
+  description: Refresh the canonical Home Assistant phone directory and request an LDAP refresh on configured phones.
 set_external_call_access:
   name: Set external call access
-  description: >-
-    Allow or block new calls through the external trunk for a phone. Applies
-    to calls routed by Home Assistant, including forwarding and transfers.
-    All phones are allowed by default. The setting survives restarts and
-    renaming. Existing calls and incoming or internal calls remain available.
-    Requires an administrator or an automation.
+  description: Allow or block new calls through the external trunk for a phone. Applies to calls routed by Home
+    Assistant, including forwarding and transfers. All phones are allowed by default. The setting survives restarts
+    and renaming. Existing calls and incoming or internal calls remain available. Requires an administrator or an
+    automation.
   fields:
     device_id:
       name: Phone
@@ -1036,17 +1088,14 @@ set_external_call_access:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     allowed:
       name: Allow external calls
       description: Turn off to block new external trunk calls from this phone. Turn on to restore access.
       required: true
       selector:
-        boolean:
-
+        boolean: null
 set_dnd:
   name: Set do not disturb
   description: Enable or disable do not disturb on a Home Assistant phone.
@@ -1058,16 +1107,13 @@ set_dnd:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     dnd:
       name: Do not disturb
       required: true
       selector:
-        boolean:
-
+        boolean: null
 set_auto_answer:
   name: Set auto answer
   description: Enable or disable automatic answering on a Home Assistant phone.
@@ -1079,16 +1125,13 @@ set_auto_answer:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     auto_answer:
       name: Auto answer
       required: true
       selector:
-        boolean:
-
+        boolean: null
 set_send_video:
   name: Set send video
   description: Enable or disable camera transmission by default on a Home Assistant phone.
@@ -1100,22 +1143,17 @@ set_send_video:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     send_video:
       name: Send video
       required: true
       selector:
-        boolean:
-
+        boolean: null
 set_phone_settings:
   name: Configure phone routing
-  description: >-
-    Set persistent defaults for future calls to a browser, SIP or ESPHome phone.
-    Omitted fields stay unchanged; an empty destination disables that rule.
-    Explicit call-routing automation commands take precedence.
+  description: Set persistent defaults for future calls to a browser, SIP or ESPHome phone. Omitted fields stay
+    unchanged; an empty destination disables that rule. Explicit call-routing automation commands take precedence.
   fields:
     device_id:
       name: Phone
@@ -1123,33 +1161,41 @@ set_phone_settings:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     forward_to:
       name: Always forward to
       description: Phonebook name, extension or SIP address. Leave empty to disable forwarding.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     outbound_trunk:
       name: Preferred outgoing SIP trunk
-      description: Select the line used for this phone's external calls. An explicit choice in the call action takes precedence. An empty value clears the preference.
+      description: Select the line used for this phone's external calls. An explicit choice in the call action takes
+        precedence. An empty value clears the preference.
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     busy_to:
       name: When busy or Do not disturb
       description: Destination to try when this phone is busy or has Do not disturb enabled.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     unavailable_to:
       name: When unavailable
       description: Destination to try when this phone is offline. No rule is added unless configured.
       selector:
-        text:
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
     ringing_timeout:
       name: Ringing timeout
       description: Seconds before the no-answer action. Zero disables the limit. Omit to keep the current setting.
@@ -1161,27 +1207,27 @@ set_phone_settings:
           unit_of_measurement: s
     no_answer_action:
       name: When nobody answers
-      description: Required when enabling a new ringing timeout. Choose hangup, forwarding or an enabled voicemail mailbox.
+      description: Required when enabling a new ringing timeout. Choose hangup, forwarding or an enabled voicemail
+        mailbox.
       selector:
         select:
           options:
-            - hangup
-            - forward
-            - voicemail
+          - hangup
+          - forward
+          - voicemail
     no_answer_to:
       name: No-answer destination
-      description: Required phonebook destination or SIP URI for forwarding. For voicemail, choose a phone name or extension, or leave empty for this phone's mailbox.
+      description: Required phonebook destination or SIP URI for forwarding. For voicemail, choose a phone name
+        or extension, or leave empty for this phone's mailbox.
       selector:
-        text:
-
+        select:
+          options: []
+          custom_value: true
+          mode: dropdown
 set_ha_softphone_settings:
   name: Configure Home Assistant phone
-  description: >-
-    Set the Home Assistant softphone extension, ring group, conference group
-    ring-on-conference behavior, auto answer and default camera transmission.
-    A manually entered group name is a valid declaration: the HA softphone
-    endpoint publishes it to the central phonebook, which creates or updates
-    the dynamic group like it does for ESP endpoints.
+  description: Set persistent account preferences. Ring membership updates the same native group records used by
+    the group editor.
   fields:
     device_id:
       name: Phone
@@ -1190,47 +1236,48 @@ set_ha_softphone_settings:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     extension:
       name: Extension
       description: Optional extension number published by the Home Assistant softphone endpoint.
       required: false
       selector:
-        text:
+        text: null
     ring_group:
       name: Ring Group
-      description: Optional PBX-style ring group membership for the Home Assistant softphone. Use a comma-separated list for multiple groups.
+      description: Ring groups assigned to this account. Group editors own the saved ordered member lists.
       required: false
       selector:
-        text:
+        text: null
     conference_group:
       name: Conference Group
-      description: Optional conference room membership for the Home Assistant softphone. Use a comma-separated list for multiple groups.
+      description: Optional conference room membership for the Home Assistant softphone. Use a comma-separated list
+        for multiple groups.
       required: false
       selector:
-        text:
+        text: null
     conference_ring:
       name: Ring On Conference
-      description: Ring the Home Assistant softphone when another participant starts or joins the selected conference group.
+      description: Ring the Home Assistant softphone when another participant starts or joins the selected conference
+        group.
       required: false
       selector:
-        boolean:
+        boolean: null
     auto_answer:
       name: Auto answer
-      description: Automatically answer incoming calls on this logical phone when an attached browser has microphone permission.
+      description: Automatically answer incoming calls on this logical phone when an attached browser has microphone
+        permission.
       required: false
       selector:
-        boolean:
+        boolean: null
     send_video:
       name: Send video
-      description: Send an attached browser camera by default when video is negotiated and browser permission is available.
+      description: Send an attached browser camera by default when video is negotiated and browser permission is
+        available.
       required: false
       selector:
-        boolean:
-
+        boolean: null
 create_account:
   name: Create SIP Account
   description: Create or replace a local SIP account for a standard SIP endpoint registering to Home Assistant.
@@ -1240,16 +1287,17 @@ create_account:
       description: SIP username and central phonebook ID, for example MobileOffice.
       required: true
       selector:
-        text:
+        text: null
     display_name:
       name: Optional Display Name
       description: Optional friendly name shown in the central phonebook.
       required: false
       selector:
-        text:
+        text: null
     password:
       name: Optional Password
-      description: Optional password, preserved exactly as entered and never echoed. If omitted, Home Assistant generates one and returns it only in this administrator service response.
+      description: Optional password, preserved exactly as entered and never echoed. If omitted, Home Assistant
+        generates one and returns it only in this administrator service response.
       required: false
       selector:
         text:
@@ -1259,39 +1307,42 @@ create_account:
       required: false
       default: true
       selector:
-        boolean:
+        boolean: null
     replace:
       name: Optional Replace Existing
       required: false
       default: false
       selector:
-        boolean:
+        boolean: null
     extension:
       name: Optional Extension
-      description: Optional internal extension published in the central phonebook. When set, this SIP endpoint can be called by name or by extension.
+      description: Optional internal extension published in the central phonebook. When set, this SIP endpoint can
+        be called by name or by extension.
       required: false
       selector:
-        text:
+        text: null
     conference_group:
       name: Optional Conference Group
-      description: Adds this registered SIP endpoint account to one or more conference groups. Use a comma-separated list for multiple groups.
+      description: Adds this registered SIP endpoint account to one or more conference groups. Use a comma-separated
+        list for multiple groups.
       required: false
       selector:
-        text:
+        text: null
     conference_ring:
       name: Ring On Conference Start
-      description: Rings this registered SIP endpoint when another participant starts its conference group. The endpoint can still join manually when this is off.
+      description: Rings this registered SIP endpoint when another participant starts its conference group. The
+        endpoint can still join manually when this is off.
       required: false
       default: false
       selector:
-        boolean:
+        boolean: null
     ring_group:
       name: Optional Ring Group
-      description: Adds this registered SIP endpoint account to one or more ring groups. Use a comma-separated list for multiple groups.
+      description: Adds this registered SIP endpoint account to one or more ring groups. Use a comma-separated list
+        for multiple groups.
       required: false
       selector:
-        text:
-
+        text: null
 remove_account:
   name: Remove SIP Endpoint Account
   description: Remove one local SIP account and its active registration.
@@ -1300,18 +1351,17 @@ remove_account:
       name: Username
       required: true
       selector:
-        text:
-
+        text: null
 rotate_account_password:
   name: Rotate SIP Endpoint Password
-  description: Generate a new password for a local SIP account, clear its active registration and return the replacement only in this administrator service response.
+  description: Generate a new password for a local SIP account, clear its active registration and return the replacement
+    only in this administrator service response.
   fields:
     username:
       name: Username
       required: true
       selector:
-        text:
-
+        text: null
 enable_account:
   name: Enable SIP Endpoint Account
   description: Enable a local SIP account.
@@ -1320,8 +1370,7 @@ enable_account:
       name: Username
       required: true
       selector:
-        text:
-
+        text: null
 disable_account:
   name: Disable SIP Endpoint Account
   description: Disable a local SIP account and clear its active registration.
@@ -1330,21 +1379,18 @@ disable_account:
       name: Username
       required: true
       selector:
-        text:
-
+        text: null
 list_accounts:
   name: List SIP Endpoint Accounts
-  description: Return configured local SIP endpoint accounts without passwords to the administrator who called this service.
-
+  description: Return configured local SIP endpoint accounts without passwords to the administrator who called this
+    service.
 capture_sip:
   name: Capture SIP signaling
-  description: >-
-    Administrator diagnostic action. Start before a test call, then stop to
-    obtain a temporary download URL for a Wireshark-readable PCAP. Captures
-    this integration's SIP messages, not RTP audio or network-level packets.
-    Authentication values are removed; phone numbers and addresses remain.
-    Automatically stops after the selected duration or 4 MiB and deletes the
-    capture 15 minutes after stopping. Starting again replaces the old capture.
+  description: Administrator diagnostic action. Start before a test call, then stop to obtain a temporary download
+    URL for a Wireshark-readable PCAP. Captures this integration's SIP messages, not RTP audio or network-level
+    packets. Authentication values are removed; phone numbers and addresses remain. Automatically stops after the
+    selected duration or 4 MiB and deletes the capture 15 minutes after stopping. Starting again replaces the old
+    capture.
   fields:
     operation:
       name: Operation
@@ -1352,10 +1398,10 @@ capture_sip:
       selector:
         select:
           options:
-            - start
-            - stop
-            - status
-            - clear
+          - start
+          - stop
+          - status
+          - clear
     duration:
       name: Maximum duration
       description: Used when starting a capture.
@@ -1367,12 +1413,10 @@ capture_sip:
           step: 1
           unit_of_measurement: s
           mode: box
-
 play_media:
   name: Play audio to the caller
-  description: Play an audio file on an Automation call and wait for transmission to
-    finish. Uses the call from its VoIP trigger or the outgoing call created in this execution.
-    Does not hang up automatically.
+  description: Play an audio file on an Automation call and wait for transmission to finish. Uses the call from
+    its VoIP trigger or the outgoing call created in this execution. Does not hang up automatically.
   fields:
     media:
       name: Audio file
@@ -1380,30 +1424,16 @@ play_media:
       selector:
         media:
           accept:
-            - audio/*
+          - audio/*
     timeout:
       name: Maximum playback duration
-      description: Includes media resolution, download, decoding and transmission.
-        Timeout stops playback. Defaults to 120 seconds.
+      description: Includes media resolution, download, decoding and transmission. Timeout stops playback. Defaults
+        to 120 seconds.
       selector:
         number:
           min: 1
           max: 600
           unit_of_measurement: s
-          mode: box
-    call_id:
-      name: Call ID
-      description: Optional advanced selection. Native triggers and a single outgoing
-        Automation call select their own call automatically.
-      selector:
-        text: null
-    expected_generation:
-      name: Call generation
-      description: Only needed with an explicit call_id; use the generation returned by Call.
-      selector:
-        number:
-          min: 1
-          max: 2147483647
           mode: box
     device_id:
       name: Phone for manual execution
@@ -1411,14 +1441,31 @@ play_media:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
+    advanced:
+      name: Advanced options
+      description: Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection.
+      collapsed: true
+      fields:
+        call_id:
+          name: Call ID
+          description: Optional advanced selection. Native triggers and a single outgoing Automation call select
+            their own call automatically.
+          selector:
+            text: null
+        expected_generation:
+          name: Call generation
+          description: Only needed with an explicit call_id; use the generation returned by Call.
+          selector:
+            number:
+              min: 1
+              max: 2147483647
+              mode: box
 tts_say:
   name: Speak to the caller
-  description: Pronounce a message on the automation call. The call is selected by
-    its VoIP trigger; the next action waits for the announcement.
+  description: Pronounce a message on the automation call. The call is selected by its VoIP trigger; the next action
+    waits for the announcement.
   fields:
     tts_entity_id:
       name: Text-to-speech provider
@@ -1447,8 +1494,8 @@ tts_say:
             object: null
         timeout:
           name: Maximum announcement duration
-          description: Maximum time for browser readiness, speech generation and transmission.
-            Defaults to 120 seconds; this is not a ringing timeout.
+          description: Maximum time for browser readiness, speech generation and transmission. Defaults to 120 seconds;
+            this is not a ringing timeout.
           selector:
             number:
               min: 1
@@ -1457,14 +1504,14 @@ tts_say:
               mode: box
         call_id:
           name: Call ID
-          description: Optional advanced selection when handling multiple calls. Native
-            triggers and a single outgoing Automation call select their call automatically.
+          description: Optional advanced selection when handling multiple calls. Native triggers and a single outgoing
+            Automation call select their call automatically.
           selector:
             text: null
         expected_generation:
           name: Call generation
-          description: Only needed with an explicit Call ID. Native triggers and a single
-            outgoing Automation call supply it automatically.
+          description: Only needed with an explicit Call ID. Native triggers and a single outgoing Automation call
+            supply it automatically.
           selector:
             number:
               min: 1
@@ -1472,26 +1519,22 @@ tts_say:
               mode: box
         device_id:
           name: Phone for manual execution
-          description: Select the phone with the automation call when testing this
-            action without a VoIP trigger.
+          description: Select the phone with the automation call when testing this action without a VoIP trigger.
           selector:
             device:
               filter:
-                - integration: voip_stack
-                  model: SIP account
-                - integration: voip_stack
-                  model: Home Assistant softphone
+              - integration: voip_stack
+                model: SIP account
 wait_unanswered:
   name: Wait without answering
-  description: Keep an unanswered Automation contact call ringing without answering
-    or starting audio. The next action runs after the wait. If this is the last
-    action, the call ends unanswered. Caller cancellation stops the wait.
+  description: Keep an unanswered Automation contact call ringing without answering or starting audio. The next
+    action runs after the wait. If this is the last action, the call ends unanswered. Caller cancellation stops
+    the wait.
   fields:
     duration:
       name: Duration
-      description: Seconds to wait without answering, from 1 to 3600. Defaults to
-        60. For provider no-answer forwarding, allow more time than the provider's
-        forwarding timer.
+      description: Seconds to wait without answering, from 1 to 3600. Defaults to 60. For provider no-answer forwarding,
+        allow more time than the provider's forwarding timer.
       default: 60
       selector:
         number:
@@ -1506,15 +1549,13 @@ wait_unanswered:
       fields:
         device_id:
           name: Phone for manual execution
-          description: Only needed outside a native VoIP trigger. The phone must
-            have an unanswered call handled by an Automation contact.
+          description: Only needed outside a native VoIP trigger. The phone must have an unanswered call handled
+            by an Automation contact.
           selector:
             device:
               filter:
-                - integration: voip_stack
-                  model: SIP account
-                - integration: voip_stack
-                  model: Home Assistant softphone
+              - integration: voip_stack
+                model: SIP account
         call_id:
           name: Call ID
           description: For legacy actions outside a native VoIP trigger.
@@ -1527,12 +1568,10 @@ wait_unanswered:
               min: 1
               max: 2147483647
               mode: box
-
-
 wait_for_dtmf:
   name: Wait for keypad input
-  description: Wait for digits from the caller on this automation call. The next condition
-    can check the received digits or the timeout result.
+  description: Wait for digits from the caller on this automation call. The next condition can check the received
+    digits or the timeout result.
   fields:
     timeout:
       name: Wait for digits
@@ -1578,21 +1617,16 @@ wait_for_dtmf:
               mode: box
         device_id:
           name: Phone for manual execution
-          description: Select the phone with the automation call when testing this
-            action without a VoIP trigger.
+          description: Select the phone with the automation call when testing this action without a VoIP trigger.
           selector:
             device:
               filter:
-                - integration: voip_stack
-                  model: SIP account
-                - integration: voip_stack
-                  model: Home Assistant softphone
+              - integration: voip_stack
+                model: SIP account
 set_voicemail_settings:
   name: Configure voicemail
-  description: >-
-    Enable a phone's mailbox independently of its forwarding rules. Omitted
-    fields retain their settings. Disabling the mailbox permanently deletes
-    its messages, files, PIN and mailbox settings. Enabling it again creates
+  description: Enable a phone's mailbox independently of its forwarding rules. Omitted fields retain their settings.
+    Disabling the mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates
     an empty mailbox.
   fields:
     device_id:
@@ -1601,14 +1635,12 @@ set_voicemail_settings:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     enabled:
       name: Enable mailbox
       selector:
-        boolean:
+        boolean: null
     max_seconds:
       name: Maximum message duration
       description: Seconds allowed after the recording tone. New mailboxes use 180 seconds.
@@ -1624,25 +1656,22 @@ set_voicemail_settings:
       selector:
         media:
           accept:
-            - audio/*
+          - audio/*
     clear_greeting:
       name: Clear the greeting
       description: Use the recording tone alone. Do not combine with a new greeting.
       selector:
-        boolean:
+        boolean: null
     pin:
       name: Mailbox PIN
       description: Optional 4 to 10 digits for access from another SIP account. An empty PIN disables that access.
       selector:
         text:
           type: password
-
 get_voicemail:
   name: Get voicemail message
-  description: >-
-    Return the existing message file and HA media-source ID. Uses the message
-    from a Voicemail received trigger, or an explicitly selected mailbox and
-    message ID. Does not copy, move or mark the message as read.
+  description: Return the existing message file and HA media-source ID. Uses the message from a Voicemail received
+    trigger, or an explicitly selected mailbox and message ID. Does not copy, move or mark the message as read.
   fields:
     mailbox:
       name: Mailbox
@@ -1650,22 +1679,18 @@ get_voicemail:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     message_id:
       name: Message ID
       description: Optional when triggered by Voicemail received.
       selector:
-        text:
-
+        text: null
 transcribe_voicemail:
   name: Transcribe voicemail
-  description: >-
-    Transcribe the saved message from a Voicemail received trigger, or select
-    a mailbox and message ID explicitly. Choose an existing HA speech-to-text
-    entity. Returns text without changing the recording or marking it as read.
+  description: Transcribe the saved message from a Voicemail received trigger, or select a mailbox and message ID
+    explicitly. Choose an existing HA speech-to-text entity. Returns text without changing the recording or marking
+    it as read.
   fields:
     mailbox:
       name: Mailbox
@@ -1673,15 +1698,13 @@ transcribe_voicemail:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     message_id:
       name: Message ID
       description: Optional when triggered by Voicemail received. Select a saved message, not a call ID.
       selector:
-        text:
+        text: null
     stt_entity_id:
       name: Speech-to-text entity
       required: true
@@ -1693,7 +1716,7 @@ transcribe_voicemail:
       description: A language code supported by the selected speech-to-text provider, for example en or it.
       required: true
       selector:
-        text:
+        text: null
     timeout:
       name: Transcription timeout
       default: 120
@@ -1702,13 +1725,10 @@ transcribe_voicemail:
           min: 1
           max: 600
           unit_of_measurement: seconds
-
 send_to_voicemail:
   name: Send call to voicemail
-  description: >-
-    Hand the automation's current call to an enabled phone mailbox. Recording
-    owns the call from this point and ends it after the message. Place this
-    after any greeting or TTS action; do not append hangup.
+  description: Hand the automation's current call to an enabled phone mailbox. Recording owns the call from this
+    point and ends it after the message. Place this after any greeting or TTS action; do not append hangup.
   fields:
     mailbox:
       name: Destination mailbox
@@ -1716,16 +1736,14 @@ send_to_voicemail:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     skip_greeting:
       name: Skip the mailbox greeting
       description: Start with the recording tone, for example after a tts_say action.
       default: false
       selector:
-        boolean:
+        boolean: null
     advanced:
       name: Explicit call selection
       collapsed: true
@@ -1735,22 +1753,22 @@ send_to_voicemail:
           selector:
             device:
               filter:
-                - integration: voip_stack
-                  model: Home Assistant softphone
+              - integration: voip_stack
+                model: SIP account
         call_id:
           name: Call ID
           selector:
-            text:
+            text: null
         expected_generation:
           name: Call generation
           selector:
             number:
               min: 1
               mode: box
-
 park:
   name: Park call
-  description: Leave an established audio call in a parking slot. Another phone retrieves it by calling the slot number.
+  description: Leave an established audio call in a parking slot. Another phone retrieves it by calling the slot
+    number.
   fields:
     device_id:
       name: Phone
@@ -1758,15 +1776,13 @@ park:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     slot:
       name: Parking slot
       description: Leave empty to use the first available configured slot.
       selector:
-        text:
+        text: null
     advanced:
       name: Advanced options
       collapsed: true
@@ -1775,27 +1791,25 @@ park:
           name: Call ID
           description: Optional explicit call belonging to the selected phone.
           selector:
-            text:
+            text: null
         expected_generation:
           name: Call generation
           selector:
             number:
               min: 1
               mode: box
-
 start_recording:
   name: Start call recording
-  description: Record both sides of an established conversation using the audio already passing through Home Assistant. Recording stops on hangup, media handoff or the configured duration limit.
+  description: Record both sides of an established conversation using the audio already passing through Home Assistant.
+    Recording stops on hangup, media handoff or the configured duration limit.
   fields:
     device_id:
       name: Phone
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     max_seconds:
       name: Maximum duration
       default: 3600
@@ -1812,14 +1826,13 @@ start_recording:
         call_id:
           name: Call ID
           selector:
-            text:
+            text: null
         expected_generation:
           name: Call generation
           selector:
             number:
               min: 1
               mode: box
-
 stop_recording:
   name: Stop call recording
   description: Finish this phone's recording and return its existing audio file, while the conversation continues.
@@ -1829,10 +1842,8 @@ stop_recording:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     advanced:
       name: Advanced options
       collapsed: true
@@ -1840,17 +1851,17 @@ stop_recording:
         call_id:
           name: Call ID
           selector:
-            text:
+            text: null
         expected_generation:
           name: Call generation
           selector:
             number:
               min: 1
               mode: box
-
 get_recording:
   name: Get call recording
-  description: Return the original recording's file path and Home Assistant media-source identifier without making another copy.
+  description: Return the original recording's file path and Home Assistant media-source identifier without making
+    another copy.
   fields:
     device_id:
       name: Phone
@@ -1858,17 +1869,14 @@ get_recording:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     recording_id:
       name: Recording ID
       description: Identifier returned by Start call recording or the recording_finished event.
       required: true
       selector:
-        text:
-
+        text: null
 delete_recording:
   name: Delete call recording
   description: Delete the selected conversation recording and its metadata.
@@ -1879,17 +1887,14 @@ delete_recording:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     recording_id:
       name: Recording ID
       description: Identifier returned by Start call recording or the recording_finished event.
       required: true
       selector:
-        text:
-
+        text: null
 get_phone_state:
   name: Get phone state
   description: Read a phone, its calls and mailbox counters without changing the call.
@@ -1900,10 +1905,8 @@ get_phone_state:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
 pickup:
   name: Pick up call
   description: Recover a ringing phone or parking slot on the selected phone.
@@ -1914,19 +1917,15 @@ pickup:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     target_device_id:
       name: Ringing phone
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP account
-            - integration: voip_stack
-              model: Home Assistant softphone
+          - integration: voip_stack
+            model: SIP account
     slot:
       name: Parking slot
       selector:
@@ -1957,10 +1956,10 @@ pickup:
           name: Call leg
           selector:
             text: {}
-
 provision_phone:
   name: Prepare phone provisioning
-  description: Generate the selected physical phone configuration when its lines are idle. This does not reboot the phone.
+  description: Generate the selected physical phone configuration when its lines are idle. This does not reboot
+    the phone.
   fields:
     device_id:
       name: Physical phone
@@ -1970,11 +1969,11 @@ provision_phone:
     phone_id:
       name: Physical phone ID
       selector:
-        text:
-
+        text: null
 get_phone_provisioning_state:
   name: Get phone provisioning state
-  description: Return desired and downloaded revisions. Only administrators can request the private provisioning URL.
+  description: Return desired and downloaded revisions. Only administrators can request the private provisioning
+    URL.
   fields:
     device_id:
       name: Physical phone
@@ -1984,25 +1983,25 @@ get_phone_provisioning_state:
     phone_id:
       name: Physical phone ID
       selector:
-        text:
+        text: null
     include_url:
       name: Include private provisioning URL
       description: The returned URL contains a device credential. Keep it private.
       default: false
       selector:
-        boolean:
-
+        boolean: null
 refresh_phone_profiles:
   name: Refresh phone profile catalog
-  description: Refresh the optional profile index. Existing phones keep their pinned profile revision until explicitly updated.
-
+  description: Refresh the optional profile index. Existing phones keep their pinned profile revision until explicitly
+    updated.
 reload_card_associations:
   name: Reload card associations
-  description: Reread saved storage and YAML dashboard configurations to update account associations. Does not reload the PBX or start polling. Administrators only.
-
+  description: Reread saved storage and YAML dashboard configurations to update account associations. Does not reload
+    the PBX or start polling. Administrators only.
 rotate_phone_provisioning_token:
   name: Rotate phone provisioning credential
-  description: Invalidate the previous download URL for a physical phone. Configure its new private URL before the next download.
+  description: Invalidate the previous download URL for a physical phone. Configure its new private URL before the
+    next download.
   fields:
     device_id:
       name: Physical phone
@@ -2012,4 +2011,4 @@ rotate_phone_provisioning_token:
     phone_id:
       name: Physical phone ID
       selector:
-        text:
+        text: null

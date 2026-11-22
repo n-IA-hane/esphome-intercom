@@ -44,7 +44,7 @@ def _endpoint_permission_entity_ids(hass: Any, endpoint: Any) -> tuple[str, ...]
         for entity_id in (getattr(endpoint, "entity_ids", ()) or ())
         if str(entity_id or "").strip()
     }
-    device_id = str(getattr(endpoint, "device_id", "") or "").strip()
+    device_id = str(getattr(endpoint, "ha_device_id", getattr(endpoint, "device_id", "")) or "").strip()
     endpoint_kind = str(
         getattr(getattr(endpoint, "kind", ""), "value", getattr(endpoint, "kind", ""))
         or ""
@@ -54,6 +54,9 @@ def _endpoint_permission_entity_ids(hass: Any, endpoint: Any) -> tuple[str, ...]
             from homeassistant.helpers import entity_registry as er
 
             registry = er.async_get(hass)
+            if getattr(endpoint, 'account_device_id', ''):
+                entity_ids = {identity for identity in entity_ids
+                              if (row := registry.async_get(identity)) is None or row.device_id == device_id}
             entity_ids.update(
                 str(item.entity_id)
                 for item in er.async_entries_for_device(
@@ -62,7 +65,8 @@ def _endpoint_permission_entity_ids(hass: Any, endpoint: Any) -> tuple[str, ...]
             )
         except (AttributeError, ImportError):
             pass
-    if endpoint_id == "default":
+    from .sip_account_identity import is_legacy_default_ha_account
+    if is_legacy_default_ha_account(hass, endpoint):
         # Preserve the original singleton permission contract for the master
         # phone while still accepting its newer per-device entities.
         if entity_id := shared_entity_ids(hass)["call_event"]:
@@ -227,6 +231,15 @@ def require_websocket_read(hass: Any, connection: Any) -> str:
     return _require_entity_permission(hass, getattr(connection, "user", None), POLICY_READ)
 
 
+def require_websocket_authenticated(connection: Any) -> str:
+    """Authenticate endpoint requests before their native entity permission check."""
+    user = getattr(connection, "user", None)
+    identity = str(getattr(user, "id", "") or "")
+    if not identity or not getattr(user, "is_active", True):
+        raise Unauthorized(user_id=identity or None)
+    return identity
+
+
 def require_websocket_control(hass: Any, connection: Any) -> str:
     """Require control access before starting or mutating a call."""
 
@@ -276,9 +289,10 @@ def websocket_can_control_endpoint(
     boundary.
     """
     try:
-        require_websocket_control(hass, connection)
         if endpoint is not None:
             require_websocket_endpoint_control(hass, connection, endpoint)
+        else:
+            require_websocket_control(hass, connection)
     except Unauthorized:
         return False
     return True

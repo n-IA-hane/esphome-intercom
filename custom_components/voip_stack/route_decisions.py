@@ -90,7 +90,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
         expected_sequence=data.get("expected_sequence", 0),
         endpoint_id=str(data.get("endpoint_id") or ""),
     )
-    if action in {"forward", "bridge"} and context is not None and len(context.route_history) >= 8:
+    if action in {"forward", "bridge"} and context is not None and context.route_hops >= 8:
         raise _service_error(
             f"call_id {call_id} exceeded 8 routing hops",
             "route_hop_limit_exceeded",
@@ -261,3 +261,34 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             call_action_actor(hass, call_id, logger=_LOGGER), action, destination or "unchanged",
             selected_endpoint.name if endpoint_id and selected_endpoint is not None else endpoint_id or "not specified",
         )
+
+
+def dispatch_route_fallback(hass, session, destination):
+    """Continue a failed group in its existing call after branch cleanup."""
+    registry = call_registry(hass)
+    if not session.live or registry.forward_call is None or not destination:
+        return False
+    token, owner, state = session.token, session.owner, session.state
+
+    async def forward():
+        if (not registry.is_generation_current(token.call_id, token.generation)
+                or session.owner != owner or session.state != state):
+            return
+        try:
+            context = registry.event_context(token.call_id)
+            task = await registry.forward_call(call_id=token.call_id, destination=destination,
+                expected_state=context.state if context else "",
+                expected_sequence=context.sequence if context else 0, on_failure="terminate")
+            if isinstance(task, asyncio.Task) and task is not asyncio.current_task():
+                await task
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            from .endpoint_session import TerminationIntent
+
+            _LOGGER.exception("Group fallback failed call_id=%s", token.call_id)
+            if registry.is_generation_current(token.call_id, token.generation):
+                registry.request_termination(token.call_id, TerminationIntent("route_failed"), generation=token.generation)
+
+    session.create_task(forward(), name="group-fallback")
+    return True

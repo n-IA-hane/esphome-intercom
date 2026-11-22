@@ -438,7 +438,7 @@ async def test_conference_retains_initiator_access_for_outbound_members(monkeypa
 
     dialer, created, _reused = _dialer(monkeypatch)
     dialer.config["external_call_blocked_endpoints"] = ["sip:restricted"]
-    session = SimpleNamespace(metadata={"source_endpoint_id": "sip:restricted"})
+    session = SimpleNamespace(live=True, metadata={"source_endpoint_id": "sip:restricted"})
     registry = SimpleNamespace(
         sessions={"owner": session}, resolve_session_id=lambda value: value,
         get_session=lambda call_id: session if call_id == "owner" else None,
@@ -450,13 +450,14 @@ async def test_conference_retains_initiator_access_for_outbound_members(monkeypa
     monkeypatch.setattr(runtime_data, "require_runtime_data", lambda _: access_runtime)
     monkeypatch.setattr(endpoint_dialing, "sip_trunk", lambda _: None)
     monkeypatch.setattr(conference_ringing, "call_registry", lambda _: registry)
-    monkeypatch.setattr(conference_ringing, "conference_manager", lambda *a, **kw: SimpleNamespace(rooms={}))
+    monkeypatch.setattr(conference_ringing, "conference_manager", lambda *a, **kw: SimpleNamespace(rooms={"Room": SimpleNamespace(
+        name="Room", _closed=False, legs={"owner": object()})}))
     monkeypatch.setattr(conference_ringing, "endpoint_directory", lambda _: SimpleNamespace())
     allocate = Mock(side_effect=AssertionError("conference must not allocate forbidden member"))
     monkeypatch.setattr(endpoint_dialing.RtpPortReservation, "allocate", allocate)
     runtime = conference_ringing.ConferenceRingRuntime(
         hass=dialer.hass, config=dialer.config, local_ip=dialer.local_ip,
-        on_inbound_timeout=Mock(), browser_leg_for_member=lambda *_: None,
+        browser_leg_for_member=lambda *_: None,
         prepare_outbound_leg=dialer.prepare_outbound_leg,
     )
     await conference_ringing.async_ring_conference_members(

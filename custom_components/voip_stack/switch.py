@@ -14,6 +14,7 @@ from .endpoint_entity_manager import (
     register_endpoint_entity_manager,
 )
 from .runtime_data import endpoint_directory
+from .service_entity import NativeServiceEntity, async_setup_native_service_entities
 
 
 async def async_set_endpoint_dnd(
@@ -52,6 +53,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    async_setup_native_service_entities(hass, entry, async_add_entities,
+        lambda owner, row: [NativeServiceEnabledSwitch(owner, row.subentry_id)],
+        include=lambda row: row.subentry_type in {"group", "paging"})
     manager = EndpointEntityManager(
         hass,
         entry,
@@ -93,6 +97,42 @@ async def async_setup_entry(
             key,
             preference_manager,
         )
+
+
+class NativeServiceEnabledSwitch(NativeServiceEntity, SwitchEntity):
+    """Change the same enabled setting used by the object's native editor."""
+
+    _attr_translation_key = "service_enabled"
+    _attr_icon = "mdi:phone-settings"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry, subentry_id):
+        super().__init__(entry, subentry_id, "enabled")
+
+    @property
+    def is_on(self):
+        row = self.record
+        return bool(row is not None and row.data.get("enabled", True))
+
+    async def _async_set(self, enabled):
+        from homeassistant.exceptions import ServiceValidationError
+        row = self.record
+        if row is None:
+            raise ServiceValidationError("The configured PBX application no longer exists")
+        manager = self.runtime.queues
+        if (row.subentry_type == "group" and row.data.get("kind") == "queue"
+                and manager is not None and manager.resolve(row.data["group_id"]) is not None):
+            manager.configure(row.data["group_id"], {"enabled": bool(enabled)})
+        else:
+            self.hass.config_entries.async_update_subentry(self.entry, row,
+                data={**row.data, "enabled": bool(enabled)})
+        self.refresh()
+
+    async def async_turn_on(self, **kwargs):
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs):
+        await self._async_set(False)
 
 
 class PhoneEndpointSettingSwitch(PhoneEndpointEntity, SwitchEntity):

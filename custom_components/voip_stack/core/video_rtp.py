@@ -571,6 +571,12 @@ class Vp8Depacketizer:
         self._damaged = False
         self._expected_sequence = None
 
+    def reset(self) -> None:
+        """Discard a partial frame when the admitted RTP source changes."""
+        self._timestamp = None
+        self._key_frame = False
+        self._reset_unit()
+
     @staticmethod
     def _payload(payload: bytes) -> tuple[bytes, bool, int]:
         if not payload:
@@ -909,6 +915,14 @@ class JpegDepacketizer:
         self._header = b""
         self._scan.clear()
         self.dropped_access_units += 1
+
+    def reset(self) -> None:
+        """Start another RTP source without inheriting its dynamic quantizers."""
+        self._timestamp = None
+        self._frame_header = None
+        self._header = b""
+        self._scan.clear()
+        self._dynamic_quantizers.clear()
 
     def push(self, packet: rtp.RtpPacket) -> VideoAccessUnit | None:
         payload = packet.payload

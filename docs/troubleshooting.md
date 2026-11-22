@@ -274,8 +274,10 @@ access and SIP account admission address different parts of that boundary.
 The SDP offer/answer did not produce a usable PCM RTP format, or HA could not
 build the required bridge conversion. Use explicit supported PCM profiles such
 as `16000:s16le:1:16`, `16000:s16le:1:32`, `16000:s16le:1:20`, or
-`48000:s16le:1:10`. A call also needs one common packet time across the selected
-TX and RX directions; rates may differ, but `frame_ms`/`ptime` must match.
+`48000:s16le:1:10`. Standard SDP negotiates accepted mappings for both
+directions; TX and RX may use different rates and packet times. Maintained PCM
+profiles can send 16 kHz/20 ms while receiving 48 kHz/10 ms. The peer must accept
+the declared alternatives, and packets must fit the receive envelope.
 
 Check the ESP firmware codec: FULL and P4 profiles use PCM; ESP32-S3 VoIP-only
 profiles can use Opus. HA softphone/trunk legs can negotiate additional codecs,
@@ -290,13 +292,11 @@ ESP. PCM and Opus are separate firmware choices.
   configuration, listener/network reachability, a successful refresh/query for
   the current generation and the Native snapshot commit. Manual contacts must
   survive refresh. An online API or JSON push alone proves none of those steps.
-- For legacy/custom firmware with the HA roster provider enabled, check
-  `sensor.<device>_voip_contacts` and discovery of
-  `esphome.<slug>_set_roster_json`. `voip_stack.push_phonebook` reports attempted
-  or skipped pushes; that path refreshes when the service is registered.
-  Managed LDAP disables this provider. Follow the
-  [phonebook guide](PHONEBOOK_PROTOCOL.md#standard-ldap-directory) for the
-  provider-specific contract.
+- LDAP is the sole dynamic ESP provider. If the required directory actions are
+  missing, rebuild and upload matching ESP firmware and update maintained HA
+  packages. `voip_stack.push_phonebook` requests a central directory rebuild;
+  it does not send JSON rows to firmware. Follow the
+  [phonebook guide](PHONEBOOK_PROTOCOL.md#standard-ldap-directory).
 - For local ESP-only routing, declare the contact in
   `voip_stack.static_contacts`.
 - Use a direct SIP URI (`sip:name@host:5060`) when bypassing HA.

@@ -35,7 +35,6 @@ class LocalRouteRuntime(Protocol):
     hass: HomeAssistant
     local_ip: str
     browser_leg_for_member: Callable[..., Any]
-    on_conference_inbound_timeout: Callable[..., Any]
     ring_conference_members: Callable[..., Any]
     run_ring_group_call: Callable[..., Any]
     start_local_assist_bridge: Callable[..., Any]
@@ -191,34 +190,15 @@ async def route_local_group(
         else ""
     )
     if group_type == GROUP_TYPE_CONFERENCE and decision.entry is not None:
-        ring_members = [
-            str(member).strip()
-            for member in ((decision.entry.metadata or {}).get("ring_members") or [])
-        ]
-        ring_endpoint_ids = tuple(
-            leg.endpoint_id
-            for member in ring_members
-            if (
-                leg := runtime.browser_leg_for_member(
-                    member,
-                    peers,
-                    roster_entries,
-                )
-            )
-            is not None
-            and leg.endpoint_id != source_endpoint_id
-        )
         result = await conference_manager(
             runtime.hass,
             local_ip=runtime.local_ip,
-            on_inbound_timeout=runtime.on_conference_inbound_timeout,
         ).join(
             invite,
             decision.entry,
-            ring_endpoint_ids=ring_endpoint_ids,
         )
         if result.status == 200:
-            registry.upsert(
+            session = registry.upsert(
                 invite.call_id,
                 state=CallState.IN_CALL.value,
                 owner="bridge",
@@ -233,8 +213,7 @@ async def route_local_group(
                 role="caller",
                 state=CallState.IN_CALL.value,
             )
-            create_runtime_task(
-                runtime.hass,
+            session.create_task(
                 runtime.ring_conference_members(
                     room_name=str(
                         decision.entry.name or decision.entry.id or invite.target
@@ -246,6 +225,7 @@ async def route_local_group(
                     roster_entries=roster_entries,
                     owner_call_id=invite.call_id,
                 ),
+                name="conference_ringing",
             )
         else:
             terminal_reason = (

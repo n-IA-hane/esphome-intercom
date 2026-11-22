@@ -19,6 +19,7 @@ def application_rtp_peer(source):
         send_payload_type=source.send_format.payload_type, send_audio_format=source.send_format.audio_format,
         send_rtp_format=source.send_format, dtmf_payload_type=source.dtmf_payload_type,
         dtmf_clock_rate=source.dtmf_clock_rate, dtmf_events=source.dtmf_events,
+        inbound_dtmf_formats=source.recv_dtmf_formats, outbound_dtmf_formats=source.send_dtmf_formats,
         send_dtmf_payload_type=source.send_dtmf_payload_type, send_dtmf_clock_rate=source.send_dtmf_clock_rate,
         send_dtmf_events=source.send_dtmf_events, can_send=source.local_audio_direction in {"recvonly", "sendrecv"},
         can_receive=source.local_audio_direction in {"sendonly", "sendrecv"} and not source.remote_audio_connection_held,

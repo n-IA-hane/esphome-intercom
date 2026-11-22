@@ -30,8 +30,9 @@ def source_account(lab, username, display_name):
     return sip_test_account(lab, identity)
 
 
+@pytest.mark.parametrize("request_video", [False, True])
 @pytest.mark.parametrize("policy", ["unknown_compliant", "known_audio_only", "unknown_bad_profile"])
-async def test_public_unknown_video_negotiates_without_relaxing_profile_validation(lab, monkeypatch, policy):
+async def test_public_unknown_video_negotiates_without_relaxing_profile_validation(lab, monkeypatch, policy, request_video):
     lab.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: False})
     source = PhoneEndpoint(endpoint_id="browser:unknown-video", device_id="unknown-video-browser",
         name="Unknown video browser", kind=EndpointKind.BROWSER,
@@ -69,6 +70,7 @@ async def test_public_unknown_video_negotiates_without_relaxing_profile_validati
     try:
         await lab.hass.services.async_call("voip_stack", "call", {
             "device_id": source.device_id, "destination": "bedroom0", "send_video": False,
+            "receive_video": request_video,
         }, blocking=True)
         async with asyncio.timeout(3):
             while not (call_id := lab.runtime.endpoints.get(source.endpoint_id).active_call_id):
@@ -76,16 +78,16 @@ async def test_public_unknown_video_negotiates_without_relaxing_profile_validati
             while (client := lab.calls.sip_client_for(call_id)).dialog is None:
                 await asyncio.sleep(0)
         dialog = client.dialog
-        assert bool(offered[0]) is (policy != "known_audio_only")
+        assert bool(offered[0]) is (request_video and policy != "known_audio_only")
         assert dialog.send_format.sample_rate == dialog.recv_format.sample_rate == 16000
         assert dialog.send_format.frame_ms == dialog.recv_format.frame_ms
-        if policy == "unknown_compliant":
+        if request_video and policy == "unknown_compliant":
             assert dialog.video_format is not None
             assert dialog.video_format.profile_level_id == "42801f"
             assert dialog.local_video_direction == "recvonly"
         else:
             assert dialog.video_format is None
-            if policy == "unknown_bad_profile":
+            if request_video and policy == "unknown_bad_profile":
                 assert sdp.offered_video_formats(answers[0])[0].profile_level_id == "42e01f"
     finally:
         if call_id:

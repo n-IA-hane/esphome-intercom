@@ -43,23 +43,15 @@ class SdpPcmProfileTest(unittest.TestCase):
             sdp.DEFAULT_VIDEO_FORMATS,
         )
 
-    def test_explicit_rtp_formats_preserve_directional_payload_contract(self) -> None:
+    def test_explicit_rtp_formats_preserve_numbers_with_standard_alternatives(self) -> None:
         wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
         narrow = sdp.RtpPcmFormat(97, "L16", 16000, 1, 10)
-
-        offer = sdp.build_offer_directional(
-            "192.0.2.1",
-            "192.0.2.1",
-            40000,
-            [wide.audio_format],
-            [narrow.audio_format],
-            audio_rtp_formats=(narrow, wide),
-            allow_directional_payloads=True,
-        )
-
+        local = [wide.audio_format, narrow.audio_format]
+        offer = sdp.build_offer_directional("192.0.2.1", "192.0.2.1", 40000,
+            local, local, audio_rtp_formats=(narrow, wide))
         self.assertIn("m=audio 40000 RTP/AVP 97 96", offer)
-        self.assertIn("a=x-voip-stack-flow:97 recv\r\n", offer)
-        self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
+        self.assertNotIn("a=x-", offer)
+        self.assertEqual([item.sample_rate for item in sdp.offered_pcm_formats(offer)], [16000, 48000])
 
     def test_explicit_offer_advertises_one_payload_per_rtp_encoding(self) -> None:
         opus_20 = sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 20)
@@ -74,12 +66,10 @@ class SdpPcmProfileTest(unittest.TestCase):
             [opus_20.audio_format, opus_10.audio_format, pcm_10.audio_format],
             send_rtp_formats=(opus_20, opus_10, pcm_10),
             recv_rtp_formats=(opus_20, opus_10, pcm_10),
-            allow_directional_payloads=True,
         )
 
         self.assertEqual(offer.count(" OPUS/48000/2\r\n"), 1)
-        # R1/R3: L16's explicit fixed set only contains 10 ms. Keeping 20 ms here
-        # would advertise an impossible shared legacy packet time.
+        # Every advertised mapping accepts the same media-level receiver preference.
         self.assertIn("a=ptime:10\r\n", offer)
         self.assertIn(" L16/16000/1\r\n", offer)
         self.assertEqual([(fmt.payload_type,fmt.encoding) for fmt in sdp.offered_pcm_formats(offer)],
@@ -990,15 +980,6 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         self.assertIsNone(selected)
 
-        with self.assertRaisesRegex(sdp.SdpError, "one RTP payload"):
-            sdp.build_answer_directional(
-                "192.168.1.47",
-                "192.168.1.47",
-                40000,
-                sdp.audio_format_to_rtp(ha_to_esp, 96),
-                sdp.audio_format_to_rtp(esp_to_ha, 97),
-            )
-
     def test_one_way_audio_uses_only_the_active_local_capability(self) -> None:
         local_send = audio_format.AudioFormat(48000, "s16le", 1, 10)
         local_recv = audio_format.AudioFormat(16000, "s16le", 1, 20)
@@ -1446,119 +1427,36 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertIsNotNone(selected)
         self.assertEqual(selected.send.audio_format, baseline)
 
-    def test_esphome_answer_flow_attributes_keep_asymmetric_payloads(self) -> None:
-        wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
-        narrow = sdp.RtpPcmFormat(98, "L16", 16000, 1, 10)
-        offer = sdp.build_offer_directional(
-            "192.0.2.10",
-            "192.0.2.10",
-            40000,
-            [wide.audio_format],
-            [narrow.audio_format],
-            audio_rtp_formats=(wide, narrow),
-            allow_directional_payloads=True,
-        )
-        answer = offer + (
-            "a=x-voip-stack-flow:96 recv\r\n"
-            "a=x-voip-stack-flow:98 send\r\n"
-        )
+    def test_standard_multiformat_answer_keeps_asymmetric_preferences(self) -> None:
+        from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 
-        selected = sdp.negotiate_answer_directional(
-            answer,
-            [wide.audio_format],
-            [narrow.audio_format],
-            local_offer_sdp=offer,
-        )
-
+        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        offer = sdp.build_offer_directional("192.0.2.10", "192.0.2.10", 40000,
+            [wide, narrow], [narrow, wide], local_capabilities=HA_AUDIO_CAPABILITIES)
+        selected = sdp.negotiate_directional(offer,
+            [narrow, wide], [wide, narrow], local_capabilities=HA_AUDIO_CAPABILITIES)
         self.assertIsNotNone(selected)
-        self.assertEqual(selected.send.payload_type, 96)
-        self.assertEqual(selected.recv.payload_type, 98)
-
-    def test_esphome_directional_offer_advertises_48k_rx_and_16k_tx(self) -> None:
-        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
-        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
-
-        offer = sdp.build_offer_directional(
-            "192.0.2.10",
-            "192.0.2.10",
-            40000,
-            [wide, narrow],
-            [narrow],
-            allow_directional_payloads=True,
-        )
-
-        offered = sdp.offered_pcm_formats(offer)
-        self.assertEqual(
-            [(item.sample_rate, item.frame_ms) for item in offered],
-            [(48000, 10), (16000, 10)],
-        )
-        self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
-        self.assertIn("a=x-voip-stack-flow:97 sendrecv\r\n", offer)
-        self.assertIn("a=ptime:10\r\n", offer)
-        self.assertNotIn("a=maxptime:", offer)
-
-    def test_explicit_directional_profile_prefers_48k_to_esp_with_16k_alternative(self) -> None:
-        wide = sdp.RtpPcmFormat(112, "L16", 48000, 1, 10)
-        narrow = sdp.RtpPcmFormat(96, "L16", 16000, 1, 10)
-        offer = sdp.build_offer_directional(
-            "192.0.2.1", "192.0.2.1", 40000,
-            [wide.audio_format, narrow.audio_format], [narrow.audio_format],
-            send_rtp_formats=(wide, narrow), recv_rtp_formats=(narrow,),
-            allow_directional_payloads=True,
-        )
-        formats = sdp.offered_pcm_formats(offer)
-        flows = sdp.audio_flow_attributes(offer)
-        # The ESP chooses the first compatible offered mapping in each direction.
-        peer_rx = next(fmt for fmt in formats if flows[fmt.payload_type] in {"send", "sendrecv"})
-        peer_tx = next(fmt for fmt in formats if flows[fmt.payload_type] in {"recv", "sendrecv"})
-        self.assertEqual(peer_rx.sample_rate, 48000)
-        self.assertEqual(peer_tx.sample_rate, 16000)
-        self.assertEqual((peer_rx.frame_ms, peer_tx.frame_ms), (10, 10))
-
-    def test_standard_offer_does_not_advertise_one_way_codec_capabilities(self) -> None:
-        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
-        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
-
-        with self.assertRaises(sdp.SdpError):
-            sdp.build_offer_directional(
-                "192.0.2.10",
-                "192.0.2.10",
-                40000,
-                [wide],
-                [narrow],
-            )
-
-    def test_esphome_directional_offer_and_answer_select_48k_to_esp_16k_from_esp(self) -> None:
-        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
-        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
-        offer = sdp.build_offer_directional(
-            "192.0.2.10",
-            "192.0.2.10",
-            40000,
-            [wide, narrow],
-            [narrow],
-            allow_directional_payloads=True,
-        )
-
-        selected_by_esp = sdp.negotiate_directional(offer, [narrow], [wide])
-        self.assertIsNotNone(selected_by_esp)
-        self.assertEqual(selected_by_esp.send.audio_format, narrow)
-        self.assertEqual(selected_by_esp.recv.audio_format, wide)
-
-        answer = sdp.build_answer_directional(
-            "192.0.2.20",
-            "192.0.2.20",
-            40002,
-            selected_by_esp.send,
-            selected_by_esp.recv,
-            remote_sdp=offer,
-        )
-        selected_by_ha = sdp.negotiate_answer_directional(
-            answer,
-            [wide],
-            [narrow],
-            local_offer_sdp=offer,
-        )
+        self.assertEqual((selected.send.sample_rate, selected.recv.sample_rate), (16000, 48000))
+        answer = sdp.build_answer_directional("192.0.2.20", "192.0.2.20", 40002,
+            selected.send, selected.recv, recv_formats=selected.recv_formats, remote_sdp=offer)
+        self.assertNotIn("a=x-", answer)
+        selected_by_ha = sdp.negotiate_answer_directional(answer, [wide, narrow], [narrow, wide],
+            local_offer_sdp=offer, local_capabilities=HA_AUDIO_CAPABILITIES)
         self.assertIsNotNone(selected_by_ha)
-        self.assertEqual(selected_by_ha.send.audio_format, wide)
-        self.assertEqual(selected_by_ha.recv.audio_format, narrow)
+        self.assertEqual((selected_by_ha.send.sample_rate, selected_by_ha.recv.sample_rate), (48000, 16000))
+        self.assertEqual({fmt.sample_rate for fmt in selected_by_ha.recv_formats}, {16000, 48000})
+
+    def test_sendrecv_offer_omits_a_mapping_missing_from_one_local_direction(self) -> None:
+        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
+        offer = sdp.build_offer_directional("192.0.2.10", "192.0.2.10", 40000,
+            [wide, narrow], [narrow])
+        self.assertEqual([fmt.sample_rate for fmt in sdp.offered_pcm_formats(offer)], [16000])
+        self.assertNotIn("a=x-", offer)
+
+    def test_sendrecv_offer_rejects_disjoint_actual_capabilities(self) -> None:
+        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
+        with self.assertRaises(sdp.SdpError):
+            sdp.build_offer_directional("192.0.2.10", "192.0.2.10", 40000, [wide], [narrow])

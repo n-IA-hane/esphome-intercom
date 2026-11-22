@@ -57,6 +57,7 @@ class DialogSignalingState:
     local_sdp_session_version: int = 0
     local_sdp_body: str = ""
     peer_supports_from_change: bool = False
+    peer_supports_update: bool = False
     session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
 
 

@@ -7,6 +7,7 @@ import logging
 from typing import ClassVar
 
 from .session_cleanup import async_wait_for_cleanup
+from .bridge_media_updates import prepare_retained_video_handoff
 from .call_deadlines import CallDeadline
 from .call_projection import publish_bridge_projection
 from .endpoint_lifecycle import call_registry
@@ -53,111 +54,6 @@ def get_parking_lot(hass):
     return lot
 
 
-async def _prepare_video_handoff(hass, session, video, source, destination, *, source_client=None, wire_id=None,
-                                 source_side="left"):
-    """Stage held/resumed video with the existing dialog and relay generations."""
-    from .bridge_media_updates import prepare_source_video_update, prepare_owned_video_generation
-    from .core import sdp
-    from .sip_bridge import dialog_video_rtp_peer, invite_video_rtp_peer
-    from .sip_client import PreparedDialogMediaUpdate
-
-    registry = call_registry(hass)
-    source_owner = registry.resource_for(session.call_id, "relay")
-    source_generation = session.generation
-
-    def owns_source():
-        return (session.live and registry.is_generation_current(session.call_id, source_generation)
-            and registry.resource_for(session.call_id, "relay") is source_owner
-            and getattr(source_owner, "video_relay", None) is video)
-
-    def terminate_failed_restore():
-        if owns_source():
-            registry.request_termination(session.call_id,
-                TerminationIntent("parking_video_restore_failed"), generation=source_generation)
-
-    previous_source, previous_destination = video._peers(source_side)
-    source_port = getattr(video, f"{source_side}_port")
-    destination_side = "right" if source_side == "left" else "left"
-    previous_formats = tuple(dict.fromkeys((previous_source.recv_format, previous_source.send_format)))
-    _, undo_left = video.stage_peer_reconfiguration(source_side, source)
-    try:
-        _, undo_right = video.stage_peer_reconfiguration(destination_side, destination)
-    except BaseException:
-        undo_left()
-        raise
-    prepared = None
-    commit_video = rollback_video = None
-    settled = ""
-
-    async def rollback():
-        nonlocal settled
-        if settled == "rolled_back":
-            return
-        committed = settled == "committed"
-        settled = "rolled_back"
-        if committed:
-            if owns_source():
-                try:
-                    restoring = await _prepare_video_handoff(hass, session, video, previous_source, previous_destination,
-                        source_client=source_client, wire_id=wire_id, source_side=source_side)
-                    await restoring.commit()
-                except BaseException:
-                    terminate_failed_restore()
-                    raise
-            return
-        if rollback_video is not None:
-            await rollback_video()
-        else:
-            undo_left()
-            undo_right()
-        if prepared is not None and owns_source():
-            if not await prepared.restore(local_video_rtp_port=source_port, video_formats=previous_formats):
-                terminate_failed_restore()
-                raise ParkingError("The retained video dialog could not be restored")
-
-    try:
-        # Validate conversion admission before changing the retained SIP leg.
-        directions = video.transcode_directions_for(
-            **{source_side: source, destination_side: destination})
-        if directions and video._transcode_hass is None:
-            from .config import transport_config
-            from .const import CONF_VIDEO_TRANSCODING
-            if not transport_config(hass).get(CONF_VIDEO_TRANSCODING, False):
-                raise ParkingError("The pickup video formats require unavailable conversion")
-            video.configure_transcoding(hass, session.call_id)
-        prepared = await prepare_source_video_update(hass, wire_id or session.call_id, source_client=source_client,
-            local_video_rtp_port=source_port,
-            video_formats=tuple(dict.fromkeys((source.recv_format, source.send_format))),
-            video_direction=sdp.local_direction_for_remote(source.video_format.direction))
-        if prepared is None:
-            raise ParkingError("The retained caller rejected the video update")
-        if not owns_source():
-            raise ParkingError("The retained video owner changed before preparation")
-        actual_source = (dialog_video_rtp_peer(prepared.candidate) if source_client is not None
-                         else invite_video_rtp_peer(prepared.candidate))
-        video.update_staged_peer(source_side, source, actual_source)
-        commit_video, rollback_video = await prepare_owned_video_generation(call_registry(hass), session, video,
-            **{source_side: actual_source, destination_side: destination})
-        if not session.live or video._stop_requested or not prepared.commit():
-            raise ParkingError("The parked video call changed before commit")
-    except BaseException:
-        await async_wait_for_cleanup(asyncio.create_task(rollback(), name="voip-parking-video-rollback"))
-        raise
-
-    async def commit():
-        if settled:
-            raise ParkingError("The video handoff has already settled")
-        if not session.live or video._stop_requested:
-            raise ParkingError("The retained caller ended before video handoff")
-        async def apply():
-            nonlocal settled
-            await commit_video()
-            settled = "committed"
-        await async_wait_for_cleanup(asyncio.create_task(apply(), name="voip-parking-video-settlement"))
-
-    return PreparedDialogMediaUpdate(commit, rollback,
-        answer_video_format=destination.send_format, answer_video_rtp_port=getattr(video, f"{destination_side}_port"))
-
 
 def _video_peer_direction(peer, direction):
     return replace(peer, video_format=replace(peer.video_format, direction=direction),
@@ -194,10 +90,10 @@ class ParkingCall(LocalCallApplication):
         destination_direction = sdp.constrained_video_direction(destination.video_format.direction,
             allow_send=sdp.remote_can_send(source.video_format) and not destination.connection_held,
             allow_receive=sdp.remote_can_receive(source.video_format, connection_held=source.connection_held))
-        return await _prepare_video_handoff(self.hass, self.session, self.media.video_relay,
+        return await prepare_retained_video_handoff(self.hass, self.session, self.media.video_relay,
             _video_peer_direction(source, sdp.local_direction_for_remote(source_direction)),
             _video_peer_direction(destination, sdp.local_direction_for_remote(destination_direction)),
-            source_client=self.source_client)
+            source_client=self.source_client, error_type=ParkingError)
 
     def cancel_deadline(self):
         if self.parked is not None:
@@ -266,7 +162,7 @@ class ParkingCall(LocalCallApplication):
             return
         target = require_runtime_data(self.hass).endpoints.get(destination)
         if target is not None:
-            destination = target.name
+            destination = target.username
         callback = registry.forward_call
         if callback is None:
             raise ParkingError("Call forwarding is unavailable")
@@ -619,10 +515,10 @@ async def park_established_sip_call(hass, call_id, parker, *, slot="", referrer=
             registry.request_termination(goal.call_id, TerminationIntent(reason), generation=goal.generation)
         if relay.video_relay is not None:
             video = relay.video_relay
-            video_update = await goal.create_task(_prepare_video_handoff(hass, original, video,
+            video_update = await goal.create_task(prepare_retained_video_handoff(hass, original, video,
                 _video_peer_direction(getattr(video, side), "inactive"),
                 _video_peer_direction(getattr(video, "right" if side == "left" else "left"), "inactive"),
-                source_client=source_client, wire_id=wire_id, source_side=side), name="parking-video-hold")
+                source_client=source_client, wire_id=wire_id, source_side=side, error_type=ParkingError), name="parking-video-hold")
             await video_update.commit()
             if not goal.live or registry.resource_for(original.call_id, "relay") is not relay:
                 raise ParkingError("The call changed while video was held")
@@ -851,9 +747,9 @@ async def pickup_phone_call(call, endpoint, slot):
         resolved = {}
         if endpoint.kind.is_softphone:
             resolved["_resolved_decision"] = RouteDecision(RouteAction.ANSWER_HA,
-                target=endpoint.name, entry=RosterEntry(endpoint.name,
+                target=endpoint.username, entry=RosterEntry(endpoint.username,
                     metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
-        task = await registry.forward_call(call_id=session.call_id, destination=endpoint.name,
+        task = await registry.forward_call(call_id=session.call_id, destination=endpoint.username,
             on_failure="resume", **resolved)
         if task is not None:
             try:

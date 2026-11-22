@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .call_projection import publish_bridge_projection
 from .config import trunk_config
+from .codec_settings import effective_codec_policy
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -25,16 +26,10 @@ from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
 from .endpoint_routing import (
     EndpointRouteResolver,
-    peer_audio_formats,
     peer_for_target,
     peer_video_codec,
-    roster_entry_formats,
     roster_from_peers,
-    sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_offer_common_audio,
-    supports_directional_audio_payloads,
-    supports_independent_audio_ptime,
 )
 from .fsm import (
     CallState,
@@ -454,24 +449,13 @@ async def async_route_trunk_invite(
         return
 
     peer_target = peer_for_target(destination, peers)
-    remote_tx_formats = peer_audio_formats(
-        peer_target, "tx_formats"
-    ) or roster_entry_formats(decision.entry, "tx_formats")
-    remote_rx_formats = peer_audio_formats(
-        peer_target, "rx_formats"
-    ) or roster_entry_formats(decision.entry, "rx_formats")
-    sip_send_formats, sip_recv_formats = sip_target_audio_profile(
-        remote_tx_formats=remote_tx_formats,
-        remote_rx_formats=remote_rx_formats,
-        target=destination,
-    )
     rtp_audio_profile = sip_target_rtp_audio_profile(
-        peer_target,
         decision.entry,
+        codec_policy=effective_codec_policy(hass,
+            endpoint_id=str((decision.entry.metadata or {}).get("endpoint_id") or "") if decision.entry is not None else ""),
     )
-    if rtp_audio_profile is not None:
-        sip_send_formats = list(rtp_audio_profile.send_formats)
-        sip_recv_formats = list(rtp_audio_profile.recv_formats)
+    sip_send_formats = list(rtp_audio_profile.send_formats)
+    sip_recv_formats = list(rtp_audio_profile.recv_formats)
     source_video_reservation = (
         preanswered.get("video_rtp_reservation")
         if isinstance(preanswered, dict)
@@ -541,7 +525,10 @@ async def async_route_trunk_invite(
             if sock is not None:
                 sock.close()
         source_video_reservation.release()
+    # Preserve the engine's complete RTP catalog through the SIP writer.
     client = SipCallClient(
+        codec_policy=rtp_audio_profile.codec_policy,
+        max_forwards=max(0, invite.max_forwards - 1) if invite.max_forwards is not None else 70,
         local_ip=runtime.local_ip,
         local_name=invite.caller or runtime.ha_peer_name,
         local_uri_user=invite.routing_caller or runtime.ha_peer_name,
@@ -549,23 +536,11 @@ async def async_route_trunk_invite(
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
-        supported_send_rtp_formats=(
-            rtp_audio_profile.send_rtp_formats
-            if rtp_audio_profile is not None
-            else None
-        ),
-        supported_recv_rtp_formats=(
-            rtp_audio_profile.recv_rtp_formats
-            if rtp_audio_profile is not None
-            else None
-        ),
-        include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
-        allow_directional_audio_payloads=supports_directional_audio_payloads(
-            peer_target, decision.entry
-        ),
-        independent_audio_ptime=supports_independent_audio_ptime(
-            peer_target, decision.entry
-        ),
+        supported_send_rtp_formats=rtp_audio_profile.send_rtp_formats,
+        supported_recv_rtp_formats=rtp_audio_profile.recv_rtp_formats,
+        include_common_codecs=False,
+        include_dahua_pcm=rtp_audio_profile.include_dahua_pcm,
+        match_received_codec=rtp_audio_profile.match_received_codec,
         signaling_transport=uri_transport(bridge_uri),
         peer_user_agent=str(
             (

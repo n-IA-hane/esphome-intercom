@@ -5,11 +5,12 @@ from enum import StrEnum
 
 from .. import sdp
 from ..audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
-from ..audio_format import AudioFormat, PcmFormat
+from ..audio_format import AudioFormat, PcmFormat, MAX_FRAME_MS
 from ..codec_policy import CodecPolicy
 from ..sdp_types import RtpPcmDirection, RtpPcmFormat
 from . import leg, negotiator
 from .codecs import CODECS
+from .capability import PeerEvidence
 
 
 class AudioOperation(StrEnum):
@@ -26,6 +27,42 @@ class AudioFlowPlan:
     operations: tuple[AudioOperation, ...]
     reason: str
 
+    @property
+    def payload_relay(self) -> bool:
+        return self.operations == (AudioOperation.PASSTHROUGH,)
+
+
+def _opus_limits(fmtp: str) -> dict[str, int]:
+    from ..opus_codec import _receive_limits
+
+    return _receive_limits(fmtp)
+
+
+def payload_relay_compatible(source: RtpPcmFormat, target: RtpPcmFormat, *, payload_size=None) -> bool:
+    """Decide encoded relay using directional receiver envelopes, not fmtp equality."""
+    from .. import rtp
+
+    if (source.encoding, source.sample_rate, source.channels) != (target.encoding, target.sample_rate, target.channels):
+        return False
+    if source.encoding == "OPUS":
+        incoming, outgoing = _opus_limits(source.fmtp), _opus_limits(target.fmtp)
+        if any(name in outgoing and incoming.get(name, default) > outgoing[name]
+               for name, default in (("maxaveragebitrate", 510000), ("maxplaybackrate", 48000))):
+            return False
+        # ptime is a preference. Actual packets are validated against both
+        # maxptime bounds before transmission, independently of byte count.
+        return max(source.frame_ms, source.max_frame_ms or 120) <= (target.max_frame_ms or 120)
+    if sdp.fmtp_parameters(source.fmtp) != sdp.fmtp_parameters(target.fmtp):
+        return False
+    if (source.frame_ms == target.frame_ms
+            and max(source.frame_ms, source.max_frame_ms) <= max(target.frame_ms, target.max_frame_ms)
+            and rtp.audio_payload_size_limit(source) <= rtp.MAX_RTP_PAYLOAD_BYTES):
+        return True
+    return bool(payload_size is not None and source.encoding in {"L16", "L24", "PCM", "PCMA", "PCMU"}
+        and payload_size == target.rtp_timestamp_step * target.channels * target.bits // 8
+        and payload_size <= min(rtp.audio_payload_size_limit(source), rtp.audio_payload_size_limit(target),
+                                rtp.MAX_RTP_PAYLOAD_BYTES))
+
 
 @dataclass(frozen=True, slots=True)
 class BridgeAudioPlan:
@@ -33,6 +70,47 @@ class BridgeAudioPlan:
     caller_to_callee: AudioFlowPlan
     callee_to_caller: AudioFlowPlan
     trace: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserAudioPlan:
+    microphone: AudioFormat
+    speaker: AudioFormat
+    max_message_bytes: int
+
+
+def plan_browser_audio(send, receive) -> BrowserAudioPlan:
+    """Keep the real browser PCM edge at 48 kHz independently of the SIP codec."""
+    def edge(wire):
+        pcm = wire.audio_format
+        try:
+            return replace(pcm, sample_rate=48000)
+        except ValueError:
+            # A legal fractional peer quantum need not produce whole samples
+            # at the browser's fixed clock. Its packetizer retains that quantum.
+            return replace(pcm, sample_rate=48000, frame_ms=20)
+
+    return BrowserAudioPlan(edge(send), edge(receive),
+        48000 * 2 * 4 * MAX_FRAME_MS // 1000 + 1)
+
+
+def plan_bridge_offer(send_formats, receive_formats, source, *, send_rtp_formats=None,
+                      receive_rtp_formats=None, evidence: PeerEvidence | None = None,
+                      codec_policy=None, common=True, dahua=False, match_received_codec=False):
+    """Rank a relay opportunity inside one destination's real capability plan."""
+    plan = negotiator.create_offer(send_formats, receive_formats, evidence,
+        codec_policy=codec_policy, capabilities=HA_AUDIO_CAPABILITIES,
+        send_rtp_formats=send_rtp_formats, recv_rtp_formats=receive_rtp_formats,
+        common=common, dahua=dahua)
+    plan = replace(plan, match_received_codec=match_received_codec)
+    if not plan.send_formats or (codec_policy is not None and codec_policy.audio_ordered):
+        return plan
+    source_key = (source.encoding, source.sample_rate, source.channels)
+    preferred = _pcm_shape(plan.send_formats[0])
+    sends = tuple(sorted(plan.send_formats, key=lambda fmt:
+        (_pcm_shape(fmt) != preferred,
+         (fmt.encoding, fmt.sample_rate, fmt.channels) != source_key)))
+    return replace(plan, send_formats=sends)
 
 
 def _pcm_shape(fmt):
@@ -52,10 +130,10 @@ def plan_audio_flow(source: RtpPcmFormat, target: RtpPcmFormat) -> AudioFlowPlan
         target.encoding, target.sample_rate, target.channels)
     same_parameters = sdp.fmtp_parameters(source.fmtp) == sdp.fmtp_parameters(target.fmtp)
     same_pcm = _pcm_shape(source) == _pcm_shape(target)
+    if payload_relay_compatible(source, target):
+        return AudioFlowPlan(source, target, (AudioOperation.PASSTHROUGH,), "encoded packets fit the directional receiver envelope")
     if same_mapping and same_parameters:
-        if source.frame_ms == target.frame_ms:
-            return AudioFlowPlan(source, target, (AudioOperation.PASSTHROUGH,), "same encoded mapping and packet time")
-        if source.encoding != "OPUS":
+        if source.encoding != "OPUS" and source.frame_ms != target.frame_ms:
             return AudioFlowPlan(source, target, (AudioOperation.REPACKETIZE,), "same mapping with a different packet time")
     if source.encoding in {"L16", "L24", "PCM"} and target.encoding in {"L16", "L24", "PCM"}:
         operations = (AudioOperation.RESAMPLE,)

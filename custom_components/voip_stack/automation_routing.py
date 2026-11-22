@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 from dataclasses import dataclass
+from functools import lru_cache
+import re
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +20,8 @@ class RouteRequest:
     called_number: str = ""
     outbound_trunk_id: str = ""
     source_host: str = ""
+    source_account_username: str = ""
+    source_extension: str = ""
 
     @property
     def routing_caller(self):
@@ -176,25 +180,82 @@ def resolve_pending_route_call_id(
     return candidates[0]
 
 
-def matches_call(payload: dict, options: dict) -> bool:
+MATCH_MODES = ("exact", "prefix", "range", "pattern")
+
+
+def _number(value):
+    text = str(value).strip().removeprefix("+")
+    return int(text) if text and len(text) <= 256 and text.isascii() and text.isdecimal() else None
+
+
+@lru_cache(maxsize=64)
+def _pattern(value):
+    return re.compile(value, re.IGNORECASE)
+
+
+def _matches_value(actual, wanted, mode, upper=""):
+    if actual in (None, ""):
+        return False
+    actual, wanted = str(actual or "").strip(), str(wanted).strip()
+    if mode == "prefix":
+        return actual.casefold().startswith(wanted.casefold())
+    if mode == "range":
+        value, lower, end = _number(actual), _number(wanted), _number(upper)
+        return value is not None and lower is not None and end is not None and lower <= value <= end
+    if mode == "pattern":
+        try:
+            return len(wanted) <= 256 and _pattern(wanted).fullmatch(actual) is not None
+        except re.error:
+            return False
+    return actual.casefold() == wanted.casefold()
+
+
+def matches_call(payload: dict, options: dict, *, hass=None) -> bool:
     """Match the event snapshot rather than mutable Event Entity attributes."""
     aliases = {
-        "caller": ("caller", "caller_number", "caller_extension"),
-        "destination": ("callee", "destination", "called_extension", "called_number"),
+        "caller": ("caller", "caller_number", "caller_extension", "source_account_username", "caller_account_username"),
+        "destination": ("callee", "destination", "called_extension", "called_number", "dest_account_username", "destination_account_username", "target_account_username"),
         "trunk": ("inbound_trunk_id",),
         "trunk_id": ("inbound_trunk_id",),
         "reason": ("reason", "terminal_reason"),
         "outcome": ("type",),
+        "caller_number": ("caller_number",),
+        "caller_extension": ("source_extension", "caller_extension"),
+        "destination_number": ("called_number",),
+        "destination_extension": ("dest_extension", "called_extension"),
+        "caller_account": ("source_account_username", "caller_account_username", "source_endpoint_id"),
+        "destination_account": ("dest_account_username", "destination_account_username", "target_account_username", "dest_endpoint_id", "target_endpoint_id"),
     }
+    if hass is not None and any(options.get(field) for field in (
+            "caller_account", "destination_account", "caller_extension", "destination_extension")):
+        from .sip_account_identity import automation_account_fields, ha_account_username
+        payload = automation_account_fields(hass, payload)
+        options = dict(options)
+        for field in ("caller_account", "destination_account"):
+            if options.get(field):
+                username = ha_account_username(hass, options[field])
+                if not username:
+                    return False
+                options[field] = username
     for key, wanted in options.items():
-        if key == "for":
+        if key == "for" or key.endswith(("_match", "_range_end")):
             continue
         if not str(wanted).strip():
             continue
         fields = aliases.get(key, (key,))
-        if str(wanted).strip().casefold() not in {
-            str(payload.get(field) or "").strip().casefold() for field in fields
-        }:
+        side = ("caller" if key in {"caller", "caller_number", "caller_extension"} else
+                "destination" if key in {"destination", "destination_number", "destination_extension"} else "")
+        mode = options.get(side + "_match", "exact") if side else "exact"
+        if hass is not None and key in {"caller", "destination"} and mode == 'exact' and getattr(hass, 'config_entries', None) is not None:
+            from .sip_account_identity import automation_account_fields, canonical_ha_destination
+            canonical = canonical_ha_destination(hass, str(wanted))
+            if canonical != wanted:
+                projected = automation_account_fields(hass, payload)
+                if any(str(projected.get(field) or '').casefold() == canonical.casefold()
+                       for field in aliases[key + '_account']):
+                    continue
+        if mode not in MATCH_MODES or not any(_matches_value(payload.get(field), wanted, mode,
+                options.get(side + "_range_end", "")) for field in fields):
             return False
     return True
 
@@ -206,7 +267,15 @@ def route_window_snapshot(invite, decision=None, *, trunk_invite=False, default_
     entry = getattr(decision, "entry", None)
     target = str(getattr(decision, "target", "") or default_destination or invite.target)
     routing_target = str(getattr(invite, "routing_target", "") or invite.target)
+    metadata = getattr(entry, 'metadata', {}) or {}
+    source = str(getattr(invite, 'identified_source_endpoint_id', '')
+                 or getattr(invite, 'source_account_username', '') or '')
+    destination = str(metadata.get('endpoint_id') or '') if metadata.get('endpoint_kind') in {
+        'sip_account', 'browser', 'esphome'} else ''
     return {**identity_fields(invite),
+        "source_account_username": source, "dest_account_username": destination,
+        "source_extension": str(getattr(invite, 'source_extension', '') or ''),
+        "dest_extension": str(getattr(entry, 'extension', '') or ''),
         "outbound_trunk_id": str(getattr(invite, "outbound_trunk_id", "") or ""),
         "caller": invite.caller, "callee": target,
         "destination": str(getattr(entry, "display_name", "") or target),
@@ -222,4 +291,4 @@ def has_native_route_window(hass, invite, decision=None, *, trunk_invite=False, 
     filters = getattr(registration, "route_trigger_filters", {})
     snapshot = route_window_snapshot(invite, decision, trunk_invite=trunk_invite,
                                      default_destination=default_destination)
-    return any(matches_call(snapshot, options) for options in filters.values())
+    return any(matches_call(snapshot, options, hass=hass) for options in filters.values())

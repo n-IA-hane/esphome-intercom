@@ -8,21 +8,23 @@ from .voip_phase1_support import sdp
 
 
 # Native S3 OPTIONS captured on 2026-11-06, with only IP/session identity scrubbed.
-# Keep the emitted media/RTCP zero ports, directional catalogs and JPEG metadata.
+# The unknown extension attributes are ignored; standard media/RTCP zero ports
+# and JPEG metadata retain their protocol meaning.
 NATIVE_OPTIONS = (Path(__file__).parent / "fixtures/sdp/native_options_capabilities.sdp").read_bytes()
 RTCP = b"a=rtcp:0 IN IP4 192.0.2.192\r\n"
-TX = ["L16/16000/1/10", "L16/16000/1/20", "G722/8000/1/20", "G722/8000/1/10"]
-RX = ["L16/48000/1/10", "L16/16000/1/20", "L16/16000/1/10",
-      "G722/8000/1/20", "G722/8000/1/10"]
+TX = ["L16/48000/1", "L16/16000/1", "G722/8000/1"]
+RX = ["L16/48000/1/10", "L16/16000/1/10", "G722/8000/1/10"]
 
 
-def test_native_options_retains_video_and_exact_directional_audio_catalogs():
+def test_options_retains_video_and_advisory_receiver_hints():
     caps = sdp.options_capabilities(NATIVE_OPTIONS)
     assert caps["sip_video_codec"] == "jpeg"
     assert caps["sip_audio_tx_formats"] == TX
     assert caps["sip_audio_rx_formats"] == RX
     assert caps["audio_mode"] == "full_duplex"
-    assert caps["sdp_features"] == ["directional_audio_v1", "independent_audio_ptime_v1"]
+    assert "sdp_features" not in caps
+    assert "sip_audio_capabilities_complete" not in caps
+    assert caps["sip_audio_tx_geometry_complete"] and caps["sip_audio_rx_geometry_complete"]
     video = sdp.parse_video_sdp(NATIVE_OPTIONS, capabilities=True)
     assert video["media_port"] == video["rtcp_port"] == 0
     assert video["direction"] == "recvonly" and video["framerate"] == 10
@@ -86,3 +88,9 @@ def test_audio_only_options_stays_unknown_and_disabled_ordinary_video_stays_disa
     audio = NATIVE_OPTIONS.split(b"m=video", 1)[0]
     assert "sip_video_codec" not in sdp.options_capabilities(audio)
     assert sdp.offered_video_formats(NATIVE_OPTIONS.replace(RTCP, b"")) == []
+
+
+def test_historical_unknown_extension_attributes_have_no_capability_effect():
+    standard = b"\r\n".join(line for line in NATIVE_OPTIONS.split(b"\r\n")
+        if not line.startswith(b"a=x-"))
+    assert sdp.options_capabilities(NATIVE_OPTIONS) == sdp.options_capabilities(standard)

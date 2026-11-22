@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from time import monotonic
+import asyncio
 import logging
 
 from .core import rtp, sdp
@@ -11,6 +12,8 @@ from .core.rtp_payload import RtpPayloadDecoder
 from .core.media.codecs import CODECS
 
 _LOGGER = logging.getLogger(__name__)
+_REORDER_PACKETS = 4
+_REORDER_DELAY_S = 0.06
 
 
 class RtpAudioReceiver:
@@ -22,8 +25,11 @@ class RtpAudioReceiver:
         recv_formats: tuple[sdp.RtpPcmFormat, ...] = (),
         *,
         previous: RtpAudioReceiver | None = None,
+        receive_state: rtp.RtpReceiveState | None = None,
+        output_pcm=None,
     ) -> None:
         self.selected_format = selected_format
+        self.output_pcm = output_pcm or selected_format.audio_format
         if CODECS.get(selected_format.encoding) is not None and CODECS[selected_format.encoding].auxiliary:
             raise ValueError("Comfort noise requires a negotiated primary audio format")
         # Share the observer collection even when it is empty: a recorder may
@@ -60,6 +66,185 @@ class RtpAudioReceiver:
         self._converter: PcmFrameConverter | None = None
         self._pending = bytearray()
         self._comfort_payload_type: int | None = None
+        self._receive_state = receive_state if receive_state is not None else rtp.RtpReceiveState()
+        self.source_clock_rate = 0
+        self._ordered: dict[int, tuple[rtp.RtpPacket, bool, bool]] = {}
+        self._next_sequence: int | None = None
+        self._next_timestamp: int | None = None
+        self._timestamp_rate = 0
+        self.last_gap_ms = 0.0
+        self.last_packet_accepted = False
+        self.last_source_changed = False
+        self._reorder_deadline = None
+        self._reorder_timer = None
+        self._reorder_epoch = 0
+        self._on_reorder_ready = None
+        self._on_reorder_error = None
+
+    @property
+    def receive_state(self):
+        """Share source admission with negotiated same-clock telephone events."""
+        return self._receive_state
+
+    @property
+    def source_ssrc(self):
+        return self._receive_state.ssrc
+
+    def requires_fixed_input(self, received_format):
+        return not PcmFrameConverter.same_pcm_format(received_format.audio_format, self.output_pcm)
+
+    def reset_source(self):
+        """Retire decode and partial PCM state on an admitted source transition."""
+        callback, on_error = self._on_reorder_ready, self._on_reorder_error
+        self.close()
+        self.set_reorder_callback(callback, on_error)
+        self._ordered.clear()
+        self._next_sequence = self._next_timestamp = None
+        self._timestamp_rate = 0
+
+    def observe_non_audio_sequence(self, sequence):
+        """An admitted shared-SSRC event consumes an RTP sequence number."""
+        if self._next_sequence == sequence:
+            self._next_sequence = rtp.next_sequence(sequence)
+
+    @property
+    def pending_reorder_deadline(self):
+        return self._reorder_deadline
+
+    @property
+    def has_pending_media(self):
+        return any(deliver for _packet, _normalize, deliver in self._ordered.values())
+
+    def set_reorder_callback(self, callback, on_error=None):
+        """Deliver deferred PCM through the same existing media consumer."""
+        self._on_reorder_ready, self._on_reorder_error = callback, on_error
+
+    def _cancel_reorder_timer(self):
+        if self._reorder_timer is not None:
+            self._reorder_timer.cancel()
+            self._reorder_timer = None
+
+    def _update_reorder_timer(self):
+        if not self._ordered:
+            self._cancel_reorder_timer()
+            self._reorder_deadline = None
+            return
+        if self._reorder_deadline is None:
+            self._reorder_deadline = monotonic() + _REORDER_DELAY_S
+        if self._reorder_timer is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        epoch, source = self._reorder_epoch, self.source_ssrc
+        self._reorder_timer = loop.call_later(max(0.0, self._reorder_deadline - monotonic()),
+            self._reorder_expired, epoch, source)
+
+    def _reorder_expired(self, epoch, source):
+        if epoch != self._reorder_epoch or source != self.source_ssrc:
+            return
+        self._reorder_timer = None
+        try:
+            frames = self.flush_pending()
+            if frames and self._on_reorder_ready is not None:
+                self._on_reorder_ready(frames)
+        except Exception as error:
+            if self._on_reorder_error is not None:
+                self._on_reorder_error(error)
+            else:
+                _LOGGER.debug("Deferred RTP audio decode failed", exc_info=True)
+        finally:
+            self._update_reorder_timer()
+
+    def flush_pending(self, now=None):
+        """Release a bounded gap at its original wall-clock deadline."""
+        now = monotonic() if now is None else now
+        if self._reorder_deadline is None or now < self._reorder_deadline:
+            return []
+        return self._drain_ordered(force=True)
+
+    def decode_rtp(self, packet: rtp.RtpPacket, *, normalize_frames=False, admitted=False,
+                   deliver_frames=True) -> list[bytes]:
+        """Decode each RTP packet once with bounded reordering and one-shot expiry."""
+        self.last_packet_accepted = self.last_source_changed = False
+        fmt = self.format_for(packet.payload_type)
+        if fmt is None:
+            raise ValueError("unnegotiated RTP audio payload type")
+        rtp.validate_audio_payload_size(packet.payload, fmt)
+        self.last_gap_ms = 0.0
+        if not admitted:
+            if not self._receive_state.admit(packet):
+                return []
+            if self._receive_state.changed:
+                self.reset_source()
+                self.last_source_changed = True
+        if self._next_sequence is None:
+            self._next_sequence = packet.sequence
+        delta = (packet.sequence - self._next_sequence + 32768) % 65536 - 32768
+        if delta < 0:
+            return []
+        self.last_packet_accepted = True
+        self.source_clock_rate = fmt.rtp_clock_rate
+        self._ordered[packet.sequence] = (packet, normalize_frames, deliver_frames)
+        return self._drain_ordered(force=len(self._ordered) >= _REORDER_PACKETS)
+
+    def _drain_ordered(self, *, force=False):
+        self.last_gap_ms = 0.0
+        frames = []
+        processed = False
+        try:
+            while self._ordered:
+                if self._next_sequence not in self._ordered:
+                    if not force or processed:
+                        break
+                    self._next_sequence = min(self._ordered,
+                        key=lambda seq: (seq - self._next_sequence) & 65535)
+                current, normalize_frames, deliver_frames = self._ordered[self._next_sequence]
+                current_format = self.format_for(current.payload_type)
+                if current_format is None:
+                    self._ordered.pop(self._next_sequence)
+                    self._next_sequence = rtp.next_sequence(current.sequence)
+                    processed = True
+                    continue
+                if processed and self._next_timestamp is not None and self._timestamp_rate == current_format.rtp_clock_rate:
+                    gap = (current.timestamp - self._next_timestamp + 0x80000000) % 0x100000000 - 0x80000000
+                    if gap > 0:
+                        # Keep every discontinuity before its own output batch.
+                        # This packet is already ordered and needs no gap wait.
+                        self._reorder_deadline = monotonic()
+                        self._cancel_reorder_timer()
+                        break
+                self._ordered.pop(self._next_sequence)
+                self._next_sequence = rtp.next_sequence(current.sequence)
+                processed = True
+                if self._timestamp_rate != current_format.rtp_clock_rate:
+                    self._next_timestamp = None
+                    self._timestamp_rate = current_format.rtp_clock_rate
+                if self._next_timestamp is not None:
+                    gap = (current.timestamp - self._next_timestamp + 0x80000000) % 0x100000000 - 0x80000000
+                    if gap > 0:
+                        self.last_gap_ms += gap * 1000 / current_format.rtp_clock_rate
+                        self._pending.clear()
+                        self._converter = None
+                        self._active_format = None
+                native, selected = current_format.audio_format, self.output_pcm
+                if not deliver_frames:
+                    decoded = [self.decode_packet(current.payload_type, current.payload)]
+                elif (not normalize_frames and
+                        (native.sample_rate, native.pcm_format, native.channels) ==
+                        (selected.sample_rate, selected.pcm_format, selected.channels)):
+                    decoded = [self.decode_packet(current.payload_type, current.payload)]
+                else:
+                    decoded = self.decode(current.payload_type, current.payload, normalize_frames=normalize_frames)
+                if deliver_frames:
+                    frames.extend(decoded)
+                duration = rtp.audio_payload_duration_ms(current.payload, current_format)
+                self._next_timestamp = rtp.next_timestamp(current.timestamp,
+                    round(duration * current_format.rtp_clock_rate / 1000))
+            return frames
+        finally:
+            self._update_reorder_timer()
 
     @property
     def accepted_formats(self) -> tuple[sdp.RtpPcmFormat, ...]:
@@ -81,6 +266,7 @@ class RtpAudioReceiver:
         fmt = self.format_for(payload_type)
         if fmt is None:
             raise ValueError(f"unnegotiated RTP audio payload type {payload_type}")
+        self.source_clock_rate = fmt.rtp_clock_rate
         if fmt.encoding != "CN":
             self.end_comfort_noise()
         if payload_type in self._new_payload_types:
@@ -152,6 +338,11 @@ class RtpAudioReceiver:
         return self._accept_decoded(fmt, pcm, normalize_frames=normalize_frames)
 
     def close(self):
+        self._reorder_epoch += 1
+        self._cancel_reorder_timer()
+        self._reorder_deadline = None
+        self._ordered.clear()
+        self._on_reorder_ready = self._on_reorder_error = None
         self.end_comfort_noise()
         for decoder in self._decoders.values():
             decoder.close()
@@ -183,8 +374,8 @@ class RtpAudioReceiver:
         if fmt != self._active_format:
             self._pending.clear()
             self._converter = (
-                PcmFrameConverter(source, self.selected_format.audio_format)
-                if source != self.selected_format.audio_format
+                    PcmFrameConverter(source, self.output_pcm)
+                    if source != self.output_pcm
                 else None
             )
             self._active_format = fmt

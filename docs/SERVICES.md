@@ -442,13 +442,12 @@ response. The roster is never broadcast on the Home Assistant event bus.
 
 ### `voip_stack.push_phonebook`
 
-Push the current central JSON phonebook to online ESP devices.
-
-The normal path is automatic: phonebook changes trigger a rebuild and push.
-Home Assistant also refreshes and pushes again when an ESPHome
-`*_set_roster_json` service is registered, so rebooting ESPs receive the roster
-after their action surface is ready. Use this service for diagnostics or manual
-recovery.
+Request a central directory rebuild. Changed directory generations schedule
+managed account/directory synchronization; each compatible ESP retrieves its
+contacts through LDAP. This compatibility HA service does not send JSON rows
+to firmware. Normal synchronization follows directory changes and the device
+API inventory. Use the phone's `refresh_ldap_directory` native action when a
+new LDAP query is needed with otherwise unchanged configuration.
 
 ### `voip_stack.purge_devices`
 

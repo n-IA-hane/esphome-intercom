@@ -1395,6 +1395,10 @@ class VoipStackEngine extends EventTarget {
 
   _onSoftphoneState(state, subscriptionSelector = null, context = null) {
     if (!this.rememberSoftphoneState(state)) return;
+    void this._adoptSoftphoneReplacement(state).catch((error) => {
+      if (error instanceof AudioSetupSupersededError) return;
+      this.dispatchEvent(new CustomEvent("error", { detail: error?.message || String(error) }));
+    });
     if (state.kind !== "closed") this._syncUnmountedSoftphoneState(state);
     for (const cb of this._softphoneSubscribers) {
       const selector = this._softphoneSubscriberSelectors.get(cb) || {};
@@ -1407,6 +1411,29 @@ class VoipStackEngine extends EventTarget {
       if (!softphoneStateMatches(state, selector)) continue;
       try { cb(state, context); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
     }
+  }
+
+  async _adoptSoftphoneReplacement(state) {
+    const endpointId = String(state?.endpoint_id || "");
+    const callId = String(state?.call_id || "");
+    const previousCallId = String(state?.media_handoff?.previous_call_id || "");
+    const current = () => !this._pageHiding && endpointId && callId && previousCallId &&
+      callId !== previousCallId && state.media_handoff?.endpoint_id === endpointId &&
+      isEstablishedCallState(state.state) && state.can_attach_media === true &&
+      this.ownsSoftphoneSession(previousCallId, endpointId);
+    if (!current()) return false;
+    // Recheck the existing backend client/user guard before moving a local
+    // claim. Account observers receive the same state, never the media lease.
+    const authorized = await this._mediaAttachState(callId, endpointId);
+    if (!current() || !authorized || authorized.call_id !== callId ||
+        authorized.media_handoff?.previous_call_id !== previousCallId ||
+        authorized.media_handoff?.endpoint_id !== endpointId ||
+        !isEstablishedCallState(authorized.state) || authorized.can_attach_media !== true ||
+        !["self", "available"].includes(authorized.media_owner)) return false;
+    this.claimSoftphoneSession(callId, endpointId);
+    await this.resumeSession(this._browserPhoneInfo(authorized),
+      authorized.session_device_id || authorized.device_id, authorized);
+    return true;
   }
 
   subscribeSoftphoneState(cb, selector = {}) {
@@ -2135,6 +2162,7 @@ class VoipStackEngine extends EventTarget {
         destination,
         call_id: context.call_id || "",
         send_video: Boolean(context.sendVideo),
+        receive_video: typeof context.receiveVideo === "boolean" ? context.receiveVideo : Boolean(context.sendVideo),
         media_client_id: this._mediaClientId,
       },
     };

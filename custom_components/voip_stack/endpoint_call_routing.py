@@ -16,7 +16,7 @@ from .config import trunk_config, trunk_enabled
 from .core import sdp as sip_sdp
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core.audio_format import HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
-from .endpoint_group_calls import EndpointGroupCalls, end_timed_out_conference_call
+from .endpoint_group_calls import EndpointGroupCalls
 from .endpoint_lifecycle import call_registry
 from .endpoint_routing import EndpointRouteResolver
 from .endpoint_session import TerminationInitiator, TerminationIntent
@@ -267,7 +267,6 @@ def compose_call_routing(
     local_ip = dialer.local_ip
     resolver = dialer.route_resolver
     defer_to_phone = partial(defer_invite, hass)
-    timeout = partial(end_timed_out_conference_call, hass)
     forward = partial(
         async_forward_existing_call,
         ForwardRuntime(
@@ -301,7 +300,6 @@ def compose_call_routing(
             hass=hass,
             config=config,
             local_ip=local_ip,
-            on_inbound_timeout=timeout,
             browser_leg_for_member=dialer.browser_leg_for_member,
             prepare_outbound_leg=dialer.prepare_outbound_leg,
         ),
@@ -330,7 +328,6 @@ def compose_call_routing(
         browser_leg_for_member=dialer.browser_leg_for_member,
         defer_invite_to_softphone=defer_to_phone,
         enable_reused_sip_tcp_connection=dialer.enable_reused_tcp_connection,
-        on_conference_inbound_timeout=timeout,
         ring_conference_members=conference,
         run_ring_group_call=ring_group,
         run_trunk_inbound_route_guarded=partial(

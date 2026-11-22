@@ -418,41 +418,34 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(registry.endpoint_claims_snapshot())
         self.assertFalse(endpoints.require("kitchen").active_call_id)
 
-    async def test_media_timeout_respects_direction_hold_and_ha_listener(self) -> None:
+    async def test_dtx_silence_keeps_the_participant_until_dialog_termination(self) -> None:
         hass = _FakeHass()
         room = conference.ConferenceRoom(hass, name="Conference", local_ip="127.0.0.1")
-        now = 100.0
+        output = asyncio.Queue()
+        leg = conference._ConferenceLeg(call_id="silent", caller="Desk", role="manual",
+            remote_host="127.0.0.1", remote_port=40000, local_out=output,
+            in_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT),
+            out_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT))
+        room.legs["silent"] = leg
+        now = 1.0
 
-        def leg(**updates):
-            values = {
-                "call_id": "leg",
-                "caller": "Desk",
-                "role": "manual",
-                "remote_host": "127.0.0.1",
-                "remote_port": 40000,
-                "in_converter": conference.PcmFrameConverter(
-                    conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT
-                ),
-                "out_converter": conference.PcmFrameConverter(
-                    conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT
-                ),
-                "last_rx": now - conference.CONFERENCE_INACTIVITY_S - 1,
-            }
-            values.update(updates)
-            return conference._ConferenceLeg(**values)
+        def clock():
+            nonlocal now
+            now += 11.0
+            return now
 
-        self.assertTrue(room._rx_inactivity_expired(leg(can_receive=True), now))
-        self.assertFalse(room._rx_inactivity_expired(leg(can_receive=False), now))
-        self.assertFalse(
-            room._rx_inactivity_expired(
-                leg(can_receive=True, connection_held=True), now
-            )
-        )
-        self.assertFalse(
-            room._rx_inactivity_expired(
-                leg(can_receive=True, local_out=asyncio.Queue()), now
-            )
-        )
+        with patch.object(conference, "time", types.SimpleNamespace(monotonic=clock)):
+            mixer = asyncio.create_task(room._mix_loop())
+            try:
+                for _ in range(3):
+                    self.assertEqual(await asyncio.wait_for(output.get(), .5), bytes(conference.CONFERENCE_FRAME_BYTES))
+                self.assertGreater(now, 30)
+                self.assertIn("silent", room.legs)
+                self.assertFalse(room._closed)
+            finally:
+                mixer.cancel()
+                await asyncio.gather(mixer, return_exceptions=True)
+        await room.close(reason="test_done")
 
     async def test_legacy_connection_hold_suppresses_conference_tx_and_keeps_clock(self) -> None:
         hass = _FakeHass()
@@ -559,42 +552,28 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, ["terminate", "close", "release"])
 
-    async def test_inbound_media_timeout_signals_before_releasing_rtp_port(self) -> None:
+    async def test_inbound_cleanup_uses_the_dialog_owner_before_releasing_the_port(self) -> None:
         hass = _FakeHass()
-        calls: list[str] = []
+        calls = []
 
-        async def on_timeout(call_id: str, reason: str) -> None:
+        async def terminate(call_id, reason, initiator):
             calls.append(f"signal:{call_id}:{reason}")
 
-        room = conference.ConferenceRoom(
-            hass,
-            name="Conference",
-            local_ip="127.0.0.1",
-            on_inbound_timeout=on_timeout,
-        )
+        room = conference.ConferenceRoom(hass, name="Conference", local_ip="127.0.0.1")
 
         class Reservation:
-            def release(self) -> None:
+            def release(self):
                 calls.append("release")
 
-        leg = conference._ConferenceLeg(
-            call_id="inbound",
-            caller="Desk",
-            role="manual",
-            remote_host="127.0.0.1",
-            remote_port=40000,
-            in_converter=conference.PcmFrameConverter(
-                conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT
-            ),
-            out_converter=conference.PcmFrameConverter(
-                conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT
-            ),
-            port_reservation=Reservation(),
-        )
-
-        await room._dispose_leg(leg, reason="media_timeout")
-
-        self.assertEqual(calls, ["signal:inbound:media_timeout", "release"])
+        leg = conference._ConferenceLeg(call_id="inbound", caller="Desk", role="manual",
+            remote_host="127.0.0.1", remote_port=40000,
+            in_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT),
+            out_converter=conference.PcmFrameConverter(conference.CONFERENCE_FORMAT, conference.CONFERENCE_FORMAT),
+            port_reservation=Reservation())
+        with patch.object(conference, "EndpointTerminationHandler",
+                return_value=types.SimpleNamespace(terminate_reason=terminate)):
+            await room._dispose_leg(leg, reason="local_hangup")
+        self.assertEqual(calls, ["signal:inbound:local_hangup", "release"])
 
     async def test_cancelled_room_close_finishes_client_and_releases_port(self) -> None:
         hass = _FakeHass()
@@ -1340,7 +1319,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             frames = [await asyncio.wait_for(output.get(), .5) for _ in range(4)]
             self.assertTrue(all(len(frame) == conference.CONFERENCE_FRAME_BYTES and any(frame) for frame in frames))
             self.assertTrue(receiver.comfort_noise_active)
-            self.assertFalse(room._rx_inactivity_expired(source, source.last_rx + 100))
+            self.assertIn("source", room.legs)
             voice = rtp.build_packet(rtp.RtpPacket(0, 2, 160, 55, bytes([255]) * 160))
             room.handle_rtp("source", voice, ("127.0.0.1", 40000))
             resumed = [await asyncio.wait_for(output.get(), .5) for _ in range(5)]

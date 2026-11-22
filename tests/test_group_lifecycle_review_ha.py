@@ -17,6 +17,8 @@ def _group(lab, **fields):
     from custom_components.voip_stack.group_config import normalize_group_data
 
     data = normalize_group_data({"kind": "queue", "name": "Support", **fields})
+    # Represent the persisted group schema read by the one-time converter.
+    data.pop("members", None)
     item = ConfigSubentry(subentry_type="group", title=data["name"], data=data,
                           unique_id=f"group:{data['group_id']}")
     lab.hass.config_entries.async_add_subentry(lab.entry, item)
@@ -102,12 +104,13 @@ async def test_group_checkbox_removal_uses_the_same_aliases_as_group_members(pho
 
 @pytest.mark.parametrize("kind", ["ring", "queue"])
 async def test_deleted_manual_record_does_not_reappear_from_equivalent_phone_alias(phone_lab, kind):
-    from custom_components.voip_stack.group_config import async_apply_group_updates, group_records
+    from custom_components.voip_stack.group_config import async_apply_group_updates, group_records, reconcile_group_records
 
     lab = phone_lab
     add_phone(lab, "first", **({"queues": ["Team-A"]} if kind == "queue" else {"ring": "Team-A"}))
     add_phone(lab, "second", **({"queues": ["Team A"]} if kind == "queue" else {"ring": "Team A"}))
     item = _group(lab, kind=kind, name="Team-A")
+    reconcile_group_records(lab.hass, lab.entry)
     previous = group_records(lab.entry)
     lab.hass.config_entries.async_remove_subentry(lab.entry, item.subentry_id)
     await async_apply_group_updates(lab.hass, lab.entry, previous)

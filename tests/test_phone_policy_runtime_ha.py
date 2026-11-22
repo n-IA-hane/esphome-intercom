@@ -11,7 +11,7 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
 from custom_components.voip_stack.phone_policy import PhonePolicy
-from custom_components.voip_stack.phone_policy_runtime import apply_phone_policy_event
+from custom_components.voip_stack.phone_policy_runtime import apply_phone_policy_state
 from custom_components.voip_stack.runtime_data import VoipStackRuntime, registration_data
 
 
@@ -49,7 +49,7 @@ async def ringing(hass):
 
 async def test_real_timer_ends_only_its_own_call(hass, ringing):
     other = ringing.calls.upsert("other", state="ringing", owner="router", callee="Other")
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     await asyncio.wait_for(ringing.ended.wait(), 2)
     assert ringing.session.termination_intent.reason == "no_answer"
     assert other.live
@@ -59,27 +59,27 @@ async def test_real_timer_ends_only_its_own_call(hass, ringing):
 async def test_unset_policy_owns_no_timer_and_later_edit_does_not_change_active_call(hass, ringing):
     configured = ringing.endpoints.require("kitchen").policy
     ringing.endpoints.update("kitchen", policy=PhonePolicy())
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     assert not ringing.session.resources
     ringing.endpoints.update("kitchen", policy=configured)
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     assert not ringing.session.resources
 
 
 async def test_repeated_ringing_does_not_restart_deadline(hass, ringing):
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     first = ringing.calls.resource_for("call-one", TIMER)
     assert first is not None
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     assert ringing.calls.resource_for("call-one", TIMER) is first
 
 
 async def test_answer_cancels_deadline_and_late_callback_cannot_hang_up(hass, ringing):
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     first = ringing.calls.resource_for("call-one", TIMER)
     assert first is not None
     ringing.calls.upsert("call-one", owner="bridge", state="in_call")
-    apply_phone_policy_event(hass, {**ringing.payload, "state": "in_call"})
+    apply_phone_policy_state(hass, {**ringing.payload, "state": "in_call"})
     assert first.closed
     first._expired()
     assert not ringing.session.resources
@@ -88,7 +88,7 @@ async def test_answer_cancels_deadline_and_late_callback_cannot_hang_up(hass, ri
 
 async def test_notification_only_automation_does_not_take_call_control(hass, ringing):
     registration_data(hass).unanswered_trigger_filters["notification"] = {"destination": "Kitchen"}
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     ringing.calls.resource_for("call-one", TIMER)._expired()
     decision = ringing.calls.resource_for("call-one", DECISION)
     assert decision is not None
@@ -100,7 +100,7 @@ async def test_notification_only_automation_does_not_take_call_control(hass, rin
 
 async def test_accepted_automation_handoff_supersedes_fallback(hass, ringing):
     registration_data(hass).unanswered_trigger_filters["handler"] = {"destination": "Kitchen"}
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     ringing.calls.resource_for("call-one", TIMER)._expired()
     decision = ringing.calls.resource_for("call-one", DECISION)
     ringing.calls.upsert("call-one", owner="automation", state="ringing")
@@ -111,12 +111,12 @@ async def test_accepted_automation_handoff_supersedes_fallback(hass, ringing):
 
 async def test_group_does_not_arm_a_members_personal_fallback(hass, ringing):
     ringing.session.route_kind = "ring_group"
-    apply_phone_policy_event(hass, ringing.payload)
+    apply_phone_policy_state(hass, ringing.payload)
     assert not ringing.session.resources
 
 
 async def test_old_generation_does_not_arm_current_call(hass, ringing):
-    apply_phone_policy_event(hass, {**ringing.payload, "generation": ringing.session.generation + 1})
+    apply_phone_policy_state(hass, {**ringing.payload, "generation": ringing.session.generation + 1})
     assert not ringing.session.resources
 
 
@@ -136,7 +136,7 @@ async def test_native_notification_runs_once_and_fallback_still_executes(hass, r
         lambda data, *_args: hass.async_create_task(notify(data)),
     )
     try:
-        apply_phone_policy_event(hass, ringing.payload)
+        apply_phone_policy_state(hass, ringing.payload)
         ringing.calls.resource_for("call-one", TIMER)._expired()
         await hass.async_block_till_done()
         assert seen == ["call-one"]

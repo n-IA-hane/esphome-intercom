@@ -216,6 +216,21 @@ async def async_migrate_entry(
             return False
         async_sync_account_route_issue(hass, config_entry)
         hass.config_entries.async_update_entry(config_entry, minor_version=3)
+    if config_entry.version == 7 and config_entry.minor_version < 4:
+        from .sip_account_identity import async_migrate_account_identities
+        try:
+            await async_migrate_account_identities(hass, config_entry)
+        except PhoneRouteConflict as error:
+            async_sync_account_route_issue(hass, config_entry, error)
+            return False
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError, ExceptionGroup) as error:
+            from .repairs import async_sync_phone_identity_issue
+            async_sync_phone_identity_issue(hass, config_entry, error)
+            _LOGGER.error("Cannot migrate SIP account identities; resolve the native identity conflict")
+            return False
+        from .repairs import async_sync_phone_identity_issue
+        async_sync_phone_identity_issue(hass, config_entry)
+        hass.config_entries.async_update_entry(config_entry, minor_version=4)
     return True
 
 
@@ -229,15 +244,6 @@ def _preferred_phone_device_id(endpoint_registry, configured_device_id: str, *, 
     selected = select_preferred_phone(endpoint_registry, configured_device_id,
                                        ha_bound_endpoint_ids=ha_bound_endpoint_ids)
     return selected.device_id if selected is not None else ""
-
-
-async def _handle_purge_devices_service(call: ServiceCall) -> None:
-    """Reject unsafe removal of devices owned by ESPHome."""
-
-    raise ServiceValidationError(
-        translation_domain=DOMAIN,
-        translation_key="purge_devices_disabled",
-    )
 
 
 async def _handle_sip_answer_service(call: ServiceCall) -> None:
@@ -612,7 +618,6 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     await async_register_services(
         hass,
         {
-            "purge_devices": _handle_purge_devices_service,
             "answer": _handle_sip_answer_service,
             "decline": _handle_sip_decline_service,
             "hangup": _handle_sip_hangup_service,
@@ -740,12 +745,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     """Set up VoIP Stack from a config entry (UI setup)."""
     previous_runtime = _runtime_data(hass)
     previous_entry_runtime = getattr(entry, "runtime_data", None)
-    if previous_phonebook := getattr(previous_entry_runtime, "phonebook", None):
-        await previous_phonebook.async_close()
-    previous_discovery = getattr(previous_entry_runtime, "phone_discovery", None)
-    if previous_discovery is not None:
-        previous_entry_runtime.phone_discovery = None
-        await previous_discovery.async_close()
+    if isinstance(previous_entry_runtime, VoipStackRuntime):
+        await _async_stop_runtime(hass, previous_entry_runtime)
     if CONF_INITIAL_PHONE_CREATED not in entry.data:
         async_bootstrap_browser_phone(hass, entry)
         data = dict(entry.data)
@@ -815,15 +816,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             previous_runtime.softphone_presence if previous_runtime is not None else {}
         ),
     )
+    # HA invokes these callbacks when setup fails too. Capture this instance
+    # before any listener, task or socket can be acquired by later setup.
+    _register_runtime_shutdown(hass, entry)
     from .phonebook_coordinator import entry_phonebook
     coordinator = entry_phonebook(hass, entry.runtime_data)
     entry.async_on_unload(coordinator.close)
     from .local_softphone_runtime import async_setup_local_softphone_bridge
 
     async_setup_local_softphone_bridge(hass)
-    from .phone_policy_runtime import setup_phone_policy_events
-
-    setup_phone_policy_events(hass, entry)
     from .call_queues import async_setup_queues
 
     await async_setup_queues(hass, entry)
@@ -885,6 +886,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     from .paging import async_setup_paging
 
     paging = await async_setup_paging(hass, entry)
+    from .paging_config import sync_paging_devices
+    sync_paging_devices(hass, entry)
     from .browser_paging import async_originate_browser_paging
     paging.browser_originate = async_originate_browser_paging
     from .mailbox import async_setup_mailboxes
@@ -899,11 +902,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     sync_trunk_devices(hass, entry)
     await coordinator.async_start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    coordinator.enable_delivery()
     from .logbook import async_setup_account_activity
     async_setup_account_activity(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
-    _register_runtime_shutdown(hass, entry)
     entry.async_create_background_task(hass, _deferred_phonebook_sync(coordinator), "voip-phonebook-startup-sync")
     # Platforms can now serve fresh snapshots after an entry reload.
     hass.bus.async_fire(f"{DOMAIN}.runtime_ready")
@@ -912,22 +913,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
 
 def _register_runtime_shutdown(hass: HomeAssistant, entry: VoipStackConfigEntry) -> None:
     """Close the entry's sessions and transports when Home Assistant stops."""
-    async def stop(_event: Event) -> None:
-        await _async_stop_runtime(hass)
+    runtime = entry.runtime_data
 
+    def schedule_cleanup() -> None:
+        if runtime.cleanup_task is None:
+            runtime.cleanup_task = hass.async_create_task(
+                _async_close_runtime(hass, runtime), "voip-entry-cleanup"
+            )
+
+    async def stop(_event: Event) -> None:
+        await _async_stop_runtime(hass, runtime)
+
+    entry.async_on_unload(schedule_cleanup)
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop))
 
 
-async def _async_stop_runtime(hass: HomeAssistant) -> None:
+async def _async_stop_runtime(hass: HomeAssistant, runtime=None) -> None:
+    """Join the same instance-owned cleanup on stop, unload or failed setup."""
+    runtime = runtime or _runtime_data(hass)
+    if runtime is None:
+        return
+    if runtime.cleanup_task is None:
+        runtime.cleanup_task = hass.async_create_task(
+            _async_close_runtime(hass, runtime), "voip-entry-cleanup"
+        )
+    from .session_cleanup import async_wait_for_cleanup
+    await async_wait_for_cleanup(runtime.cleanup_task)
+
+
+async def _async_close_runtime(hass: HomeAssistant, runtime) -> None:
     """Release media owners before closing the PBX runtime."""
     from .browser_phone_runtime import _async_shutdown_all
 
-    runtime = _runtime_data(hass)
+    async def close(owner):
+        if owner is None:
+            return
+        try:
+            await owner.async_close()
+        except Exception:
+            _LOGGER.exception("VoIP entry resource cleanup failed: %s", type(owner).__name__)
+
     if runtime is not None and runtime.phonebook is not None:
-        await runtime.phonebook.async_close()
+        await close(runtime.phonebook)
     if runtime is not None and runtime.phone_discovery is not None:
         discovery, runtime.phone_discovery = runtime.phone_discovery, None
-        await discovery.async_close()
+        await close(discovery)
     if runtime is not None:
         stores = tuple(store for owner in (runtime.ha_bindings, runtime.physical_phones, runtime.queues)
                        if owner is not None
@@ -936,25 +966,48 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
             runtime.entry_stores = stores
     if runtime is not None and runtime.ha_bindings is not None:
         bindings, runtime.ha_bindings = runtime.ha_bindings, None
-        await bindings.async_close()
+        await close(bindings)
     queues = runtime.queues if runtime is not None else None
     if queues is not None:
         queues.closed = True
         queues._changed()
-    from .phone_services import async_close_phone_services
-    await async_close_phone_services(hass)
+    await close(runtime.phone_services)
+    runtime.phone_services = None
+    await close(runtime.ldap_server)
+    runtime.ldap_server = None
     if runtime is not None and runtime.phone_provisioning is not None:
-        await runtime.phone_provisioning.async_close()
+        await close(runtime.phone_provisioning)
     if runtime is not None and runtime.physical_phones is not None:
-        await runtime.physical_phones.async_close()
+        await close(runtime.physical_phones)
         runtime.physical_phones = None
     if runtime is not None and runtime.directory is not None:
         runtime.directory.close()
-    await _async_shutdown_all(hass)
-    await _async_stop_sip_endpoint(hass)
+    # Helpers below consume the active entry. A delayed old callback must not
+    # resolve and shut down a replacement runtime.
+    if _runtime_data(hass) is runtime:
+        try:
+            await _async_shutdown_all(hass)
+        except Exception:
+            _LOGGER.exception("VoIP browser runtime cleanup failed")
+        try:
+            await _async_stop_sip_endpoint(hass)
+        except Exception:
+            _LOGGER.exception("VoIP SIP runtime cleanup failed")
+    elif runtime.sip is not None:
+        try:
+            await runtime.sip.shutdown()
+        except Exception:
+            _LOGGER.exception("Previous VoIP SIP runtime cleanup failed")
     if queues is not None:
-        await queues.close()
+        try:
+            await queues.close()
+        except Exception:
+            _LOGGER.exception("VoIP queue runtime cleanup failed")
         runtime.queues = None
+    unsub, runtime.esp_state_event_bridge_unsub = runtime.esp_state_event_bridge_unsub, None
+    if unsub is not None:
+        unsub()
+    runtime.endpoints.close()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
@@ -1004,6 +1057,24 @@ async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
 
     bucket.pop("manual_roster_entries", None)
     bucket.pop(entry.entry_id, None)
+
+
+async def async_remove_config_entry_device(hass, config_entry, device_entry) -> bool:
+    """Remove the owned native account, retaining its hardware integration."""
+    if device_entry.config_entry_id != config_entry.entry_id:
+        return False
+    subentry_id = device_entry.config_subentry_id
+    row = config_entry.subentries.get(subentry_id) if subentry_id else None
+    if row is None:
+        return True
+    if row.subentry_type == "phone":
+        from .phone_config import phone_endpoint_id
+        runtime = getattr(config_entry, "runtime_data", None)
+        endpoint = runtime.endpoints.get(phone_endpoint_id(row)) if runtime is not None else None
+        if endpoint is not None and endpoint.active_call_id:
+            return False
+    hass.config_entries.async_remove_subentry(config_entry, row.subentry_id)
+    return True
 
 
 async def _async_start_sip_trunk(hass: HomeAssistant) -> bool:

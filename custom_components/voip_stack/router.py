@@ -226,6 +226,16 @@ def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> 
 
 def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: bool = False) -> RouteDecision:
     target = (target or "").strip()
+    if not target.lower().startswith(("sip:", "sips:")):
+        # A selected SIP account is authoritative before display aliases,
+        # implicit user@host addresses and PBX service prefixes.
+        accounts = [entry for entry in entries if entry.id.casefold() == target.casefold()
+                    and entry.metadata.get("endpoint_kind") in {"sip_account", "esphome", "browser", "ha_softphone"}]
+        if len(accounts) == 1:
+            return _route_ha_entry(accounts[0], target, trunk_ready=trunk_ready)
+        if len(accounts) > 1:
+            return RouteDecision(RouteAction.REJECT, target=target, status=485,
+                                 reason=RouteReason.AMBIGUOUS_DESTINATION, source="phonebook")
     directory_target = None
     if re.fullmatch(r"contact\+[0-9a-f]{20}", target, re.I):
         from .phone_directory import contact_dial_target, contact_key_reference

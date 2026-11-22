@@ -54,7 +54,7 @@ selection or the IDs needed to connect other components.
 
 When the native API is present, `voip_stack` creates **VoIP State**,
 **VoIP Caller**, **VoIP Destination**, **VoIP Last
-Reason**, **VoIP Media Route** and **VoIP Contacts** entities. It also exposes
+Reason** and **VoIP Contacts** entities. It also exposes
 extension, ring/conference groups and the conference-ring switch.
 
 The HA integration identifies a phone by the presence of `voip_state` on its
@@ -67,11 +67,21 @@ phone's named HA account and, when selected, its LDAP directory configuration.
 LDAP then refreshes contacts. Standard SIP BLF/presence and MWI subscriptions
 provide live phone and message state independently of those records.
 
-The native `set_roster_json` action remains for compatibility with firmware
-without managed LDAP. A managed LDAP provider disables that old roster provider
-so the two deliveries do not compete. Call, answer, decline, hangup and manual
-contact actions keep using the existing native API connection.
-Entity names and action names remain compatible with the earlier packages.
+LDAP is the sole dynamic ESP directory provider. Call, answer, decline, hangup
+and manual static-contact actions use the existing native API connection.
+Rebuild and upload matching ESP firmware and update maintained HA packages
+together: JSON roster push, roster cleanup actions and the media-route control
+are removed. Negotiated TX/RX formats remain available in SIP diagnostics.
+
+The native originate command is
+`start_call_on_line(dest, line, send_video, receive_video)`; ESP creates Call-ID
+and HA learns the call from the actual SIP INVITE. Both booleans false requests
+audio only; receive-only video uses false and true without enabling the camera.
+Actual source/sink capability and camera privacy still apply. `start_call`
+retains configured native intent, and `hangup_call_if_id` targets the actual
+current Call-ID. Auto-enrollment uses `register_ha_account()` without arguments.
+Call identity and directional audio negotiation use standard SIP/SDP fields; no
+private identity header or SDP feature attribute is required.
 
 Each responsibility has one owner:
 

@@ -93,6 +93,10 @@ module_app account.so
             if name in getattr(request, "param", {}).get("l16", ()):
                 with (config / "config").open("a") as stream:
                     stream.write("module l16.so\n")
+            codecs = getattr(request, "param", {}).get("audio_codecs", {}).get(name, "")
+            if codecs:
+                with (config / "config").open("a") as stream:
+                    stream.write("module g722.so\nmodule opus.so\n")
             h264_profile = getattr(request, "param", {}).get("h264_profile_level_id", "")
             if name in video_names and h264_profile:
                 with (config / "config").open("a") as stream:
@@ -105,6 +109,8 @@ module_app account.so
                 f'<sip:{name}@127.0.0.1:{lab.runtime.transport_config["sip_port"]}>'
                 f';auth_user={name};auth_pass=isolated-test-only;regint=60;answermode={answer_mode}\n'
             )
+            if codecs:
+                accounts.write_text(accounts.read_text().rstrip() + f";audio_codecs={codecs}\n")
             if name in video_names:
                 accounts.write_text(accounts.read_text().replace(">;auth_user=", ";video_codecs=H264>;auth_user="))
             accounts.chmod(0o600)
@@ -1275,7 +1281,7 @@ async def test_replacement_waits_for_destination_remote_media_commit(registered_
 async def test_blind_transfer_service_retains_opposite_phone(
     registered_phones, trunks, transferor_index, retained_kind, first_rejected, use_leg_id,
 ):
-    """The retained SIP peer can establish its referred dialog before BYE."""
+    """The PBX routes locally while preserving the role of the retained peer."""
     from homeassistant.core import ServiceCall
     from custom_components.voip_stack import _handle_sip_transfer_service
 
@@ -1317,7 +1323,8 @@ async def test_blind_transfer_service_retains_opposite_phone(
             for peer in registered_phones:
                 peer.read()
             sessions = tuple(lab.calls.sessions.values())
-            if len(sessions) == 1 and sessions[0].call_id != original_id:
+            if (len(sessions) == 1 and set(sessions[0].endpoint_claims) == {retained_id, "transfer_c"}
+                    and ((sessions[0].call_id != original_id) if transferor_index == 0 else sessions[0] is original)):
                 replacement = sessions[0]
                 break
             await asyncio.sleep(0.01)
@@ -1339,8 +1346,8 @@ async def test_blind_transfer_service_retains_opposite_phone(
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_legacy_esp_refer_rejection_keeps_original_busy(registered_phones, trunks, monkeypatch):
-    """A peer without REFER retains its original call and destination claim."""
+async def test_internal_transfer_anchors_peer_without_refer_and_preserves_its_busy_claim(registered_phones, trunks, monkeypatch):
+    """A peer without REFER stays connected to its newly routed internal target."""
     from unittest.mock import AsyncMock
 
     from homeassistant.core import ServiceCall
@@ -1387,14 +1394,19 @@ async def test_legacy_esp_refer_rejection_keeps_original_busy(registered_phones,
         lab.hass, "voip_stack", "transfer",
         {"device_id": "transfer_a", "call_id": original_id, "destination": "transfer_c"},
     ))
-    assert not result["success"] and result["status"] == 501, result
-    assert len(refers) == 1
-    assert original.live and original.state == "in_call"
-    assert set(original.endpoint_claims) == {"transfer_a", "sip:bedroom0"}
-    assert not legacy.bye.is_set()
+    assert result["success"], result
+    assert not refers, "An internal transfer belongs to this PBX rather than the provider's REFER implementation"
+    async with asyncio.timeout(5):
+        while True:
+            sessions = tuple(lab.calls.sessions.values())
+            if len(sessions) == 1 and set(sessions[0].endpoint_claims) == {"sip:bedroom0", "transfer_c"}:
+                current = sessions[0]
+                break
+            await asyncio.sleep(.01)
+    assert current.live and current.state == "in_call" and not legacy.bye.is_set()
     await asyncio.to_thread(second.command, "/dial bedroom0")
     await asyncio.to_thread(second.wait_for, "486 Busy Here", 5)
     assert len(legacy.invites) == 1
-    assert lab.runtime.endpoints.get("sip:bedroom0").active_call_id == original_id
-    await asyncio.to_thread(caller.hangup)
-    await asyncio.wait_for(original.terminated.wait(), 3)
+    assert lab.runtime.endpoints.get("sip:bedroom0").active_call_id == current.call_id
+    await asyncio.to_thread(_target.hangup)
+    await asyncio.wait_for(current.terminated.wait(), 3)

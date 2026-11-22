@@ -6,12 +6,11 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import replace
 import logging
-import re
 from types import MappingProxyType
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 
 from .config_validation import conflicting_route, mailbox_route_aliases
 from .const import (
@@ -22,6 +21,7 @@ from .const import (
     CONF_HA_SOFTPHONE_EXTENSION,
     CONF_HA_SOFTPHONE_RING_GROUP,
     CONF_SIP_ACCOUNTS,
+    CONF_REGISTRAR_ENABLED,
     DOMAIN,
     HA_PEER_FALLBACK_NAME,
 )
@@ -63,6 +63,17 @@ LEGACY_HA_SOFTPHONE_STORE_KEY = f"{DOMAIN}_ha_softphone"
 LEGACY_HA_SOFTPHONE_STORE_VERSION = 1
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@callback
+def async_enable_registrar_for_new_account(hass, entry):
+    """Enable the existing server setting once when an enabled account is created."""
+    data = {**entry.data, CONF_REGISTRAR_ENABLED: True}
+    options = dict(entry.options)
+    if CONF_REGISTRAR_ENABLED in options:
+        options[CONF_REGISTRAR_ENABLED] = True
+    if data != dict(entry.data) or options != dict(entry.options):
+        hass.config_entries.async_update_entry(entry, data=data, options=options)
 
 
 class PhoneIdentityConflict(ValueError):
@@ -130,6 +141,8 @@ def draft_phone_subentry(
     draft = previous or ConfigSubentry(data=MappingProxyType({}),
         subentry_type=PHONE_SUBENTRY_TYPE, title=title, unique_id=None)
     identity = phone_endpoint_id(previous) if previous is not None else str(data.get(CONF_PHONE_ENDPOINT_ID) or "").strip()
+    if data.get(CONF_PHONE_USERNAME):
+        identity = normalize_username(str(data[CONF_PHONE_USERNAME]))
     if not identity:
         prefix = "browser" if data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value else "sip"
         identity = f"{prefix}:{draft.subentry_id}"
@@ -154,11 +167,6 @@ def phone_subentry_by_endpoint_id(
         ),
         None,
     )
-
-
-def new_sip_account_endpoint_id() -> str:
-    """Compatibility allocator backed by a native HA subentry ID."""
-    return phone_endpoint_id(draft_phone_subentry({CONF_PHONE_KIND: EndpointKind.SIP_ACCOUNT.value}))
 
 
 def browser_phone_data(
@@ -208,10 +216,12 @@ def async_bootstrap_browser_phone(
     data = browser_phone_data(
         hass,
         entry,
-        endpoint_id=new_sip_account_endpoint_id(),
+        endpoint_id="",
     )
     data[CONF_PHONE_KIND] = EndpointKind.SIP_ACCOUNT.value
     data[CONF_PHONE_USERNAME] = _browser_account_username(data)
+    data['username_source'] = 'ha_name'
+    data[CONF_PHONE_ENDPOINT_ID] = data[CONF_PHONE_USERNAME]
     validate_sip_account_namespace(entry, [*map(phone_subentry_data, phone_subentries(entry)), data])
     data[CONF_PHONE_PASSWORD] = generate_password()
     return _add_phone_subentry(
@@ -236,8 +246,10 @@ def migrate_browser_accounts(hass, entry):
             if not isinstance(raw_bindings, (list, tuple)):
                 raise ValueError("Invalid configured HA associations")
             bindings = list(raw_bindings)
-            if not any(isinstance(row, Mapping) and row.get("source") == "migration" for row in bindings):
-                bindings.append({"source": "migration"})
+            reference = 'legacy_ha_phone:' + phone_endpoint_id(subentry)
+            if not any(isinstance(row, Mapping) and row.get("source") == "migration"
+                       and row.get('reference') == reference for row in bindings):
+                bindings.append({"source": "migration", 'reference': reference})
             data["ha_bindings"] = bindings
             endpoint_from_data(entry, data)
             updates.append((subentry, data))
@@ -324,11 +336,12 @@ def sip_account_phone_data(
     """Translate one legacy registrar account to a phone subentry."""
     account = account_from_mapping(raw)
     return {
-        CONF_PHONE_ENDPOINT_ID: str(endpoint_id or new_sip_account_endpoint_id()),
+        CONF_PHONE_ENDPOINT_ID: account.username,
         CONF_PHONE_KIND: EndpointKind.SIP_ACCOUNT.value,
         CONF_PHONE_NAME: account.display_name,
         CONF_PHONE_EXTENSION: account.extension,
         CONF_PHONE_USERNAME: account.username,
+        'username_source': 'user',
         CONF_PHONE_PASSWORD: account.password,
         CONF_PHONE_ENABLED: account.enabled,
         CONF_PHONE_DND: False,
@@ -349,17 +362,12 @@ def _add_phone_subentry(
     data: Mapping[str, Any],
     title: str,
     draft: ConfigSubentry | None = None,
+    activate_registrar: bool = True,
 ) -> ConfigSubentry:
-    if draft is None:
-        # Older callers pass the DTO returned by sip_account_phone_data. Its
-        # new native ULID remains the actual subentry ID when materialised.
-        identity = str(data.get(CONF_PHONE_ENDPOINT_ID) or "")
-        native_id = identity.partition(":")[2]
-        if re.fullmatch(r"[0-9A-HJKMNP-TV-Z]{26}", native_id):
-            draft = ConfigSubentry(data=MappingProxyType({}), subentry_id=native_id,
-                subentry_type=PHONE_SUBENTRY_TYPE, title=title, unique_id=f"phone:{identity}")
     subentry = draft_phone_subentry(data, previous=draft, title=title)
     hass.config_entries.async_add_subentry(entry, subentry)
+    if activate_registrar and data.get(CONF_PHONE_ENABLED, True):
+        async_enable_registrar_for_new_account(hass, entry)
     return subentry
 
 
@@ -476,7 +484,7 @@ def async_ensure_phone_subentries(
             data[CONF_PHONE_USERNAME] = _browser_account_username(data)
     validate_sip_account_namespace(entry, [*projected, *pending])
     for data in pending:
-        _add_phone_subentry(hass, entry, data=data, title=str(data[CONF_PHONE_NAME]))
+        _add_phone_subentry(hass, entry, data=data, title=str(data[CONF_PHONE_NAME]), activate_registrar=False)
     if legacy_accounts:
         data = dict(entry.data)
         data.pop(CONF_SIP_ACCOUNTS, None)
@@ -516,9 +524,11 @@ def endpoint_from_subentry(
     availability: EndpointAvailability = EndpointAvailability.OFFLINE,
 ) -> PhoneEndpoint:
     """Build an immutable endpoint snapshot from persisted configuration."""
+    from .phone_queue_membership import project_phone_memberships
+    data = project_phone_memberships(entry, phone_endpoint_id(subentry), phone_subentry_data(subentry))
     return endpoint_from_data(
         entry,
-        phone_subentry_data(subentry),
+        data,
         fallback_name=subentry.title,
         availability=availability,
     )
@@ -567,6 +577,7 @@ def endpoint_from_data(
         kind=kind,
         extension=str(data.get(CONF_PHONE_EXTENSION) or ""),
         username=str(data.get(CONF_PHONE_USERNAME) or ""),
+        device_id=str(data.get("device_id") or "") if data.get("managed_esphome") else "",
         availability=availability,
         capabilities=_endpoint_capabilities(entry, data),
         dnd=bool(data.get(CONF_PHONE_DND, False)),
@@ -698,6 +709,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             candidate = replace(
                 candidate,
                 device_id=previous.device_id,
+                account_device_id=previous.account_device_id,
                 entity_ids=previous.entity_ids,
                 availability=availability,
                 active_call_id=previous.active_call_id,
@@ -755,7 +767,7 @@ def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]
 def validate_sip_account_namespace(
     entry: ConfigEntry,
     account_data: Iterable[Mapping[str, Any]],
-) -> None:
+) -> EndpointRegistry:
     """Validate a complete future SIP-account set against the dial plan.
 
     Native phone subentry flows already validate the shared namespace. The
@@ -770,7 +782,7 @@ def validate_sip_account_namespace(
     replaced = {
         phone_endpoint_id(subentry)
         for subentry in phone_subentries(entry)
-        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value
+        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value and not subentry.data.get("managed_esphome")
     }
     replaced.update(str(data.get(CONF_PHONE_ENDPOINT_ID) or "") for data in candidates)
     existing = entry_route_mappings(entry, {**entry.data, CONF_SIP_ACCOUNTS: []},
@@ -789,10 +801,9 @@ def validate_sip_account_namespace(
         )
         conflict = conflicting_route(
             candidate_routes=(
-                data.get(CONF_PHONE_NAME),
                 data.get(CONF_PHONE_EXTENSION),
-                data.get(CONF_PHONE_USERNAME),
             ),
+            candidate_username=data.get(CONF_PHONE_USERNAME),
             candidate_mailbox_routes=mailbox_route_aliases(data),
             candidate_groups=groups,
             existing=(*existing, *accepted),
@@ -821,15 +832,32 @@ def validate_sip_account_namespace(
             # reconciliation. A valid future route may still belong to another
             # live endpoint; reject before saving until that owner releases it.
             live.validate(candidate, replacing_endpoint_id=candidate.endpoint_id)
+    return future
 
 
 def validate_phone_subentry_data(entry: ConfigEntry, data: Mapping[str, Any]) -> None:
     """Check one candidate against the current complete future configuration."""
-    endpoint_from_data(entry, data)
+    for field in (CONF_PHONE_NAME, CONF_PHONE_EXTENSION):
+        value = str(data.get(field) or "")
+        if len(value.encode()) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("Phone directory field exceeds its wire contract")
+    candidate = endpoint_from_data(entry, data)
     identity = str(data.get(CONF_PHONE_ENDPOINT_ID) or "")
     future = [phone_subentry_data(subentry) for subentry in phone_subentries(entry)
               if phone_endpoint_id(subentry) != identity]
-    validate_sip_account_namespace(entry, [*future, data])
+    registry = validate_sip_account_namespace(entry, [*future, data])
+    visited = {candidate.endpoint_id}
+    destination = candidate.policy.always
+    while destination is not None and destination.kind is DestinationKind.CONTACT:
+        target = registry.get(destination.target) or registry.by_username(destination.target)
+        if target is None and not destination.target.casefold().startswith(('sip:', 'sips:', 'tel:')):
+            target = registry.resolve(destination.target, namespace=('name', 'extension'))
+        if target is None:
+            break
+        if target.endpoint_id in visited:
+            raise ValueError('phone_forward_loop')
+        visited.add(target.endpoint_id)
+        destination = target.policy.always
 
 
 def replace_sip_account_subentries(
@@ -841,7 +869,7 @@ def replace_sip_account_subentries(
     existing = {
         str(subentry.data.get(CONF_PHONE_USERNAME) or "").casefold(): subentry
         for subentry in phone_subentries(entry)
-        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value
+        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value and not subentry.data.get("managed_esphome")
     }
     wanted: dict[str, dict[str, Any]] = {}
     for raw in raw_accounts:
@@ -853,6 +881,7 @@ def replace_sip_account_subentries(
             # client preferences, declared HA associations or future metadata.
             managed = {key: data[key] for key in (
                 CONF_PHONE_KIND, CONF_PHONE_NAME, CONF_PHONE_EXTENSION, CONF_PHONE_USERNAME,
+                "username_source",
                 CONF_PHONE_PASSWORD, CONF_PHONE_ENABLED, CONF_PHONE_RING_GROUP,
                 CONF_PHONE_CONFERENCE_GROUP, CONF_PHONE_CONFERENCE_RING)}
             data = {**deepcopy(phone_subentry_data(previous)), **managed}
@@ -910,9 +939,13 @@ def update_phone_subentry(
     subentry = phone_subentry_by_endpoint_id(entry, endpoint_id)
     if subentry is None:
         return False
-    data = phone_subentry_data(subentry)
+    from .phone_queue_membership import GROUP_MEMBERSHIP_VERSION, _apply_membership_updates, project_phone_memberships
+    data = project_phone_memberships(entry, endpoint_id, phone_subentry_data(subentry))
+    memberships = {field: value for field, value in updates.items() if field in {CONF_PHONE_QUEUES, CONF_PHONE_RING_GROUP}}
     if CONF_PHONE_ENDPOINT_ID in updates and updates[CONF_PHONE_ENDPOINT_ID] != phone_endpoint_id(subentry):
         raise ValueError("phone endpoint identity is immutable")
+    if CONF_PHONE_USERNAME in updates and updates[CONF_PHONE_USERNAME] != subentry.data.get(CONF_PHONE_USERNAME):
+        raise ValueError("Change the SIP account identity through the native account configuration")
     data.update(updates)
     if CONF_PHONE_QUEUES in updates:
         data[CONF_PHONE_QUEUES] = list(normalize_phone_queues(updates[CONF_PHONE_QUEUES]))
@@ -927,6 +960,10 @@ def update_phone_subentry(
     # This read/validate/write section does not yield: all account changes share
     # the ConfigEntry owner on HA's event loop, including concurrent UI clients.
     validate_phone_subentry_data(entry, data)
+    if memberships and entry.data.get(GROUP_MEMBERSHIP_VERSION) == 1:
+        _apply_membership_updates(hass, entry, {endpoint_id: memberships})
+        data.pop(CONF_PHONE_QUEUES, None)
+        data.pop(CONF_PHONE_RING_GROUP, None)
     changed = hass.config_entries.async_update_subentry(
         entry=entry,
         subentry=subentry,

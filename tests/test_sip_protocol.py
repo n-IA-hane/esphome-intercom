@@ -33,6 +33,42 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_combined_via_keeps_the_first_transaction_branch(self):
+        message = sip.parse_message(
+            b"OPTIONS sip:desk@example.test SIP/2.0\r\n"
+            b"Via: SIP/2.0/UDP first.example;branch=z9hG4bK-first, "
+            b"SIP/2.0/TCP second.example;branch=z9hG4bK-second\r\n"
+            b"Content-Length: 0\r\n\r\n"
+        )
+        self.assertEqual(len(message.header_values("Via")), 2)
+        self.assertEqual(sip.parse_via(message.header("Via")).branch, "z9hG4bK-first")
+
+    def test_tel_identity_is_preserved_without_becoming_a_sip_route(self):
+        self.assertEqual(sip.format_name_addr("tel:+390551234", "External caller"),
+                         '"External caller" <tel:+390551234>')
+        with self.assertRaises(sip.SipError):
+            sip.parse_sip_uri("tel:+390551234")
+
+    def test_oversized_request_can_return_a_bounded_transaction_error(self):
+        headers = [
+            ("Via", "SIP/2.0/UDP phone.example;branch=z9hG4bK-size;rport"),
+            ("From", "<sip:phone@example.test>;tag=source"),
+            ("To", "<sip:desk@example.test>"), ("Call-ID", "large-request"),
+            ("CSeq", "1 INVITE"),
+        ]
+        wire = sip.build_request("INVITE", "sip:desk@example.test", headers,
+                                 b"x" * (sip.MAX_SIP_BODY_BYTES + 1))
+        request, status = sip.oversized_request_envelope(wire)
+        self.assertEqual(status, 413)
+        self.assertEqual(request.header("Call-ID"), "large-request")
+        self.assertEqual(request.body, b"")
+        response = sip.build_uas_response(request, status, "Content Too Large")
+        first = sip.parse_message(response)
+        second = sip.parse_message(sip.build_uas_response(request, status, "Content Too Large"))
+        self.assertTrue(first.header("To").endswith(";tag=" + sip.extract_tag(second.header("To"))))
+        self.assertTrue(sip.extract_tag(first.header("To")))
+        self.assertIsNone(sip.oversized_request_envelope(wire.replace(b"INVITE", b"ACK")))
+
     def test_numeric_wire_fields_use_the_parser_error_contract(self) -> None:
         for parser, value in (
             (sip.parse_host_port, "host:50udp"),

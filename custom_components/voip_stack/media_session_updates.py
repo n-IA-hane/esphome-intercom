@@ -40,7 +40,12 @@ def commit_audio_session_update(
         negotiated.remote_audio_connection_held
     )
     session.dtmf_payload_type = dtmf_payload_type
+    recv_dtmf = getattr(negotiated, "recv_dtmf_format", None)
+    session.dtmf_clock_rate = (recv_dtmf.sample_rate if recv_dtmf is not None
+                               else getattr(negotiated, "dtmf_clock_rate", 8000))
     session.dtmf_events = frozenset(dtmf_events)
+    session.recv_dtmf_formats = tuple(getattr(negotiated, "recv_dtmf_formats", ()))
+    session.send_dtmf_formats = tuple(getattr(negotiated, "send_dtmf_formats", ()))
     # SipInvite exposes the negotiated value; SipDialog stores its directional
     # projection. Publish TX with RX in this same session-owned generation.
     send_dtmf = getattr(negotiated, "send_dtmf_format", None)

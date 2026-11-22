@@ -93,7 +93,7 @@ def message_audio_reference(hass, archive, message):
 
 async def selected_mailbox(call: ServiceCall, selector: str):
     runtime = require_runtime_data(call.hass)
-    endpoint = resolve_service_phone(runtime.endpoints, selector, allow_internal=True)
+    endpoint = resolve_service_phone(runtime.endpoints, selector, allow_internal=True, hass=call.hass)
     if endpoint is None:
         raise ServiceValidationError("Select an existing phone mailbox")
     await async_require_phone_service_control(call.hass, call, endpoint=endpoint)

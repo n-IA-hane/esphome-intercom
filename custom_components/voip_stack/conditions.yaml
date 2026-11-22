@@ -25,7 +25,10 @@ is_phone_available:
     phone:
       required: true
       selector:
-        text: {}
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP account
 is_dtmf_result:
   fields:
     status:
@@ -40,7 +43,6 @@ is_dtmf_result:
     digits:
       selector:
         text: {}
-
 is_phone_state:
   fields:
     phone:
@@ -49,10 +51,7 @@ is_phone_state:
         device:
           filter:
           - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
             model: SIP account
-          - integration: esphome
     state:
       required: true
       selector:
@@ -73,10 +72,7 @@ has_ringing_call:
         device:
           filter:
           - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
             model: SIP account
-          - integration: esphome
 has_voicemail:
   fields:
     phone:
@@ -85,10 +81,7 @@ has_voicemail:
         device:
           filter:
           - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
             model: SIP account
-          - integration: esphome
     unread_only:
       default: true
       selector:

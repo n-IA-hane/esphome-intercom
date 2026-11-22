@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import logging
 import secrets
 import socket
 import struct
+from time import monotonic
 from typing import Any, Awaitable, Callable
 
 from .core import rtp
@@ -61,6 +62,7 @@ class VideoRtpPeer:
     rx_ssrc: int | None = None
     rtcp_source_port: int | None = None
     connection_held: bool = False
+    receive_state: Any = field(default_factory=rtp.RtpReceiveState, repr=False)
 
     def __post_init__(self) -> None:
         if not self.advertised_host:
@@ -197,6 +199,8 @@ class SipVideoRtpRelay:
         }
         self._transcode_startup_bytes = {"left": 0, "right": 0}
         self._keyframe_requests: dict[str, int | None] = {}
+        self._keyframe_attempts: dict[str, tuple[int, int, float]] = {}
+        self._transcoded_ssrc: dict[str, int] = {}
         self._staged_peers: dict[str, _StagedVideoPeer] = {}
         self._rtcp_ssrc = secrets.randbelow(0xFFFFFFFF) + 1
         self._fir_sequence = 0
@@ -256,16 +260,40 @@ class SipVideoRtpRelay:
             raise
 
     def reverse_held_sides(self) -> None:
-        """Keep the retained peer on the left when a held bridge changes owner."""
+        """Reverse a settled handoff atomically, retaining active stream owners.
+
+        The audio owner's media guard protects the synchronous session cutover.
+        Repeating this operation restores the prior orientation for rollback.
+        """
         if (not self.started or self._start_task is not None or self._stop_requested
-                or self._staged_peers or self.transcoding or self._transcode_slot_claimed
-                or any(peer.video_format.direction != "inactive" for peer in (self.left, self.right))):
-            raise RuntimeError("Only a settled inactive video relay can change orientation")
+                or self._staged_peers):
+            raise RuntimeError("Only a settled video relay can change orientation")
         keys = {(side, rtcp) for side in ("left", "right") for rtcp in (False, True)}
         if keys != set(self._transports) or keys != set(self._sockets) or any(
                 not isinstance(transport.get_protocol(), _VideoRelayProtocol)
-                or transport.is_closing() for transport in self._transports.values()):
+                or transport.get_protocol().relay is not self
+                or transport.get_protocol().side != side
+                or transport.get_protocol().rtcp != rtcp
+                or transport.is_closing() for (side, rtcp), transport in self._transports.items()):
             raise RuntimeError("The video transport owner changed before handoff")
+        generation = self._transcode
+        output_keys = {(side, rtcp) for side in generation.directions for rtcp in (False, True)}
+        if (not generation.directions <= {"left", "right"}
+                or (generation.directions and not self._transcode_slot_claimed)
+                or set(generation.transcoders) != generation.directions
+                or set(generation.transports) != output_keys or set(generation.sockets) != output_keys
+                or any(not getattr(worker, "ready", True) or getattr(worker, "stopping", False)
+                       for worker in generation.transcoders.values())
+                or any(not isinstance(transport.get_protocol(), _TranscodedOutputProtocol)
+                       or transport.get_protocol().relay is not self
+                       or transport.get_protocol().source_side != side
+                       or transport.get_protocol().rtcp != rtcp or transport.is_closing()
+                       for (side, rtcp), transport in generation.transports.items())):
+            raise RuntimeError("The video conversion generation changed before handoff")
+
+        def opposite(side):
+            return "right" if side == "left" else "left"
+
         self.left, self.right = self.right, self.left
         self.left_port, self.right_port = self.right_port, self.left_port
         for mapping in (self._sockets, self._transports):
@@ -274,6 +302,13 @@ class SipVideoRtpRelay:
                     mapping[("right", rtcp)], mapping[("left", rtcp)])
         for (side, _rtcp), transport in self._transports.items():
             transport.get_protocol().side = side
+        generation.directions = {opposite(side) for side in generation.directions}
+        generation.transcoders = {opposite(side): worker for side, worker in generation.transcoders.items()}
+        generation.sockets = {(opposite(side), rtcp): sock for (side, rtcp), sock in generation.sockets.items()}
+        generation.transports = {(opposite(side), rtcp): transport
+            for (side, rtcp), transport in generation.transports.items()}
+        for (side, _rtcp), transport in generation.transports.items():
+            transport.get_protocol().source_side = side
         for suffix in ("rx_packets", "rx_bytes", "tx_packets", "tx_bytes"):
             left, right = f"left_{suffix}", f"right_{suffix}"
             old_left = getattr(self, left)
@@ -283,6 +318,12 @@ class SipVideoRtpRelay:
             mapping["left"], mapping["right"] = mapping["right"], mapping["left"]
         self._keyframe_requests = {
             "right" if side == "left" else "left": value for side, value in self._keyframe_requests.items()
+        }
+        self._keyframe_attempts = {
+            "right" if side == "left" else "left": value for side, value in self._keyframe_attempts.items()
+        }
+        self._transcoded_ssrc = {
+            "right" if side == "left" else "left": value for side, value in self._transcoded_ssrc.items()
         }
 
     @staticmethod
@@ -360,22 +401,42 @@ class SipVideoRtpRelay:
         source, _destination = self._peers(side)
         feedback = set(source.recv_format.rtcp_feedback)
         if (
-            not self.transcodes_from(side)
-            or not feedback.intersection({"ccm fir", "nack pli"})
+            not feedback.intersection({"ccm fir", "nack pli"})
         ):
             return False
         self._keyframe_requests.setdefault(side, None)
         return True
 
+    def request_keyframe(self, side: str) -> bool:
+        """Use the same validated RTCP request for feedback and legacy SIP INFO.
+
+        This requests recovery from the remote source. FFmpeg output continues
+        to use its configured periodic keyframes; no dynamic encoder API exists.
+        """
+        if side not in {"left", "right"} or self._stop_requested:
+            return False
+        source, _destination = self._peers(side)
+        if not set(source.recv_format.rtcp_feedback).intersection({"ccm fir", "nack pli"}):
+            return False
+        self._keyframe_requests[side] = None
+        self._send_armed_keyframe_request(side, source)
+        return True
+
     def _send_armed_keyframe_request(self, side: str, source: VideoRtpPeer) -> None:
         if (
             side not in self._keyframe_requests
-            or self._keyframe_requests[side] is not None
             or source.rx_ssrc is None
         ):
             return
-        self._keyframe_requests[side] = source.rx_ssrc
         feedback = set(source.recv_format.rtcp_feedback)
+        if not feedback.intersection({"ccm fir", "nack pli"}):
+            return
+        now = monotonic()
+        ssrc, count, previous = self._keyframe_attempts.get(side, (source.rx_ssrc, 0, 0.0))
+        if ssrc != source.rx_ssrc:
+            count, previous = 0, 0.0
+        if count >= 3 or now - previous < 0.5:
+            return
         if "ccm fir" in feedback:
             self._fir_sequence = (self._fir_sequence + 1) & 0xFF
             packet = build_fir(self._rtcp_ssrc, source.rx_ssrc, self._fir_sequence)
@@ -390,6 +451,8 @@ class SipVideoRtpRelay:
             feedback=packet,
         )
         output.sendto(raw, (source.rtcp_host, int(source.rtcp_port)))
+        self._keyframe_requests[side] = source.rx_ssrc
+        self._keyframe_attempts[side] = (source.rx_ssrc, count + 1, now)
         self.rtcp_forwarded += 1
 
     @property
@@ -463,6 +526,8 @@ class SipVideoRtpRelay:
                     self._transports[key] = transport
             if self._transcode.directions:
                 await self._start_transcoding(loop)
+            for side in ("left", "right"):
+                self.arm_keyframe_request(side)
             self.started = True
             self._maintain_nat()
         except BaseException:
@@ -607,7 +672,9 @@ class SipVideoRtpRelay:
     ) -> None:
         self._transcode = generation
         self._keyframe_requests.clear()
-        for side in generation.directions:
+        self._keyframe_attempts.clear()
+        self._transcoded_ssrc.clear()
+        for side in ("left", "right"):
             self.arm_keyframe_request(side)
 
     def _buffer_transcode_startup_rtp(self, side: str, data: bytes) -> bool:
@@ -736,11 +803,16 @@ class SipVideoRtpRelay:
             if current is not previous:
                 raise RuntimeError(f"video relay peer changed before {side} commit")
             peer.rx_ssrc = None
+            peer.receive_state = rtp.RtpReceiveState()
             peer.rtcp_source_port = None
             if side == "left":
                 self.left = peer
             else:
                 self.right = peer
+            for source_side in ("left", "right"):
+                self._keyframe_requests.pop(source_side, None)
+                self._keyframe_attempts.pop(source_side, None)
+                self.arm_keyframe_request(source_side)
 
         return _commit
 
@@ -925,6 +997,8 @@ class SipVideoRtpRelay:
             self._adopt_transcode_resources(old, restored)
             for side in replaced:
                 self._keyframe_requests.pop(side, None)
+                self._keyframe_attempts.pop(side, None)
+                self._transcoded_ssrc.pop(side, None)
                 self.arm_keyframe_request(side)
 
         async def recover():
@@ -972,19 +1046,22 @@ class SipVideoRtpRelay:
             if not current():
                 await recover()
                 raise RuntimeError("video relay owner changed before commit settlement")
-            left.rx_ssrc = None
-            left.rtcp_source_port = None
-            right.rx_ssrc = None
-            right.rtcp_source_port = None
+            for candidate, previous in ((left, previous_left), (right, previous_right)):
+                if candidate is not previous:
+                    candidate.rx_ssrc = None
+                    candidate.receive_state = rtp.RtpReceiveState()
+                    candidate.rtcp_source_port = None
             retired = self._take_transcode_resources(old, removed)
             self._adopt_transcode_resources(old, generation)
             old.directions = directions
             self.left = left
             self.right = right
             self._maintain_nat()
-            for side in removed | new_directions:
+            for side in ("left", "right"):
                 self._keyframe_requests.pop(side, None)
-            for side in new_directions:
+                self._keyframe_attempts.pop(side, None)
+                if side in removed | new_directions:
+                    self._transcoded_ssrc.pop(side, None)
                 self.arm_keyframe_request(side)
             await self._close_transcode_generation(retired)
             clear_stages()
@@ -1074,11 +1151,15 @@ class SipVideoRtpRelay:
             packet = rtp.parse_packet(data)
             if packet.payload_type != int(source.recv_format.payload_type):
                 raise ValueError("unexpected RTP payload type")
-            if source.rx_ssrc is not None and packet.ssrc != source.rx_ssrc:
-                raise ValueError("unexpected RTP SSRC")
-            if source.rx_ssrc is None:
-                source.rx_ssrc = packet.ssrc
-                self._send_armed_keyframe_request(side, source)
+            if source.receive_state.ssrc is None and source.rx_ssrc is not None:
+                source.receive_state.ssrc = source.rx_ssrc
+            if not source.receive_state.admit(packet):
+                raise ValueError("duplicate RTP or unconfirmed source transition")
+            if source.receive_state.changed:
+                self._keyframe_requests[side] = None
+                self._keyframe_attempts.pop(side, None)
+            source.rx_ssrc = packet.ssrc
+            self._send_armed_keyframe_request(side, source)
             source.host = str(addr[0])
             source.port = int(addr[1])
             if side in self._transcode.directions:
@@ -1140,6 +1221,7 @@ class SipVideoRtpRelay:
             packet = rtp.parse_packet(data)
             if packet.payload_type != int(destination.send_format.payload_type):
                 raise ValueError("unexpected transcoded RTP payload type")
+            self._transcoded_ssrc[source_side] = packet.ssrc
             if output is None:
                 raise ValueError("transcoded destination RTP transport is not ready")
             output.sendto(data, (destination.host, int(destination.port)))
@@ -1178,11 +1260,9 @@ class SipVideoRtpRelay:
     def handle_rtcp(self, side: str, data: bytes, addr) -> None:
         if is_stun_message(data):
             return
-        if self._transcode.directions:
-            self.transcode_rtcp_dropped += 1
-            return
         source, destination = self._peers(side)
-        output = self._transports.get(("right" if side == "left" else "left", True))
+        destination_side = "right" if side == "left" else "left"
+        output = self._transports.get((destination_side, True))
         try:
             if destination.connection_held:
                 self.drop_connection_hold += 1
@@ -1190,26 +1270,58 @@ class SipVideoRtpRelay:
             if not source.accepts_rtcp_source_host(str(addr[0])):
                 raise ValueError("unexpected RTCP source host")
             packets = parse_compound(data)
-            if destination.rx_ssrc is not None:
-                expected_ssrc = int(destination.rx_ssrc)
-                for packet in packets:
-                    if packet.packet_type != 206:
+            selected = []
+            source_transcoded = self.transcodes_from(side)
+            destination_transcoded = self.transcodes_from(destination_side)
+            expected = (self._transcoded_ssrc.get(destination_side)
+                        if destination_transcoded else destination.rx_ssrc)
+            for packet in packets:
+                payload, count = packet.payload, packet.fmt
+                if packet.packet_type in {205, 206}:
+                    if len(payload) < 8:
+                        raise ValueError("truncated RTCP feedback")
+                    targets = (tuple(struct.unpack_from("!I", payload, offset)[0]
+                        for offset in range(8, len(payload), 8))
+                        if packet.packet_type == 206 and count == 4 else
+                        (struct.unpack_from("!I", payload, 4)[0],))
+                    if expected is not None and any(target != expected for target in targets):
+                        raise ValueError("RTCP feedback targets an unexpected media SSRC")
+                    if destination_transcoded:
+                        # The encoder's output stream has a distinct SSRC and
+                        # counters. It has periodic recovery, no live FFmpeg
+                        # keyframe control. Only request upstream decoder repair.
+                        if packet.packet_type == 206 and count in {1, 4}:
+                            self.request_keyframe(destination_side)
+                        self.transcode_rtcp_dropped += 1
                         continue
-                    if packet.fmt == 1:
-                        feedback_targets = (
-                            struct.unpack_from("!I", packet.payload, 4)[0],
-                        )
-                    elif packet.fmt == 4:
-                        feedback_targets = tuple(
-                            struct.unpack_from("!I", packet.payload, offset)[0]
-                            for offset in range(8, len(packet.payload), 8)
-                        )
-                    else:
+                elif packet.packet_type in {200, 201}:
+                    base = 24 if packet.packet_type == 200 else 4
+                    if len(payload) != base + count * 24:
+                        raise ValueError("invalid RTCP report length")
+                    blocks = []
+                    for offset in range(base, len(payload), 24):
+                        target = struct.unpack_from("!I", payload, offset)[0]
+                        if expected is not None and target != expected:
+                            raise ValueError("RTCP report targets an unexpected media SSRC")
+                        if not destination_transcoded:
+                            blocks.append(payload[offset:offset + 24])
+                    if packet.packet_type == 200 and source_transcoded:
+                        # Preserve any reports about the independent relayed
+                        # direction without forwarding the input sender counts.
+                        payload, count = payload[:4] + b"".join(blocks), len(blocks)
+                        selected.append(struct.pack("!BBH", 0x80 | count, 201, len(payload) // 4) + payload)
                         continue
-                    if any(target != expected_ssrc for target in feedback_targets):
-                        raise ValueError(
-                            "RTCP feedback targets an unexpected media SSRC"
-                        )
+                    payload = payload[:base] + b"".join(blocks)
+                    count = len(blocks)
+                elif source_transcoded and packet.packet_type not in {202, 203}:
+                    # Opaque sender-specific extensions describe the input
+                    # stream. SDES/BYE still identify the preserved RR sender.
+                    continue
+                selected.append(struct.pack("!BBH", 0x80 | count, packet.packet_type,
+                                             len(payload) // 4) + payload)
+            if not selected:
+                return
+            data = b"".join(selected)
             source_port = int(addr[1])
             if (
                 source.rtcp_source_port is not None

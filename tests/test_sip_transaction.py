@@ -50,6 +50,42 @@ sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_non_invite_keeps_retrying_after_a_provisional_response(self):
+        responses = asyncio.Queue()
+        sends = 0
+        sip = sip_transaction.sip
+        provisional = sip.parse_message(sip.build_response(100, "Trying", []))
+        final = sip.parse_message(sip.build_response(200, "OK", []))
+
+        def send():
+            nonlocal sends
+            sends += 1
+            if sends == 1:
+                responses.put_nowait((provisional, None))
+            elif sends == 3:
+                responses.put_nowait((final, None))
+            return True
+
+        async def read(timeout):
+            try:
+                return await asyncio.wait_for(responses.get(), timeout)
+            except TimeoutError:
+                return None
+
+        transaction_type = sip_transaction.SipClientTransaction
+
+        class FastTransaction(transaction_type):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs, t1=0.001, t2=0.005)
+
+        with patch.object(sip_transaction, "SipClientTransaction", FastTransaction):
+            response = await sip_transaction.async_run_dialog_request_transaction(
+                send=send, read=read, matches=lambda message: True,
+                active=lambda: True, transport="UDP", timeout=0.2,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(sends, 3)
+
     async def test_unbounded_proceeding_wait_can_acquire_a_cancellation_deadline(self) -> None:
         transaction = sip_transaction.SipClientTransaction(transport="UDP", timeout=1)
         transaction.reset_deadline(None)

@@ -26,9 +26,6 @@ def reuse_registered_trunk_flow(
         client.discover_media_sockets = lambda sockets: discover_pending_media(
             sockets, getattr(trunk, "media_stun_urls", None)
         )
-        # Standard From/To and Request-URI already carry these identities.
-        # External PBXs do not need duplicate VoIP Stack routing headers.
-        client.include_route_metadata = False
         client.local_contact_uri = getattr(trunk, "public_gruu", "") if getattr(trunk, "registered", False) else ""
     open_dialog = getattr(trunk, "open_outbound_dialog", None)
     if not callable(open_dialog):

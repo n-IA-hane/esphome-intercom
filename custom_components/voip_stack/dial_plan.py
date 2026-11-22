@@ -103,7 +103,7 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str, dict]]
                 key: value for key, value in (entry.metadata or {}).items()
                 if key not in {
                     "sip_contacts", "sip_audio_tx_formats", "sip_audio_rx_formats",
-                    "sdp_features", "sip_capabilities_known", "tx_formats", "rx_formats", "user_agent",
+                    "sip_capabilities_known", "tx_formats", "rx_formats", "user_agent",
                 }
             }
             metadata.update(raw)

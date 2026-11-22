@@ -28,6 +28,9 @@ async def async_terminate_sip_bridge_session(
 
     del endpoint_id, session_device_id
     registry = call_registry(hass)
+    owner = registry.get_session(registry.resolve_session_id(call_id))
+    if owner is not None and call_id != owner.call_id and call_id not in owner.legs:
+        return False, "", "", False, False
     source_call_id, dest_call_id = registry.bridge_for(call_id)
     if not source_call_id:
         return False, "", "", False, False

@@ -53,8 +53,8 @@ class HaCardBindings:
     def _endpoint_changed(self, event):
         previous, endpoint = event.previous, event.endpoint
         if event.event_type is EndpointRegistryEventType.UPDATED and previous is not None and (
-            previous.endpoint_id, previous.kind, previous.device_id
-        ) == (endpoint.endpoint_id, endpoint.kind, endpoint.device_id):
+            previous.endpoint_id, previous.kind, previous.ha_device_id
+        ) == (endpoint.endpoint_id, endpoint.kind, endpoint.ha_device_id):
             return
         self._reindex()
 
@@ -104,7 +104,8 @@ class HaCardBindings:
         registry = self.runtime.endpoints
         endpoint = registry.resolve(selector["device_id"], namespace=EndpointLookup.DEVICE_ID) if selector.get("device_id") else None
         if selector.get("endpoint_id"):
-            explicit = registry.resolve(selector["endpoint_id"], namespace=EndpointLookup.ENDPOINT_ID)
+            from .sip_account_identity import resolve_ha_endpoint
+            explicit = resolve_ha_endpoint(registry, selector["endpoint_id"], entry=self.entry)
             if selector.get("device_id") and (endpoint is None or explicit != endpoint):
                 return None
             endpoint = explicit
@@ -113,8 +114,9 @@ class HaCardBindings:
             # this owner, creating a cycle for an implicit card declaration.
             preferred = getattr(self.entry, "data", {}).get("preferred_phone_device_id") or getattr(
                 self.runtime, "preferred_phone_device_id", "")
+            from .sip_account_identity import resolve_ha_endpoint
             endpoint = (registry.resolve(preferred, namespace=EndpointLookup.DEVICE_ID)
-                        or registry.resolve("default", namespace=EndpointLookup.ENDPOINT_ID))
+                        or resolve_ha_endpoint(registry, "default", entry=self.entry))
         return endpoint if endpoint is not None and str(endpoint.kind) in {"browser", "sip_account"} else None
 
     def _references(self):

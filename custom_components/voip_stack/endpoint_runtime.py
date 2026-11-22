@@ -12,6 +12,7 @@ from homeassistant.helpers.event import async_call_later
 
 from .assist_endpoint import AssistEndpoint
 from .config_entry_runtime import async_refresh_and_push_phonebook as _refresh_and_push_phonebook
+from .codec_settings import effective_codec_policy
 from .const import CONF_REGISTRAR_ENABLED, CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND, CONF_VIDEO_TRANSCODING
 from .core.audio_format import HA_SIP_PCM_FORMATS, HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
 from .dtmf_events import handle_sip_info
@@ -64,7 +65,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     from .config import transport_config
     from .core.sip import parse_sip_uri
     from .endpoint_call_routing import compose_call_routing
-    from .managed_phones import active_managed_accounts
     from .peer_snapshot import async_advertise_host
     from .sip_application import SipApplicationMethods
     from .sip_endpoint import SipEndpointManager
@@ -95,8 +95,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     accounts = _sip_accounts(hass)
     entry = config_entry(hass)
     registrar = SipRegistrar(
-        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False)
-                     or (entry is not None and active_managed_accounts(hass, entry))),
+        enabled=bool(cfg.get(CONF_REGISTRAR_ENABLED, False)),
         accounts=accounts,
         local_ip=local_ip,
         local_sip_port=int(cfg["sip_port"]),
@@ -107,7 +106,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     # dark until every listener component has transferred into it.
     pbx_runtime = _call_registry(hass)
     pbx_runtime.attach_component("registrar", registrar)
+    if entry is not None:
+        from .registrar_storage import RegistrarLeaseStore
+
+        leases = RegistrarLeaseStore(hass, registrar, entry.entry_id)
+        await leases.async_restore()
+        pbx_runtime.attach_component("registrar_leases", leases, closer=leases.async_close)
     registrar_expiry = _RegistrarExpiryScheduler(hass, registrar)
+    registrar_expiry.reschedule()
     pbx_runtime.attach_component(
         "registrar_expiry",
         registrar_expiry,
@@ -123,7 +129,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         result = await registrar.handle_register(request, addr, transport)
         if 200 <= int(result.status) < 300:
             registrar_expiry.reschedule()
-            await _refresh_and_push_phonebook(hass)
+            # Admit the SIP transaction independently of directory and device I/O.
+            coordinator = runtime.phonebook
+            if coordinator is not None:
+                coordinator.request_refresh()
             from .sip_capabilities import schedule_capability_probe
 
             try:
@@ -186,6 +195,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_invite=routing.on_invite,
         on_offerless_invite=routing.on_offerless_invite,
         codec_policy_resolver=ingress.codec_policy_for_invite,
+        codec_policy=effective_codec_policy(hass),
         invite_identity_resolver=ingress.identity_for_invite,
         invite_authorizer=ingress.authorize_initial_invite,
         on_terminated=endpoint_termination.handle,

@@ -14,6 +14,7 @@ from aiohttp import web, WSMsgType
 from aiohttp.test_utils import TestServer
 
 from custom_components.voip_stack.audio_ws_view import VoipAudioWebSocketView
+from custom_components.voip_stack.video_ws_view import VoipVideoWebSocketView
 from tests.test_browser_logical_availability_ha import open_browser_ws
 from .shared_codec_peer import tone_pcm
 
@@ -21,6 +22,7 @@ from .shared_codec_peer import tone_pcm
 class Card:
     def __init__(self):
         self.controls = []
+        self.http_errors = []
         self.requests = set()
         self.process = self.server = None
 
@@ -47,12 +49,16 @@ class Card:
             self.requests.add(task)
             try:
                 return await handler(request)
+            except web.HTTPException as error:
+                self.http_errors.append((request.path, error.status, error.text))
+                raise
             finally:
                 self.requests.discard(task)
 
         app = web.Application(middlewares=[authenticated])
         app["hass"] = lab.hass
         app.router.add_get("/api/voip_stack/ws", VoipAudioWebSocketView().get)
+        app.router.add_get("/api/voip_stack/video_ws", VoipVideoWebSocketView().get)
 
         async def control(request):
             browser = web.WebSocketResponse()

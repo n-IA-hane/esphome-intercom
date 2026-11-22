@@ -148,7 +148,7 @@ def _ha_softphone_store(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     store.setdefault("endpoint_id", key)
     endpoint = endpoint_directory(hass).get(key)
     if endpoint is not None and endpoint.supports_ha_client:
-        store.setdefault("device_id", endpoint.device_id)
+        store.setdefault("device_id", endpoint.ha_device_id)
         store.setdefault("local_name", endpoint.name)
     return store
 
@@ -256,7 +256,9 @@ def _endpoint_id_from_selector(
     if explicit:
         resolved_id = _endpoint_store_id(explicit)
         if registry is not None:
-            endpoint = registry.get(resolved_id)
+            from .sip_account_identity import resolve_ha_endpoint
+            from .store import config_entry
+            endpoint = resolve_ha_endpoint(registry, resolved_id, entry=config_entry(hass))
             if endpoint is None or not endpoint.supports_ha_client:
                 raise ValueError(f"Unknown Home Assistant phone endpoint: {explicit}")
             # EndpointRegistry lookup is case-insensitive; every downstream

@@ -4,20 +4,43 @@ voicemail_received:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: Home Assistant softphone
-            - integration: voip_stack
-              model: SIP account
-            - integration: esphome
+          - integration: voip_stack
+            model: SIP account
 call_started:
   fields:
-    caller: &id001
+    caller_account: &id002
+      selector:
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP account
+    caller_number: &id001
       selector:
         text: {}
-    destination: &id002
+    caller_extension: *id001
+    caller_match: &id003
+      default: exact
+      selector:
+        select:
+          options:
+          - exact
+          - prefix
+          - range
+          - pattern
+          translation_key: call_match
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: &id004
       selector:
         text: {}
-    ingress: &id003
+    destination: &id005
+      selector:
+        text: {}
+    ingress: &id006
       selector:
         select:
           options:
@@ -26,57 +49,97 @@ call_started:
           translation_key: call_ingress
 call_received:
   fields:
-    caller: *id001
-    destination: *id002
-    ingress: *id003
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: *id004
+    destination: *id005
+    ingress: *id006
     trunk:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     called_number:
       selector:
         text: {}
 route_requested:
   fields:
-    caller: *id001
-    destination: *id002
-    ingress: *id003
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: *id004
+    destination: *id005
+    ingress: *id006
     trunk:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     called_number:
       selector:
         text: {}
 call_connected:
   fields:
-    caller: *id001
-    destination: *id002
-    ingress: *id003
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: *id004
+    destination: *id005
+    ingress: *id006
     trunk:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     called_number:
       selector:
         text: {}
 call_ended:
   fields:
-    caller: *id001
-    destination: *id002
-    ingress: *id003
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: *id004
+    destination: *id005
+    ingress: *id006
     trunk:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     called_number:
       selector:
         text: {}
@@ -93,15 +156,25 @@ call_ended:
           translation_key: call_outcome
 dtmf_received:
   fields:
-    caller: *id001
-    destination: *id002
-    ingress: *id003
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: *id004
+    destination: *id005
+    ingress: *id006
     trunk:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     called_number:
       selector:
         text: {}
@@ -134,15 +207,25 @@ dtmf_received:
           translation_key: dtmf_source
 call_unanswered:
   fields:
-    caller: *id001
-    destination: *id002
-    ingress: *id003
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
+    caller: *id004
+    destination: *id005
+    ingress: *id006
     trunk:
       selector:
         device:
           filter:
-            - integration: voip_stack
-              model: SIP trunk
+          - integration: voip_stack
+            model: SIP trunk
     called_number:
       selector:
         text: {}
@@ -150,7 +233,6 @@ call_unanswered:
       required: false
       selector:
         duration: {}
-
 phone_state_changed:
   fields:
     phone:
@@ -159,10 +241,7 @@ phone_state_changed:
         device:
           filter:
           - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
             model: SIP account
-          - integration: esphome
     from:
       selector:
         select:
@@ -193,12 +272,19 @@ mailbox_changed:
         device:
           filter:
           - integration: voip_stack
-            model: Home Assistant softphone
-          - integration: voip_stack
             model: SIP account
-          - integration: esphome
 call_picked_up:
   fields:
+    caller_account: *id002
+    caller_number: *id001
+    caller_extension: *id001
+    caller_match: *id003
+    caller_range_end: *id001
+    destination_account: *id002
+    destination_number: *id001
+    destination_extension: *id001
+    destination_match: *id003
+    destination_range_end: *id001
     destination:
       selector:
         text: {}

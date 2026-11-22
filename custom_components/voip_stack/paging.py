@@ -51,12 +51,15 @@ def validate_announcement(data):
     return values
 
 
-def resolve_paging_targets(runtime, groups, targets):
+def resolve_paging_targets(runtime, groups, targets, *, hass=None):
     """Expand saved groups once, deduplicating the existing logical phones."""
     selected = OrderedDict()
     visiting = set()
 
     def expand(target):
+        if hass is not None:
+            from .service_endpoints import resolve_service_group_reference
+            target = resolve_service_group_reference(hass, target, kind="paging")
         identity = str(target).removeprefix("service:paging:").removeprefix("paging:")
         group = groups.get(identity)
         if group is None:
@@ -74,7 +77,7 @@ def resolve_paging_targets(runtime, groups, targets):
                 expand(member)
             visiting.remove(identity)
         else:
-            endpoint = resolve_service_phone(runtime.endpoints, target, allow_internal=True)
+            endpoint = resolve_service_phone(runtime.endpoints, target, allow_internal=True, hass=hass)
             if endpoint is None:
                 raise ServiceValidationError(f"Unknown paging phone: {target}")
             selected[endpoint.endpoint_id] = endpoint
@@ -147,7 +150,7 @@ class PagingJob:
             return DialOutcome(disposition)
         # A selector identity such as sip:desk is not the URI sip:desk.
         # Feed its canonical phonebook name into the existing route resolver.
-        data = {"destination": endpoint.name, "answer_timeout": self.data["answer_timeout"]}
+        data = {"destination": endpoint.username, "answer_timeout": self.data["answer_timeout"]}
         call = ServiceCall(self.manager.hass, "voip_stack", "call", data, context=self.call.context)
         try:
             if browser:
@@ -352,7 +355,7 @@ class PagingRuntime:
         if len(self.jobs) >= MAX_PAGING_JOBS:
             raise ServiceValidationError("All paging slots are in use")
         runtime = require_runtime_data(self.hass)
-        targets = resolve_paging_targets(runtime, paging_group_configs(self.entry), data["targets"])
+        targets = resolve_paging_targets(runtime, paging_group_configs(self.entry), data["targets"], hass=self.hass)
         identity = uuid4().hex
         registry = call_registry(self.hass)
         session = application.session if application is not None else registry.upsert(

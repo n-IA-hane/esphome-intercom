@@ -83,8 +83,9 @@ voip_stack:
 Use `static_contacts` for a small fixed ESP-local dial plan. For HA-managed
 phones, the current device packages select native enrollment and optional
 `directory`, `blf` and `mwi` services. LDAP supplies contacts; SIP subscriptions
-supply live status and message counts. The old JSON action remains compatible
-with firmware without managed LDAP. Enable `custom_services: true` in the
+supply live status and message counts. Rebuild and upload matching ESP firmware
+and update maintained HA packages together; the native JSON roster push and
+its subscription package have been removed. Enable `custom_services: true` in the
 existing `api:` block; do not add the retired phonebook subscription package. See the
 [ESP phone migration](ESP_ENTITY_SURFACE.md#migrating-an-existing-phone).
 

@@ -109,8 +109,8 @@ Choose the upgrade path for the parts you use:
   [LDAP directory](PHONEBOOK_PROTOCOL.md#standard-ldap-directory), with an
   actual successful refresh replacing the shared snapshot and preserving
   manual entries. Check listener/account settings and matching preview
-  firmware. Legacy/custom JSON roster providers remain supported; sending
-  their roster action is not a managed LDAP migration or refresh.
+  firmware. Current ESP firmware uses LDAP as its sole dynamic provider. Rebuild
+  and upload the ESP when migrating from the removed JSON roster delivery.
 - **S3 displays:** a maintained LCD profile may include the optional
   [JPEG receiver](../packages/voip/s3_video_jpeg.yaml), defaulting to
   320x240 at 2 FPS. It needs the profile's LVGL surface and a compatible video

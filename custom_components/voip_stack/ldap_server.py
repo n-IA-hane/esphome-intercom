@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 import logging
-import re
 import secrets
 import ssl
 import unicodedata
@@ -22,15 +21,14 @@ from .roster import RosterEntry
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_BASE_DN = "ou=phonebook,dc=voip"
 _CATEGORIES = ("esphome", "sip_account", "browser", "contact", "automation", "group", "service")
-_USER = re.compile(r"[\w.-]+\Z")
 _ALIASES = {"commonname": "cn", "surname": "sn", "userid": "uid", "2.5.4.3": "cn", "2.5.4.20": "telephonenumber"}
-_KNOWN = {"objectclass", "uid", "cn", "sn", "displayname", "telephonenumber", "mobile", "homephone",
+_KNOWN = {"objectclass", "uid", "cn", "sn", "givenname", "displayname", "telephonenumber", "mobile", "homephone",
           "labeleduri", "ou", "description", "supportedldapversion", "namingcontexts", "supportedcontrol",
           "supportedextension", "supportedsaslmechanisms"}
 _OPERATIONAL = {"supportedldapversion", "namingcontexts", "supportedcontrol", "supportedextension", "supportedsaslmechanisms"}
 _RESPONSES = {"modifyRequest": "modifyResponse", "addRequest": "addResponse", "delRequest": "delResponse",
               "modDNRequest": "modDNResponse", "compareRequest": "compareResponse", "extendedReq": "extendedResp"}
-Authenticate = Callable[[str, bytes], Awaitable[str | None]]
+Authenticate = Callable[[str, bytes], Awaitable[object | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,7 +231,8 @@ class LdapDirectoryServer:
     def username(self, bind_dn: str) -> str:
         # Account-name shorthand remains useful to ordinary SIP phones. The
         # published Bind DN is uid=<SIP username>,ou=accounts,<directory base>.
-        if _USER.fullmatch(bind_dn):
+        if ("=" not in bind_dn and bind_dn and len(bind_dn.encode()) <= 64
+                and not any(ord(char) < 32 or ord(char) == 127 for char in bind_dn)):
             return bind_dn
         groups = _dn(bind_dn)
         key = _dn_key(bind_dn)
@@ -244,34 +243,59 @@ class LdapDirectoryServer:
         return groups[0][0][1]
 
     def records(self) -> Iterable[tuple[str, dict[str, tuple[bytes, ...]]]]:
-        yield self.base_dn, {"objectclass": (b"top", b"organizationalUnit"), "ou": (b"phonebook",)}
+        base_attributes = {"objectclass": (b"top", b"organizationalUnit")}
+        for attribute, value in _dn(self.base_dn)[0]:
+            if attribute == "ou":
+                base_attributes["ou"] = (value.encode(),)
+        yield self.base_dn, base_attributes
         for category in _CATEGORIES:
             yield f"ou={category},{self.base_dn}", {"objectclass": (b"top", b"organizationalUnit"), "ou": (category.encode(),)}
         for entry in self.directory.snapshot():
             if not entry.enabled:
                 continue
-            kind = str(entry.metadata.get("endpoint_kind") or "contact")
-            virtual = str(entry.metadata.get("virtual_endpoint") or "")
-            if virtual:
-                kind = "automation" if virtual in {"automation", "assist_pipeline"} else "group" if virtual in {"ring_group", "conference"} else "service"
-            elif entry.metadata.get("group_type") in {"ring", "conference"}:
-                kind = "group"
-            if kind not in _CATEGORIES:
-                kind = "contact"
-            identity = str(entry.metadata.get("endpoint_id") or entry.id)
-            if not identity or any(ord(char) < 32 for char in identity):
+            try:
+                record = self._record(entry)
+            except (ValueError, UnicodeError, LDAPInvalidDnError):
+                _LOGGER.debug("Skipping an invalid LDAP directory record")
                 continue
-            attributes = {"objectclass": (b"top", b"organizationalRole", b"uidObject", b"labeledURIObject"),
-                          "uid": (identity.encode(),), "cn": (entry.display_name.encode(),), "ou": (kind.encode(),)}
-            numbers = tuple(value.encode() for value in self.directory.dial_users(entry, (entry.extension, entry.number)))
-            if numbers:
-                attributes["telephonenumber"] = numbers
-            uri = self.uri_for(entry) if self.uri_for is not None else entry.sip_uri
-            if uri:
-                attributes["labeleduri"] = (uri.encode(),)
-            if any(len(value) > codec.MAX_VALUE_BYTES for values in attributes.values() for value in values):
-                raise codec.LdapProtocolError("Directory value exceeds its byte budget")
-            yield f"uid={escape_rdn(identity)},ou={kind},{self.base_dn}", attributes
+            if record is not None:
+                yield record
+
+    def _record(self, entry):
+        """Bound one derived record without interrupting an unrelated search."""
+        kind = str(entry.metadata.get("endpoint_kind") or "contact")
+        virtual = str(entry.metadata.get("virtual_endpoint") or "")
+        if virtual:
+            kind = "automation" if virtual in {"automation", "assist_pipeline"} else "group" if virtual in {"ring_group", "conference"} else "service"
+        elif entry.metadata.get("group_type") in {"ring", "conference"}:
+            kind = "group"
+        if kind not in _CATEGORIES:
+            kind = "contact"
+        from .directory_runtime import directory_user
+        identity = directory_user(self.directory, entry)
+        if not identity or any(ord(char) < 32 or ord(char) == 127 for char in identity):
+            return None
+        attributes = {"objectclass": (b"top", b"organizationalRole", b"uidObject", b"labeledURIObject"),
+                      "uid": (identity.encode(),), "cn": (entry.display_name.encode(),),
+                      "displayname": (entry.display_name.encode(),), "ou": (kind.encode(),)}
+        given, _, surname = entry.display_name.rpartition(" ")
+        attributes["givenname"] = ((given or entry.display_name).encode(),)
+        attributes["sn"] = ((surname or entry.display_name).encode(),)
+        numbers = tuple(value.encode() for value in self.directory.dial_users(entry, (entry.extension, entry.number)))
+        if numbers:
+            attributes["telephonenumber"] = numbers
+        uri = self.uri_for(entry) if self.uri_for is not None else entry.sip_uri
+        if uri:
+            attributes["labeleduri"] = (uri.encode(),)
+        dn = f"uid={escape_rdn(identity)},ou={kind},{self.base_dn}"
+        value_bytes = [value for values in attributes.values() for value in values]
+        if (any(len(value) > codec.MAX_VALUE_BYTES for value in value_bytes)
+                or sum(map(len, value_bytes)) + len(dn.encode()) + 1024 > codec.MAX_PDU_BYTES):
+            # One invalid configured contact cannot poison a different
+            # filtered search. Config editors reject these bounds too.
+            _LOGGER.debug("Skipping an LDAP record exceeding its byte budget")
+            return None
+        return dn, attributes
 
     @staticmethod
     def select_attributes(attributes, requested):

@@ -17,7 +17,7 @@ from .service_endpoints import resolve_service_phone
 
 def _endpoint(hass, selector):
     registry = require_runtime_data(hass).endpoints
-    endpoint = resolve_service_phone(registry, selector, allow_internal=True,
+    endpoint = resolve_service_phone(registry, selector, allow_internal=True, hass=hass,
                                      namespace=EndpointLookup.ENDPOINT_ID)
     if endpoint is None:
         raise ValueError("The selected phone is unavailable")

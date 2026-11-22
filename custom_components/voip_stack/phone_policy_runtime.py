@@ -1,10 +1,8 @@
-"""Session-owned no-answer defaults driven by existing HA call events."""
+"""Session-owned no-answer defaults applied to committed call state."""
 
 from __future__ import annotations
 
 import logging
-
-from homeassistant.core import callback
 
 from .automation_routing import automation_event_type, matches_call
 from .call_deadlines import CallDeadline
@@ -22,17 +20,8 @@ _TIMER = "deadline:phone_policy"
 _DECISION = "deadline:phone_policy_decision"
 
 
-def setup_phone_policy_events(hass, entry) -> None:
-    """Observe call events without adding polling or a second call registry."""
-
-    @callback
-    def receive(event):
-        apply_phone_policy_event(hass, dict(event.data))
-
-    entry.async_on_unload(hass.bus.async_listen(CALL_EVENT, receive))
-
-
-def apply_phone_policy_event(hass, payload: dict) -> None:
+def apply_phone_policy_state(hass, payload: dict) -> None:
+    """Arm one deadline from the committed call state, before HA delivery."""
     runtime = runtime_data(hass)
     registry = runtime.sip if runtime is not None else None
     if registry is None:
@@ -96,7 +85,7 @@ def apply_phone_policy_event(hass, payload: dict) -> None:
             )
             return
         target_endpoint = runtime.endpoints.get(destination.target)
-        target_name = target_endpoint.name if target_endpoint is not None else destination.target
+        target_name = target_endpoint.username if target_endpoint is not None else destination.target
         if destination.kind is DestinationKind.VOICEMAIL:
             target_name = f"voicemail.{destination.target}"
         try:
@@ -130,7 +119,7 @@ def apply_phone_policy_event(hass, payload: dict) -> None:
         event = {**payload, "scope": "phone_policy", "event_type": "ringing_timeout_requested",
                  "reason": "no_answer", "sequence": sequence, "timeout": policy.ringing_timeout}
         interested = any(
-            matches_call(event, options)
+            matches_call(event, options, hass=hass)
             and (options.get("for") is None or options["for"].total_seconds() <= policy.ringing_timeout)
             for options in registration_data(hass).unanswered_trigger_filters.values()
         )
@@ -177,7 +166,7 @@ def dispatch_phone_failure(hass, session, endpoint, destination):
         if not registry.is_generation_current(token.call_id, token.generation) or session.owner != owner or session.state != state:
             return
         target_endpoint = runtime_data(hass).endpoints.get(destination.target)
-        target = target_endpoint.name if target_endpoint is not None else destination.target
+        target = target_endpoint.username if target_endpoint is not None else destination.target
         if destination.kind is DestinationKind.VOICEMAIL:
             target = f'voicemail.{destination.target}'
         try:

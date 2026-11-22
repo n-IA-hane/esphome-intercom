@@ -24,7 +24,7 @@ use matching preview firmware for managed ESP directory provisioning. SIP BLF,
 presence and voicemail MWI are separate services already present in stable.
 
 Home Assistant owns one persistent directory. The phonebook sensor, JSON
-compatibility format and LDAP service are projections of the same contacts,
+export and LDAP service are projections of the same contacts,
 not separate contact databases. Managed phone identities remain listed while
 offline; availability describes current reachability without deleting identity.
 Names and extensions can change while a phone keeps its stable identifier.
@@ -46,6 +46,11 @@ and refreshes after effective directory changes. A successful query replaces
 the phone's LDAP snapshot atomically. A temporary connection/listener failure
 retains its last valid snapshot; administrative disabling is a separate action.
 HA Repairs reports listener or TLS setup failures.
+
+Phone `uid` values are the literal SIP account username, up to 64 UTF-8 bytes.
+Other entries use their public route identity, up to 1024 UTF-8 bytes. Their
+encoded SIP URI is limited to 2048 bytes. HA device IDs associate provisioning
+records; they are not SIP usernames or LDAP phone UIDs.
 
 Entries retain their phone, group or service kind. Only eligible phone entries
 are automatic BLF targets. LDAP contact records and public roster metadata do
@@ -92,13 +97,14 @@ Rules:
 - A numeric target from an ESP is routed to HA. HA resolves `extension` as an
   internal target and `number` as an external trunk target.
 - LDAP is the standard shared phonebook for compatible managed ESP firmware.
-  The sensor/JSON interface remains available for HA clients and compatibility.
-  Static contacts remain local additions for offline or custom installations.
+  The sensor and JSON export remain available for HA clients and diagnostics.
+  LDAP is the sole dynamic ESP provider. Static contacts remain local additions
+  for offline or custom installations.
 
 The ESP-local schema is intentionally smaller than the HA central-contact
 schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
 membership, and media capabilities are authored on HA or discovered from
-endpoint entities, then normalized before HA pushes the roster to ESPs.
+endpoint entities, then projected through the LDAP directory.
 
 The contact `name` is the only user-facing identity field required by an ESP
 static contact. Users do not need to provide a second underscore-safe version
@@ -109,10 +115,11 @@ of the same name. SIP keeps routing and presentation separate on the wire:
 - an incoming caller display is read from the peer's `From` header, not
   replaced from the roster.
 
-For the ESP itself, ESPHome's node name is the stable URI user and
-`friendly_name` is the SIP display name. For example, node
-`waveshare-p4-touch` with friendly name `Waveshare P4 Touch` sends both values
-in their standard SIP roles without asking the YAML author to duplicate them.
+On a registered ESP line, the URI user is the literal account username.
+Managed accounts default to ESPHome's effective `friendly_name`, or effective
+node name when absent, including ESPHome's native MAC suffix when enabled. A
+user-configured account username remains authoritative. The SIP display label
+can differ from that username.
 
 ## HA roster
 
@@ -212,25 +219,26 @@ Central roster services:
 - `voip_stack.set_contacts`: replace manual contacts from a JSON
   roster document.
 - `voip_stack.clear_contacts`: clear manual central contacts.
-- `voip_stack.push_phonebook`: push the current roster immediately to
-  online ESP devices.
+- `voip_stack.push_phonebook`: request a central directory rebuild and
+  synchronization of any changed managed LDAP generation.
 - `voip_stack.export_phonebook`: return the current roster privately in the
   administrator-only service response for diagnostics/backup.
 
 ESPHome also exposes native API actions such as
 `esphome.<slug>_add_contact`, `esphome.<slug>_remove_contact`,
-`esphome.<slug>_set_contacts`, `esphome.<slug>_flush_contacts` and
-`esphome.<slug>_update_contacts`. These are local ESP actions: they change only
-that device's mirror/manual entries. In HA-managed installs, prefer the central
+`esphome.<slug>_set_contacts` and `esphome.<slug>_flush_contacts`. These are
+local ESP actions for manual static entries. In HA-managed installs, prefer the central
 `voip_stack.*` services above and let the directory coordinator deliver the
-current canonical roster to the devices. `sensor.voip_phonebook` exposes the
+current directory generation through LDAP. `sensor.voip_phonebook` exposes the
 same projection for diagnostics; disabling the sensor does not stop delivery.
 
 HA refreshes the directory and delivers its canonical roster when the owning
 account, device or configuration changes. Delivery also observes the native
 ESPHome action inventory, so a device reconnect does not depend on sensor
-publication order. `voip_stack.push_phonebook` remains a diagnostic/manual
-recovery tool, not the normal synchronization path.
+publication order. `voip_stack.push_phonebook` requests a central rebuild for
+diagnostics; `refresh_ldap_directory` on the phone requests an LDAP query.
+Rebuild and upload matching ESP firmware when upgrading from the removed JSON
+roster delivery, and update maintained HA packages together.
 
 Local SIP accounts are created with `voip_stack.create_account`.
 The `username` becomes the SIP username and central roster ID. If `password` is

@@ -2,28 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .codec_settings import effective_codec_policy
 from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
     EndpointRouteResolver,
     bridge_audio_profile,
-    peer_audio_formats,
     peer_for_target,
     peer_video_codec,
-    roster_entry_formats,
-    sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_offer_common_audio,
-    supports_directional_audio_payloads,
-    supports_independent_audio_ptime,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -32,7 +25,6 @@ from .media_ports import (
 )
 from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
-from .peer_media_profile import resolve_peer_media_profile
 from .peer import sip_uri_for_peer
 from .runtime_data import preferred_browser_phone, sip_trunk
 from .trunk_signaling import reuse_registered_trunk_flow
@@ -61,7 +53,6 @@ class OutboundLegPolicy:
     username: str = ""
     password: str = ""
     outbound_proxy: str = ""
-    force_common_audio: bool = False
     reuse_registered_flow: bool = True
     use_trunk_flow: bool = False
     allow_video: bool = True
@@ -173,6 +164,28 @@ class EndpointDialer:
         )
         member_entry = roster_entry_override or member_entry
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
+        if uri is None:
+            from .config import trunk_identity_uri
+            from .router import RouteAction
+            from .trunk_selection import select_call_trunk
+
+            dial_target = str(getattr(member_entry, "number", "") or member)
+            decision = self.route_resolver.route(dial_target, roster_entries)
+            if decision.action is RouteAction.TRUNK:
+                inherited = policy.trunk_id or (invite.outbound_trunk_id if invite is not None else "") or decision.trunk_id
+                selected = select_call_trunk(self.hass, inherited=inherited)
+                if selected.available:
+                    cfg = selected.config
+                    uri = SipUri(decision.target, str(cfg.get("trunk_domain") or cfg.get("trunk_server") or ""),
+                                 int(cfg.get("trunk_port") or 5060),
+                                 params=(("transport", str(cfg.get("trunk_transport") or "udp")),))
+                    policy = replace(policy, use_trunk_flow=True, trunk_id=selected.identity,
+                        username=str(cfg.get("trunk_username") or ""),
+                        auth_username=str(cfg.get("trunk_auth_username") or ""),
+                        password=str(cfg.get("trunk_password") or ""),
+                        local_uri_user=str(cfg.get("trunk_username") or ""),
+                        local_identity_uri=trunk_identity_uri(cfg),
+                        outbound_proxy=str(cfg.get("trunk_outbound_proxy") or ""))
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
         target_endpoint = self.route_resolver.logical_endpoint(member, peers, roster_entries)
@@ -200,51 +213,21 @@ class EndpointDialer:
                     raise RuntimeError("retained caller reservation changed before dial")
             else:
                 ports.bind_audio_sockets(ports=(ports.ports[local_rtp_port_index],))
-            remote_tx_formats = peer_audio_formats(
-                peer_target,
-                "tx_formats",
-            ) or roster_entry_formats(member_entry, "tx_formats")
-            remote_rx_formats = peer_audio_formats(
-                peer_target,
-                "rx_formats",
-            ) or roster_entry_formats(member_entry, "rx_formats")
-            sip_send_formats, sip_recv_formats = sip_target_audio_profile(
-                remote_tx_formats=remote_tx_formats,
-                remote_rx_formats=remote_rx_formats,
-                target=member,
-            )
             rtp_audio_profile = sip_target_rtp_audio_profile(
-                peer_target,
                 member_entry,
                 codec_policy=codec_policy,
+                peer_user_agent=peer_user_agent_override or None,
+                trunk=policy.use_trunk_flow,
             )
             bridge_to_softphone = bool(
                 member_entry is not None
                 and member_entry.sip_uri
                 and member_entry.metadata.get("registered")
             )
-            peer_profile = resolve_peer_media_profile(
-                member_entry.metadata if member_entry is not None else None,
-                user_agent_override=peer_user_agent_override or None,
-            )
-            include_common_audio = (
-                policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
-                or sip_target_offer_common_audio(peer_target, member_entry)
-            )
-            if policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
-                sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
-                sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
-                rtp_audio_profile = None
-            elif rtp_audio_profile is not None:
-                sip_send_formats = list(rtp_audio_profile.send_formats)
-                sip_recv_formats = list(rtp_audio_profile.recv_formats)
-            if invite is not None and sip_send_formats and sip_recv_formats:
-                rtp_audio_profile = bridge_audio_profile(
-                    invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
-                    include_common_codecs=include_common_audio,
-                )
-                sip_send_formats = list(rtp_audio_profile.send_formats)
-                sip_recv_formats = list(rtp_audio_profile.recv_formats)
+            if invite is not None:
+                rtp_audio_profile = bridge_audio_profile(invite, rtp_audio_profile)
+            sip_send_formats = list(rtp_audio_profile.send_formats)
+            sip_recv_formats = list(rtp_audio_profile.recv_formats)
             target_video_codec = peer_video_codec(peer_target, member_entry)
             video_failure_reason = ""
             trunk = (
@@ -292,7 +275,10 @@ class EndpointDialer:
                         member,
                         err,
                     )
+            # These RTP rows are the complete engine plan; the SIP writer
+            # numbers them without expanding a second capability catalog.
             client = SipCallClient(
+                max_forwards=max(0, invite.max_forwards - 1) if invite is not None and invite.max_forwards is not None else 70,
                 **({"call_id": policy.call_id} if policy.call_id else {}),
                 codec_policy=codec_policy,
                 local_ip=self.local_ip,
@@ -310,28 +296,14 @@ class EndpointDialer:
                 local_rtp_port=ports.ports[local_rtp_port_index],
                 supported_send_formats=sip_send_formats,
                 supported_recv_formats=sip_recv_formats,
-                supported_send_rtp_formats=(
-                    rtp_audio_profile.send_rtp_formats
-                    if rtp_audio_profile is not None
-                    else None
-                ),
-                supported_recv_rtp_formats=(
-                    rtp_audio_profile.recv_rtp_formats
-                    if rtp_audio_profile is not None
-                    else None
-                ),
+                supported_send_rtp_formats=rtp_audio_profile.send_rtp_formats,
+                supported_recv_rtp_formats=rtp_audio_profile.recv_rtp_formats,
                 signaling_transport=self.sip_uri_transport(uri),
                 auth_username=policy.auth_username,
                 username=policy.username,
                 password=policy.password,
                 outbound_proxy=policy.outbound_proxy,
-                include_common_codecs=include_common_audio,
-                allow_directional_audio_payloads=supports_directional_audio_payloads(
-                    peer_target, member_entry
-                ),
-                independent_audio_ptime=supports_independent_audio_ptime(
-                    peer_target, member_entry
-                ),
+                include_common_codecs=False,
                 peer_user_agent=(
                     str(peer_user_agent_override or "").strip()
                     or str(
@@ -343,8 +315,8 @@ class EndpointDialer:
                         or ""
                     ).strip()
                 ),
-                include_dahua_pcm=peer_profile.include_dahua_pcm,
-                match_received_codec=peer_profile.match_received_codec,
+                include_dahua_pcm=rtp_audio_profile.include_dahua_pcm,
+                match_received_codec=rtp_audio_profile.match_received_codec,
                 local_video_rtp_port=(
                     video_relay.right_port if video_relay is not None else 0
                 ),

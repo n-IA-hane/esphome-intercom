@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 import contextlib
 from dataclasses import dataclass, field
 import logging
@@ -50,7 +49,6 @@ _LOGGER = logging.getLogger(__name__)
 CONFERENCE_FORMAT = AudioFormat(16000, PcmFormat.S16LE, 1, 20)
 CONFERENCE_FRAME_BYTES = CONFERENCE_FORMAT.nominal_frame_bytes
 CONFERENCE_TICK_S = CONFERENCE_FORMAT.frame_ms / 1000.0
-CONFERENCE_INACTIVITY_S = 10.0
 MAX_CONFERENCE_LEGS = 8
 CONFERENCE_RTP_FORMAT = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
 _CONFERENCE_SILENCE = b"\x00" * CONFERENCE_FRAME_BYTES
@@ -89,12 +87,12 @@ class _ConferenceLeg:
     local_ports: tuple[int, int] = (0, 0)
     transport: asyncio.DatagramTransport | None = None
     decoder: RtpAudioReceiver | None = None
+    dtmf_decoder: Any = None
     encoder: RtpPayloadEncoder | None = None
     local_out: asyncio.Queue[bytes] | None = None
     client: Any | None = None
     port_reservation: RtpPortReservation | None = None
     in_fifo: list[bytes] = field(default_factory=list)
-    last_rx: float = field(default_factory=time.monotonic)
     sequence: int = field(default_factory=lambda: random.randrange(0, 0xFFFF))
     timestamp: int = field(default_factory=lambda: random.randrange(0, 0xFFFFFFFF))
     ssrc: int = field(default_factory=lambda: random.randrange(1, 0xFFFFFFFF))
@@ -133,7 +131,6 @@ class ConferenceRoom:
         *,
         name: str,
         local_ip: str,
-        on_inbound_timeout: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self.hass = hass
         self.name = name
@@ -143,7 +140,6 @@ class ConferenceRoom:
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
         self._ha_softphone_announced: dict[str, str] = {}
-        self.on_inbound_timeout = on_inbound_timeout
 
     async def join(
         self,
@@ -193,6 +189,8 @@ class ConferenceRoom:
                 ),
                 connection_held=invite.remote_audio_connection_held,
             )
+            self._bind_receive_callback(leg)
+            self._bind_dtmf(leg, invite)
             self.legs[invite.call_id] = leg
             if self._task is None or self._task.done():
                 self._task = self.hass.async_create_task(self._mix_loop())
@@ -284,6 +282,8 @@ class ConferenceRoom:
                 ),
                 connection_held=dialog.remote_audio_connection_held,
             )
+            self._bind_receive_callback(leg)
+            self._bind_dtmf(leg, dialog)
             self.legs[call_id] = leg
             transport.resume_reading()
             if self._task is None or self._task.done():
@@ -302,6 +302,38 @@ class ConferenceRoom:
             port_reservation.release()
             raise
 
+    def _bind_dtmf(self, leg, negotiated):
+        from .dtmf import RtpDtmfDecoder
+        from .local_call_media import source_dtmf_formats
+
+        formats = source_dtmf_formats(negotiated)
+        if formats:
+            leg.dtmf_decoder = RtpDtmfDecoder(formats, audio_receiver=leg.decoder)
+
+    def _bind_receive_callback(self, leg):
+        if leg.decoder is not None:
+            leg.decoder.set_reorder_callback(
+                lambda frames: self._receive_pcm(leg, frames),
+                lambda error: self._receive_error(leg, error))
+
+    def _receive_error(self, leg, error):
+        if self.legs.get(leg.call_id) is leg and not self._closed:
+            leg.dropped_frames += 1
+            _LOGGER.debug("Deferred conference RTP audio drop room=%s call_id=%s: %s", self.name, leg.call_id, error)
+
+    def _receive_pcm(self, leg, pcm_frames):
+        if self.legs.get(leg.call_id) is not leg or self._closed:
+            return
+        if leg.decoder.last_source_changed or leg.decoder.last_gap_ms:
+            leg.in_converter = PcmFrameConverter(leg.in_converter.src, leg.in_converter.dst)
+            leg.dropped_frames += len(leg.in_fifo)
+            leg.in_fifo.clear()
+        for frame in (frame for pcm in pcm_frames for frame in leg.in_converter.convert(pcm)):
+            if len(leg.in_fifo) >= 3:
+                leg.in_fifo.pop(0)
+                leg.dropped_frames += 1
+            leg.in_fifo.append(frame)
+
     def handle_rtp(self, call_id: str, data: bytes, addr) -> None:
         leg = self.legs.get(call_id)
         if leg is None:
@@ -315,33 +347,33 @@ class ConferenceRoom:
             return
         try:
             packet = parse_packet(data)
+            if leg.dtmf_decoder is not None and leg.dtmf_decoder.accepts(packet.payload_type):
+                report = leg.dtmf_decoder.decode_report(data)
+                if report is not None and report.shared_audio:
+                    if report.source_changed:
+                        leg.decoder.reset_source()
+                        leg.in_converter = PcmFrameConverter(leg.in_converter.src, leg.in_converter.dst)
+                        leg.in_fifo.clear()
+                    leg.decoder.observe_non_audio_sequence(packet.sequence)
+                    leg.rx_ssrc, leg.remote_port = report.ssrc, int(addr[1])
+                return
             if leg.decoder.format_for(packet.payload_type) is None:
                 raise ValueError(
                     f"unnegotiated payload type {packet.payload_type}"
                 )
-            if leg.rx_ssrc is not None and packet.ssrc != leg.rx_ssrc:
-                raise ValueError(f"SSRC {packet.ssrc} != latched {leg.rx_ssrc}")
-            pcm_frames = leg.decoder.decode(packet.payload_type, packet.payload)
+            pcm_frames = leg.decoder.decode_rtp(packet,
+                normalize_frames=leg.in_converter.requires_fixed_input)
+            if not leg.decoder.last_packet_accepted:
+                return
+            leg.rx_ssrc = leg.decoder.source_ssrc
+            leg.remote_port = int(addr[1])
+            leg.rx_packets += 1
             if leg.encoder is not None:
                 leg.encoder.follow_received(leg.decoder.format_for(packet.payload_type))
-            if not pcm_frames:
-                return
-            if leg.rx_ssrc is None:
-                leg.rx_ssrc = packet.ssrc
-                leg.remote_port = int(addr[1])
-            elif int(addr[1]) != leg.remote_port:
-                leg.remote_port = int(addr[1])
-            frames = [frame for pcm in pcm_frames for frame in leg.in_converter.convert(pcm)]
+            self._receive_pcm(leg, pcm_frames)
         except Exception as err:
             _LOGGER.debug("Conference RTP frame ignored room=%s call_id=%s: %s", self.name, call_id, err)
             return
-        leg.last_rx = time.monotonic()
-        leg.rx_packets += 1
-        for frame in frames:
-            if len(leg.in_fifo) >= 3:
-                leg.in_fifo.pop(0)
-                leg.dropped_frames += 1
-            leg.in_fifo.append(frame)
 
     async def leave(self, call_id: str, reason: str = "remote_hangup") -> bool:
         leg = self.legs.pop(call_id, None)
@@ -389,8 +421,7 @@ class ConferenceRoom:
                 name=f"voip-conference-close-{self.name}",
             )
         elif origin is self._task:
-            # An existing closer joins the mixer. Its final tick (including
-            # a leave triggered by media timeout) must be free to return.
+            # An existing closer joins the mixer; its final tick must return.
             return
         await async_wait_for_cleanup(self._close_task)
 
@@ -434,19 +465,8 @@ class ConferenceRoom:
         leg.client = None
         if client is None:
             try:
-                if (
-                    reason == "media_timeout"
-                    and leg.local_out is None
-                    and self.on_inbound_timeout is not None
-                ):
-                    await self.on_inbound_timeout(leg.call_id, reason)
-            except Exception:
-                _LOGGER.exception(
-                    "Conference inbound timeout signaling failed room=%s "
-                    "call_id=%s",
-                    self.name,
-                    leg.call_id,
-                )
+                await EndpointTerminationHandler(self.hass).terminate_reason(
+                    leg.call_id, reason, TerminationInitiator.RUNTIME)
             finally:
                 if reservation is not None:
                     reservation.release()
@@ -493,12 +513,6 @@ class ConferenceRoom:
                         # is less useful than current audio in a live room.
                         next_deadline = now
                 next_deadline += CONFERENCE_TICK_S
-                now = time.monotonic()
-                for call_id, leg in list(self.legs.items()):
-                    if self._rx_inactivity_expired(leg, now):
-                        await self.leave(call_id, reason="media_timeout")
-                if not self.legs:
-                    break
                 leg_items = list(self.legs.items())
                 input_frames = [self._input_frame(leg) for _call_id, leg in leg_items]
                 for (_call_id, leg), mixed in zip(leg_items, mix_frames(input_frames), strict=True):
@@ -548,24 +562,6 @@ class ConferenceRoom:
         finally:
             if not self._closed and not self.legs:
                 await self.close(reason="idle")
-
-    @staticmethod
-    def _rx_inactivity_expired(leg: _ConferenceLeg, now: float) -> bool:
-        """Apply RTP timeout only to a SIP leg expected to transmit audio.
-
-        A local ``sendonly``/``inactive`` answer explicitly tells the peer not
-        to send RTP. The browser conference leg may likewise be a deliberate
-        listener with no microphone frames. Neither is evidence of a dead SIP
-        dialog, and legacy c=0 hold suspends the expectation as well.
-        """
-
-        return bool(
-            leg.local_out is None
-            and leg.can_receive
-            and not leg.connection_held
-            and not (leg.decoder is not None and leg.decoder.comfort_noise_active)
-            and now - leg.last_rx > CONFERENCE_INACTIVITY_S
-        )
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -641,7 +637,6 @@ class ConferenceRoom:
         leg = self.legs.get(call_id)
         if leg is None:
             return
-        leg.last_rx = time.monotonic()
         leg.rx_packets += 1
         for frame in leg.in_converter.convert(pcm):
             if len(leg.in_fifo) >= 3:
@@ -747,7 +742,6 @@ class ConferenceManager:
         hass: HomeAssistant,
         *,
         local_ip: str,
-        on_inbound_timeout: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self.hass = hass
         self.local_ip = local_ip
@@ -756,7 +750,6 @@ class ConferenceManager:
         self._close_task: asyncio.Task[None] | None = None
         self._closing = False
         self._closed = False
-        self.on_inbound_timeout = on_inbound_timeout
 
     def _own_membership(
         self,
@@ -951,7 +944,6 @@ class ConferenceManager:
                 self.hass,
                 name=room_name,
                 local_ip=self.local_ip,
-                on_inbound_timeout=self.on_inbound_timeout,
             )
             self.rooms[room_name] = room
         endpoint_registry = endpoint_directory(self.hass)
@@ -1029,7 +1021,6 @@ class ConferenceManager:
                 self.hass,
                 name=room_key,
                 local_ip=self.local_ip,
-                on_inbound_timeout=self.on_inbound_timeout,
             )
             self.rooms[room_key] = room
         joined = await room.add_client_leg(
@@ -1188,14 +1179,12 @@ def conference_manager(
     hass: HomeAssistant,
     *,
     local_ip: str,
-    on_inbound_timeout: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> ConferenceManager:
     manager = conference_component(hass)
     if not isinstance(manager, ConferenceManager) or manager.local_ip != local_ip:
         manager = ConferenceManager(
             hass,
             local_ip=local_ip,
-            on_inbound_timeout=on_inbound_timeout,
         )
         pbx_runtime = sip_endpoint_runtime(hass)
         if pbx_runtime is None:
@@ -1205,8 +1194,4 @@ def conference_manager(
             manager,
             closer=manager.close,
         )
-    elif on_inbound_timeout is not None:
-        manager.on_inbound_timeout = on_inbound_timeout
-        for room in manager.rooms.values():
-            room.on_inbound_timeout = on_inbound_timeout
     return manager

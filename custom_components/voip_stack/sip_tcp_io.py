@@ -32,8 +32,9 @@ async def read_sip_stream_message(
 
     if first == b"\r":
         try:
-            second = await reader.readexactly(1)
-        except asyncio.IncompleteReadError:
+            async with asyncio.timeout(frame_timeout):
+                second = await reader.readexactly(1)
+        except (TimeoutError, asyncio.IncompleteReadError):
             return None
         return b"\r\n" if second == b"\n" else None
 
@@ -43,7 +44,7 @@ async def read_sip_stream_message(
         except (asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             return None
         if len(head) > sip.MAX_SIP_MESSAGE_BYTES:
-            return None
+            raise sip.SipMessageTooLarge(head[:sip.MAX_SIP_MESSAGE_BYTES], 513)
         try:
             text = head.decode("utf-8", errors="strict")
         except UnicodeDecodeError:
@@ -63,12 +64,12 @@ async def read_sip_stream_message(
                 content_length = int(value.strip())
             except ValueError:
                 return None
-        if (
-            content_length < 0
-            or content_length > sip.MAX_SIP_BODY_BYTES
-            or len(head) + content_length > sip.MAX_SIP_MESSAGE_BYTES
-        ):
+        if content_length < 0:
             return None
+        if content_length > sip.MAX_SIP_BODY_BYTES:
+            raise sip.SipMessageTooLarge(head, 413)
+        if len(head) + content_length > sip.MAX_SIP_MESSAGE_BYTES:
+            raise sip.SipMessageTooLarge(head, 513)
         try:
             body = await reader.readexactly(content_length) if content_length else b""
         except asyncio.IncompleteReadError:

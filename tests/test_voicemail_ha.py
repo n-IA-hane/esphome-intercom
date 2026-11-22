@@ -536,7 +536,6 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
     from unittest.mock import AsyncMock
     from custom_components import voip_stack
     from custom_components.voip_stack.phone_config import _add_phone_subentry
-    from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
     from custom_components.voip_stack.endpoint_session import TerminationIntent
 
     lab = browser_lab
@@ -551,7 +550,6 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
         data={"endpoint_id": "kitchen", "name": "Kitchen", "kind": "browser",
               "voicemail": {"enabled": True, "max_seconds": 10}},
     ))
-    setup_phone_policy_events(lab.hass, entry)
     lab.phones[0].auto_answer = False
     # This fixture has independent UDP phones, but no listener/REGISTER setup.
     # Declare their valid input bindings in the real registrar owner: changing

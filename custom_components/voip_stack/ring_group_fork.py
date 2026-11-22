@@ -183,9 +183,12 @@ def build_ring_group_fork(
             mode: LegCloseMode,
             outbound: OutboundLeg = attempt,
         ) -> None:
+            if mode is LegCloseMode.ANSWERED_ELSEWHERE:
+                outbound.client.cancel_reason = "answered_elsewhere"
             try:
                 await async_close_outbound_leg(
-                    outbound, bye_or_cancel=mode in {LegCloseMode.CANCEL_OR_BYE, LegCloseMode.BYE},
+                    outbound, bye_or_cancel=mode in {LegCloseMode.CANCEL_OR_BYE, LegCloseMode.BYE,
+                                                   LegCloseMode.ANSWERED_ELSEWHERE},
                 )
             finally:
                 if on_leg_state is not None:

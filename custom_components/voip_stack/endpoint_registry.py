@@ -167,6 +167,39 @@ class EndpointRegistry:
         )
         return endpoint
 
+    def rekey_accounts(self, mapping, *, apply=True):
+        """Replace configured account keys as one batch without retaining aliases."""
+        from .phone_endpoint import EndpointKind
+
+        future = EndpointRegistry()
+        changed = []
+        for endpoint in self.endpoints:
+            identity = mapping.get(endpoint.endpoint_id, endpoint.endpoint_id)
+            policy = endpoint.policy
+            for field in ("always", "busy", "unavailable", "no_answer"):
+                destination = getattr(policy, field)
+                if destination is not None and destination.target in mapping:
+                    policy = replace(policy, **{field: replace(destination, target=mapping[destination.target])})
+            candidate = replace(endpoint, endpoint_id=identity, username=identity,
+                                kind=EndpointKind.SIP_ACCOUNT, policy=policy,
+                                offline_forward_target=mapping.get(endpoint.offline_forward_target, endpoint.offline_forward_target)
+                                ) if endpoint.endpoint_id in mapping else replace(endpoint, policy=policy)
+            if candidate != endpoint:
+                if endpoint.active_call_id:
+                    raise EndpointBusyError(endpoint, endpoint.active_call_id)
+                changed.append((endpoint, candidate))
+            future.register(candidate)
+        if not apply:
+            return
+        self._endpoints = dict(future._endpoints)
+        self.subentry_ids = {mapping.get(key, key): value for key, value in self.subentry_ids.items()}
+        pending = {mapping.get(key, key) for key in self.pending_removals}
+        self.pending_removals.clear()
+        self.pending_removals.update(pending)
+        self._rebuild_indexes()
+        for previous, endpoint in changed:
+            self._emit(EndpointRegistryEvent(EndpointRegistryEventType.UPDATED, endpoint, previous))
+
     def upsert(self, endpoint: PhoneEndpoint) -> PhoneEndpoint:
         """Register or atomically replace one endpoint snapshot."""
         endpoint_key = _key(endpoint.endpoint_id)
@@ -243,7 +276,10 @@ class EndpointRegistry:
         return self._from_index(self._entity_index, entity_id)
 
     def by_name(self, name: object) -> PhoneEndpoint | None:
-        return self._from_index(self._name_index, name)
+        matches = [endpoint for endpoint in self._endpoints.values() if _key(endpoint.name) == _key(name)]
+        if len(matches) > 1:
+            raise EndpointAmbiguousError(str(name), tuple(sorted(endpoint.endpoint_id for endpoint in matches)))
+        return matches[0] if matches else None
 
     def by_extension(self, extension: object) -> PhoneEndpoint | None:
         value = str(extension or "").strip()
@@ -267,6 +303,8 @@ class EndpointRegistry:
         namespace: EndpointLookup | str | tuple[EndpointLookup | str, ...] | None = None,
     ) -> PhoneEndpoint | None:
         """Resolve one qualified identifier or an unqualified unique match."""
+        if namespace is None and (account := self.by_username(value)) is not None:
+            return account
         if namespace is not None and not isinstance(namespace, tuple):
             try:
                 lookup = EndpointLookup(namespace)
@@ -403,31 +441,15 @@ class EndpointRegistry:
             self._validate_index_value(
                 endpoint, "entity_id", entity_id, self._entity_index, replacing_key
             )
-        for field_name, value in (("name", endpoint.name), ("username", endpoint.username)):
-            value_key = normalize_roster_key(value)
-            if not value_key:
-                continue
-            owner_keys = self._route_index.get(value_key, set()) - {replacing_key}
-            if owner_keys:
-                owner_key = next(iter(owner_keys))
-                self._raise_collision(
-                    endpoint,
-                    field_name,
-                    value,
-                    self._endpoints[owner_key],
-                )
+        self._validate_index_value(endpoint, "username", endpoint.username, self._username_index, replacing_key)
 
-        extension_key = normalize_roster_key(endpoint.extension)
-        if extension_key:
-            owner_keys = self._route_index.get(extension_key, set()) - {replacing_key}
-            for owner_key in owner_keys:
-                owner = self._endpoints[owner_key]
-                if extension_key not in {
-                    normalize_roster_key(owner.name),
-                    normalize_roster_key(owner.username),
-                }:
-                    continue
+        for owner_key, owner in self._endpoints.items():
+            if owner_key == replacing_key:
+                continue
+            if endpoint.extension and _key(endpoint.extension) == _key(owner.username):
                 self._raise_collision(endpoint, "extension", endpoint.extension, owner)
+            if endpoint.username and _key(endpoint.username) == _key(owner.extension):
+                self._raise_collision(endpoint, "username", endpoint.username, owner)
 
     def _validate_index_value(
         self,

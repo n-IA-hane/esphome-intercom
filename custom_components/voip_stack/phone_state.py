@@ -67,7 +67,7 @@ def phone_state_dto(phone, *, peer_readable):
 
 def resolve_phone(hass, selector):
     directory = require_runtime_data(hass).endpoints
-    endpoint = resolve_service_phone(directory, selector, allow_internal=True)
+    endpoint = resolve_service_phone(directory, selector, allow_internal=True, hass=hass)
     if endpoint is None:
         raise ServiceValidationError("Select an existing phone")
     return endpoint
@@ -133,7 +133,7 @@ def phone_states(hass, *, dialogs=None):
         result[endpoint.endpoint_id] = {
             "schema_version": 1,
             "endpoint_id": endpoint.endpoint_id,
-            "device_id": endpoint.device_id,
+            "device_id": endpoint.ha_device_id,
             "name": endpoint.name,
             "extension": endpoint.extension,
             "kind": endpoint.kind.value,
@@ -218,6 +218,13 @@ class PhoneStateObserver:
     @callback
     def _endpoint_changed(self, event: EndpointRegistryEvent):
         previous = event.previous
+        if previous is not None and previous.endpoint_id != event.endpoint.endpoint_id:
+            identity = event.endpoint.endpoint_id
+            before = self.previous.pop(previous.endpoint_id, None)
+            if before is not None:
+                self.previous[identity] = {**before, 'endpoint_id': identity}
+            if previous.endpoint_id in self.dialogs:
+                self.dialogs[identity] = self.dialogs.pop(previous.endpoint_id)
         if (
             event.event_type is EndpointRegistryEventType.UPDATED
             and previous is not None
@@ -231,7 +238,7 @@ class PhoneStateObserver:
         self.refresh(dialogs=self.dialogs)
         if previous is not None and (
             previous.entity_ids != event.endpoint.entity_ids
-            or previous.device_id != event.endpoint.device_id
+            or previous.ha_device_id != event.endpoint.ha_device_id
             or previous.kind != event.endpoint.kind
         ):
             self._access_changed(event)

@@ -14,6 +14,10 @@ voip_stack:
             pcm_format: s16le
             channels: 1
             frame_ms: 20
+          - sample_rate: 48000
+            pcm_format: s16le
+            channels: 1
+            frame_ms: 10
         rx:
           - sample_rate: 16000
             pcm_format: s16le

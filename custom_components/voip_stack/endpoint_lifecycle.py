@@ -194,6 +194,14 @@ async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
     runtime = require_runtime_data(hass)
     pbx_runtime = runtime.sip
 
+    if pbx_runtime is not None:
+        leases = pbx_runtime.component("registrar_leases")
+        if leases is not None:
+            try:
+                await leases.async_close()
+            except Exception:
+                _LOGGER.exception("Could not persist SIP leases before shutdown")
+
     await cancel_runtime_tasks(hass)
     if pbx_runtime is not None:
         pbx_runtime.forward_call = None

@@ -16,6 +16,7 @@ from .call_projection import (
     stage_phone_termination_projection,
 )
 from .core.audio_format import HA_SIP_PCM_FORMATS
+from .core.media.negotiator import browser_rtp_format
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
@@ -432,7 +433,7 @@ class PendingLocalSource:
     def __init__(
         self, hass: HomeAssistant, snapshot: LocalCallSnapshot | None,
         local_ip: str, sip_port: int, *, call_id: str = "", retained_endpoint_id: str = "",
-        video_peer_format=None, established_client=None,
+        video_peer_format=None, established_client=None, established_dialog=None,
     ) -> None:
         from .core import sdp, sip
         from .sip_listener import SipInvite
@@ -447,9 +448,9 @@ class PendingLocalSource:
         session = self.registry.get_session(snapshot.call_id if snapshot else call_id)
         if self.established and not self.outgoing:
             if (snapshot is None or snapshot.caller_state is not LocalCallState.IN_CALL
-                    or snapshot.callee_state is not LocalCallState.IN_CALL or snapshot.video_active
+                    or snapshot.callee_state is not LocalCallState.IN_CALL
                     or retained_endpoint_id not in {snapshot.caller_endpoint_id, snapshot.callee_endpoint_id}):
-                raise RuntimeError("local handoff requires an established audio participant")
+                raise RuntimeError("local handoff requires an established participant")
         if session is None or (snapshot is not None and not self.established
                                and snapshot.callee_state is not LocalCallState.RINGING):
             raise RuntimeError("local call is no longer ringing")
@@ -461,7 +462,8 @@ class PendingLocalSource:
                 valid = (self.established and session.live and session.state in {"in_call", "held"}
                          and session.metadata.get("source_endpoint_id") == retained_endpoint_id
                          and retained_endpoint_id in session.endpoint_claims
-                         and established_client.dialog is not None
+                         and (established_client.dialog is not None or (established_dialog is not None
+                              and established_client.incoming_refer_dialog is established_dialog))
                          and self.registry.sip_client_for(established_client.dialog_ids.call_id) is established_client)
             if not valid:
                 raise RuntimeError("outgoing browser call is no longer ringing")
@@ -478,11 +480,17 @@ class PendingLocalSource:
             else:
                 self.call = BrowserSourceIdentity(snapshot.call_id, snapshot.caller_endpoint_id,
                                                   snapshot.callee_endpoint_id, snapshot.caller_media_owner_id)
-        self.video_requested = bool(self.previous_client.video_formats) if self.outgoing else snapshot.video_requested
-        self.caller_video_send = (
-            self.previous_client.video_direction in {"sendonly", "sendrecv"} and self.video_requested
-            if self.outgoing else snapshot.caller_video_send
-        )
+        accepted_dialog = established_dialog or (self.previous_client.dialog if self.outgoing else None)
+        self.video_requested = (accepted_dialog.video_format is not None if accepted_dialog is not None
+                                else bool(self.previous_client.video_formats)) if self.outgoing else snapshot.video_requested
+        local_video_direction = (accepted_dialog.local_video_direction if accepted_dialog is not None
+                                 else self.previous_client.video_direction) if self.outgoing else (
+            snapshot.video_direction_for(self.call.caller_endpoint_id) if self.established
+            else "sendrecv" if snapshot.caller_video_send and snapshot.caller_video_receive
+            else "sendonly" if snapshot.caller_video_send
+            else "recvonly" if snapshot.caller_video_receive else "inactive")
+        self.caller_video_send = self.video_requested and local_video_direction in {"sendonly", "sendrecv"}
+        self.caller_video_receive = self.video_requested and local_video_direction in {"recvonly", "sendrecv"}
         self.token = session.token
         self.media = self.registry.resource_for(session.call_id, "softphone_media")
         if self.outgoing and self.media is None:
@@ -502,11 +510,9 @@ class PendingLocalSource:
         callee = _endpoint(hass, self.call.callee_endpoint_id)
         if caller is None or (callee is None and not self.outgoing):
             raise RuntimeError("local phone disappeared during forwarding")
-        rtp_format = next(
-            fmt for fmt in HA_SIP_PCM_FORMATS
-            if fmt.channels == 1 and fmt.nominal_frame_bytes <= 1200
-        )
-        local_video_offer = None
+        rtp_format = browser_rtp_format()
+        local_video_offer = (sdp.RtpVideoFormat(payload_type=103, encoding="VP8", direction=local_video_direction)
+                             if not self.outgoing and self.established and self.video_requested else None)
         if (video_peer_format is not None and not self.outgoing and not self.established
                 and snapshot.video_enabled and self.video_requested):
             # A ringing browser has not committed its local VP8 encoder yet.
@@ -514,19 +520,20 @@ class PendingLocalSource:
             # a native display); otherwise the existing relay may transcode VP8.
             preferred = (video_peer_format if sdp.browser_video_send_supported(video_peer_format)
                          else sdp.RtpVideoFormat(payload_type=103, encoding="VP8"))
-            local_video_offer = replace(preferred,
-                direction="sendrecv" if self.caller_video_send else "recvonly")
+            local_video_offer = replace(preferred, direction=local_video_direction)
         self.invite = SipInvite(
             source_host=local_ip, source_port=sip_port,
             request_uri=sip.SipUri(callee.sip_uri_user if callee else session.callee, local_ip, sip_port),
             caller_uri=sip.SipUri(caller.sip_uri_user, local_ip, sip_port),
             target=callee.name if callee else session.callee, caller=caller.name, call_id=session.call_id,
             cseq="1 INVITE", remote_sdp=b"",
-            send_format=sdp.audio_format_to_rtp(rtp_format, 96),
-            recv_format=sdp.audio_format_to_rtp(rtp_format, 96),
+            send_format=rtp_format, recv_format=rtp_format,
             remote_rtp_host=local_ip, remote_rtp_port=0,
-            video_format=(replace(self.previous_client.video_format, direction=self.previous_client.video_direction)
+            video_format=(replace(accepted_dialog.send_video_format, direction=local_video_direction)
+                          if self.outgoing and accepted_dialog is not None and accepted_dialog.send_video_format is not None
+                          else replace(self.previous_client.video_format, direction=local_video_direction)
                           if self.outgoing and self.previous_client.video_format is not None else local_video_offer),
+            local_video_format=accepted_dialog.recv_video_format if self.outgoing and accepted_dialog is not None else None,
             remote_video_rtp_host=local_ip if self.video_requested else "",
         )
 
@@ -703,7 +710,7 @@ class PendingLocalSource:
         start_local_softphone_call(
             self.hass, self.call.caller_endpoint_id, endpoint_id, call_id=self.token.call_id,
             caller_owner_id=self.call.caller_media_owner_id, preserve_controller=True,
-            request_video=self.video_requested if request_video is None else request_video,
+            request_video=self.caller_video_receive if request_video is None else request_video,
             enable_caller_video_send=self.caller_video_send,
         )
         self.committed = True

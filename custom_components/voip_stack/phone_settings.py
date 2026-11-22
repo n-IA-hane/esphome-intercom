@@ -16,7 +16,7 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
     """Change future-call defaults without taking control of an active call."""
     registry = endpoint_directory(call.hass)
     directory = getattr(runtime_data(call.hass), "directory", None)
-    endpoint = resolve_service_phone(registry, call.data["device_id"])
+    endpoint = resolve_service_phone(registry, call.data["device_id"], hass=call.hass)
     if endpoint is None:
         raise ServiceValidationError("Select an existing VoIP phone")
     await async_require_phone_service_control(call.hass, call, endpoint=endpoint)

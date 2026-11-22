@@ -39,18 +39,19 @@ managed SIP access.
 
 ### How the ESP gets its SIP username
 
-The VoIP integration chooses the SIP login when it creates the account.
-With `esphome.name_add_mac_suffix: true`, it uses the
-effective node name reported by ESPHome, including the suffix. For example,
-the node `door` can report `door-a1b2c3`. With the option disabled, the
-integration uses the ESPHome `friendly_name` exactly as configured, including
-spaces and capitalization. An empty friendly name selects the node name. For
-example, `Piano Terra` is the SIP login on the ESP and in Home Assistant.
+The VoIP integration chooses the SIP login when it creates the account from
+ESPHome's effective `friendly_name`, preserving spaces and capitalization, or
+the effective node name when the friendly name is absent. ESPHome applies its
+native MAC suffix before publishing those names; VoIP Stack does not generate
+another suffix. For example, an effective friendly name `Piano Terra a1b2c3`
+is the same SIP login on the ESP and in Home Assistant.
 The username may occupy up to 64 UTF-8 bytes. Leading or trailing whitespace
 and control characters require a configuration change before enrollment.
-Renaming the device in Home Assistant updates its display name. Reloading
-the integration or changing the ESPHome name preserves the saved login,
-password and device identity.
+Renaming the device in Home Assistant updates its display label. An
+automatically named managed account follows an effective ESPHome name change
+when the phone is idle, preserving its password and HA device identity. A
+username explicitly edited in the account settings remains the chosen login;
+a reload or hardware rename does not replace that user choice.
 
 If another phone or route already uses the selected name, Home Assistant
 Repairs identifies the conflict. Choose a unique name in ESPHome and install
@@ -88,8 +89,14 @@ on that line. Failed OPTIONS discovery does not prevent an otherwise valid call.
 Use `voip_stack.start_call_on_line` with `id`, `target` and `line` to choose an
 account explicitly. `voip_stack.select_line` changes subsequent calls only.
 `direct` selects the existing phonebook and HA routing path. The native API's
-`start_call_on_line` uses `dest` and `line`; the YAML action uses `target`.
-An active call retains its own line, authentication and signaling flow.
+`start_call_on_line` uses `dest`, `line`, `send_video` and `receive_video`; the
+YAML action uses `target` and has optional video booleans that default to native
+configured intent. Both false requests audio only. Receive-only video uses
+`send_video: false`, `receive_video: true` and requires a real sink. Sending
+respects the native camera privacy setting. Auto-enrollment uses the
+zero-argument `register_ha_account()` action. Rebuild and upload the ESP
+firmware together with matching HA packages for this API. The ESP creates its
+SIP Call-ID. An active call retains its line, authentication and signaling flow.
 
 `voip_stack.set_account` and `remove_account` are volatile unless `persist: true`
 is requested. Persisted overrides take precedence over YAML after restart.

@@ -449,6 +449,15 @@ async def run_ring_group_call(
             return
         if winner is None:
             _take_pending_route(hass, invite.call_id)
+            fallback = str(entry.metadata.get("fallback_destination") or "")
+            if fallback:
+                from .route_decisions import dispatch_route_fallback
+
+                if not ha_origin:
+                    registry.set_pending_invite(invite.call_id, invite)
+                    authoritative_session.artifacts.caller_invite = invite
+                if dispatch_route_fallback(hass, authoritative_session, fallback):
+                    return
             status_code, sip_reason, terminal_reason, public_state = (
                 _sip_failure_response(final_result)
             )

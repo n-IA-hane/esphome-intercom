@@ -87,7 +87,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 sip_audio_rx_formats=tuple(
                     device.get("sip_audio_rx_formats") or ()
                 ),
-                sdp_features=frozenset(device.get("sdp_features") or ()),
+
             )
         )
         device["sip_transport"] = sip_transport
@@ -126,7 +126,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 audio_mode="full_duplex",
                 tx_formats=formats,
                 rx_formats=formats,
-                sdp_features=frozenset({"directional_audio_v1", "independent_audio_ptime_v1"}),
+
             )
         )
 

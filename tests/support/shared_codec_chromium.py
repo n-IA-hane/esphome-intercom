@@ -170,7 +170,7 @@ with sync_playwright() as runner:
                             "()=>controlEvents.filter(message=>message.type==='event'||message.success===false)"
                         ),
                         "card": page.evaluate(
-                            "()=>({state:card._softphoneSnapshot?.state,caller:card._softphoneSnapshot?.caller,callee:card._softphoneSnapshot?.callee,audioReady:engine._audioSession.ready,contextState:engine._audioSession.audioContext?.state,tracks:engine._audioSession.mediaStream?.getTracks().map(t=>t.readyState)||[],stats:engine._stats})"
+                            "()=>({state:card._softphoneSnapshot?.state,callId:engine._callId,ownedCallId:engine.softphoneCallIdFor(card._softphoneSnapshot?.endpoint_id),mediaClientId:engine.mediaClientId,caller:card._softphoneSnapshot?.caller,callee:card._softphoneSnapshot?.callee,audioReady:engine._audioSession.ready,contextState:engine._audioSession.audioContext?.state,tracks:engine._audioSession.mediaStream?.getTracks().map(t=>t.readyState)||[],stats:engine._stats,video:engine.stats.video,videoActive:engine.videoActive})"
                         ),
                     }
                 elif action == "close":

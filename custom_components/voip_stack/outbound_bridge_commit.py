@@ -79,6 +79,8 @@ class BridgeCommitData:
     source_client: Any | None = None
     prepared_media: Any | None = None
     retained_media: RetainedSourceMedia | None = None
+    retained_video_update: Any | None = None
+    retained_video_answer: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +207,7 @@ async def async_commit_outbound_bridge(
         if client.dialog is not None and session.state in {CallState.RINGING.value, CallState.REMOTE_RINGING.value}:
             registry.transition(invite.call_id, state=CallState.CONNECTING.value,
                                 expected_generation=generation)
-        video_answer = None
+        video_answer = data.retained_video_answer
         if winner.video_relay is not None and client.dialog is not None:
             video_answer = configure_answered_invite_video_relay(
                 invite, client.dialog, winner.video_relay,
@@ -227,6 +229,9 @@ async def async_commit_outbound_bridge(
                 data.retained_media.validate(registry)
                 if client.dialog is None:
                     raise RuntimeError("early bridge dialog closed before media commit")
+                if data.retained_video_update is not None:
+                    await data.retained_video_update.commit()
+                    _require_current()
                 relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(client.dialog))()
             relay._on_release = _release_ports
         elif data.prepared_media is not None:
@@ -342,7 +347,8 @@ async def async_commit_outbound_bridge(
 
         request_video_keyframe = await async_start_sip_bridge_media(relay)
         _require_current()
-        if policy.response_already_sent and video_answer is not None and relay.video_relay is not None:
+        if (policy.response_already_sent and video_answer is not None and relay.video_relay is not None
+                and data.retained_video_update is None):
             video_formats = tuple(dict.fromkeys((
                 relay.video_relay.left.recv_format, relay.video_relay.left.send_format,
             )))
@@ -422,9 +428,9 @@ async def async_commit_outbound_bridge(
                 name=f"voip-keyframe-{dest_call_id}",
             )
 
-        from .call_projection import publish_esp_media_route
+        from .call_projection import publish_media_route
 
-        publish_esp_media_route(hass, invite.call_id, relay.media_route)
+        publish_media_route(hass, invite.call_id, relay.media_route)
         result = BridgeCommitResult(
             relay,
             dest_call_id,

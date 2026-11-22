@@ -145,7 +145,7 @@ def collect_groups(
             if (group_id and group.group_type == GROUP_TYPE_RING
                     and metadata.get("endpoint_id") == f"group:ring:{group_id}"
                     and metadata.get("group_type") == GROUP_TYPE_RING
-                    and metadata.get("auto") is True and metadata.get("members") == group.members):
+                    and metadata.get("group_id")):
                 continue
         _LOGGER.warning("Skipping group %s because it collides with an existing roster entry", group.name)
     return {group.name: group for group in groups.values()}

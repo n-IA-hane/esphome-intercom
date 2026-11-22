@@ -639,7 +639,7 @@ def local_direction_for_offer(
     *,
     remote_connection_held: bool = False,
 ) -> str:
-    """Return the local direction, suppressing TX for legacy c=0 hold."""
+    """Return the local direction, suppressing TX for zero-address connection hold."""
 
     return constrained_media_direction(
         remote_direction,
@@ -676,55 +676,3 @@ def constrained_media_direction(
     if can_receive:
         return "recvonly"
     return "inactive"
-
-
-def supports_independent_audio_ptime(body: str | bytes) -> bool:
-    """Read the versioned capability only from the advertised audio media."""
-    text = (
-        body.text
-        if isinstance(body, SdpDocument)
-        else (
-            body.decode("utf-8", errors="strict") if isinstance(body, bytes) else body
-        )
-    )
-    sections = re.split(r"(?=^m=)", text.replace("\r\n", "\n"), flags=re.MULTILINE)
-    audio = next(
-        (
-            part
-            for part in sections
-            if part.startswith("m=audio ")
-            and len(part.splitlines()[0].split()) >= 4
-            and part.splitlines()[0].split()[2].upper() in {"RTP/AVP", "RTP/AVPF"}
-        ),
-        "",
-    )
-    return "a=x-voip-stack-independent-ptime:1" in {
-        line.strip() for line in audio.splitlines()[1:]
-    }
-
-
-def parse_audio_flow_attributes(remote_sdp: str | bytes) -> dict[int, str]:
-    text = (
-        remote_sdp.text
-        if isinstance(remote_sdp, SdpDocument)
-        else (
-            remote_sdp.decode("utf-8", errors="strict")
-            if isinstance(remote_sdp, bytes)
-            else remote_sdp
-        )
-    )
-    return {
-        int(match.group(1)): match.group(2).lower()
-        for match in re.finditer(
-            r"^a=x-voip-stack-flow:(\d+)\s+(send|recv|sendrecv)\s*$",
-            text.replace("\r\n", "\n"),
-            flags=re.IGNORECASE | re.MULTILINE,
-        )
-    }
-
-
-def has_directional_flow_attributes(remote_sdp: str | bytes) -> bool:
-    flows = set(parse_audio_flow_attributes(remote_sdp).values())
-    can_send = bool(flows & {"send", "sendrecv"})
-    can_recv = bool(flows & {"recv", "sendrecv"})
-    return can_send and can_recv

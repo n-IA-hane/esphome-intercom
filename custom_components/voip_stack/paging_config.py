@@ -77,3 +77,19 @@ def update_phone_paging_groups(hass, entry, endpoint_id, selected):
     for record, data in updates:
         hass.config_entries.async_update_subentry(entry, record, data=data)
     return bool(updates)
+
+
+def sync_paging_devices(hass, entry):
+    """Keep each paging service on its existing native config subentry."""
+    from homeassistant.helpers import device_registry as dr
+    from .const import DOMAIN
+
+    devices = dr.async_get(hass)
+    for row in entry.subentries.values():
+        if row.subentry_type != "paging":
+            continue
+        identity = str(row.data.get("paging_group_id") or row.subentry_id)
+        devices.async_get_or_create(config_entry_id=entry.entry_id, config_subentry_id=row.subentry_id,
+            identifiers={(DOMAIN, f"paging:{identity}")}, name=row.title,
+            manufacturer="VoIP Stack", model="Paging group", model_id="paging_group",
+            entry_type=dr.DeviceEntryType.SERVICE)

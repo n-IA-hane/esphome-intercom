@@ -193,8 +193,8 @@ entity alone is not an advertised SIP receive display. See [SIP video](SIP_VIDEO
 
 Home Assistant owns one canonical directory. Its public sensor/JSON view and
 LDAP service project that same data. Current managed ESP profiles receive shared
-contacts through LDAP; the native JSON roster action remains a compatibility
-path for firmware without managed LDAP. Directory records and the selected call
+contacts through LDAP, the sole dynamic ESP directory provider. Manual static
+contacts remain available. Directory records and the selected call
 line resolve names, extensions and numbers into SIP destinations or HA routes.
 
 Direct calls use SIP URIs such as:

@@ -83,8 +83,16 @@ def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy,
             allowed = policy.encodings if policy.encodings is not None else DEFAULT_AUDIO_CODECS
             for item in declared:
                 if item.mapping[0] in {"L16", "L24"} and item.mapping[0] in allowed and item.mapping not in known:
-                    values.extend(RtpPcmFormat(96, *item.mapping, packet_ms)
-                                  for packet_ms in item.times.explicit)
+                    for packet_ms in item.times.explicit or (policy.default_packet_ms,):
+                        fmt = RtpPcmFormat(96, *item.mapping, packet_ms)
+                        if not receive:
+                            choice = choose_transmit_packet_ms(CODECS[fmt.encoding],
+                                fmt.sample_rate, fmt.channels, producible=PacketTimes(),
+                                default_ms=packet_ms, receiver=ReceiverBounds(), budget=policy.budget)
+                            if choice is None:
+                                continue
+                            fmt = replace(fmt, frame_ms=choice.packet_ms)
+                        values.append(fmt)
                     known.add(item.mapping)
     if policy.codec_order:
         values.sort(key=lambda fmt: policy.codec_order.index(fmt.encoding)
@@ -114,14 +122,18 @@ def _declared_catalog(values, declaration, *, explicit, capabilities, receive):
 
 def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_formats=None,
                           recv_rtp_formats=None, audio_rtp_formats=None, common=False,
-                          dahua=False, directional=False, independent=True, direction="sendrecv",
+                          dahua=False, direction="sendrecv",
                           capabilities=None, previous=None, codec_policy=None, evidence=None):
     """Plan one full or explicitly constrained offer; never guess missing codecs."""
+    # A sendrecv m-line advertises formats usable in either direction. Local
+    # preferences remain directional; private flow flags do not grant codecs.
     if audio_rtp_formats is not None:
         send_rtp_formats = tuple(fmt for fmt in audio_rtp_formats if fmt.audio_format in send_formats)
         recv_rtp_formats = tuple(fmt for fmt in audio_rtp_formats if fmt.audio_format in receive_formats)
-    peer_sends = evidence.sends if evidence is not None and evidence.complete else ()
-    peer_receives = evidence.receives if evidence is not None and evidence.complete else ()
+    known_send = evidence is not None and (evidence.complete or evidence.send_geometry_complete)
+    known_receive = evidence is not None and (evidence.complete or evidence.receive_geometry_complete)
+    peer_sends = evidence.sends if known_send else ()
+    peer_receives = evidence.receives if known_receive else ()
     sends = (_catalog(send_formats, send_rtp_formats, receive=False, common=common, dahua=dahua,
                       capabilities=capabilities, policy=policy, codec_policy=codec_policy,
                       declared=peer_receives) if direction != "recvonly" else [])
@@ -131,9 +143,10 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     explicit = send_rtp_formats is not None or recv_rtp_formats is not None
     explicit_rows = list(audio_rtp_formats if audio_rtp_formats is not None else
                          (*(send_rtp_formats or ()), *(recv_rtp_formats or ())))
-    if explicit and (common or dahua):
+    if explicit and common:
         # Explicit entries keep their mappings and parameters. Common codecs
         # add new alternatives only; they do not widen an existing entry's role.
+        # A vendor PCM permission alone never expands a complete RTP catalog.
         known = {_key(fmt) for fmt in (*sends, *receives)}
         extra_send = (_catalog(send_formats, None, receive=False, common=common, dahua=dahua,
                               capabilities=capabilities, policy=policy) if direction != "recvonly" else [])
@@ -147,11 +160,19 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
                     and fmt.encoding not in {"L16", "L24"})
         sends.extend(fmt for fmt in extra_send if additional(fmt))
         receives.extend(fmt for fmt in extra_receive if additional(fmt))
-    if evidence is not None and evidence.complete:
+    if known_receive:
         sends = _declared_catalog(sends, peer_receives, explicit=send_rtp_formats is not None,
                                  capabilities=capabilities, receive=False)
+    if known_send:
         receives = _declared_catalog(receives, peer_sends, explicit=recv_rtp_formats is not None,
                                     capabilities=capabilities, receive=True)
+    for values, declaration in ((sends, evidence.receives if evidence else ()),
+                                (receives, tuple(item for item in evidence.sends if item.times.fixed)
+                                 if evidence else ())):
+        ranking = {item.mapping: index for index, item in enumerate(declaration)}
+        values.sort(key=lambda fmt: (
+            policy.codec_order.index(fmt.encoding) if fmt.encoding in policy.codec_order else len(policy.codec_order),
+            ranking.get(_key(fmt), len(ranking))))
     send_keys, receive_keys = {_key(fmt) for fmt in sends}, {_key(fmt) for fmt in receives}
     if direction == "sendrecv" and (not sends or not receives):
         raise ValueError("No enabled audio codec has the required local directions")
@@ -159,8 +180,6 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
         chosen = sends
     elif direction == "recvonly":
         chosen = receives
-    elif directional:
-        chosen = [*sends, *receives]
     else:
         chosen = [fmt for fmt in sends if _key(fmt) in receive_keys]
     if explicit:
@@ -191,15 +210,10 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     maximum = min((receive_limit(fmt) for fmt in active_receive), default=0)
     receiver = capabilities or HA_AUDIO_CAPABILITIES
     preferred = active_receive[0].frame_ms if active_receive else 0
-    active_send = [fmt for fmt in sends if _key(fmt) in ordered]
-    legacy_common_time = directional and not independent and direction == "sendrecv"
-    sender_times = {fmt.frame_ms for fmt in active_send} if legacy_common_time else None
-    explicit_send = [fmt for fmt in active_send if fmt in (send_rtp_formats or ())]
-    explicit_receive = [fmt for fmt in active_receive if fmt in (recv_rtp_formats or ())]
 
     def supports_time(fmt, packet_ms, *, receive):
-        if evidence is not None and evidence.complete:
-            declaration = peer_sends if receive else peer_receives
+        if evidence is not None and evidence.complete and not receive:
+            declaration = peer_receives
             if not any(item.mapping == _key(fmt) and item.times.contains(packet_ms) for item in declaration):
                 return False
         local = receive_formats if receive else send_formats
@@ -212,16 +226,6 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     def compatible(packet_ms):
         if not packet_ms or not active_receive:
             return False
-        if legacy_common_time:
-            if not supports_time(active_send[0], packet_ms, receive=False):
-                return False
-            # A caller's explicit mappings are hard input. Automatic mappings
-            # may be omitted when they cannot share the legacy primary's time.
-            if any(not supports_time(fmt, packet_ms, receive=False) for fmt in explicit_send):
-                return False
-            if any(not supports_time(fmt, packet_ms, receive=True) for fmt in explicit_receive):
-                return False
-            return any(supports_time(fmt, packet_ms, receive=True) for fmt in active_receive)
         if maximum and packet_ms > maximum:
             return False
         return all(supports_time(fmt, packet_ms, receive=True) for fmt in active_receive)
@@ -233,28 +237,12 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     # preset even though every receiver implements the primary duration.
     common_order = (policy.default_packet_ms, *sorted(common_times))
     common_candidates = [value for value in common_order if value in common_times]
-    primary_time = (active_send[0].frame_ms,) if legacy_common_time else ()
-    candidates = dict.fromkeys((*primary_time, *common_candidates, preferred, policy.default_packet_ms,
-        *(fmt.frame_ms for fmt in active_receive), *sorted(sender_times or ()), *STANDARD_LADDER_MS))
+    candidates = dict.fromkeys((preferred, *common_candidates, policy.default_packet_ms,
+        *(fmt.frame_ms for fmt in active_receive), *STANDARD_LADDER_MS))
     packet_ms = (sends[0].frame_ms if direction == "sendonly" else
                  next((value for value in candidates if compatible(value)), 0))
-    if legacy_common_time and not packet_ms:
-        raise ValueError("Legacy directional audio requires a common packet time")
-    pruned = []
-    if legacy_common_time:
-        for values, receiving in ((active_send, False), (active_receive, True)):
-            for fmt in values:
-                if not supports_time(fmt, packet_ms, receive=receiving):
-                    side = "receive" if receiving else "send"
-                    pruned.append(f"R3 omitted automatic {side} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}: "
-                                  f"cannot use the primary's {packet_ms} ms within its fixed set and budget")
-        sends = [fmt for fmt in active_send if supports_time(fmt, packet_ms, receive=False)]
-        receives = [fmt for fmt in active_receive if supports_time(fmt, packet_ms, receive=True)]
-        active_receive = receives
-        send_keys, receive_keys = {_key(fmt) for fmt in sends}, {_key(fmt) for fmt in receives}
-        ordered = [key for key in ordered if key in send_keys | receive_keys]
-        chosen = [*sends, *receives]
-        maximum = min((receive_limit(fmt) for fmt in active_receive), default=0)
+    if active_receive and not packet_ms:
+        raise ValueError("Audio mappings have no common receivable packet time")
     events = list(dict.fromkeys([8000, *(clock for _encoding, clock, _channels in ordered)]))
     auxiliary = []
     cn_clock = CODECS["CN"].static_clock_rate
@@ -277,14 +265,13 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
                                     previous=previous, preferences=preferences)
     numbers = {mapping: number for number, mapping in numbered.receive.items()}
     mapped_sends = tuple(replace(fmt, payload_type=numbers[_key(fmt)]) for fmt in sends if _key(fmt) in ordered)
-    mapped_receives = tuple(replace(fmt, payload_type=numbers[_key(fmt)]) for fmt in active_receive)
+    mapped_receives = tuple(replace(fmt, payload_type=numbers[_key(fmt)],
+        frame_ms=packet_ms, max_frame_ms=maximum) for fmt in active_receive)
     unique = {_key(fmt): replace(fmt, payload_type=numbers[_key(fmt)]) for fmt in reversed(chosen)}
     primary = tuple(unique[mapping] for mapping in ordered)
     aux_formats = tuple(RtpPcmFormat(numbers[mapping], *mapping, packet_ms or 20) for mapping in auxiliary)
-    flows = tuple((numbers[mapping], "sendrecv" if mapping in send_keys and mapping in receive_keys
-                   else "send" if mapping in send_keys else "recv") for mapping in ordered)
     return OfferPlan(tuple(numbered.receive.items()), packet_ms,
-        (f"S1 offered {len(primary)} enabled primary mappings", f"R1 ask {packet_ms or 'unspecified'} ms", *pruned),
+        (f"S1 offered {len(primary)} enabled primary mappings", f"R1 ask {packet_ms or 'unspecified'} ms"),
         formats=(*primary, *aux_formats), send_formats=mapped_sends, receive_formats=mapped_receives,
         events=tuple(RtpDtmfFormat(numbers[(TELEPHONE_EVENT, clock, 1)], clock) for clock in events),
-        flows=flows, maximum_ms=maximum)
+        maximum_ms=maximum, include_dahua_pcm=dahua)

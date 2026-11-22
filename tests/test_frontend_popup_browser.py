@@ -1198,3 +1198,88 @@ def test_revoked_account_stream_clears_open_popup_and_card_without_hangup(popup_
     assert page.evaluate("services") == []
     assert page.evaluate("mics") == 0
     assert page.evaluate("streams.filter(s=>s.active && s.request.type==='voip_stack/subscribe_ha_softphone_state').length") == 0
+
+
+def test_video_handset_and_each_runtime_icon_keep_independent_native_hit_targets(popup_page):
+    page = popup_page
+    page.set_viewport_size({"width": 1100, "height": 850})
+    page.evaluate("""async()=>{
+      await import('/voip-stack-card.js');
+      const {buildMainCardSkeleton}=await import('/voip-stack-card-view.js');
+      const Card=customElements.get('voip-stack-card');
+      const dialog=document.createElement('voip-stack-phone-dialog');root.shadowRoot.append(dialog);
+      const view=document.createElement('div');view.attachShadow({mode:'open'});
+      const hits=[];window.controlHits=hits;
+      view._hangup=()=>hits.push('hangup');view._parkCall=()=>hits.push('park');
+      view._toggleKeypad=()=>hits.push('keypad');view._toggleSettings=()=>hits.push('settings');
+      view._sessionCallId=()=>'owned-call';view._getSoftphoneEndpointId=()=>'Desk @ East';
+      __voipStackEngine.setMicrophoneMuted=()=>hits.push('microphone');
+      view._attachEventHandlers=()=>Card.prototype._attachEventHandlers.call(view);
+      view._observeLayout=()=>{};view._layoutPhoneActivity=Card.prototype._layoutPhoneActivity;
+      view._measureLayout=Card.prototype._measureLayout;
+      buildMainCardSkeleton.call(view,'independent-hits');dialog._view.append(view);
+      const e=view._els;e.card.classList.add('video-active');
+      for(const item of [e.header,e.destRow,e.answerBtn,e.declineBtn,e.callBtn,e.placeholderBtn,
+          e.settingsPanel,e.keypadPanel,e.voicemailPanel])item.hidden=true;
+      for(const button of e.runtimeControls.querySelectorAll('button'))button.hidden=true;
+      for(const button of [e.parkBtn,e.keypadBtn,e.settingsBtn,e.microphoneBtn,e.hangupBtn])button.hidden=false;
+      e.videoCanvas.hidden=false;e.videoCanvas.width=160;e.videoCanvas.height=90;
+      e.hangupPeer.textContent='Sala, Nord';e.hangupDuration.textContent='00:45';
+      dialog._dialog.showModal();view._measureLayout();
+      const point=node=>{const r=node.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,width:r.width,height:r.height};};
+      window.hitTargets=()=>Object.fromEntries(['hangupBtn','parkBtn','keypadBtn','settingsBtn','microphoneBtn','hangupPeer']
+        .map(key=>[key,point(e[key])]));
+      window.videoLayout=()=>({fit:getComputedStyle(e.videoCanvas).objectFit,
+        position:getComputedStyle(e.videoCanvas).objectPosition});
+    }""")
+    points = page.evaluate("hitTargets()")
+    assert points["hangupBtn"]["width"] >= 44 and points["hangupBtn"]["height"] >= 44
+    for key in ("hangupBtn", "parkBtn", "keypadBtn", "settingsBtn", "microphoneBtn", "hangupPeer"):
+        page.mouse.click(points[key]["x"], points[key]["y"])
+    assert page.evaluate("controlHits") == ["hangup", "park", "keypad", "settings", "microphone"]
+    assert page.evaluate("videoLayout()") == {"fit": "contain", "position": "50% 50%"}
+
+
+def test_audio_and_video_call_controls_keep_receive_intent_and_camera_privacy_separate(popup_page):
+    page = popup_page
+    observed = page.evaluate("""async()=>{
+      await import('/voip-stack-card.js');
+      const {buildMainCardSkeleton}=await import('/voip-stack-card-view.js');
+      const Card=customElements.get('voip-stack-card');
+      const view=document.createElement('div');view.attachShadow({mode:'open'});
+      view._observeLayout=()=>{};view._attachEventHandlers=()=>Card.prototype._attachEventHandlers.call(view);
+      const controls=[];view._startCall=(destination,options)=>controls.push(options);
+      buildMainCardSkeleton.call(view,'explicit-video-intent');
+      view._els.callBtn.click();view._els.videoCallBtn.click();
+      const card=new Card();card._render=()=>{};card._callOperationId=0;
+      card._getSoftphoneTargetDevice=()=>({name:'Peer with video',capabilities:['audio','video']});
+      card._softphoneRequestScope=()=>({endpoint_id:'Desk',device_id:'desk-device'});
+      card._getSoftphoneEndpointId=()=>'Desk';card._getHaName=()=>'Desk';
+      card._microphoneAntiAliasEnabled=()=>true;card._softphoneSupportsVideo=()=>true;
+      const requests=[];let cameraRequests=0;
+      __voipStackEngine.prepareAudioCall=async()=>{};
+      __voipStackEngine.prepareVideoCameraPermission=async()=>{cameraRequests++;return true;};
+      __voipStackEngine.startHaSoftphone=async(_peer,_source,intent)=>{requests.push({receive:intent.receiveVideo,send:intent.sendVideo});return null;};
+      for(const [options,cameraEnabled,preference] of [
+        [{receiveVideo:false,sendVideo:false},true,true],
+        [{receiveVideo:true},false,true],
+        [{receiveVideo:true},true,true],
+        [{receiveVideo:false,sendVideo:true},true,false],
+        [{},true,true],
+        [{receiveVideo:true},true,false],
+      ]){
+        card._softphoneSnapshot={send_video:preference,video_camera_send_enabled:cameraEnabled};
+        await card._startHaSoftphoneCall({},0,'Peer with video',options);
+      }
+      return {controls,requests,cameraRequests,
+        audioLabel:view._els.callBtn.getAttribute('aria-label'),
+        videoLabel:view._els.videoCallBtn.getAttribute('aria-label')};
+    }""")
+    assert observed["controls"] == [{"receiveVideo": False, "sendVideo": False}, {"receiveVideo": True}]
+    assert observed["requests"] == [
+        {"receive": False, "send": False}, {"receive": True, "send": False},
+        {"receive": True, "send": True}, {"receive": False, "send": True},
+        {"receive": False, "send": False}, {"receive": True, "send": False},
+    ]
+    assert observed["cameraRequests"] == 2
+    assert observed["audioLabel"] == "Call" and observed["videoLabel"] == "Video call"

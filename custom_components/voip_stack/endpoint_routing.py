@@ -10,18 +10,17 @@ from homeassistant.core import HomeAssistant
 from .trunk_policy import trunk_available
 from .core.audio_format import (
     AudioFormat,
-    HA_SIP_PCM_RX_FORMATS,
-    HA_SIP_PCM_TX_FORMATS,
-    choose_common_frame_ms,
     parse_audio_format_list,
 )
-from .core.audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_formats
-from .core.media.codecs import PREFERRED_PAYLOADS
+from .core.codec_policy import CodecPolicy
+from .core.media import negotiator
+from .core.media.bridge import plan_bridge_offer
+from .core.media.capability import PeerEvidence
 from .core import sdp
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
 from .roster import RosterEntry, find_entry, normalize_roster_key
-from .router import resolve_ha_router
+from .router import RouteAction, RouteDecision, RouteReason, resolve_ha_router
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, runtime_data
 from .store import manual_roster_entries
 
@@ -30,267 +29,53 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class SipAudioCapabilityProfile:
-    """One endpoint's ordered, directional RTP wire capabilities."""
+    """Projection of the media engine's ordered local offer capabilities."""
 
     send_formats: tuple[AudioFormat, ...]
     recv_formats: tuple[AudioFormat, ...]
     send_rtp_formats: tuple[sdp.RtpPcmFormat, ...]
     recv_rtp_formats: tuple[sdp.RtpPcmFormat, ...]
-    sdp_features: frozenset[str]
+    evidence: PeerEvidence | None = None
+    codec_policy: CodecPolicy | None = None
+    include_dahua_pcm: bool = False
+    match_received_codec: bool = False
 
     @classmethod
-    def from_rtp(
-        cls,
-        send_rtp_formats: tuple[sdp.RtpPcmFormat, ...],
-        recv_rtp_formats: tuple[sdp.RtpPcmFormat, ...],
-        sdp_features: frozenset[str] = frozenset(),
-    ) -> SipAudioCapabilityProfile:
-        """Keep local PCM selection independent of advisory RTP offer order."""
+    def from_plan(cls, plan, *, evidence=None, codec_policy=None):
         return cls(
-            send_formats=tuple(HA_AUDIO_CAPABILITIES.expand(
-                list(HA_SIP_PCM_TX_FORMATS), list(send_rtp_formats),
-            )),
-            recv_formats=tuple(HA_AUDIO_CAPABILITIES.expand(
-                list(HA_SIP_PCM_RX_FORMATS), list(recv_rtp_formats), receive=True,
-            )),
-            send_rtp_formats=send_rtp_formats,
-            recv_rtp_formats=recv_rtp_formats,
-            sdp_features=sdp_features,
-        )
+            send_formats=tuple(dict.fromkeys(fmt.audio_format for fmt in plan.send_formats)),
+            recv_formats=tuple(dict.fromkeys(fmt.audio_format for fmt in plan.receive_formats)),
+            send_rtp_formats=plan.send_formats, recv_rtp_formats=plan.receive_formats,
+            evidence=evidence, codec_policy=codec_policy,
+            include_dahua_pcm=plan.include_dahua_pcm, match_received_codec=plan.match_received_codec)
 
 
-def _rtp_capability_tokens(
-    peer: Peer | None,
-    entry,
-    direction: str,
-    device: dict | None = None,
-) -> list[str]:
-    field = f"sip_audio_{direction}_formats"
+def _binding_audio_evidence(entry):
     metadata = dict(getattr(entry, "metadata", None) or {})
-    if metadata.get("sip_capabilities_known"):
-        return [str(item) for item in metadata.get(field, ())]
-    if peer is not None:
-        direct = getattr(peer, field, ())
-        if direct:
-            return [str(item) for item in direct]
-        device = peer.device or {}
-        if device.get(field):
-            return [str(item) for item in device[field]]
-    value = metadata.get(field) or (device or {}).get(field) or ()
-    return [str(item) for item in value]
+    if not metadata.get("sip_capabilities_known"):
+        return PeerEvidence()
+    return PeerEvidence.from_options(metadata)
 
 
-def _endpoint_sdp_features(
-    peer: Peer | None,
-    entry,
-    device: dict | None = None,
-) -> frozenset[str]:
-    metadata = dict(getattr(entry, "metadata", None) or {})
-    known = {"directional_audio_v1", "independent_audio_ptime_v1"}
-    if metadata.get("sip_capabilities_known"):
-        return frozenset(str(item).casefold() for item in metadata.get("sdp_features", ())) & known
-    values: set[str] = set()
-    if peer is not None:
-        values.update(str(item).casefold() for item in peer.sdp_features)
-        values.update(
-            str(item).casefold()
-            for item in (peer.device or {}).get("sdp_features", ())
-        )
-    values.update(
-        str(item).casefold()
-        for item in (getattr(entry, "metadata", None) or {}).get(
-            "sdp_features", ()
-        )
-    )
-    values.update(
-        str(item).casefold()
-        for item in (device or {}).get("sdp_features", ())
-    )
-    return frozenset(values & known)
+def sip_target_rtp_audio_profile(entry, *, codec_policy=None, peer_user_agent=None, trunk=False):
+    """Get one engine plan from backend capabilities and Contact-scoped SDP facts."""
+    evidence = _binding_audio_evidence(entry)
+    plan = negotiator.sip_offer_plan(evidence, codec_policy=codec_policy,
+        peer_metadata=dict(getattr(entry, "metadata", None) or {}),
+        peer_user_agent=peer_user_agent, trunk=trunk)
+    return SipAudioCapabilityProfile.from_plan(plan, evidence=evidence, codec_policy=codec_policy)
 
 
-def _assign_capability_payloads(
-    formats: tuple[sdp.RtpPcmFormat, ...],
-    payloads: dict[tuple[str, int, int], int] | None = None,
-) -> tuple[sdp.RtpPcmFormat, ...]:
-    """Share one payload mapping between local send and receive capabilities."""
-    payloads = payloads if payloads is not None else {}
-    used: set[int] = set(payloads.values())
-    dynamic = 96
-    out: list[sdp.RtpPcmFormat] = []
-    seen: set[tuple[str, int, int, int]] = set()
-    preferred_payloads = {
-        **PREFERRED_PAYLOADS,
-    }
-    for fmt in formats:
-        key = (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
-        wire_key = (*key, fmt.frame_ms)
-        if wire_key in seen:
-            continue
-        seen.add(wire_key)
-        payload = payloads.get(key)
-        if payload is None:
-            payload = preferred_payloads.get(key)
-        if payload is None or (payload in used and payloads.get(key) != payload):
-            while dynamic in used or dynamic in preferred_payloads.values():
-                dynamic += 1
-            if dynamic > 127:
-                raise sdp.SdpError("No RTP payload type available for local audio capabilities")
-            payload = dynamic
-            dynamic += 1
-        used.add(payload)
-        payloads[key] = payload
-        out.append(replace(fmt, payload_type=payload))
-    return tuple(out)
-
-
-def _rtp_audio_hints(
-    tokens: list[str], legacy_formats: list[AudioFormat]
-) -> list[sdp.RtpPcmFormat]:
-    """Parse advisory preferences without treating them as local capabilities."""
-    hints = []
-    for token in tokens:
-        try:
-            hints.append(sdp.parse_rtp_audio_capability(token))
-        except sdp.SdpError as err:
-            _LOGGER.warning("Ignoring invalid SIP RTP capability %r: %s", token, err)
-    if not tokens:
-        encodings = {"s16le": "L16", "s24le": "L24", "s24le_in_s32": "L24"}
-        hints.extend(
-            sdp.RtpPcmFormat(96, encodings[fmt.pcm_format], fmt.sample_rate,
-                             fmt.channels, fmt.frame_ms)
-            for fmt in legacy_formats if fmt.pcm_format in encodings
-        )
-    return hints
-
-
-def sip_target_has_unspecified_audio(
-    peer: Peer | None, entry, device: dict | None = None
-) -> bool:
-    """Unregistered SIP targets need negotiation, not an implicit PCM-only policy."""
-    metadata = dict(getattr(entry, "metadata", None) or {})
-    info = dict(device or (peer.device if peer is not None else None) or {})
-    kind = str(
-        (peer.endpoint_kind if peer is not None else "")
-        or metadata.get("endpoint_kind")
-        or info.get("endpoint_kind")
-        or ""
-    )
-    if kind in {"browser", "assist"}:
-        return False
-    return not any(
-        _rtp_capability_tokens(peer, entry, direction, device)
-        or peer_audio_formats(peer, direction + "_formats")
-        or roster_entry_formats(entry, direction + "_formats")
-        or device_formats(device, direction + "_formats")
-        for direction in ("tx", "rx")
-    )
-
-
-def sip_target_offer_common_audio(
-    peer: Peer | None,
-    entry,
-    device: dict | None = None,
-) -> bool:
-    """Keep a complete offer unless this Contact declared its full fixed set."""
-    return not _binding_audio_evidence(peer, entry, device).complete
-
-
-def _binding_audio_evidence(peer, entry, device=None):
-    from .core.media.capability import PeerEvidence
-    metadata = dict(getattr(entry, "metadata", None) or {})
-    return PeerEvidence.from_tokens(
-        _rtp_capability_tokens(peer, entry, "tx", device),
-        _rtp_capability_tokens(peer, entry, "rx", device),
-        complete=bool(metadata.get("sip_capabilities_known") and metadata.get("sip_audio_capabilities_complete")),
-    )
-
-
-def sip_target_rtp_audio_profile(
-    peer: Peer | None,
-    entry,
-    device: dict | None = None,
-    *, codec_policy=None,
-) -> SipAudioCapabilityProfile | None:
-    """Order local backend capabilities using advisory remote preferences."""
-
-    remote_tx_tokens = _rtp_capability_tokens(peer, entry, "tx", device)
-    remote_rx_tokens = _rtp_capability_tokens(peer, entry, "rx", device)
-    metadata = dict(getattr(entry, "metadata", None) or {})
-    legacy_tx = [] if metadata.get("sip_capabilities_known") else (
-        peer_audio_formats(peer, "tx_formats") or roster_entry_formats(entry, "tx_formats")
-        or device_formats(device, "tx_formats")
-    )
-    legacy_rx = [] if metadata.get("sip_capabilities_known") else (
-        peer_audio_formats(peer, "rx_formats") or roster_entry_formats(entry, "rx_formats")
-        or device_formats(device, "rx_formats")
-    )
-    # Remote RX preferences rank HA's transmitter; remote TX ranks our receiver.
-    shared_payloads: dict[tuple[str, int, int], int] = {}
-    send_rtp = local_rtp_audio_formats(
-        list(HA_SIP_PCM_TX_FORMATS), hints=_rtp_audio_hints(remote_rx_tokens, legacy_rx),
-    )
-    recv_rtp = local_rtp_audio_formats(
-        list(HA_SIP_PCM_RX_FORMATS), hints=_rtp_audio_hints(remote_tx_tokens, legacy_tx),
-        receive=True,
-    )
-    from .core.media.offers import expand_configured_linear_formats
-    send_rtp = _assign_capability_payloads(expand_configured_linear_formats(
-        send_rtp, HA_SIP_PCM_TX_FORMATS, codec_policy, receive=False), shared_payloads)
-    recv_rtp = _assign_capability_payloads(expand_configured_linear_formats(
-        recv_rtp, HA_SIP_PCM_RX_FORMATS, codec_policy, receive=True), shared_payloads)
-    from .core.media.capability import constrain_formats
-    evidence = _binding_audio_evidence(peer, entry, device)
-    if evidence.complete:
-        send_rtp = constrain_formats(send_rtp, evidence.receives)
-        recv_rtp = constrain_formats(recv_rtp, evidence.sends)
-    return SipAudioCapabilityProfile.from_rtp(
-        send_rtp_formats=send_rtp,
-        recv_rtp_formats=recv_rtp,
-        sdp_features=_endpoint_sdp_features(peer, entry, device),
-    )
-
-
-def bridge_audio_profile(
-    invite,
-    send_formats: list[AudioFormat],
-    recv_formats: list[AudioFormat],
-    profile: SipAudioCapabilityProfile | None,
-    *,
-    include_common_codecs: bool,
-) -> SipAudioCapabilityProfile:
-    """Prefer the caller's wire audio while retaining destination fallbacks.
-
-    Discovery ranks the backend's capabilities. Bridge preferences retain
-    those alternatives and the destination's independent receive packet time.
-    """
-    if profile is None:
-        frame_ms = choose_common_frame_ms(send_formats, recv_formats)
-        formats = sdp.audio_offer_formats(
-            [fmt for fmt in [*send_formats, *recv_formats] if fmt.frame_ms == frame_ms],
-            capability_formats=[*send_formats, *recv_formats],
-            include_common_codecs=include_common_codecs,
-            preferred_frame_ms=frame_ms,
-        )
-        send = tuple(fmt for fmt in formats if fmt.audio_format in send_formats)
-        recv = tuple(fmt for fmt in formats if fmt.audio_format in recv_formats)
-        profile = SipAudioCapabilityProfile.from_rtp(send, recv)
-
-    def prefer(formats, source):
-        # Favor a passthrough codec while retaining the destination's ordered
-        # packet times. The other dialog leg cannot own this receiver's ptime.
-        return tuple(sorted(formats, key=lambda fmt:
-            (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
-            != (source.encoding.upper(), source.sample_rate, source.channels)
-        ))
-
-    send = prefer(profile.send_rtp_formats, invite.recv_format)
-    # Keep the destination transmitter's preferences for our receiver.
-    # A backend fallback must not override that order using another leg.
-    recv = profile.recv_rtp_formats
-    # SDP's advertised preference does not remove the decoder/encoder quanta
-    # needed for a legal answer (for example G.722 with a 20 ms packet time).
-    return replace(profile, send_rtp_formats=send, recv_rtp_formats=recv)
+def bridge_audio_profile(invite, profile):
+    """Project the bridge planner's destination offer without another selection."""
+    plan = plan_bridge_offer(profile.send_formats, profile.recv_formats, invite.recv_format,
+        send_rtp_formats=profile.send_rtp_formats,
+        receive_rtp_formats=profile.recv_rtp_formats,
+        evidence=profile.evidence, codec_policy=profile.codec_policy,
+        common=False, dahua=profile.include_dahua_pcm,
+        match_received_codec=profile.match_received_codec)
+    return SipAudioCapabilityProfile.from_plan(plan,
+        evidence=profile.evidence, codec_policy=profile.codec_policy)
 
 
 def same_route_name(left: str, right: str) -> bool:
@@ -308,6 +93,17 @@ def is_ha_target(hass: HomeAssistant, value: str) -> bool:
 
 def ha_router_decision(hass: HomeAssistant, target: str, entries: list, *, source_endpoint_id: str = "", trunk_id: str = ""):
     """Resolve one target against the canonical HA dial plan."""
+
+    if source_endpoint_id or trunk_id:
+        from .trunk_selection import parse_public_trunk_destination, select_call_trunk
+
+        explicit, dial_target = parse_public_trunk_destination(hass, target)
+        if explicit:
+            selected = select_call_trunk(hass, requested=explicit, endpoint_id=source_endpoint_id)
+            return RouteDecision(RouteAction.TRUNK if selected.available else RouteAction.REJECT,
+                target=dial_target, trunk_id=selected.identity, source="trunk",
+                status=0 if selected.available else 503,
+                reason=RouteReason.TRUNK_UNAVAILABLE if not selected.available else RouteReason.TRUNK_SERVICE_CODE)
 
     from .parking import resolve_parking_route
     parking = resolve_parking_route(hass, target)
@@ -508,41 +304,6 @@ def roster_entry_formats(entry, key: str) -> list[AudioFormat]:
         return []
 
 
-def sip_target_audio_profile(
-    *,
-    remote_tx_formats: list[AudioFormat] | None,
-    remote_rx_formats: list[AudioFormat] | None,
-    target: str,
-) -> tuple[list[AudioFormat], list[AudioFormat]]:
-    """Rank backend PCM capabilities without constraining authoritative SDP."""
-    send_rtp = local_rtp_audio_formats(
-        list(HA_SIP_PCM_TX_FORMATS), hints=_rtp_audio_hints([], list(remote_rx_formats or [])),
-    )
-    recv_rtp = local_rtp_audio_formats(
-        list(HA_SIP_PCM_RX_FORMATS), hints=_rtp_audio_hints([], list(remote_tx_formats or [])),
-        receive=True,
-    )
-    profile = SipAudioCapabilityProfile.from_rtp(send_rtp, recv_rtp)
-    send_candidates, recv_candidates = list(profile.send_formats), list(profile.recv_formats)
-    _LOGGER.debug(
-        "Directional SIP PCM profile for %s: send=%s recv=%s",
-        target,
-        [fmt.wire_token() for fmt in send_candidates],
-        [fmt.wire_token() for fmt in recv_candidates],
-    )
-    return send_candidates, recv_candidates
-
-
-def supports_directional_audio_payloads(peer: Peer | None, entry) -> bool:
-    """Return whether the destination implements the ESP directional SDP profile."""
-    return "directional_audio_v1" in _endpoint_sdp_features(peer, entry)
-
-
-def supports_independent_audio_ptime(peer: Peer | None, entry) -> bool:
-    """Allow the D1 timing upgrade only for an explicitly capable target."""
-    return "independent_audio_ptime_v1" in _endpoint_sdp_features(peer, entry)
-
-
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
     """Share canonical identities without caching a call's Contact selection."""
     runtime = runtime_data(hass)
@@ -619,7 +380,7 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
                     "rx_formats": list(peer.rx_formats or []),
                     "sip_audio_tx_formats": list(peer.sip_audio_tx_formats),
                     "sip_audio_rx_formats": list(peer.sip_audio_rx_formats),
-                    "sdp_features": sorted(peer.sdp_features),
+
                     "conference_group": peer.conference_group,
                     "conference_ring": bool(peer.conference_ring),
                     "ring_group": peer.ring_group,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import contextlib
 import logging
@@ -53,6 +53,8 @@ class LocalAudioContract:
     dtmf_payload_type: int | None = None
     dtmf_clock_rate: int = 8000
     dtmf_events: frozenset[int] = frozenset()
+    recv_dtmf_formats: tuple = ()
+    send_dtmf_formats: tuple = ()
 
     @classmethod
     def from_dialog(cls, dialog):
@@ -124,6 +126,11 @@ def source_dtmf_formats(source):
     """Read negotiated events from a dialog contract or an actual SIP offer."""
     from .core.sdp import RtpDtmfFormat, offered_dtmf_formats
 
+    accepted = tuple(getattr(source, "recv_dtmf_formats", ()))
+    if accepted:
+        primary = getattr(source, "recv_dtmf_format", None)
+        payload = primary.payload_type if primary is not None else getattr(source, "dtmf_payload_type", None)
+        return tuple(sorted(accepted, key=lambda fmt: fmt.payload_type != payload))
     if isinstance(source, LocalAudioContract):
         return (RtpDtmfFormat(source.dtmf_payload_type, source.dtmf_clock_rate, source.dtmf_events),) if source.dtmf_payload_type is not None else ()
     if isinstance(source, SipInvite):
@@ -163,7 +170,6 @@ class LocalCallMedia:
         self.on_dtmf = None
         self._dtmf_sdp = None
         self._dtmf_decoder = None
-        self._dtmf_events = frozenset()
 
         self.transport: asyncio.DatagramTransport | None = None
         self._rtp_socket = rtp_socket
@@ -201,6 +207,7 @@ class LocalCallMedia:
             "drop_addr": 0,
             "drop_payload_type": 0,
             "drop_ssrc": 0,
+            "drop_sequence": 0,
             "drop_decode": 0,
             "drop_rx_queue": 0,
             "rx_suppressed": 0,
@@ -212,6 +219,32 @@ class LocalCallMedia:
             "pipeline_runs": 0,
             "speech_gate_opens": 0,
         }
+        self._bind_receive_callback(self.decoder)
+
+    def _bind_receive_callback(self, receiver):
+        receiver.set_reorder_callback(
+            lambda frames: self._receive_pcm(receiver, frames),
+            lambda error: self._receive_error(receiver, error))
+
+    def _receive_error(self, receiver, error):
+        if receiver is self.decoder and not self.closed.is_set():
+            self.counters["drop_decode"] += 1
+            _LOGGER.debug("Deferred local RTP audio drop call_id=%s: %s", self.invite.call_id, error)
+
+    def _receive_pcm(self, receiver, frames):
+        """Feed immediate and deferred decoded audio through one application sink."""
+        if receiver is not self.decoder or self.closed.is_set():
+            return
+        if receiver.last_source_changed or receiver.last_gap_ms:
+            self.rx_converter = PcmFrameConverter(self.rx_converter.src, self.rx_converter.dst)
+        if not frames:
+            return
+        if not self._accepting_input:
+            self.counters["rx_suppressed"] += 1
+            return
+        for frame in (frame for pcm in frames for frame in self.rx_converter.convert(pcm)):
+            if put_drop_oldest(self.rx_queue, frame):
+                self.counters["drop_rx_queue"] += 1
 
     def prepare_media_update(self, updated: SipInvite | LocalAudioContract) -> Callable[[], None]:
         """Prepare an atomic in-dialog audio update for the Local call RTP leg."""
@@ -252,6 +285,8 @@ class LocalCallMedia:
                 raise RuntimeError("Local call media session ended before media commit")
             if self.invite is not previous:
                 raise RuntimeError("Assist media contract changed before commit")
+            self.decoder.close()
+            self.encoder.close()
             self.decoder = decoder
             self.encoder = encoder
             self.rx_converter = rx_converter
@@ -263,6 +298,7 @@ class LocalCallMedia:
             self.can_send = can_send
             self.invite = updated
             self._dtmf_sdp = None
+            self._bind_receive_callback(decoder)
 
         return _commit
 
@@ -339,6 +375,8 @@ class LocalCallMedia:
             if self._cleanup_done.is_set():
                 return
             self.closed.set()
+            self.decoder.close()
+            self.encoder.close()
             current = asyncio.current_task()
             tasks = [self._consumer_task, self._tts_task, self._tx_task]
             for task in tasks:
@@ -387,52 +425,43 @@ class LocalCallMedia:
             return
         try:
             packet = rtp.parse_packet(data)
-            if self.on_dtmf is not None:
+            if self.invite.remote_sdp != self._dtmf_sdp or self._dtmf_decoder is not None or self.on_dtmf is not None:
                 if self._dtmf_sdp != self.invite.remote_sdp:
                     from .dtmf import RtpDtmfDecoder
 
                     formats = source_dtmf_formats(self.invite)
                     self._dtmf_sdp = self.invite.remote_sdp
-                    self._dtmf_decoder = RtpDtmfDecoder(formats[0].payload_type) if formats else None
-                    self._dtmf_events = formats[0].events if formats else frozenset()
-                if self._dtmf_decoder is not None and packet.payload_type == self._dtmf_decoder.payload_type:
-                    from .dtmf import telephone_event_code
-
-                    digit = self._dtmf_decoder.decode(data)
-                    if digit and telephone_event_code(digit) in self._dtmf_events:
+                    self._dtmf_decoder = RtpDtmfDecoder(formats, audio_receiver=self.decoder) if formats else None
+                if self._dtmf_decoder is not None and self._dtmf_decoder.accepts(packet.payload_type):
+                    report = self._dtmf_decoder.decode_report(data)
+                    digit = report.digit if report is not None and report.first else ""
+                    if report is not None and report.shared_audio:
+                        if report.source_changed:
+                            self.decoder.reset_source()
+                            self.rx_converter = PcmFrameConverter(self.rx_converter.src, self.rx_converter.dst)
+                        self.decoder.observe_non_audio_sequence(packet.sequence)
+                        self.remote_ssrc, self.remote_rtp_port = report.ssrc, int(addr[1])
+                    if digit and self.on_dtmf is not None:
                         self.on_dtmf("left", digit, "rtp_event")
                     return
             received_format = self.decoder.format_for(packet.payload_type)
             if received_format is None:
                 self.counters["drop_payload_type"] += 1
                 return
-            if self.remote_ssrc is not None and packet.ssrc != self.remote_ssrc:
-                self.counters["drop_ssrc"] += 1
+            pcm_frames = self.decoder.decode_rtp(packet,
+                normalize_frames=self.rx_converter.requires_fixed_input)
+            if not self.decoder.last_packet_accepted:
+                counter = "drop_ssrc" if packet.ssrc != self.decoder.source_ssrc else "drop_sequence"
+                self.counters[counter] += 1
                 return
-            # Normalize before resampling. For duration-only conversion, the
-            # converter owns reassembly; two reframers would strand a valid
-            # pipeline quantum across their different input/output buffers.
-            variable_input = (not self.rx_converter.requires_fixed_input
-                and self.rx_converter.src != self.rx_converter.dst
-                and replace(received_format.audio_format, frame_ms=self.rx_converter.src.frame_ms)
-                == self.rx_converter.src)
-            pcm_frames = ([self.decoder.decode_packet(packet.payload_type, packet.payload)]
-                if variable_input else self.decoder.decode(packet.payload_type, packet.payload, normalize_frames=True))
             # A valid short packet may only fill the normalizer. Its source is
             # still valid; malformed payloads must never establish or rebind it.
-            self.remote_ssrc = packet.ssrc
+            self.remote_ssrc = self.decoder.source_ssrc
             self.remote_rtp_port = int(addr[1])
             # Count accepted RTP packets even when their PCM is still buffered.
             self.counters["rtp_rx"] += 1
             self.encoder.follow_received(self.decoder.format_for(packet.payload_type))
-            if not pcm_frames:
-                return
-            if not self._accepting_input:
-                self.counters["rx_suppressed"] += 1
-                return
-            for frame in (frame for pcm in pcm_frames for frame in self.rx_converter.convert(pcm)):
-                if put_drop_oldest(self.rx_queue, frame):
-                    self.counters["drop_rx_queue"] += 1
+            self._receive_pcm(self.decoder, pcm_frames)
         except Exception as err:  # noqa: BLE001 - malformed media cannot end the call.
             self.counters["drop_decode"] += 1
             _LOGGER.debug(

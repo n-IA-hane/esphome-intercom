@@ -172,6 +172,15 @@ async def async_refresh_directory(hass, *, peers=None, registered=None, prepare_
     return directory.snapshot()
 
 
+def directory_user(directory, row):
+    """Return the public SIP identity exposed to directory clients."""
+    metadata = row.metadata
+    if (metadata.get("endpoint_kind") in {"sip_account", "esphome", "browser", "ha_softphone"}
+            and not metadata.get("virtual_endpoint") and not metadata.get("group_type")):
+        return row.id
+    return next(directory.dial_users(row), "")
+
+
 def directory_uri(hass, row):
     """Return a canonical PBX address while retaining the row's call policy."""
     from .core.sip import SipUri
@@ -182,7 +191,7 @@ def directory_uri(hass, row):
     if not host:
         return ""
     if contact_key_reference(row) or row.metadata.get("virtual_endpoint") or row.metadata.get("group_type"):
-        user = next(runtime.directory.dial_users(row), "")
+        user = directory_user(runtime.directory, row)
     else:
-        user = row.id  # The composed phone row carries its public SIP username.
+        user = row.id
     return str(SipUri(user, host, int(runtime.transport_config["sip_port"]))) if user else ""

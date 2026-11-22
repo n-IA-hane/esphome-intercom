@@ -14,7 +14,13 @@ from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpo
 pytestmark = pytest.mark.ha
 
 
-def test_pending_browser_source_offers_mono_rtp_without_lowering_sample_rate(monkeypatch):
+@pytest.mark.parametrize("send,receive,direction", [
+    (False, False, "inactive"), (False, True, "recvonly"),
+    (True, False, "sendonly"), (True, True, "sendrecv"),
+])
+def test_pending_browser_source_preserves_pcm_rate_and_video_intent(monkeypatch, send, receive, direction):
+    from custom_components.voip_stack.core import sdp
+
     phones = {
         name: PhoneEndpoint(endpoint_id=name, name=name, kind=EndpointKind.BROWSER)
         for name in ("caller", "callee")
@@ -31,15 +37,22 @@ def test_pending_browser_source_offers_mono_rtp_without_lowering_sample_rate(mon
         object(),
         SimpleNamespace(call_id="local-call", caller_endpoint_id="caller",
                         callee_endpoint_id="callee", caller_media_owner_id="caller-owner",
-                        video_requested=False, caller_video_send=False,
+                        video_requested=send or receive, video_enabled=send or receive,
+                        caller_video_send=send, caller_video_receive=receive,
                         callee_state=local.LocalCallState.RINGING),
-        "127.0.0.1", 15060,
+        "127.0.0.1", 15060, video_peer_format=sdp.RtpVideoFormat(payload_type=103, encoding="VP8"),
     )
     assert source.invite.call_id == "local-call"
     for format in (source.invite.send_format, source.invite.recv_format):
         assert format.audio_format.sample_rate == 48000
         assert format.audio_format.channels == 1
         assert format.audio_format.nominal_frame_bytes <= 1200
+    assert source.caller_video_send is send
+    assert source.caller_video_receive is receive
+    if send or receive:
+        assert source.invite.video_format.direction == direction
+    else:
+        assert source.invite.video_format is None
     assert media == {"local_bridge": True}
 
 

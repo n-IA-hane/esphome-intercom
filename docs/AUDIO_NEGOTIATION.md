@@ -24,9 +24,10 @@ come from the local receiver and the actual local offer, not the peer's receive
 limits. `ptime` describes a receive preference; the two directions need not use
 the same packet duration. `maxptime` bounds packet duration for that receiver.
 
-The optional per-payload directional attributes use the same codec checks.
-Older directional peers keep their shared-quantum compatibility rule. Ordinary
-standard SIP does not require those attributes or ESP discovery.
+The engine uses standard payload mappings, direction, `ptime` and `maxptime`
+attributes. Every accepted sendrecv alternative must be usable in both
+directions. No private per-payload attributes, identity headers or ESP discovery
+are required for directional preferences.
 
 ## Implemented media envelope
 

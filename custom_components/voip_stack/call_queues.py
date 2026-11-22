@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import math
 import time
 from typing import Callable
@@ -199,13 +199,19 @@ class QueueManager:
         updated = QueuePolicy.from_data({**asdict(policy), **changes})
         if any(member not in queue.members for member in updated.agent_order):
             raise ValueError("Agent order must contain only configured queue members")
+        ordered = tuple(dict.fromkeys((*updated.agent_order, *queue.members)))
+        updated = replace(updated, agent_order=ordered)
         if self.hass is not None:
             from .group_config import group_subentries
             for item in group_subentries(self.entry):
                 if item.data.get("group_id") == queue.queue_id:
+                    saved_policy = asdict(updated)
+                    saved_policy.pop("agent_order", None)
                     self.hass.config_entries.async_update_subentry(self.entry, item,
-                        data={**item.data, "policy": asdict(updated), "enabled": updated.enabled})
+                        data={**item.data, "members": list(ordered),
+                              "policy": saved_policy, "enabled": updated.enabled})
                     break
+        self.definitions[queue.queue_id] = replace(queue, members=ordered)
         self.policies[queue.queue_id] = updated
         self._event("policy_changed", queue_id=queue.queue_id)
         self._changed(persist=True)
@@ -682,11 +688,13 @@ async def async_set_queue_agent_state(call):
     from .service_endpoints import async_require_phone_service_control
     endpoint = resolve_phone(call.hass, call.data["phone"])
     await async_require_phone_service_control(call.hass, call, endpoint=endpoint)
+    from .service_endpoints import resolve_service_group_reference
+    queue_ref = resolve_service_group_reference(call.hass, call.data["queue"], kind="queue")
     manager = get_queue_manager(call.hass)
     if manager is None:
         raise ServiceValidationError("Queues are unavailable")
     try:
-        manager.set_agent_state(call.data["queue"], endpoint.endpoint_id, call.data["state"], call.data.get("reason", ""))
+        manager.set_agent_state(queue_ref, endpoint.endpoint_id, call.data["state"], call.data.get("reason", ""))
     except ValueError as error:
         raise ServiceValidationError(str(error)) from error
 
@@ -696,12 +704,14 @@ async def async_get_queue_state(call):
     from .phone_state import resolve_phone
     from homeassistant.exceptions import ServiceValidationError
     await async_require_service_admin(call.hass, call)
+    from .service_endpoints import resolve_service_group_reference
+    queue_ref = resolve_service_group_reference(call.hass, call.data["queue"], kind="queue")
     manager = get_queue_manager(call.hass)
     if manager is None:
         raise ServiceValidationError("Queues are unavailable")
     phone = resolve_phone(call.hass, call.data["phone"]).endpoint_id if call.data.get("phone") else None
     try:
-        return manager.get_state(call.data["queue"], phone)
+        return manager.get_state(queue_ref, phone)
     except ValueError as error:
         raise ServiceValidationError(str(error)) from error
 
@@ -710,10 +720,15 @@ async def async_configure_queue(call):
     from .authorization import async_require_service_admin
     from homeassistant.exceptions import ServiceValidationError
     await async_require_service_admin(call.hass, call)
+    from .service_endpoints import resolve_service_group_reference
+    queue_ref = resolve_service_group_reference(call.hass, call.data["queue"], kind="queue")
     manager = get_queue_manager(call.hass)
     if manager is None:
         raise ServiceValidationError("Queues are unavailable")
     try:
-        manager.configure(call.data["queue"], {key: value for key, value in call.data.items() if key != "queue"})
+        changes = {key: value for key, value in call.data.items() if key != "queue"}
+        if isinstance(changes.get("hold_media"), dict):
+            changes["hold_media"] = changes["hold_media"]["media_content_id"]
+        manager.configure(queue_ref, changes)
     except (ValueError, TypeError) as error:
         raise ServiceValidationError(str(error)) from error

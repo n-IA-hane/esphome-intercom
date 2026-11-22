@@ -161,7 +161,8 @@
           "parking": "Call parking",
           "voicemail": "Voicemail voice",
           "phone_services": "LDAP directory",
-          "phone_provisioning": "Phone discovery and provisioning"
+          "phone_provisioning": "Phone discovery and provisioning",
+          "esphome_enrollment": "Re-enroll an ESPHome phone"
         }
       },
       "phone_services": {
@@ -294,6 +295,13 @@
         "data_description": {
           "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
         }
+      },
+      "esphome_enrollment": {
+        "title": "Re-enroll an ESPHome phone",
+        "description": "Choose the ESPHome device whose managed SIP account was removed. VoIP Stack creates a new account from its native name and associates it with the existing hardware device.",
+        "data": {
+          "device_id": "ESPHome phone"
+        }
       }
     },
     "error": {
@@ -360,7 +368,8 @@
       "invalid_phone_key_order": "Choose each existing key exactly once.",
       "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
       "phone_provisioning_disabled": "Provisioning is off. To manage this phone, enable provisioning under VoIP Stack > Reconfigure > Phone discovery and provisioning, then return here.",
-      "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec."
+      "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
+      "managed_esphome_missing": "Select a connected ESPHome phone whose managed SIP account was removed."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -392,38 +401,6 @@
             "kind": "Phone type"
           }
         },
-        "browser": {
-          "title": "Home Assistant softphone",
-          "description": "Create a logical phone for one or more Lovelace cards. Cards bound to the same phone ring together; the first one to answer owns the media.",
-          "data": {
-            "name": "Name",
-            "extension": "Extension",
-            "enabled": "Enabled",
-            "dnd": "Do not disturb",
-            "ring_group": "Ring group",
-            "conference_group": "Conference group",
-            "conference_ring": "Ring for conference calls",
-            "video_enabled": "Allow video",
-            "auto_answer": "Auto answer",
-            "send_video": "Send video",
-            "voicemail_enabled": "Enable mailbox",
-            "audio_codecs": "Audio codec preference",
-            "audio_codecs_inherit": "Use integration audio codecs",
-            "video_codecs": "Video codec preference",
-            "video_codecs_inherit": "Use integration video codecs"
-          },
-          "data_description": {
-            "name": "Required phone name used by the card, phonebook and call routing.",
-            "extension": "Optional unique dialable extension. The logical phone remains ringable when no browser card is connected.",
-            "auto_answer": "Automatically answer when an attached browser has microphone permission.",
-            "send_video": "Send an attached browser camera by default when video is negotiated and permission is available.",
-            "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
-            "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
-            "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-            "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
-            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
-          }
-        },
         "sip_account": {
           "title": "Standard SIP account",
           "description": "Create credentials for any standard SIP/RTP phone or softphone. No vendor-specific behavior is used.",
@@ -438,8 +415,6 @@
             "conference_group": "Conference group",
             "conference_ring": "Ring for conference calls",
             "video_enabled": "Allow video negotiation",
-            "offline_policy": "When not registered",
-            "offline_forward_target": "Forward destination",
             "voicemail_enabled": "Enable mailbox",
             "physical_bindings": "Associated physical phones",
             "auto_answer": "Auto answer in the browser",
@@ -447,7 +422,17 @@
             "audio_codecs": "Audio codec preference",
             "audio_codecs_inherit": "Use integration audio codecs",
             "video_codecs": "Video codec preference",
-            "video_codecs_inherit": "Use integration video codecs"
+            "video_codecs_inherit": "Use integration video codecs",
+            "queues": "Queues",
+            "forward_action": "Always route calls",
+            "forward_to": "Always destination",
+            "busy_action": "When busy",
+            "busy_to": "Busy destination",
+            "unavailable_action": "When unavailable",
+            "unavailable_to": "Unavailable destination",
+            "ringing_timeout": "No-answer ringing limit",
+            "no_answer_action": "When unanswered",
+            "no_answer_to": "No-answer destination"
           },
           "data_description": {
             "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
@@ -456,11 +441,41 @@
             "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
             "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
             "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
-            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+            "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+            "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
+            "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
+            "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
+            "ringing_timeout": "Seconds before the no-answer action. Zero leaves this account without a no-answer deadline.",
+            "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
+            "busy_to": "Used by the selected busy action.",
+            "unavailable_to": "Used by the selected unavailable action.",
+            "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account."
           }
         },
         "reconfigure": {
-          "title": "Reconfigure phone"
+          "title": "Reconfigure phone",
+          "data": {
+            "queues": "Queues",
+            "forward_action": "Always route calls",
+            "forward_to": "Always destination",
+            "busy_action": "When busy",
+            "busy_to": "Busy destination",
+            "unavailable_action": "When unavailable",
+            "unavailable_to": "Unavailable destination",
+            "ringing_timeout": "No-answer ringing limit",
+            "no_answer_action": "When unanswered",
+            "no_answer_to": "No-answer destination"
+          },
+          "data_description": {
+            "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
+            "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
+            "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
+            "ringing_timeout": "Seconds before the no-answer action. Zero leaves this account without a no-answer deadline.",
+            "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
+            "busy_to": "Used by the selected busy action.",
+            "unavailable_to": "Used by the selected unavailable action.",
+            "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account."
+          }
         }
       },
       "error": {
@@ -474,20 +489,23 @@
         "phone_line_occupied": "That physical line is already assigned to another account.",
         "phone_line_has_keys": "Reassign or remove keys using this line before removing the association.",
         "invalid_phone_configuration": "Check the phone configuration and selected references.",
-        "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec."
+        "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
+        "phone_groups_invalid": "Choose valid group names within the supported length.",
+        "phone_policy_invalid": "Choose a valid action and ringing time.",
+        "phone_forward_loop": "Choose a destination outside this account forwarding chain.",
+        "phone_mailbox_required": "Choose an account with voicemail enabled."
       },
       "abort": {
         "reconfigure_successful": "Phone reconfigured successfully.",
         "already_configured": "This phone already exists.",
-        "phone_configured": "SIP account configured.",
-        "managed_esphome_account": "VoIP Stack created this login automatically for the [ESPHome device](/config/devices/device/{device_id}). Its SIP username is shown below. Removing this account revokes the login. Adding the device to ESPHome again creates a new login.\n\n    {username}",
-        "managed_esphome_missing": "This ESPHome device no longer has this SIP account."
+        "phone_configured": "SIP account configured."
       }
     },
     "contact": {
       "entry_type": "Contact",
       "initiate_flow": {
-        "user": "Add contact"
+        "user": "Add contact",
+        "reconfigure": "Edit contact"
       },
       "title": "Contact",
       "step": {
@@ -523,6 +541,9 @@
       "error": {
         "invalid_contact": "Use a unique name and extension. An ordinary contact needs a number or SIP address; an Automation contact must not contain them.",
         "invalid_sip_profile": "Select a valid SIP profile. Explicit Dahua audio choices require the Dahua profile. Automation contacts cannot use device profiles."
+      },
+      "abort": {
+        "reconfigure_successful": "Contact updated"
       }
     },
     "trunk": {
@@ -639,11 +660,11 @@
         },
         "group": {
           "title": "Configure group",
-          "description": "Membership is shared with each phone settings.",
+          "description": "Add members to one list and drag them into order. Phone settings display membership from this group.",
           "data": {
             "name": "Name",
             "extension": "Extension",
-            "members": "Phones",
+            "members": "Ordered members",
             "enabled": "Enabled",
             "keep_empty": "Keep this group when empty",
             "max_waiting": "Maximum waiting callers",
@@ -653,7 +674,7 @@
             "retry_delay": "Retry delay (seconds)",
             "wrap_up": "Pause after a call (seconds)",
             "fallback": "Fallback destination",
-            "hold_media": "Hold audio URI",
+            "hold_media": "Hold audio",
             "strategy": "Distribution strategy",
             "auto_pause_after": "Pause after unanswered rings (0 disables)",
             "fallback_full": "Fallback when full",
@@ -661,16 +682,22 @@
             "fallback_no_agents": "Fallback without operators",
             "fallback_disabled": "Fallback when disabled",
             "fallback_removed": "Fallback when removed",
-            "queue_members": "Queue members"
+            "overall_timeout": "Overall ringing limit",
+            "step_timeout": "Ringing time per step",
+            "clear_hold_media": "Remove saved hold audio"
           },
           "data_description": {
             "auto_pause_after": "Disabled at 0. Set 3 to pause after three unanswered ringing attempts; busy, offline and cancellations do not count.",
-            "fallback": "Used when a specific exit destination is empty.",
-            "queue_members": "Add the phones that may answer, then drag to order them. Ring all rings every eligible member together. Configured order follows the list, round robin rotates through it, and longest idle uses it to break ties.",
+            "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
             "ring_timeout": "How long each attempt rings. The queue uses its own wait limit and fallback. A phone's personal no-answer rule applies to direct calls.",
             "max_wait": "Total waiting time, including ringing and pauses between attempts. The final attempt may be shorter to respect this limit.",
             "retry_delay": "Pause before offering the same waiting call again. Changes in agent availability can trigger an earlier check.",
-            "fallback_timeout": "Where the queue sends the caller after the maximum wait. A voicemail destination deposits directly; a phone destination applies that phone's normal ringing policy. Empty uses the common fallback."
+            "fallback_timeout": "Where the queue sends the caller after the maximum wait. A voicemail destination deposits directly; a phone destination applies that phone's normal ringing policy. Empty uses the common fallback.",
+            "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
+            "strategy": "Parallel rings eligible members together. Sequential follows the member list. Queue distribution follows its selected strategy and uses the same ordered list.",
+            "overall_timeout": "Maximum time for this ring group before fallback. The default is 30 seconds.",
+            "step_timeout": "Maximum time before advancing to the next member or priority tier. The default is 15 seconds and cannot exceed the overall limit.",
+            "hold_media": "Choose audio from Home Assistant Media for waiting callers."
           }
         }
       },
@@ -678,8 +705,7 @@
         "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
       },
       "abort": {
-        "reconfigure_successful": "Group updated",
-        "queue_member_device_missing": "{count} saved queue members have no enabled Home Assistant device. Restore their device or update membership in their phone settings before editing this queue."
+        "reconfigure_successful": "Group updated"
       }
     },
     "paging": {
@@ -695,14 +721,19 @@
           "data": {
             "name": "Name",
             "extension": "Extension",
-            "members": "Phones",
+            "members": "Ordered receivers",
             "answer_timeout": "Answer window (seconds)",
-            "timeout": "Maximum duration (seconds)"
-          }
+            "timeout": "Maximum duration (seconds)",
+            "enabled": "Enabled"
+          },
+          "description": "Select account devices, then drag receivers into order. Saved unavailable receivers remain editable. Disabling the group preserves its membership."
         }
       },
       "error": {
         "invalid_paging_group": "Invalid paging group or conflicting destination."
+      },
+      "abort": {
+        "reconfigure_successful": "Paging group updated"
       }
     },
     "physical_phone": {
@@ -1055,17 +1086,42 @@
         "binding": "Physical phone and line"
       }
     },
-    "queue_members": {
-      "fields": {
-        "device": {
-          "name": "Phone"
-        }
-      }
-    },
     "codec_order": {
       "fields": {
         "codec": "Codec",
         "enabled": "Enabled"
+      }
+    },
+    "group_members": {
+      "fields": {
+        "device": {
+          "name": "Account device"
+        },
+        "destination": {
+          "name": "Directory or manual destination"
+        }
+      }
+    },
+    "ring_strategy": {
+      "options": {
+        "parallel": "Parallel",
+        "sequential": "Sequential"
+      }
+    },
+    "call_match": {
+      "options": {
+        "exact": "Exact value",
+        "prefix": "Starts with",
+        "range": "Numeric range",
+        "pattern": "Regular expression"
+      }
+    },
+    "phone_forward_action": {
+      "options": {
+        "none": "No rule",
+        "forward": "Forward",
+        "voicemail": "Voicemail",
+        "hangup": "End call"
       }
     }
   },
@@ -1088,22 +1144,65 @@
   "issues": {
     "account_route_conflict": {
       "title": "Resolve the conflicting SIP account route",
-      "description": "The SIP account {phone} needs the route {route}, which overlaps another name, SIP username, extension, group or feature code. Give the conflicting routes distinct values in the previous configuration, then retry the upgrade.",
+      "description": "The SIP account {phone} conflicts with the configured route {route}. Open the repair, choose the account and correct its SIP username or extension. The migration retains existing Home Assistant references.",
       "fix_flow": {
         "step": {
+          "init": {
+            "title": "Choose the SIP account to repair",
+            "description": "Select a conflicting account. Its existing Home Assistant device, entities and configuration identity are retained.",
+            "data": {
+              "account": "SIP account"
+            }
+          },
+          "edit_account": {
+            "title": "Correct the account settings",
+            "description": "Choose a distinct SIP username and optional extension, then submit to retry the complete migration.",
+            "data": {
+              "name": "Name",
+              "username": "SIP username",
+              "extension": "Optional extension"
+            }
+          },
           "confirm": {
-            "title": "Retry the SIP account upgrade",
-            "description": "Correct the conflicting route {route} for {phone} in the previous configuration, then confirm to retry the upgrade. This action retries migration without editing account settings."
+            "title": "Retry account migration",
+            "description": "Retry after resolving the reported configuration conflict."
           }
         },
         "error": {
-          "migration_retry_failed": "Migration is still blocked. Correct the conflict or enable the integration, then retry."
+          "migration_retry_failed": "Migration remains blocked. Correct the account settings or resolve the reported conflict, then retry."
         }
       }
     },
     "phone_identity_conflict": {
       "title": "Phone identity needs recovery",
-      "description": "The saved identity for {phone} disagrees with its legacy copy (native: {canonical}, legacy: {legacy}). No identity was changed. Restore a consistent configuration from a known backup or ask the integration maintainer to recover these references. Do not delete and recreate the phone to bypass this check, because existing devices, bindings and mailboxes use its original identity."
+      "description": "The saved references for {phone} require reconciliation (native: {canonical}, previous: {legacy}). Open the repair to correct the account settings and retry migration while preserving its Home Assistant device, entities and bindings.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Choose the SIP account to repair",
+            "description": "Select a conflicting account. Its existing Home Assistant device, entities and configuration identity are retained.",
+            "data": {
+              "account": "SIP account"
+            }
+          },
+          "edit_account": {
+            "title": "Correct the account settings",
+            "description": "Choose a distinct SIP username and optional extension, then submit to retry the complete migration.",
+            "data": {
+              "name": "Name",
+              "username": "SIP username",
+              "extension": "Optional extension"
+            }
+          },
+          "confirm": {
+            "title": "Retry account migration",
+            "description": "Retry after resolving the reported configuration conflict."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Migration remains blocked. Correct the account settings or resolve the reported conflict, then retry."
+        }
+      }
     },
     "esphome_actions_incomplete": {
       "title": "ESPHome phone control is incomplete",
@@ -1148,6 +1247,10 @@
     "esphome_endpoint_collision": {
       "title": "ESPHome phone identity conflict",
       "description": "The ESPHome phone {phone} could not be restored because its {field} ({value}) is already owned by another phone. Other phones remain available. Open the device page to review its name or routing identity. No identifiers or credentials were changed."
+    },
+    "group_membership_conflict": {
+      "title": "Group membership needs a configuration change",
+      "description": "These existing phone declarations overlap another configured destination: {groups}. Open VoIP Stack and correct the affected phone or group settings. Their existing declarations are retained until conversion can finish."
     }
   },
   "exceptions": {
@@ -1350,6 +1453,18 @@
             }
           }
         }
+      },
+      "pbx_active_calls": {
+        "name": "Active calls"
+      },
+      "pbx_registered_contacts": {
+        "name": "Registered SIP contacts"
+      },
+      "queue_waiting": {
+        "name": "Waiting callers"
+      },
+      "queue_available_agents": {
+        "name": "Available agents"
       }
     },
     "switch": {
@@ -1364,6 +1479,9 @@
       },
       "phone_endpoint_send_video": {
         "name": "Send video"
+      },
+      "service_enabled": {
+        "name": "Enabled"
       }
     },
     "text": {
@@ -1410,15 +1528,15 @@
   "triggers": {
     "call_started": {
       "name": "VoIP call started",
-      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1431,20 +1549,60 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
     "call_received": {
       "name": "VoIP call received",
-      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1457,20 +1615,60 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
     "route_requested": {
       "name": "VoIP call destination requested",
-      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1483,20 +1681,60 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
     "call_connected": {
       "name": "VoIP call connected",
-      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1509,20 +1747,60 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
     "call_ended": {
       "name": "VoIP call ended",
-      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1543,20 +1821,60 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
     "dtmf_received": {
       "name": "VoIP call keypad digit received",
-      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1577,20 +1895,60 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
     "call_unanswered": {
       "name": "VoIP call unanswered",
-      "description": "The phone reaches its configured ringing timeout, or an explicitly chosen duration. Answering, forwarding or ending cancels this wait.",
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically.",
       "fields": {
         "caller": {
-          "name": "Caller",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         },
         "destination": {
-          "name": "Destination",
-          "description": "Phonebook name or extension. Leave empty for all."
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
         },
         "ingress": {
           "name": "Call origin",
@@ -1607,6 +1965,46 @@
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
         }
       }
     },
@@ -1646,9 +2044,55 @@
       "name": "Call picked up",
       "fields": {
         "destination": {
-          "name": "Destination"
+          "name": "Destination name or alias",
+          "description": "Match an existing destination name, number or extension filter. Exact matching is the default."
+        },
+        "caller_account": {
+          "name": "Caller account",
+          "description": "Select the logical SIP account that originates the call."
+        },
+        "destination_account": {
+          "name": "Receiving account",
+          "description": "Select the logical SIP account receiving the call."
+        },
+        "caller_number": {
+          "name": "Caller telephone number",
+          "description": "Match the caller number. Leave empty for every telephone number."
+        },
+        "caller_extension": {
+          "name": "Caller extension",
+          "description": "Match the configured extension of the calling account."
+        },
+        "destination_number": {
+          "name": "Called telephone number",
+          "description": "Match the called number received at ingress."
+        },
+        "destination_extension": {
+          "name": "Destination extension",
+          "description": "Match the configured destination extension."
+        },
+        "caller_match": {
+          "name": "Caller value matching",
+          "description": "Applies to caller number, extension or name filters. Account selection always matches the selected account."
+        },
+        "destination_match": {
+          "name": "Destination value matching",
+          "description": "Applies to destination number, extension or name filters. Account selection always matches the selected account."
+        },
+        "caller_range_end": {
+          "name": "Last caller number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_range_end": {
+          "name": "Last destination number in range",
+          "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "caller": {
+          "name": "Caller name or alias",
+          "description": "Match an existing caller name, number or extension filter. Exact matching is the default."
         }
-      }
+      },
+      "description": "Leave filters empty for every call. Combine these filters with Home Assistant time or weekday conditions. Actions use the triggering call automatically."
     }
   },
   "conditions": {
@@ -1735,21 +2179,21 @@
           "name": "Group type"
         },
         "value": {
-          "name": "Group names",
-          "description": "Ring groups and queues use names. Paging groups use existing group IDs, as a list or comma-separated. Empty removes memberships without deleting groups."
+          "name": "Groups",
+          "description": "Choose groups matching the selected group type. Empty removes this account from that type of group."
         }
       }
     },
     "set_phone_queues": {
       "name": "Set phone queues",
-      "description": "Set the queue declarations of one phone. New names create automatic queue devices.",
+      "description": "Choose the native queues for this SIP account.",
       "fields": {
         "phone": {
           "name": "Phone"
         },
         "queues": {
           "name": "Queues",
-          "description": "Comma-separated queue names, or an empty value to leave all queues."
+          "description": "Choose the queues for this account, or clear the selection to leave all queues."
         }
       }
     },
@@ -1858,14 +2302,10 @@
           "name": "Fallback destination"
         },
         "hold_media": {
-          "name": "Hold audio URI"
+          "name": "Hold audio"
         },
         "strategy": {
           "name": "Distribution strategy"
-        },
-        "agent_order": {
-          "name": "Preferred phone order",
-          "description": "Ordered stable phone identities. Remaining queue members follow; this does not change membership."
         },
         "auto_pause_after": {
           "name": "Pause after unanswered rings",
@@ -1937,27 +2377,13 @@
         }
       }
     },
-    "purge_devices": {
-      "name": "Purge stale devices (disabled)",
-      "description": "Disabled because VoIP Stack does not own ESPHome devices and must never remove them from Home Assistant's device registry.",
-      "fields": {
-        "device_id": {
-          "name": "Device",
-          "description": "Optional specific VoIP ESPHome device to purge immediately."
-        },
-        "min_unavailable_hours": {
-          "name": "Minimum Hours Unavailable",
-          "description": "Only purge devices that have been unavailable for at least this many hours. Default 0 = purge immediately. Use a higher value (e.g. 1) to avoid wiping devices that are only briefly offline (OTA updates, reboots)."
-        }
-      }
-    },
     "answer": {
       "name": "Answer call",
       "description": "Answer the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.",
       "fields": {
         "device_id": {
           "name": "Phone",
-          "description": "Optional Home Assistant or ESPHome phone device."
+          "description": "Optional logical SIP account."
         },
         "send_video": {
           "name": "Send video",
@@ -1974,7 +2400,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -1984,7 +2411,7 @@
       "fields": {
         "device_id": {
           "name": "Phone",
-          "description": "Optional Home Assistant or ESPHome phone device."
+          "description": "Optional logical SIP account."
         },
         "line_id": {
           "name": "Physical phone line",
@@ -2005,7 +2432,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2043,7 +2471,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2083,7 +2512,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2110,7 +2540,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2136,6 +2567,12 @@
           "name": "Expected sequence",
           "description": "Optional stale-automation guard copied from the call event."
         }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
+        }
       }
     },
     "cancel_deadline": {
@@ -2144,6 +2581,12 @@
       "fields": {
         "call_id": {
           "name": "Call ID"
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2174,6 +2617,12 @@
           "name": "Decline reason",
           "description": "Application terminal reason propagated in SIP Reason and X-Voip-Stack-Decline-Reason headers."
         }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
+        }
       }
     },
     "select_inbound_destination": {
@@ -2200,7 +2649,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2210,7 +2660,7 @@
       "fields": {
         "device_id": {
           "name": "Phone",
-          "description": "Optional Home Assistant or ESPHome phone device."
+          "description": "Optional logical SIP account."
         },
         "line_id": {
           "name": "Physical phone line",
@@ -2226,7 +2676,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2322,7 +2773,7 @@
         },
         "ring_group": {
           "name": "Optional Ring Group",
-          "description": "Adds this contact as a member of one or more VoIP ring groups. Use a comma-separated list for multiple groups."
+          "description": "Set this public destination membership in native ring groups. The group editor owns the saved ordered members."
         }
       }
     },
@@ -2337,7 +2788,7 @@
     },
     "set_contacts": {
       "name": "Set Phonebook Contacts",
-      "description": "Replace manual contacts with a JSON roster document.",
+      "description": "Replace manual contacts through the administrator JSON import. Explicit ring_group fields update native group membership.",
       "fields": {
         "roster_json": {
           "name": "Roster JSON"
@@ -2353,8 +2804,8 @@
       "description": "Return the current central JSON phonebook privately to the administrator."
     },
     "push_phonebook": {
-      "name": "Push Phonebook",
-      "description": "Push the current central JSON phonebook to all online ESP endpoints. The normal path is automatic: phonebook changes trigger a push, and HA refreshes again when an ESPHome *_set_roster_json service registers after reboot. Use this for diagnostics or manual recovery."
+      "name": "Refresh phone directory",
+      "description": "Refresh the canonical Home Assistant phone directory and request an LDAP refresh on configured phones."
     },
     "set_external_call_access": {
       "name": "Set external call access",
@@ -2448,7 +2899,7 @@
     },
     "set_ha_softphone_settings": {
       "name": "Configure Home Assistant phone",
-      "description": "Set the Home Assistant softphone extension, ring group, conference group ring-on-conference behavior, auto answer and default camera transmission. A manually entered group name is a valid declaration: the HA softphone endpoint publishes it to the central phonebook, which creates or updates the dynamic group like it does for ESP endpoints.",
+      "description": "Set persistent account preferences. Ring membership updates the same native group records used by the group editor.",
       "fields": {
         "device_id": {
           "name": "Phone",
@@ -2460,7 +2911,7 @@
         },
         "ring_group": {
           "name": "Ring Group",
-          "description": "Optional PBX-style ring group membership for the Home Assistant softphone. Use a comma-separated list for multiple groups."
+          "description": "Ring groups assigned to this account. Group editors own the saved ordered member lists."
         },
         "conference_group": {
           "name": "Conference Group",
@@ -2596,6 +3047,12 @@
           "name": "Phone for manual execution",
           "description": "Select the phone with an Automation call when testing manually."
         }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
+        }
       }
     },
     "tts_say": {
@@ -2634,7 +3091,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2660,7 +3118,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2694,7 +3153,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2787,7 +3247,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Explicit call selection"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2813,7 +3274,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2836,7 +3298,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2856,7 +3319,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },
@@ -2923,7 +3387,8 @@
       },
       "sections": {
         "advanced": {
-          "name": "Advanced options"
+          "name": "Advanced call selection",
+          "description": "Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection."
         }
       }
     },

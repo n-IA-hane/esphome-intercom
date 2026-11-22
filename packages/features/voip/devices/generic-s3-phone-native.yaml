@@ -25,8 +25,6 @@ voip_stack:
     gain_factor: 1
   speaker: hw_speaker
   dc_offset_removal: false
-  delete_contact_missing_from:
-    updates_number: 1
   use_ha_as_first_contact: true
 external_components:
 - source: ${voip_stack_components_source}

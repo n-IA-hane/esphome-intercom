@@ -153,7 +153,11 @@ def async_ensure_endpoint_device(
         **info,
     )
     if registry is not None and not endpoint.account_device_id and endpoint.device_id != device.id:
-        registry.update(endpoint.endpoint_id, device_id=device.id)
+        hardware = device_registry.async_get(endpoint.device_id) if endpoint.device_id else None
+        if hardware is not None and hardware.config_entry_id != entry.entry_id:
+            registry.update(endpoint.endpoint_id, account_device_id=device.id)
+        else:
+            registry.update(endpoint.endpoint_id, device_id=device.id)
     return device
 
 

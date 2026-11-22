@@ -43,7 +43,8 @@ def mailbox_namespace_conflicts(mappings):
 
 def mapping_route_aliases(item: Mapping[str, Any]) -> set[str]:
     """Return the ordinary phone/contact aliases of one persisted mapping."""
-    return normalized_aliases(item.get(field) for field in ROUTE_ALIAS_FIELDS)
+    return normalized_aliases(item.get(field) for field in ROUTE_ALIAS_FIELDS
+                              if not item.get("username") or field in {"extension", "number"})
 
 
 def mapping_group_values(item: Mapping[str, Any]) -> list[str]:
@@ -64,6 +65,7 @@ def mapping_group_aliases(item: Mapping[str, Any]) -> set[str]:
 def conflicting_route(
     *,
     candidate_routes: Iterable[object] = (),
+    candidate_username: object = "",
     candidate_mailbox_routes: Iterable[object] = (),
     candidate_groups: Iterable[object] = (),
     existing: Iterable[Mapping[str, Any]] = (),
@@ -75,6 +77,7 @@ def conflicting_route(
     existing phone/contact alias.
     """
     routes = tuple(value for raw in candidate_routes if (value := str(raw or "").strip()))
+    username = str(candidate_username or "").strip()
     groups = tuple(value for raw in candidate_groups if (value := str(raw or "").strip()))
     mailboxes = tuple(str(value).strip() for value in candidate_mailbox_routes)
     mailbox_keys = {value.casefold() for value in mailboxes}
@@ -90,6 +93,7 @@ def conflicting_route(
     existing_mailboxes: set[str] = set()
     existing_exact: set[str] = set()
     existing_usernames: set[str] = set()
+    explicit_routes: set[str] = set()
     for item in existing:
         if not isinstance(item, Mapping):
             continue
@@ -113,16 +117,23 @@ def conflicting_route(
         existing_mailboxes.update(value.casefold() for value in mailbox_route_aliases(item))
         existing_exact.update(str(value or "").strip().casefold()
                               for value in (*(item.get(field) for field in ROUTE_ALIAS_FIELDS), *mapping_group_values(item)))
-        if username := item.get("username"):
+        explicit_routes.update(str(item.get(field) or "").strip().casefold()
+                               for field in ("extension", "number"))
+        if item.get("group_id") or item.get("paging_group_id"):
+            explicit_routes.add(str(item.get("name") or "").strip().casefold())
+        if existing_username := item.get("username"):
             # The registrar compares logins even when a route has no alphanumeric key.
-            existing_usernames.add(str(username).strip().casefold())
+            existing_usernames.add(str(existing_username).strip().casefold())
+    if username and username.casefold() in (existing_usernames | explicit_routes | {value.casefold() for value in groups}):
+        return username
     unavailable_routes = existing_routes | existing_groups
     unavailable_logins = existing_usernames | existing_mailboxes
     for value in routes:
         if normalize_roster_key(value.casefold()) in unavailable_routes or value.casefold() in unavailable_logins:
             return value
     for value in groups:
-        if normalize_roster_key(value.casefold()) in existing_routes or value.casefold() in existing_mailboxes:
+        if (normalize_roster_key(value.casefold()) in existing_routes
+                or value.casefold() in existing_mailboxes | existing_usernames):
             return value
     unavailable_mailboxes = existing_exact | existing_mailboxes
     for value in mailboxes:

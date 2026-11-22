@@ -22,12 +22,13 @@ from homeassistant.core import HomeAssistant
 from .core import rtp
 from .core.sip_stun import is_stun_message
 from .audio_ws import decode_audio_frame, encode_audio_frame
-from .audio_ws_frames import BrowserAudioReceiver, BrowserPcmPlayout
+from .audio_ws_frames import BrowserAudioReceiver, BrowserPcmPlayout, DeferredAudioFrames
 from .browser_playback import BrowserPlayback
-from .call_projection import publish_esp_media_route
+from .call_projection import publish_media_route
 from .config import debug_mode, media_capture_enabled
 from .core.audio_format import HA_SIP_PCM_FORMATS, MAX_PCM_FRAME_BYTES
-from .core.audio_capabilities import HA_AUDIO_CAPABILITIES, OPUS_ENCODER_FRAME_MS
+from .core.audio_pcm import PcmFrameConverter
+from .core.media.bridge import plan_browser_audio
 from .core.sdp import RtpDtmfFormat, RtpPcmFormat
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
@@ -93,7 +94,10 @@ class _SoftphoneMediaSession:
     local_audio_direction: str = "sendrecv"
     remote_audio_connection_held: bool = False
     dtmf_payload_type: int | None = None
+    dtmf_clock_rate: int = 8000
     dtmf_events: frozenset[int] = frozenset()
+    recv_dtmf_formats: tuple[RtpDtmfFormat, ...] = ()
+    send_dtmf_formats: tuple[RtpDtmfFormat, ...] = ()
     send_dtmf_payload_type: int | None = None
     send_dtmf_clock_rate: int = 8000
     send_dtmf_events: frozenset[int] = frozenset()
@@ -111,22 +115,14 @@ class _SoftphoneMediaSession:
 
 
 def _browser_audio_message_limit(session: _SoftphoneMediaSession | None) -> int:
-    """Reserve only the real encoder input needed by a renegotiable SIP leg."""
+    """Bound the 48 kHz browser PCM edge across supported in-dialog packet quanta."""
     if session is None or session.conference_room or not session.local_rtp_port:
         return _MAX_BROWSER_AUDIO_MESSAGE_BYTES
-    frame_bytes = int(session.send_format.audio_format.nominal_frame_bytes)
+    plan = plan_browser_audio(session.send_format, session.recv_format)
+    frame_bytes = int(plan.microphone.nominal_frame_bytes)
     if not 0 < frame_bytes <= MAX_PCM_FRAME_BYTES:
         raise ValueError("negotiated browser PCM frame exceeds the local size bound")
-    wire_budget = HA_AUDIO_CAPABILITIES.transmit_payload_bytes
-    # Linear PCM/L24 needs at most 4/3 of wire bytes; G.711 needs twice that.
-    encoder_bytes = max((wire_budget * 4 + 2) // 3, wire_budget * 2)
-    for candidate in (
-        RtpPcmFormat(9, "G722", 8000, 1, wire_budget * 1000 / 8000),
-        RtpPcmFormat(98, "OPUS", 48000, 2, max(OPUS_ENCODER_FRAME_MS)),
-    ):
-        if HA_AUDIO_CAPABILITIES.supports_rtp(candidate):
-            encoder_bytes = max(encoder_bytes, candidate.audio_format.nominal_frame_bytes)
-    return max(_MAX_BROWSER_AUDIO_MESSAGE_BYTES, frame_bytes + 1, encoder_bytes + 1)
+    return max(_MAX_BROWSER_AUDIO_MESSAGE_BYTES, plan.max_message_bytes, frame_bytes + 1)
 
 
 def _rx_queue_frame_limit(frame_ms: int | float) -> int:
@@ -175,8 +171,8 @@ class _DebugAudioCapture:
     def __init__(self, call_id: str, *, rx_format: Any, tx_format: Any) -> None:
         self.call_id = str(call_id or "call")
         self.capture_name = capture_session_name(self.call_id)
-        self.rx_format = rx_format.audio_format
-        self.tx_format = tx_format.audio_format
+        self.rx_format = getattr(rx_format, "audio_format", rx_format)
+        self.tx_format = getattr(tx_format, "audio_format", tx_format)
         self.rtp_to_ws = bytearray()
         self.ws_to_rtp = bytearray()
         self.rtp_to_ws_deltas_ms: list[float] = []
@@ -553,6 +549,7 @@ def _active_softphone_media_session(
 
             dtmf_formats = source_dtmf_formats(invite)
             dtmf_format = dtmf_formats[0] if dtmf_formats else None
+            send_dtmf_format = getattr(invite, "send_dtmf_format", None)
             retained_source = isinstance(invite, ApplicationCallSource)
             source_client = registry.source_sip_client_for(call_id) if retained_source else None
             return _SoftphoneMediaSession(
@@ -574,17 +571,20 @@ def _active_softphone_media_session(
                 dtmf_payload_type=(
                     dtmf_format.payload_type if dtmf_format is not None else None
                 ),
+                dtmf_clock_rate=dtmf_format.sample_rate if dtmf_format is not None else 8000,
+                recv_dtmf_formats=dtmf_formats,
+                send_dtmf_formats=getattr(invite, "send_dtmf_formats", ()),
                 dtmf_events=(
                     dtmf_format.events if dtmf_format is not None else frozenset()
                 ),
                 send_dtmf_payload_type=(
-                    invite.send_dtmf_payload_type if retained_source else dtmf_format.payload_type if dtmf_format is not None else None
+                    invite.send_dtmf_payload_type if retained_source else send_dtmf_format.payload_type if send_dtmf_format is not None else None
                 ),
                 send_dtmf_clock_rate=(
-                    int(invite.send_dtmf_clock_rate or 8000) if retained_source else dtmf_format.sample_rate if dtmf_format is not None else 8000
+                    int(invite.send_dtmf_clock_rate or 8000) if retained_source else send_dtmf_format.sample_rate if send_dtmf_format is not None else 8000
                 ),
                 send_dtmf_events=(
-                    invite.send_dtmf_events or frozenset() if retained_source else dtmf_format.events if dtmf_format is not None else frozenset()
+                    invite.send_dtmf_events or frozenset() if retained_source else send_dtmf_format.events if send_dtmf_format is not None else frozenset()
                 ),
                 send_dtmf_info=source_client.send_dtmf_info if source_client is not None else None,
                 on_dtmf=_dtmf_callback("left"),
@@ -616,7 +616,10 @@ def _active_softphone_media_session(
                     dialog.remote_audio_connection_held
                 ),
                 dtmf_payload_type=dialog.dtmf_payload_type,
+                dtmf_clock_rate=dialog.dtmf_clock_rate,
                 dtmf_events=dialog.dtmf_events,
+                recv_dtmf_formats=dialog.recv_dtmf_formats,
+                send_dtmf_formats=dialog.send_dtmf_formats,
                 send_dtmf_payload_type=dialog.send_dtmf_payload_type,
                 send_dtmf_clock_rate=int(dialog.send_dtmf_clock_rate or 8000),
                 send_dtmf_events=dialog.send_dtmf_events or frozenset(),
@@ -793,8 +796,9 @@ async def _run_audio_session(
             endpoint_id=endpoint_id,
         )
         return
+    browser_plan = plan_browser_audio(session.send_format, session.recv_format)
     frame_ms = max(1.0, float(session.recv_format.audio_format.frame_ms))
-    queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=16)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
     protocol = _RtpAudioProtocol(queue, frame_ms=frame_ms)
     loop = asyncio.get_running_loop()
     bound_socket = session.rtp_socket
@@ -872,17 +876,14 @@ async def _run_audio_session(
     dtmf_source = None
     dtmf_tasks: set[asyncio.Task[None]] = set()
     debug_capture = (
-        _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
+        _DebugAudioCapture(session.call_id, rx_format=browser_plan.speaker, tx_format=browser_plan.microphone)
         if media_capture_enabled(hass)
         else None
     )
     rtp_decoder: RtpAudioReceiver
     rtp_encoder: RtpPayloadEncoder
-    dtmf_decoder = (
-        RtpDtmfDecoder(session.dtmf_payload_type)
-        if session.dtmf_payload_type is not None
-        else None
-    )
+    tx_converter: PcmFrameConverter
+    dtmf_decoder = None
 
     def publish_counters(*, force: bool = False) -> None:
         nonlocal last_counter_event
@@ -920,14 +921,14 @@ async def _run_audio_session(
                     "local_rtp_port": session.local_rtp_port,
                     "remote_rtp_host": incoming.remote_host,
                     "remote_rtp_port": incoming.remote_port,
-                    "tx_format": session.send_format.audio_format.wire_token(),
-                    "rx_format": session.recv_format.audio_format.wire_token(),
+                    "tx_format": browser_plan.microphone.wire_token(),
+                    "rx_format": browser_plan.speaker.wire_token(),
                     "tx_rtp_format": session.send_format.wire_token(),
-                    "rx_rtp_format": session.recv_format.wire_token(),
+                    "rx_rtp_format": (incoming.received_format or session.recv_format).wire_token(),
                     "audio_direction": session.local_audio_direction,
                     "remote_connection_held": session.remote_audio_connection_held,
-                    "expected_browser_tx_frame_bytes": session.send_format.audio_format.nominal_frame_bytes,
-                    "expected_browser_rx_frame_bytes": session.recv_format.audio_format.nominal_frame_bytes,
+                    "expected_browser_tx_frame_bytes": browser_plan.microphone.nominal_frame_bytes,
+                    "expected_browser_rx_frame_bytes": browser_plan.speaker.nominal_frame_bytes,
                     **counters,
                 },
             )
@@ -941,10 +942,10 @@ async def _run_audio_session(
         payload: dict[str, Any] = {
             "state": "in_call",
             "call_id": session.call_id,
-            "tx_format": session.send_format.audio_format.wire_token(),
-            "rx_format": session.recv_format.audio_format.wire_token(),
-            "selected_tx_format": session.send_format.audio_format.wire_token(),
-            "selected_rx_format": session.recv_format.audio_format.wire_token(),
+            "tx_format": browser_plan.microphone.wire_token(),
+            "rx_format": browser_plan.speaker.wire_token(),
+            "selected_tx_format": browser_plan.microphone.wire_token(),
+            "selected_rx_format": browser_plan.speaker.wire_token(),
             "selected_tx_rtp_format": session.send_format.wire_token(),
             "selected_rx_rtp_format": session.recv_format.wire_token(),
             "audio_direction": session.local_audio_direction,
@@ -954,9 +955,34 @@ async def _run_audio_session(
             payload["type"] = message_type
         return payload
 
+    def deferred_audio(receiver, frames):
+        if closed.is_set() or receiver is not rtp_decoder:
+            return
+        batch = DeferredAudioFrames(receiver, tuple(frames), receiver.last_gap_ms)
+        ready, datagrams = [], []
+        while not queue.empty():
+            item = queue.get_nowait()
+            (ready if isinstance(item[0], DeferredAudioFrames) else datagrams).append(item)
+        # Already decoded PCM precedes datagrams the same WS owner has not
+        # processed yet. Keep its original media order across backpressure.
+        while queue.maxsize and len(ready) + 1 + len(datagrams) > queue.maxsize:
+            (datagrams if datagrams else ready).pop(0)
+            protocol.dropped_packets += 1
+        for item in (*ready, (batch, None), *datagrams):
+            queue.put_nowait(item)
+
+    def deferred_audio_error(receiver, error):
+        if not closed.is_set() and receiver is rtp_decoder:
+            counters["drop_error"] += 1
+            _LOGGER.debug("Deferred browser RTP audio drop call_id=%s: %s", session.call_id, error)
+
+    def bind_reorder_callback(receiver):
+        receiver.set_reorder_callback(lambda frames: deferred_audio(receiver, frames),
+            lambda error: deferred_audio_error(receiver, error))
+
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, applied_dtmf_contract
-        nonlocal rtp_decoder, rtp_encoder
+        nonlocal rtp_decoder, rtp_encoder, browser_plan, tx_converter
         nonlocal dtmf_decoder
         nonlocal debug_capture
         if generation == applied_media_generation:
@@ -971,13 +997,17 @@ async def _run_audio_session(
             # part of it.  A re-INVITE may change PT, codec, rate or ptime; using
             # the previous encoder with the new RTP metadata would put invalid
             # media on the wire.
+            next_plan = plan_browser_audio(session.send_format, session.recv_format)
             next_decoder = RtpAudioReceiver(
-                session.recv_format, session.recv_formats, previous=rtp_decoder
+                session.recv_format, session.recv_formats, previous=rtp_decoder,
+                output_pcm=next_plan.speaker,
             )
             next_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats, match_received_codec=session.match_received_codec)
             next_dtmf_decoder = (
-                RtpDtmfDecoder(session.dtmf_payload_type)
-                if session.dtmf_payload_type is not None
+                RtpDtmfDecoder(session.recv_dtmf_formats or (RtpDtmfFormat(
+                    session.dtmf_payload_type, session.dtmf_clock_rate, session.dtmf_events),),
+                    audio_receiver=next_decoder)
+                if session.recv_dtmf_formats or session.dtmf_payload_type is not None
                 else None
             )
             protocol.reconfigure_frame_ms(
@@ -985,19 +1015,24 @@ async def _run_audio_session(
             )
             incoming.reset(session.remote_rtp_host, session.remote_rtp_port)
             protocol.dropped_packets += drain_queue(queue)
+            rtp_decoder.close()
+            rtp_encoder.close()
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
             dtmf_decoder = next_dtmf_decoder
+            browser_plan = next_plan
+            tx_converter = PcmFrameConverter(browser_plan.microphone, next_encoder.input_format)
+            bind_reorder_callback(rtp_decoder)
             if debug_capture is not None:
                 _schedule_debug_capture_write(hass, debug_capture, counters)
                 debug_capture = _DebugAudioCapture(
                     session.call_id,
-                    rx_format=session.recv_format,
-                    tx_format=session.send_format,
+                    rx_format=browser_plan.speaker,
+                    tx_format=browser_plan.microphone,
                 )
             applied_dtmf_contract = sender_dtmf_contract()
             applied_media_generation = generation
-            publish_esp_media_route(hass, session.call_id, browser_media_route())
+            publish_media_route(hass, session.call_id, browser_media_route())
 
     def browser_media_route() -> str:
         return "direct" if all(
@@ -1007,8 +1042,14 @@ async def _run_audio_session(
 
     try:
         await ws.send_json(negotiation_payload())
-        rtp_decoder = RtpAudioReceiver(session.recv_format, session.recv_formats)
+        rtp_decoder = RtpAudioReceiver(session.recv_format, session.recv_formats, output_pcm=browser_plan.speaker)
+        dtmf_decoder = (RtpDtmfDecoder(session.recv_dtmf_formats or (RtpDtmfFormat(
+            session.dtmf_payload_type, session.dtmf_clock_rate, session.dtmf_events),),
+            audio_receiver=rtp_decoder)
+            if session.recv_dtmf_formats or session.dtmf_payload_type is not None else None)
         rtp_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats, match_received_codec=session.match_received_codec)
+        tx_converter = PcmFrameConverter(browser_plan.microphone, rtp_encoder.input_format)
+        bind_reorder_callback(rtp_decoder)
     except asyncio.CancelledError:
         transport.close()
         raise
@@ -1029,7 +1070,7 @@ async def _run_audio_session(
         session.recv_format.audio_format.wire_token(),
         session.recv_format.wire_token(),
     )
-    publish_esp_media_route(hass, session.call_id, browser_media_route())
+    publish_media_route(hass, session.call_id, browser_media_route())
     async def rtp_to_ws() -> None:
         if playback is not None:
             await playback.wait_ready()
@@ -1042,14 +1083,19 @@ async def _run_audio_session(
             if observed_generation != session.media_generation:
                 observed_generation = int(session.media_generation)
                 await refresh_media_state(observed_generation)
-            if str(addr[0]) not in {session.remote_rtp_host, session.signaling_host}:
+            if not isinstance(data, DeferredAudioFrames) and str(addr[0]) not in {session.remote_rtp_host, session.signaling_host}:
                 counters["drop_addr"] += 1
                 continue
             try:
-                batch = incoming.decode(
-                    data, addr, session, decoder=rtp_decoder, encoder=rtp_encoder,
-                    dtmf_decoder=dtmf_decoder, dtmf_send_lock=dtmf_send_lock, counters=counters,
-                )
+                if isinstance(data, DeferredAudioFrames):
+                    if data.receiver is not rtp_decoder:
+                        continue
+                    batch = data.frames, data.gap_ms > session.recv_format.frame_ms * 2
+                else:
+                    batch = incoming.decode(
+                        data, addr, session, decoder=rtp_decoder, encoder=rtp_encoder,
+                        dtmf_decoder=dtmf_decoder, dtmf_send_lock=dtmf_send_lock, counters=counters,
+                    )
                 if batch is None:
                     continue
                 frames, remote_silence_resume = batch
@@ -1169,7 +1215,7 @@ async def _run_audio_session(
                             await result
                     return
 
-                async def emit(duration: int, marker: bool, end: bool) -> bool:
+                async def emit(duration: int, marker: bool, end: bool, timestamp_offset: int) -> bool:
                     nonlocal sequence
                     async with rtp_send_lock:
                         if closed.is_set() or applied_media_generation != event_generation:
@@ -1178,7 +1224,7 @@ async def _run_audio_session(
                             rtp.RtpPacket(
                                 payload_type=int(event_payload_type),
                                 sequence=sequence if shared_clock else dtmf_source.sequence,
-                                timestamp=event_timestamp,
+                                timestamp=rtp.next_timestamp(event_timestamp, timestamp_offset),
                                 ssrc=event_ssrc,
                                 payload=build_telephone_event_payload(
                                     digit,
@@ -1248,12 +1294,6 @@ async def _run_audio_session(
                                 )
                             )
                             transport.sendto(packet, (incoming.remote_host, incoming.remote_port))
-                            if audio_observers:
-                                for observer in tuple(audio_observers):
-                                    try:
-                                        observer("left", pcm, session.send_format.audio_format)
-                                    except Exception:
-                                        audio_observers.pop(observer, None)
                             sequence = rtp.next_sequence(sequence)
                             rtp_source.sequence = sequence
                             if debug_capture is not None:
@@ -1314,7 +1354,7 @@ async def _run_audio_session(
                     await sync_tx_generation()
                     counters["ws_rx"] += 1
                     pcm = decode_audio_frame(bytes(msg.data))
-                    expected = int(session.send_format.audio_format.nominal_frame_bytes)
+                    expected = int(browser_plan.microphone.nominal_frame_bytes)
                     if len(pcm) != expected:
                         raise ValueError(f"browser PCM frame has {len(pcm)} bytes, expected {expected}")
                     if playback is not None:
@@ -1322,7 +1362,16 @@ async def _run_audio_session(
                         playback.ready(ws)
                     if debug_capture is not None:
                         debug_capture.note_ws_rx(loop.time(), pcm)
-                    playout_buffer.append(pcm)
+                    if (session.remote_audio_connection_held
+                            or session.local_audio_direction not in {"sendonly", "sendrecv"}):
+                        continue
+                    for observer in tuple(audio_observers):
+                        try:
+                            observer("left", pcm, browser_plan.microphone)
+                        except Exception:
+                            audio_observers.pop(observer, None)
+                    for converted in tx_converter.convert(pcm):
+                        playout_buffer.append(converted)
                 except Exception as err:  # noqa: BLE001 - malformed frames cannot stop call control.
                     counters["tx_error"] += 1
                     _LOGGER.debug("HA softphone browser audio TX drop: %s", err)
@@ -1362,6 +1411,8 @@ async def _run_audio_session(
             browser_task.result()
     finally:
         closed.set()
+        rtp_decoder.close()
+        rtp_encoder.close()
         remove_call_listener()
         session.handoff_transport = None
         session.observe_audio = None

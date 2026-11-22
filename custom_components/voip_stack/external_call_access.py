@@ -13,7 +13,7 @@ from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 async def async_set_external_call_access(call: ServiceCall) -> dict:
     await async_require_service_admin(call.hass, call)
     runtime = require_runtime_data(call.hass)
-    endpoint = resolve_service_phone(runtime.endpoints, call.data["device_id"])
+    endpoint = resolve_service_phone(runtime.endpoints, call.data["device_id"], hass=call.hass)
     if endpoint is None:
         raise ServiceValidationError("Select a VoIP Stack phone, SIP account or discovered ESPHome phone")
     entry = config_entry(call.hass)

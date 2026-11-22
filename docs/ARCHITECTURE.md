@@ -491,11 +491,11 @@ the current directory generation. Native commits a successful query atomically
 while preserving manual contacts. A failed query must not erase the last usable
 snapshot. See the [phonebook contract](PHONEBOOK_PROTOCOL.md#standard-ldap-directory).
 
-Legacy/custom firmware may instead enable the HA roster provider and its JSON
-push actions. The legacy roster is bounded to 64 normalized contacts and
-replaces existing names in place; HA must filter larger pushed rosters. Managed
-LDAP disables that provider, so a successful `set_roster_json` request is not
-evidence that the active LDAP directory refreshed.
+LDAP is the sole dynamic ESP directory provider. Manual static contacts remain
+local additions. The HA phonebook sensor and administrator JSON export are
+projections for HA clients and diagnostics; they do not push directory rows to
+firmware. Updating HA alone does not migrate the ESP: rebuild and upload matching
+firmware and update maintained packages together.
 
 ## SIP/TCP backpressure
 

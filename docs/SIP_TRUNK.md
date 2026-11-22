@@ -209,7 +209,9 @@ the remote answer, and the following actions control that execution's call.
 
 The same **Outgoing SIP trunk** selector works when the calling phone is an
 ESPHome device. This requires firmware exposing the native actions
-`start_call_via_ha` and `hangup_call_if_id` from the matching development branch.
+`start_call_on_line(dest, line, send_video, receive_video)` and
+`hangup_call_if_id` from matching rebuilt firmware. ESP creates the SIP Call-ID;
+HA selects routing after the actual INVITE arrives.
 Older firmware can still make ordinary calls and use its persistent phone
 preference; choosing a line for one action returns an explicit upgrade message.
 

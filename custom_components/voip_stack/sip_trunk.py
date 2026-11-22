@@ -25,7 +25,7 @@ from .sip_capture import send_sip_datagram
 
 from .core import sip
 from .core.sip_transport import bind_flow_usage, default_tls_context
-from .core.sip_auth import DigestChallengeTracker
+from .core.sip_auth import DigestChallengeTracker, build_digest_authorization
 from .core.sip_resolution import SipServerResolver, SipServerTarget
 from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction, transaction_key
 from .sip_udp_io import SipDatagramQueueProtocol
@@ -44,14 +44,26 @@ _UDP_KEEPALIVE_INTERVAL = 25.0
 TrunkRequestHandler = Callable[[bytes, tuple[str, int]], Awaitable[None]]
 
 
-def _registration_expires(message: sip.SipMessage, default: int) -> int:
+def _registration_expires(message: sip.SipMessage, default: int, contact_uri: str = "") -> int:
     values = [message.header("Expires")]
-    for contact in message.header_values("Contact"):
-        for part in contact.split(";")[1:]:
-            key, separator, value = part.partition("=")
-            if separator and key.strip().lower() == "expires":
-                values.insert(0, value.strip())
-                break
+    owned = sip.parse_sip_uri(contact_uri) if contact_uri else None
+    contacts = [item for header in message.header_values("Contact")
+                for item in sip._split_comma_header_values(header)]
+    for contact in contacts:
+        head, parameters = sip._split_semicolon_params(contact)
+        try:
+            target = sip.parse_sip_uri(head)
+        except sip.SipError:
+            continue
+        if owned is not None and (target.user, target.host.casefold(), sip.sip_default_port(target)) != (
+                owned.user, owned.host.casefold(), sip.sip_default_port(owned)):
+            continue
+        if owned is None and len(contacts) != 1:
+            continue
+        expires = dict(parameters).get("expires")
+        if expires is not None:
+            values.insert(0, expires)
+        break
     for value in values:
         try:
             return max(0, min(86400, int(value)))
@@ -1058,7 +1070,7 @@ class SipTrunkClient:
                 try:
                     msg = sip.parse_message(raw)
                 except Exception as err:
-                    _LOGGER.info("SIP trunk RX malformed from %s:%s: %s", addr[0], addr[1], err)
+                    _LOGGER.debug("SIP trunk RX malformed from %s:%s: %s", addr[0], addr[1], err)
                     continue
                 dialog_responses = self._outbound_dialogs.get(msg.header("Call-ID"))
                 if dialog_responses is not None:
@@ -1085,7 +1097,7 @@ class SipTrunkClient:
                     if put_drop_oldest(self.responses, msg):
                         _LOGGER.debug("SIP trunk response queue full; dropped oldest response")
                     continue
-                _LOGGER.info("SIP trunk RX %s %s from %s:%s", msg.method, msg.uri, addr[0], addr[1])
+                _LOGGER.debug("SIP trunk RX %s %s from %s:%s", msg.method, msg.uri, addr[0], addr[1])
                 self.last_sip_event = msg.method or "SIP_REQUEST"
                 if self.request_handler is None:
                     _LOGGER.warning("SIP trunk inbound request ignored: no SIP endpoint is attached")
@@ -1111,6 +1123,8 @@ class SipTrunkClient:
         expires_value = int(self.config.expires if expires is None else expires)
         auth_values: dict[str, str] = {}
         auth_challenges = DigestChallengeTracker()
+        register_challenges: dict[str, tuple[str, int]] = {}
+        interval_retried = False
         while True:
             self.cseq += 1
             request_uri = self.registration_uri
@@ -1120,7 +1134,7 @@ class SipTrunkClient:
             raw = sip.build_request("REGISTER", request_uri, headers, b"")
             await self._send_raw(raw)
             self.last_sip_event = "REGISTER"
-            _LOGGER.info("SIP trunk TX REGISTER %s expires=%s", self.domain, expires_value)
+            _LOGGER.debug("SIP trunk TX REGISTER %s expires=%s", self.domain, expires_value)
             transaction = SipClientTransaction[
                 sip.SipMessage
             ](
@@ -1197,10 +1211,10 @@ class SipTrunkClient:
             self.status_code = int(msg.status_code)
             self.status_reason = msg.reason
             self.last_sip_event = "SIP_RESPONSE"
-            _LOGGER.info("SIP trunk RX %s %s", msg.status_code, msg.reason)
+            _LOGGER.debug("SIP trunk RX %s %s", msg.status_code, msg.reason)
             if msg.status_code in {401, 407}:
                 try:
-                    auth_header, _challenge, auth_value = auth_challenges.authorize(
+                    auth_header, challenge, auth_value = auth_challenges.authorize(
                         msg,
                         username=self.config.username,
                         auth_username=self.config.auth_username,
@@ -1214,9 +1228,26 @@ class SipTrunkClient:
                     _LOGGER.warning("SIP trunk digest challenge rejected: %s", err)
                     return sip.sip_failure_reason(msg.status_code)
                 auth_values[auth_header] = auth_value
+                register_challenges[auth_header] = (challenge, 1)
                 continue
+            if msg.status_code == 423 and expires_value > 0 and not interval_retried:
+                try:
+                    minimum = int(msg.header("Min-Expires"))
+                except ValueError:
+                    minimum = 0
+                if expires_value < minimum <= 86400:
+                    interval_retried = True
+                    expires_value = minimum
+                    for header, (challenge, count) in tuple(register_challenges.items()):
+                        auth_values[header] = build_digest_authorization(
+                            challenge_header=challenge, username=self.config.username,
+                            auth_username=self.config.auth_username, password=self.config.password,
+                            method="REGISTER", uri=request_uri, nonce_count=count + 1,
+                        )
+                        register_challenges[header] = (challenge, count + 1)
+                    continue
             if 200 <= msg.status_code < 300:
-                granted_expires = _registration_expires(msg, expires_value)
+                granted_expires = _registration_expires(msg, expires_value, self.contact_uri)
                 self.registered = expires_value > 0 and granted_expires > 0
                 self.expires_at = time.time() + granted_expires if self.registered else 0.0
                 if self.registered:

@@ -49,8 +49,8 @@ def _client_for_call(runtime: VoipStackRuntime, call_id: str) -> SipCallClient |
 
 def _endpoint_user(endpoint: PhoneEndpoint | None, fallback: str) -> str:
     return str(
-        (endpoint.extension if endpoint is not None else "")
-        or (endpoint.username if endpoint is not None else "")
+        (endpoint.username if endpoint is not None else "")
+        or (endpoint.extension if endpoint is not None else "")
         or fallback
     ).strip()
 
@@ -66,8 +66,6 @@ def _blind_target(
     raw = str(destination or "").strip()
     if raw.lower().startswith(("sip:", "sips:")):
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(raw)))
-    if "@" in raw:
-        return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))
     if entries is None:
         entries = routing_snapshot(runtime)
     if hass is not None:
@@ -77,6 +75,8 @@ def _blind_target(
         if parking is not None:
             return _local_transfer_target(runtime, parking.target, entries)
     entry = find_entry(entries, raw)
+    if entry is None and "@" in raw:
+        return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))
     if entry is not None:
         route = resolve_ha_router(raw, entries, trunk_ready=True)
         if route.action is RouteAction.REJECT:
@@ -219,7 +219,7 @@ async def _transfer_local_source(
 
     registry = runtime.sip
     manager = sip_endpoint_manager(hass)
-    if manager is None or registry.forward_call is None or current.video_active:
+    if manager is None or registry.forward_call is None:
         return SipTransferResult(False, 488, "local_transfer_unavailable")
     previous = registry.resource_for(session.call_id, "browser_source")
     if previous is not None and not previous.committed:
@@ -241,16 +241,15 @@ async def _transfer_local_source(
     registry.set_pending_invite(session.call_id, source.invite)
     task = None
     try:
-        async with asyncio.timeout(30):
-            await registry.forward_call(
-                call_id=session.call_id,
-                destination=destination,
-                on_failure="resume",
-                expected_state="in_call",
-            )
-            task = registry.task_for(session.call_id, "forward")
-            if task is not None:
-                await asyncio.shield(task)
+        await registry.forward_call(
+            call_id=session.call_id,
+            destination=destination,
+            on_failure="resume",
+            expected_state="in_call",
+        )
+        task = registry.task_for(session.call_id, "forward")
+        if task is not None:
+            await asyncio.shield(task)
         success = source.committed and session.live and session.state == "in_call"
         return SipTransferResult(
             success,
@@ -269,6 +268,48 @@ async def _transfer_local_source(
             registry.release_resource(session.call_id, f"browser_source:{session.call_id}", value=source)
 
 
+async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wire_id):
+    """Keep an internal target in this PBX, independent of provider REFER support."""
+    from .endpoint_routing import is_local_listener_uri
+    from .pending_sip_destination import EstablishedSipDestination
+    from .session_cleanup import async_wait_for_cleanup
+
+    if session is None or runtime.sip.forward_call is None:
+        return None
+    uri = sip.parse_sip_uri(target.uri)
+    listener = runtime.sip.component("udp_listener")
+    if not is_local_listener_uri(uri, local_ip=str(getattr(listener, "local_ip", "")),
+                                 sip_port=int(runtime.transport_config["sip_port"])):
+        return None
+    operation = await EstablishedSipDestination.prepare(hass, runtime, session, referrer, wire_id)
+    if operation is None:
+        return SipTransferResult(False, 488, "local_transfer_unavailable")
+    task, success, reason = None, False, "transfer_failed"
+    try:
+        task = await runtime.sip.forward_call(call_id=operation.session.call_id,
+            destination=uri.user, on_failure="resume", expected_state=operation.session.state)
+        if task is None:
+            task = runtime.sip.task_for(operation.session.call_id, "forward")
+        if task is not None:
+            outcome = await asyncio.shield(task)
+            reason = str(getattr(outcome, "reason", "") or "transfer_failed")
+        success = (operation.session.live and operation.session.state == "in_call"
+                   and runtime.sip.bridge_link_for(operation.session.call_id) not in {"", operation.destination_id})
+        if not success:
+            await operation.restore(runtime)
+        from .fsm import sip_failure_response
+        status = 200 if success else sip_failure_response(reason)[0]
+        return SipTransferResult(success, status, "completed" if success else reason, retained_call=success)
+    except BaseException:
+        if task is not None and not task.done():
+            task.cancel()
+            await async_wait_for_cleanup(asyncio.gather(task, return_exceptions=True))
+        await operation.restore(runtime)
+        raise
+    finally:
+        operation.finish(success=success)
+
+
 async def async_transfer_call(
     runtime: VoipStackRuntime,
     request: CallTransferRequest,
@@ -276,7 +317,7 @@ async def async_transfer_call(
 ) -> SipTransferResult:
     """Transfer one established call without creating another lifecycle owner."""
 
-    session = runtime.sip.get_session(request.call_id) if hass is not None and runtime.sip is not None else None
+    session = runtime.sip.get_session(runtime.sip.resolve_session_id(request.call_id)) if hass is not None and runtime.sip is not None else None
     if session is not None and session.owner == "local_bridge" and hass is not None:
         from .local_softphone_runtime import local_softphone_bridge
         from .pbx_routing import browser_endpoint_can_ring
@@ -331,10 +372,16 @@ async def async_transfer_call(
         if client is not None and client.dialog is not None
         else _server_local_uri(server)
     )
+    if hass is not None and not request.replaces_call_id and session is not None:
+        transferor = _client_for_call(runtime, request.call_id) if from_callee else runtime.sip.source_sip_client_for(session.call_id)
+        local = await _try_local_blind_transfer(hass, runtime, session, target, transferor,
+            transferor.dialog_ids.call_id if transferor is not None else session.call_id)
+        if local is not None:
+            return local
     if _external_transfer_denied(runtime, request.call_id, target, remote_uri, local_uri, entries=entries):
         return SipTransferResult(False, 403, "external_calls_disabled")
     if server is not None:
-        return await server.async_refer(request.call_id, target) or SipTransferResult(False, 0, "call_not_found")
+        return await server.async_refer(session.call_id if from_callee and session is not None else request.call_id, target) or SipTransferResult(False, 0, "call_not_found")
     return await client.refer(target)
 
 
@@ -391,7 +438,8 @@ async def async_transfer_target(
                     and endpoint.endpoint_id in session.endpoint_claims
                     and leg is not None and leg.dialog is source_client
                     and leg.role in {"ha_softphone", "callee"}
-                    and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                    and (leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}
+                         or source_client.incoming_refer_dialog is not None)
                     and session.state in {"in_call", "held"}):
                 from .browser_transfer import transfer_browser_target
                 return await transfer_browser_target(hass, runtime, session, source_client, target)
@@ -413,6 +461,12 @@ async def async_transfer_target(
         local_uri = _server_local_uri(server)
     else:
         return SipTransferResult(False, 0, "call_not_found")
+    if hass is not None and target.replaces is None:
+        session = runtime.sip.get_session(runtime.sip.resolve_session_id(call_id))
+        local = await _try_local_blind_transfer(hass, runtime, session, target, source_client,
+            source_client.dialog_ids.call_id if source_client is not None else call_id)
+        if local is not None:
+            return local
     if _external_transfer_denied(
         runtime, call_id, target, remote_uri, local_uri
     ):

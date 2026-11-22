@@ -1,16 +1,23 @@
 """Audio frame decoding, source tracking and browser capture playout."""
 
 from collections import deque
+from dataclasses import dataclass
 import logging
 
 from .core import rtp
-from .dtmf import telephone_event_code
 
 _LOGGER = logging.getLogger(f"{__package__}.audio_ws_view")
 
 
 _BROWSER_PLAYOUT_TARGET_MS = 60
 _BROWSER_PLAYOUT_MAX_MS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class DeferredAudioFrames:
+    receiver: object
+    frames: tuple[bytes, ...]
+    gap_ms: float
 
 
 def _conceal_pcm_frame(last_pcm: bytes, frame_bytes: int) -> bytes:
@@ -114,10 +121,8 @@ class BrowserAudioReceiver:
         self.remote_port = int(remote_port)
         self.source = None
         self.ssrc = None
+        self.received_format = None
         self.logged_first = False
-        self.last_sequence = None
-        self.last_timestamp = None
-        self.last_format = None
 
     def decode(
         self,
@@ -132,17 +137,26 @@ class BrowserAudioReceiver:
         counters,
     ):
         """Return the decoded frames and silence-resume marker for an accepted packet."""
+        if str(addr[0]) not in {self.remote_host, str(getattr(session, "remote_rtp_host", "")),
+                                str(getattr(session, "signaling_host", ""))}:
+            counters["drop_addr"] += 1
+            return None
         packet = rtp.parse_packet(data)
         if (
             dtmf_decoder is not None
-            and packet.payload_type == dtmf_decoder.payload_type
+            and dtmf_decoder.accepts(packet.payload_type)
         ):
-            digit = dtmf_decoder.decode(data)
-            event = telephone_event_code(digit)
+            report = dtmf_decoder.decode_report(data)
+            digit = report.digit if report is not None and report.first else ""
+            if report is not None and report.shared_audio:
+                if report.source_changed:
+                    decoder.reset_source()
+                decoder.observe_non_audio_sequence(packet.sequence)
+                self.ssrc = report.ssrc
+                self.source = (str(addr[0]), int(addr[1]))
+                self.remote_host, self.remote_port = self.source
             if (
                 digit
-                and event is not None
-                and event in session.dtmf_events
                 and session.on_dtmf is not None
             ):
                 session.on_dtmf(digit)
@@ -166,49 +180,20 @@ class BrowserAudioReceiver:
         if session.local_audio_direction not in {"recvonly", "sendrecv"}:
             counters["drop_direction"] += 1
             return None
-        if self.ssrc is not None and packet.ssrc != self.ssrc:
-            counters["drop_addr"] += 1
-            return None
         try:
-            frames = decoder.decode(packet.payload_type, packet.payload)
+            frames = decoder.decode_rtp(packet,
+                normalize_frames=decoder.requires_fixed_input(received_format))
         except rtp.RtpError as err:
             counters["drop_payload_size"] += 1
             _LOGGER.debug("HA softphone RTP RX oversized audio drop: %s", err)
             return None
-        source = (str(addr[0]), int(addr[1]))
-        if self.source is None:
-            self.source = source
-            self.ssrc = packet.ssrc
-            self.remote_host = source[0]
-            self.remote_port = source[1]
-        elif source[0] != self.source[0]:
-            counters["drop_addr"] += 1
+        if not decoder.last_packet_accepted:
             return None
-        elif source[1] != self.source[1]:
-            # Preserve the SSRC latch while allowing a NAT mapping to
-            # change its source port during a long-lived call.
-            self.source = source
-            self.remote_port = source[1]
-        sequence_delta = (
-            (packet.sequence - self.last_sequence) & 0xFFFF
-            if self.last_sequence is not None
-            else 0
-        )
-        timestamp_delta = (
-            (packet.timestamp - self.last_timestamp) & 0xFFFFFFFF
-            if self.last_timestamp is not None
-            else 0
-        )
-        expected_timestamp_delta = int(received_format.rtp_timestamp_step)
-        remote_silence_resume = (
-            self.last_sequence is not None
-            and self.last_format == received_format
-            and sequence_delta == 1
-            and timestamp_delta > expected_timestamp_delta * 2
-        )
-        self.last_sequence = packet.sequence
-        self.last_timestamp = packet.timestamp
-        self.last_format = received_format
+        self.source = (str(addr[0]), int(addr[1]))
+        self.ssrc = decoder.source_ssrc
+        self.received_format = received_format
+        self.remote_host, self.remote_port = self.source
+        remote_silence_resume = decoder.last_gap_ms > received_format.frame_ms * 2
         if not dtmf_send_lock.locked() and encoder.follow_received(received_format):
             _LOGGER.info(
                 "SIP audio TX follows negotiated RX codec call_id=%s tx=%s",

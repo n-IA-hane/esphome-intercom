@@ -30,12 +30,6 @@ if TYPE_CHECKING:
     from .roster import RosterEntry
 
 
-async def end_timed_out_conference_call(hass: HomeAssistant, call_id: str, reason: str) -> None:
-    """End a timed-out inbound UAS dialog and release its logical claim."""
-    await EndpointTerminationHandler(hass).terminate(
-        call_id,
-        TerminationIntent.bye(reason, TerminationInitiator.TIMEOUT),
-    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

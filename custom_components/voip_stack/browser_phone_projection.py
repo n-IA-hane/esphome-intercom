@@ -410,6 +410,11 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
                   and session.metadata.get("endpoint_id") == endpoint_id
                   and str(store.get("call_id") or "") == session.call_id)
     can_attach_media = _account_browser_media(entry_runtime, registry, endpoint_id, str(call_id or "")) if entry_runtime is not None else False
+    descriptor = registry.resource_for(str(call_id or ""), "softphone_media") or {}
+    handoff = descriptor.get("media_handoff") or {}
+    media_handoff = dict(handoff) if (can_attach_media and session is not None
+        and endpoint_id in session.endpoint_claims and descriptor.get("endpoint_id") == endpoint_id
+        and handoff.get("endpoint_id") == endpoint_id and descriptor.get("media_client_id")) else None
     event_context = registry.event_context(str(call_id or ""))
     video_active = bool(store.get("video_active", False))
     video_offered = bool(store.get("video_offered", False))
@@ -455,8 +460,8 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         **phone,
         "endpoint_id": endpoint_id,
         "device_id": (
-            endpoint.device_id
-            if endpoint is not None and endpoint.device_id
+            endpoint.ha_device_id
+            if endpoint is not None and endpoint.ha_device_id
             else store.get("device_id", "")
         ),
         "name": endpoint.name if endpoint is not None else _ha_peer_name(hass),
@@ -472,6 +477,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "connected_cards": connected_cards,
         "ha_client_supported": bool(endpoint is not None and endpoint.supports_ha_client),
         "can_attach_media": can_attach_media,
+        **({"media_handoff": media_handoff} if media_handoff is not None else {}),
         "can_answer": can_answer,
         "media_is_local": can_attach_media,
         "owns_media": False,

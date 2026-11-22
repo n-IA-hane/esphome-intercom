@@ -332,3 +332,37 @@ async def test_nonfatal_keepalive_failure_is_counted_and_keeps_the_shared_source
     assert sender.sequence == lab.source.sequence
     assert lab.source.keepalives == 2
     assert lab.state.counters["video_symmetric_rtp_keepalives"] == 0
+
+
+async def test_same_generation_source_change_uses_probation_and_rearms_recovery(processing):
+    lab = processing
+    decoded, requests = [], []
+
+    def decode(_decoder, packet, *_args):
+        decoded.append((packet.ssrc, packet.sequence))
+        return VideoAccessUnit(b"frame", packet.timestamp, True, "VP8")
+
+    receiver = VideoReceiveWorkers(lab.session, lab.state, lab.queue, lab.media_queue,
+        lab.access_units, lab.closed, None, None, generation(lab).refresh,
+        lambda _now: requests.append(lab.state.route.latched_ssrc), lab.stored,
+        VideoReceiveHooks(decode, view._video_loss_requires_key_frame, view._sync_video_reorder_counters),
+        1024, 2)
+    payload_type = lab.state.browser_format.payload_type
+    for ssrc, sequence, host, pt in ((99, 0, "192.0.2.99", payload_type),
+        (99, 0, "192.0.2.1", 120), (55, 1, "192.0.2.1", payload_type),
+        (55, 1, "192.0.2.1", payload_type), (77, 10, "192.0.2.1", payload_type),
+        (77, 11, "192.0.2.1", payload_type), (55, 2, "192.0.2.1", payload_type)):
+        raw = rtp.build_packet(rtp.RtpPacket(pt, sequence, sequence * 3000, ssrc, b"payload"))
+        lab.media_queue.put_nowait((raw, (host, 49999)))
+    task = asyncio.create_task(receiver.rtp_to_access_units())
+    try:
+        await until(lambda: lab.media_queue.empty() and len(decoded) == 2)
+        assert decoded == [(55, 1), (77, 11)]
+        assert lab.state.route.latched_ssrc == 77
+        assert requests[-1] == 77
+        assert lab.state.counters["video_drop_payload_type"] == 1
+        assert lab.state.counters["video_duplicate_packets"] >= 1
+    finally:
+        lab.closed.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

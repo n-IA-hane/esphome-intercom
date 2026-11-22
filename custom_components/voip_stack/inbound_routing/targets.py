@@ -112,7 +112,7 @@ def resolve_phone_target(
         # Resolve them to the current public alias before using the dial plan.
         target_endpoint = endpoint_registry.get(forward_target)
         if target_endpoint is not None:
-            forward_target = target_endpoint.name
+            forward_target = target_endpoint.username
         decision = route_resolver(forward_target, roster_entries)
         trace_call(
             _LOGGER, call_id,
@@ -190,7 +190,13 @@ def reject_route_decision(
 
     if decision.action is not RouteAction.REJECT:
         return None
-    if decision.reason is RouteReason.TARGET_DISABLED:
+    explicit_status = int(decision.status or 0)
+    if explicit_status in {403, 404, 480, 482, 483, 485, 486, 488, 503}:
+        status = explicit_status
+        sip_reason = {403: "Forbidden", 404: "Not Found", 480: "Temporarily Unavailable",
+                      482: "Loop Detected", 483: "Too Many Hops", 485: "Ambiguous",
+                      486: "Busy Here", 488: "Not Acceptable Here", 503: "Service Unavailable"}[status]
+    elif decision.reason is RouteReason.TARGET_DISABLED:
         status = 403
         sip_reason = "Forbidden"
     elif decision.reason in {

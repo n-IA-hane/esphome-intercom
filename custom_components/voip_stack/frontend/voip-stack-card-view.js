@@ -131,7 +131,7 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .video-canvas {
         position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
-        max-width: 100%; max-height: 100%; object-fit: contain; background: #000;
+        max-width: 100%; max-height: 100%; object-fit: contain; object-position: center; background: #000;
         border-radius: inherit; pointer-events: none;
       }
       /* Center the complete decoded frame above the actual call controls. */
@@ -326,6 +326,11 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .card:not(.video-active) .voip-button.small { min-width: var(--voip-small-button-size, 80px); }
       .voip-button.call { background: #4caf50; color: white; }
+      .card:not(.video-active) .voip-button.video-call {
+        width: 44px; min-width: 44px; height: 44px; padding: 8px;
+        border-radius: 50%; background: #4caf50; color: white;
+      }
+      .video-call ha-icon { --mdc-icon-size: 24px; }
       .voip-button.answer { background: #4caf50; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.decline { background: #f44336; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.hangup { background: transparent; color: white; }
@@ -382,6 +387,7 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .video-active .hangup-icon ha-icon { --mdc-icon-size: 28px; }
       .video-active .hangup-copy {
+        pointer-events: none;
         display: flex;
         flex: 1 1 auto;
         min-width: 0;
@@ -402,6 +408,7 @@ export function buildMainCardSkeleton(cardVersion) {
         font-size: .98rem;
       }
       .video-active .hangup-duration {
+        pointer-events: none;
         display: block;
         flex: 0 0 auto;
         margin-left: auto;
@@ -411,6 +418,7 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .hangup-stats { display: none; }
       .video-active .hangup-stats:not([hidden]) {
+        pointer-events: none;
         display: block;
         flex: 1 1 auto;
         min-width: 0;
@@ -859,6 +867,17 @@ export function buildMainCardSkeleton(cardVersion) {
     callBtn.type = "button";
     callBtn.className = "voip-button call";
     callBtn.textContent = translate("Call");
+    callBtn.setAttribute("aria-label", translate("Call"));
+    callBtn.title = translate("Audio call");
+    const videoCallBtn = document.createElement("button");
+    videoCallBtn.type = "button";
+    videoCallBtn.className = "voip-button video-call";
+    videoCallBtn.hidden = true;
+    videoCallBtn.setAttribute("aria-label", translate("Video call"));
+    videoCallBtn.title = translate("Video call");
+    const videoCallIcon = document.createElement("ha-icon");
+    videoCallIcon.setAttribute("icon", "mdi:video-outline");
+    videoCallBtn.appendChild(videoCallIcon);
     const placeholderBtn = document.createElement("button");
     placeholderBtn.type = "button";
     placeholderBtn.className = "voip-button";
@@ -868,7 +887,7 @@ export function buildMainCardSkeleton(cardVersion) {
     buttonContainer.appendChild(declineBtn);
     buttonContainer.appendChild(audioCallSummary);
     buttonContainer.append(hangupBtn, hangupCopy, hangupStats, hangupDuration);
-    buttonContainer.appendChild(callBtn);
+    buttonContainer.append(callBtn, videoCallBtn);
     buttonContainer.appendChild(placeholderBtn);
     card.appendChild(buttonContainer);
 
@@ -1303,7 +1322,7 @@ export function buildMainCardSkeleton(cardVersion) {
       header, headerName,
       destRow, destValueWrap, destValue, destSelect, prevBtn, nextBtn, offlinePanel,
       keypadPanel, keypadInput, keypadKeys, keypadGrid,
-      answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
+      answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, videoCallBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
       audioCallSummary, audioCallDuration, microphoneBtn, microphoneLabel, microphoneIcon,
       transferLabel: transferBtn.querySelector(".settings-label"),

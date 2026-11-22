@@ -137,69 +137,6 @@ def _sip_video_codec(extras: list[str]) -> str:
     return ""
 
 
-def _sip_audio_formats(extras: list[str], direction: str) -> list[str]:
-    """Return normalized standard RTP codec capabilities from endpoint extras."""
-    expected_keys = {f"audio_{direction}", "at" if direction == "tx" else "ar"}
-    compact_encodings = {
-        "o": "OPUS",
-        "l": "L16",
-        "h": "L24",
-        "a": "PCMA",
-        "u": "PCMU",
-        "g": "G722",
-    }
-    for token in extras:
-        key, separator, value = token.partition("=")
-        normalized_key = key.strip().casefold()
-        if not separator or normalized_key not in expected_keys:
-            continue
-        out: list[str] = []
-        for raw in value.replace(",", ";").split(";"):
-            parts = [part.strip() for part in raw.split("/")]
-            if len(parts) != 4:
-                continue
-            encoding = compact_encodings.get(parts[0].casefold(), parts[0].upper())
-            if encoding not in {"OPUS", "G722", "PCMA", "PCMU", "L16", "L24"}:
-                continue
-            try:
-                rate, channels, frame_ms = map(int, parts[1:])
-            except ValueError:
-                continue
-            if normalized_key in {"at", "ar"}:
-                rate *= 1000
-            if rate <= 0 or channels not in {1, 2} or frame_ms not in {10, 16, 20, 32}:
-                continue
-            if encoding == "OPUS" and (rate != 48000 or channels != 2):
-                continue
-            out.append(f"{encoding}/{rate}/{channels}/{frame_ms}")
-        return out[:8]
-    return []
-
-
-def _sdp_features(extras: list[str]) -> list[str]:
-    """Return explicitly advertised, versioned SDP extensions."""
-
-    features: set[str] = set()
-    for token in extras:
-        key, separator, value = token.partition("=")
-        normalized_key = key.strip().casefold()
-        if separator and normalized_key == "ip" and value.strip() == "1":
-            features.add("independent_audio_ptime_v1")
-        if not separator or normalized_key not in {"sdp_features", "sf"}:
-            continue
-        if normalized_key == "sf" and value.strip().casefold() == "d1":
-            features.add("directional_audio_v1")
-            continue
-        features.update(
-            feature
-            for feature in (
-                item.strip().casefold() for item in value.split(";")
-            )
-            if feature in {"directional_audio_v1", "independent_audio_ptime_v1"}
-        )
-    return sorted(features)
-
-
 def parse_voip_endpoint(value: str | None) -> dict | None:
     """Parse the project endpoint standard published by ESP voip_stack.
 
@@ -253,15 +190,6 @@ def parse_voip_endpoint(value: str | None) -> dict | None:
         return None
     sip_transport = "tcp" if transport_token == "sip_tcp" else "udp"
     extras = parts[9:] if len(parts) > 9 else []
-    sip_audio_tx_formats = _sip_audio_formats(extras, "tx")
-    sip_audio_rx_formats = _sip_audio_formats(extras, "rx")
-    if (not tx_formats and not sip_audio_tx_formats) or (
-        not rx_formats and not sip_audio_rx_formats
-    ):
-        _LOGGER.debug(
-            "VoIP endpoint did not publish SIP audio formats, negotiation will use the HA offer: %r",
-            text,
-        )
     return {
         "name": name,
         "sip_transport": sip_transport,
@@ -274,9 +202,6 @@ def parse_voip_endpoint(value: str | None) -> dict | None:
         "extension": parts[8] if len(parts) >= 9 else "",
         "extras": extras,
         "sip_video_codec": _sip_video_codec(extras),
-        "sip_audio_tx_formats": sip_audio_tx_formats,
-        "sip_audio_rx_formats": sip_audio_rx_formats,
-        "sdp_features": _sdp_features(extras),
     }
 
 
@@ -449,9 +374,6 @@ class VoipDeviceResolver:
                 "audio_mode": endpoint.get("audio_mode"),
                 "tx_formats": _format_tokens(endpoint.get("tx_formats") or []),
                 "rx_formats": _format_tokens(endpoint.get("rx_formats") or []),
-                "sip_audio_tx_formats": list(endpoint.get("sip_audio_tx_formats") or []),
-                "sip_audio_rx_formats": list(endpoint.get("sip_audio_rx_formats") or []),
-                "sdp_features": list(endpoint.get("sdp_features") or []),
                 "sip_video_codec": endpoint.get("sip_video_codec"),
                 "camera_entity_id": camera_entity_id,
                 "capabilities": sorted(capabilities),
@@ -516,9 +438,6 @@ class VoipDeviceResolver:
                 "conference_group": phone.conference_group, "conference_ring": phone.conference_ring,
                 "audio_mode": caps.get("audio_mode", previous.get("audio_mode")),
                 "tx_formats": previous.get("tx_formats", []), "rx_formats": previous.get("rx_formats", []),
-                "sip_audio_tx_formats": caps.get("sip_audio_tx_formats", previous.get("sip_audio_tx_formats", [])),
-                "sip_audio_rx_formats": caps.get("sip_audio_rx_formats", previous.get("sip_audio_rx_formats", [])),
-                "sdp_features": caps.get("sdp_features", previous.get("sdp_features", [])),
                 "sip_video_codec": video_codec,
                 "sip_capabilities_known": binding is not None and binding.capabilities is not None,
                 "camera_entity_id": entities.get("camera", ""),

@@ -48,13 +48,20 @@ substitutions:
                 pcm_format: s16le
                 channels: 1
                 frame_ms: 10
+              - sample_rate: 48000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 10
             rx:
-              # Prefer 48 kHz / 10 ms from HA. 48 kHz / 20 ms exceeds the normal RTP payload budget.
               # 16 kHz alternatives allow compatible PCM peers without unnecessary transcoding.
               - sample_rate: 48000
                 pcm_format: s16le
                 channels: 1
                 frame_ms: 10
+              - sample_rate: 48000
+                pcm_format: s16le
+                channels: 1
+                frame_ms: 20
               - sample_rate: 16000
                 pcm_format: s16le
                 channels: 1
@@ -65,8 +72,6 @@ substitutions:
                 frame_ms: 10
       microphone: mic_afe
       speaker: voip_speaker_input
-      delete_contact_missing_from:
-        updates_number: 1
     speaker:
     - id: !extend 'voip_speaker_input'
       task_stack_in_psram: true

@@ -41,6 +41,8 @@ class _EndpointTerminationHandler:
         source = registry.resolve_session_id(call_id)
         session = registry.sessions.get(source)
         leg = session.legs.get(call_id) if session is not None else None
+        if session is not None and call_id != session.call_id and leg is None:
+            return
         # A second inbound dialog may be the callee of a joined call. Its BYE
         # retires that dialog at the listener, but the original caller still
         # needs its own BYE from the session's normal signaling owner.
@@ -93,6 +95,9 @@ class _EndpointTerminationHandler:
         registry = call_registry(self.hass)
         session = registry.sessions.get(registry.resolve_session_id(call_id))
         leg = session.legs.get(call_id) if session is not None else None
+        if (intent.initiator is TerminationInitiator.REMOTE_PEER
+                and session is not None and call_id != session.call_id and leg is None):
+            return None
         if (intent.initiator is TerminationInitiator.REMOTE_PEER
                 and leg is not None and leg.phase in {LegPhase.CLOSING, LegPhase.CLOSED}):
             return None

@@ -59,6 +59,7 @@ class LegCloseMode(StrEnum):
     """Required signaling cleanup for a losing or abandoned branch."""
 
     CANCEL_OR_BYE = "cancel_or_bye"
+    ANSWERED_ELSEWHERE = "answered_elsewhere"
     BYE = "bye"
     CLOSE = "close"
 
@@ -81,6 +82,8 @@ def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
     dispositions = [outcome.disposition for outcome in outcomes]
     if all(item is DialDisposition.DECLINED for item in dispositions):
         return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
+    if any(item is DialDisposition.TIMEOUT for item in dispositions):
+        return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
     if any(item is DialDisposition.BUSY for item in dispositions):
         return DialOutcome(DialDisposition.BUSY, 486, "Busy Here")
     if any(item is DialDisposition.DND for item in dispositions):
@@ -500,16 +503,18 @@ class DialForkController:
 
         tiers = sorted({candidate.tier for candidate in self.candidates})
         try:
-            for tier in tiers:
+            for tier_index, tier in enumerate(tiers):
                 tier_candidates = tuple(
                     candidate for candidate in self.candidates if candidate.tier == tier
                 )
                 attempted.extend(candidate.candidate_id for candidate in tier_candidates)
                 strategy = self.tier_strategies.get(tier, self.strategy)
                 if strategy is ForkStrategy.PARALLEL:
+                    tier_deadline = (min(deadline, loop.time() + self.step_timeout)
+                                     if tier_index + 1 < len(tiers) else deadline)
                     winner, control, tier_failures = await self._dial_parallel_tier(
                         tier_candidates,
-                        deadline,
+                        tier_deadline,
                     )
                 else:
                     winner, control, tier_failures = await self._dial_sequential_tier(
@@ -540,7 +545,7 @@ class DialForkController:
 
             losers = all_candidates - {winner}
             cleanup = asyncio.create_task(
-                self._close_candidates(losers, LegCloseMode.CANCEL_OR_BYE),
+                self._close_candidates(losers, LegCloseMode.ANSWERED_ELSEWHERE),
                 name="voip-dial-fork-loser-barrier",
             )
             source_terminated = await self._wait_for_cleanup_or_termination(cleanup)

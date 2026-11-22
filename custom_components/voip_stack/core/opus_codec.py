@@ -73,6 +73,9 @@ class OpusDecoder:
         return AudioFormat(self.sample_rate, PcmFormat.S16LE, self.channels, self.frame_ms)
 
     def decode(self, payload: bytes) -> bytes:
+        from .rtp import opus_packet_duration_ms
+
+        opus_packet_duration_ms(payload)
         frames = self._ctx.decode(self._av.Packet(payload))
         if not frames:
             return b""

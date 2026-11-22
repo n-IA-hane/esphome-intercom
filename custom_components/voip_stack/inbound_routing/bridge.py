@@ -10,7 +10,6 @@ from homeassistant.core import HomeAssistant
 
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
-from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from ..core.sdp import build_answer_directional, first_offered_dtmf_format
 from ..config import trunk_identity_uri as _trunk_identity_uri
 from ..const import (
@@ -33,15 +32,9 @@ from ..endpoint_session import (
 )
 from ..endpoint_routing import (
     bridge_audio_profile,
-    peer_audio_formats,
     peer_for_target,
     peer_video_codec,
-    roster_entry_formats,
-    sip_target_audio_profile,
     sip_target_rtp_audio_profile,
-    sip_target_offer_common_audio,
-    supports_directional_audio_payloads,
-    supports_independent_audio_ptime,
 )
 from ..fsm import (
     CallState,
@@ -206,40 +199,19 @@ async def route_sip_bridge(
         _LOGGER.warning("SIP RTP bridge port allocation failed: %s", err)
         return SipInviteResult(503, "Service Unavailable", to_tag="")
     source_relay_port, dest_relay_port = bridge_ports.ports
-    remote_tx_formats = peer_audio_formats(
-        peer_target, "tx_formats"
-    ) or roster_entry_formats(decision.entry, "tx_formats")
-    remote_rx_formats = peer_audio_formats(
-        peer_target, "rx_formats"
-    ) or roster_entry_formats(decision.entry, "rx_formats")
-    sip_send_formats, sip_recv_formats = sip_target_audio_profile(
-        remote_tx_formats=remote_tx_formats,
-        remote_rx_formats=remote_rx_formats,
-        target=decision.target or invite.target,
-    )
     rtp_audio_profile = sip_target_rtp_audio_profile(
-        peer_target,
         decision.entry,
+        codec_policy=codec_policy,
+        trunk=bridge_to_trunk,
     )
     bridge_to_softphone = bool(
         decision.entry is not None
         and decision.entry.sip_uri
         and decision.entry.metadata.get("registered")
     )
-    if bridge_to_trunk:
-        sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
-        sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
-        rtp_audio_profile = None
-    elif rtp_audio_profile is not None:
-        sip_send_formats = list(rtp_audio_profile.send_formats)
-        sip_recv_formats = list(rtp_audio_profile.recv_formats)
-    if not bridge_to_trunk and sip_send_formats and sip_recv_formats:
-        rtp_audio_profile = bridge_audio_profile(
-            invite, sip_send_formats, sip_recv_formats, rtp_audio_profile,
-            include_common_codecs=sip_target_offer_common_audio(peer_target, decision.entry),
-        )
-        sip_send_formats = list(rtp_audio_profile.send_formats)
-        sip_recv_formats = list(rtp_audio_profile.recv_formats)
+    rtp_audio_profile = bridge_audio_profile(invite, rtp_audio_profile)
+    sip_send_formats = list(rtp_audio_profile.send_formats)
+    sip_recv_formats = list(rtp_audio_profile.recv_formats)
 
     video_bridge_ports = None
     video_relay = None
@@ -300,7 +272,9 @@ async def route_sip_bridge(
         await release_pending_media(TerminalReason.CANCELLED.value)
         return SipInviteResult(487, "Request Terminated", to_tag="")
 
+    # Preserve the engine's complete RTP catalog through the SIP writer.
     client = SipCallClient(
+        max_forwards=max(0, invite.max_forwards - 1) if invite.max_forwards is not None else 70,
         codec_policy=codec_policy,
         local_ip=local_ip,
         local_name=invite.caller or runtime.ha_peer_name(hass),
@@ -316,16 +290,8 @@ async def route_sip_bridge(
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
-        supported_send_rtp_formats=(
-            rtp_audio_profile.send_rtp_formats
-            if rtp_audio_profile is not None
-            else None
-        ),
-        supported_recv_rtp_formats=(
-            rtp_audio_profile.recv_rtp_formats
-            if rtp_audio_profile is not None
-            else None
-        ),
+        supported_send_rtp_formats=rtp_audio_profile.send_rtp_formats,
+        supported_recv_rtp_formats=rtp_audio_profile.recv_rtp_formats,
         signaling_transport=runtime.sip_uri_transport(decision_uri),
         auth_username=str(trunk_config.get(CONF_TRUNK_AUTH_USERNAME) or "")
         if bridge_to_trunk
@@ -339,16 +305,9 @@ async def route_sip_bridge(
         outbound_proxy=str(trunk_config.get(CONF_TRUNK_OUTBOUND_PROXY) or "")
         if bridge_to_trunk
         else "",
-        include_common_codecs=(
-            bridge_to_trunk
-            or sip_target_offer_common_audio(peer_target, decision.entry)
-        ),
-        allow_directional_audio_payloads=supports_directional_audio_payloads(
-            peer_target, decision.entry
-        ),
-        independent_audio_ptime=supports_independent_audio_ptime(
-            peer_target, decision.entry
-        ),
+        include_common_codecs=False,
+        include_dahua_pcm=rtp_audio_profile.include_dahua_pcm,
+        match_received_codec=rtp_audio_profile.match_received_codec,
         peer_user_agent=(
             str((decision.entry.metadata or {}).get("user_agent") or "")
             if bridge_to_softphone and decision.entry is not None

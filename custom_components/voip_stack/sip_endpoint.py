@@ -137,6 +137,7 @@ class SipEndpointManager:
         on_invite: InviteHandler,
         on_offerless_invite: OfferlessInviteHandler | None = None,
         codec_policy_resolver=None,
+        codec_policy=None,
         invite_identity_resolver=None,
         invite_authorizer: InviteAuthorizer | None = None,
         on_terminated: TerminateHandler | None = None,
@@ -163,6 +164,7 @@ class SipEndpointManager:
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
+        self.codec_policy = codec_policy
         self.invite_identity_resolver = invite_identity_resolver
         self.invite_authorizer = invite_authorizer
         self.on_terminated = on_terminated
@@ -235,6 +237,7 @@ class SipEndpointManager:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    codec_policy=self.codec_policy,
                     invite_identity_resolver=self.invite_identity_resolver,
                     invite_authorizer=self.invite_authorizer,
                     on_terminated=self.on_terminated,
@@ -264,6 +267,7 @@ class SipEndpointManager:
                     on_invite=self.on_invite,
                     on_offerless_invite=self.on_offerless_invite,
                     codec_policy_resolver=self.codec_policy_resolver,
+                    codec_policy=self.codec_policy,
                     invite_identity_resolver=self.invite_identity_resolver,
                     invite_authorizer=self.invite_authorizer,
                     on_terminated=self.on_terminated,

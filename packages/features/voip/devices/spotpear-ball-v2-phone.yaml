@@ -24,8 +24,6 @@ voip_stack:
             frame_ms: 20
   microphone: mic_main
   speaker: voip_speaker_input
-  delete_contact_missing_from:
-    updates_number: 1
   use_ha_as_first_contact: true
 packages:
   callbacks: !include '../../../voip/callbacks.yaml'

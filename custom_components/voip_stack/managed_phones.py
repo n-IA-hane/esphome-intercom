@@ -2,28 +2,16 @@
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-import re
 
-from .esphome_native import action_names, device_info, normalize_mac, verified_action_names
+from .esphome_native import device_info, normalize_mac, verified_action_names
 from .sip_registrar import SipAccount, validate_managed_username
 from .phone_queue_membership import normalize_membership_tracking, normalize_phone_queues
 
 CONF_MANAGED_PHONES = "managed_esphome_phones"
 CONF_ESPHOME_ENROLLMENTS = "esphome_sip_enrollments"
 MANAGED_ACCOUNT_ID = "ha"
-MANAGED_ACTIONS = frozenset({"set_ha_display_name", "set_account", "register_account"})
-REGISTER_BY_NODE = "register_ha_account_by_node_name"
-REGISTER_BY_FRIENDLY_NAME = "register_ha_account_by_friendly_name"
-
-
-def managed_registration_action(native) -> str:
-    """New firmware advertises the configured name source in its native action."""
-    actions = action_names(native)
-    if REGISTER_BY_NODE in actions:
-        return REGISTER_BY_NODE
-    if REGISTER_BY_FRIENDLY_NAME in actions:
-        return REGISTER_BY_FRIENDLY_NAME
-    return "register_account"
+REGISTER_HA_ACCOUNT = "register_ha_account"
+MANAGED_ACTIONS = frozenset({"set_ha_display_name", "set_account", REGISTER_HA_ACCOUNT})
 
 
 class ManagedNameError(ValueError):
@@ -35,27 +23,13 @@ class ManagedNameError(ValueError):
         self.value = value
 
 
-def check_native_username(action, username):
-    """Firmware without the named action sends its SIP URI user unescaped."""
-    if action == "register_account" and re.fullmatch(r"[A-Za-z0-9_.-]+", username) is None:
-        raise ManagedNameError("esphome_account_firmware")
-
-
 def managed_device_username(native) -> str:
+    """Use ESPHome's effective friendly name, whose native suffix is already applied."""
     info = device_info(native)
-    action = managed_registration_action(native)
-    username = info.name if action == REGISTER_BY_NODE else info.friendly_name or info.name
-    # Legacy DeviceInfo has both effective names but lacks the YAML flag.
-    # A literal node name may also end in the physical MAC suffix.
-    if (action == "register_account" and username != info.name
-            and info.name.endswith("-" + normalize_mac(info.mac_address)[-6:])):
-        raise ManagedNameError("esphome_account_firmware")
     try:
-        username = validate_managed_username(username)
+        return validate_managed_username(info.friendly_name or info.name)
     except ValueError as exc:
         raise ManagedNameError("esphome_account_name") from exc
-    check_native_username(action, username)
-    return username
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +60,7 @@ class ManagedPhone:
             object.__setattr__(self, name, normalize_membership_tracking(getattr(self, name)))
         mac = normalize_mac(self.mac)
         username = validate_managed_username(self.username)
-        endpoint_id = self.endpoint_id or f"esphome:{self.device_id}"
+        endpoint_id = self.endpoint_id or username
         if (not isinstance(self.device_id, str) or not self.device_id
                 or not isinstance(self.origin_entry_id, str) or not self.origin_entry_id
                 or not isinstance(self.password, str) or not 1 <= len(self.password) <= 128
@@ -112,7 +86,7 @@ class ManagedPhone:
 def managed_account_subentries(entry):
     """Index native SIP accounts whose physical owner is an ESPHome device."""
     return {device_id: row for row in getattr(entry, "subentries", {}).values()
-            if row.subentry_type == "phone" and row.data.get("kind") == "esphome"
+            if row.subentry_type == "phone" and (row.data.get("kind") == "esphome" or row.data.get("managed_esphome"))
             and isinstance(device_id := row.data.get("device_id"), str) and device_id}
 
 
@@ -122,12 +96,16 @@ def managed_records(entry) -> dict[str, ManagedPhone]:
     for device_id, row in managed_account_subentries(entry).items():
         identity = getattr(row, "unique_id", None)
         if isinstance(identity, str) and identity.startswith("phone:") and identity[6:]:
-            candidates[device_id] = {**row.data, "endpoint_id": identity[6:]}
+            candidates[device_id] = {**row.data, "endpoint_id": identity[6:],
+                "display_name": row.data.get("name") or row.data.get("display_name") or row.title,
+                "active": bool(row.data.get("enabled", True) and row.data.get("active", True))}
     records = {}
     for key, raw in candidates.items():
         if not isinstance(raw, Mapping):
             continue
         try:
+            from .phone_queue_membership import project_phone_memberships
+            raw = project_phone_memberships(entry, str(raw.get("endpoint_id") or raw.get("username") or ""), raw)
             phone = ManagedPhone(**{name: raw[name] for name in ManagedPhone.__dataclass_fields__ if name in raw})
             if phone.device_id != key:
                 continue
@@ -137,7 +115,7 @@ def managed_records(entry) -> dict[str, ManagedPhone]:
     return records
 
 
-def save_managed_account(hass, entry, phone):
+def save_managed_account(hass, entry, phone, *, username_source=None):
     """The subentry owns the credential. Its native unique ID owns the endpoint ID."""
     from types import MappingProxyType
     from homeassistant.config_entries import ConfigSubentry
@@ -145,11 +123,25 @@ def save_managed_account(hass, entry, phone):
     row = managed_account_subentries(entry).get(phone.device_id)
     data = phone.record()
     unique_id = "phone:" + data.pop("endpoint_id")
-    data["kind"] = "esphome"
+    data["kind"] = "sip_account"
+    data["name"] = phone.display_name or phone.username
+    data["managed_esphome"] = True
+    data["managed_exclusive"] = bool(row.data.get("managed_exclusive", True)) if row else True
+    if row is not None:
+        data = {**row.data, **data}
+    if username_source is not None:
+        data['username_source'] = username_source
+    from .phone_queue_membership import GROUP_MEMBERSHIP_VERSION
+    if entry.data.get(GROUP_MEMBERSHIP_VERSION) == 1:
+        data.pop("queues", None)
+        data.pop("ring_group", None)
     title = phone.display_name or phone.username
     if row is None:
         row = ConfigSubentry(subentry_type="phone", title=title, unique_id=unique_id, data=MappingProxyType(data))
         hass.config_entries.async_add_subentry(entry, row)
+        if phone.active:
+            from .phone_config import async_enable_registrar_for_new_account
+            async_enable_registrar_for_new_account(hass, entry)
     elif row.data != data or row.unique_id != unique_id:
         # Preserve the title if the administrator renamed this account separately.
         title = title if row.title == (row.data.get("display_name") or row.data.get("username")) else row.title
@@ -163,25 +155,6 @@ def save_managed_account(hass, entry, phone):
         hass.config_entries.async_update_entry(entry, data={**entry.data,
             CONF_ESPHOME_ENROLLMENTS: {**receipts, phone.device_id: receipt}})
     return row
-
-
-def migrate_managed_accounts(hass, entry):
-    """Move existing credentials before enrolling any new devices, including offline ones."""
-    legacy = entry.data.get(CONF_MANAGED_PHONES)
-    if legacy is None:
-        return
-    records = managed_records(entry)
-    remaining = dict(legacy)
-    for device_id in legacy:
-        if phone := records.get(device_id):
-            save_managed_account(hass, entry, phone)
-            remaining.pop(device_id)
-    data = dict(entry.data)
-    if remaining:
-        data[CONF_MANAGED_PHONES] = remaining
-    else:
-        data.pop(CONF_MANAGED_PHONES)
-    hass.config_entries.async_update_entry(entry, data=data)
 
 
 def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:

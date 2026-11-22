@@ -89,6 +89,27 @@ def browser_video_send_supported(video_format: RtpVideoFormat | None) -> bool:
     )
 
 
+def plan_browser_video_offer(target_codec, *, camera_send=False, receive=False,
+                             peer_profile=None, trunk=False, codec_policy=None):
+    """Choose truthful browser formats from explicit send/receive intent."""
+    if not camera_send and not receive:
+        return ()
+    available = tuple(fmt for fmt in DEFAULT_VIDEO_FORMATS
+        if not camera_send or browser_video_send_supported(fmt))
+    if codec_policy is not None:
+        available = codec_policy.video_formats(available)
+    formats = video_offer_formats_for_target_codec(target_codec, available)
+    if (receive and not camera_send and peer_profile is not None and peer_profile.is_dahua
+            and (not trunk or peer_profile.explicit_dahua)
+            and str(target_codec or "").upper() in {"", "H264"}
+            and any(fmt.encoding == "H264" for fmt in formats)):
+        # These stations may omit fmtp in an H264 answer, which defaults to
+        # mode 0. The existing receiver supports that mode and Level 3.1.
+        return (replace(DEFAULT_H264_FORMAT, payload_type=105, profile_level_id="42001f",
+                        packetization_mode=0, level_asymmetry_allowed=False),)
+    return formats
+
+
 def browser_video_receive_supported(video_format: RtpVideoFormat | None) -> bool:
     """Return whether the direct browser bridge can render this codec."""
 

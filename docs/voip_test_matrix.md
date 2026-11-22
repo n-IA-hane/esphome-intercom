@@ -64,11 +64,12 @@ regression. Do not change household phone registration to isolate this lab.
   retain the account address of record. Qualify this against both a strict
   FRITZBox registrar and the configured provider/PBX.
 - SDP never emits `a=fmtp:<pt> ptime=N`; only `a=ptime` and `a=maxptime`.
-- Default payload limit rejects `48000:s16le:1:20`.
+- The default 1200-byte send limit rejects TX `48000:s16le:1:20`; the separate
+  bounded receiver accepts RX 48 kHz/20 ms within its advertised envelope.
 - Native 48 kHz mono signed-16 PCM profiles use 10 ms frames, 960 payload
   bytes, and remain below the default 1200-byte RTP payload budget.
-- Directory entries are data-driven. Compatible managed ESPs refresh LDAP;
-  legacy/custom HA roster providers consume JSON. Direct ESP and softphone
+- Directory entries are data-driven. Compatible managed ESPs refresh LDAP,
+  the sole dynamic ESP directory provider. Direct ESP and softphone
   entries include explicit SIP transport or route through HA without
   user-authored `kind`.
 - ESP endpoint declarations never include a separate `sip` protocol column.
@@ -159,8 +160,8 @@ state.
 - `voip_stack.clear_contacts`: clears manual central contacts.
 - Managed LDAP: observe delivered account/configuration, an actual successful
   query generation and atomic Native commit, with manual contacts preserved.
-- Legacy/custom JSON provider: observe valid roster push and each pushed/skipped
-  ESP in `voip_stack.push_phonebook` diagnostics. Do not count it as LDAP proof.
+- `voip_stack.push_phonebook`: observe the central directory rebuild and any
+  resulting managed LDAP generation refresh; no JSON rows are sent to ESPs.
 - `voip_stack.set_dnd`: updates the HA softphone DND store, emits event,
   and causes inbound calls to receive `486 Busy Here` with DND reason.
 - `voip_stack.forward`: source leg, destination leg, busy destination and

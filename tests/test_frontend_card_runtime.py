@@ -412,7 +412,7 @@ function elements() {{
   const names = [
     "audioCallSummary", "audioCallDuration",
     "microphoneBtn", "microphoneLabel", "microphoneIcon",
-    "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "card",
+    "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "videoCallBtn", "card",
     "declineBtn", "destRow", "destSelect", "destValue", "destValueWrap",
     "dndCheckbox", "dndRow", "err", "hangupBtn", "hangupDuration",
     "hangupPeer", "hangupState", "header", "headerName", "keypadBtn", "keypadLabel",
@@ -2252,3 +2252,21 @@ editor.disconnectedCallback();
 '''.replace("__FRONTEND__", json.dumps(CARD.parent.as_uri()))
     result = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_peer_labels_keep_literal_sip_names_and_never_use_control_ids():
+    script = r'''
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+const model=await import(pathToFileURL(MODEL));
+assert.equal(model.terminalPeerLabel({direction:'incoming',caller_name:'Caffè, Office',caller:'account'}),'Caffè, Office');
+assert.equal(model.terminalPeerLabel({direction:'outgoing',connected_party_name:'Desk @ East',connected_party:'DeskEast'}),'Desk @ East');
+assert.equal(model.terminalPeerLabel({direction:'outgoing',target:'legacy-ha-device-uuid',dialed_target:'entity_id'}),'');
+assert.equal(model.mirroredEndpointPeerLabel({direction:'outgoing',caller:'Desk@East',callee:'DeskEast'},'Desk@East'),'DeskEast');
+assert.equal(model.mirroredEndpointPeerLabel({direction:'incoming',caller:'desk@East',callee:'Desk@East'},'Desk@East'),'desk@East');
+assert.equal(model.mirroredEndpointPeerLabel({direction:'outgoing',callee:'Sala, Nord 20%'},'SalaNord20'),'Sala, Nord 20%');
+'''.replace("MODEL", json.dumps(str(CARD_MODEL)))
+    result = subprocess.run(["node", "--input-type=module", "-e", script], cwd=ROOT,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr or result.stdout

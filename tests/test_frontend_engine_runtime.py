@@ -2110,3 +2110,73 @@ assert.equal(model.softphoneStateMatches(
         text=True,
     )
     assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_replaces_successor_adoption_requires_owned_predecessor_and_native_client_guard(tmp_path):
+    script = r'''
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+const storage=()=>{const v=new Map();return {getItem:k=>v.get(k)||null,setItem:(k,x)=>v.set(k,String(x)),removeItem:k=>v.delete(k)}};
+globalThis.sessionStorage=storage();globalThis.localStorage=storage();
+globalThis.window={location:{protocol:'https:',host:'ha.example'},addEventListener(){},setTimeout,clearTimeout,setInterval,clearInterval};
+Object.defineProperty(globalThis,'navigator',{value:{mediaDevices:{}},configurable:true});
+const {voipStackEngine:engine}=await import(pathToFileURL(ENGINE));
+let calls=0,resumed=[];
+const proof={previous_call_id:'old-consultation',endpoint_id:'casa'};
+const state={endpoint_id:'casa',device_id:'browser-casa',call_id:'new-dialog',state:'in_call',can_attach_media:true,media_handoff:proof};
+let authorized={...state,media_owner:'self'};
+engine._hass={callWS:async request=>{calls++;assert.equal(request.media_client_id,engine.mediaClientId);return authorized;}};
+engine.resumeSession=async (...args)=>resumed.push(args);
+assert.equal(await engine._adoptSoftphoneReplacement(state),false);
+assert.equal(calls,0,'A spectator has no predecessor claim and cannot request adoption');
+engine.claimSoftphoneSession('old-consultation','casa');
+assert.equal(await engine._adoptSoftphoneReplacement({...state,media_handoff:{...proof,endpoint_id:'foreign'}}),false);
+assert.equal(calls,0);
+authorized={...state,media_owner:'other'};
+assert.equal(await engine._adoptSoftphoneReplacement(state),false);
+assert.equal(engine.softphoneCallIdFor('casa'),'old-consultation');
+authorized={...state,call_id:'unrelated',media_owner:'self'};
+assert.equal(await engine._adoptSoftphoneReplacement(state),false);
+authorized={...state,media_owner:'self'};
+assert.equal(await engine._adoptSoftphoneReplacement(state),true);
+assert.equal(engine.softphoneCallIdFor('casa'),'new-dialog');
+assert.equal(resumed.length,1);assert.equal(resumed[0][2].call_id,'new-dialog');
+assert.equal(await engine._adoptSoftphoneReplacement(state),false,'A replay cannot adopt twice');
+engine.releaseSoftphoneSession('new-dialog','casa');
+'''.replace("ENGINE", json.dumps(str(ENGINE)))
+    completed = subprocess.run(["node", "--input-type=module", "-e", script], cwd=ROOT,
+                               check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_outgoing_receive_video_is_explicit_and_independent_from_camera_send():
+    script = r'''
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+const storage=()=>{const v=new Map();return {getItem:k=>v.get(k)||null,setItem:(k,x)=>v.set(k,String(x)),removeItem:k=>v.delete(k)}};
+globalThis.sessionStorage=storage();globalThis.localStorage=storage();
+globalThis.window={location:{protocol:'https:',host:'ha.example'},addEventListener(){},setTimeout,clearTimeout,setInterval,clearInterval};
+Object.defineProperty(globalThis,'navigator',{value:{mediaDevices:{}},configurable:true});
+const {voipStackEngine:engine}=await import(pathToFileURL(ENGINE));
+const requests=[];
+engine._hass={callWS:async request=>{requests.push(request.service_data);return {state:'idle',device_id:'browser-device',endpoint_id:'Desk'};}};
+const source={device_id:'browser-device',endpoint_id:'Desk',capabilities:['audio','video']};
+for(const [intent,expected] of [
+ [{},{receive_video:false,send_video:false}],
+ [{receiveVideo:true,sendVideo:false},{receive_video:true,send_video:false}],
+ [{receiveVideo:false,sendVideo:true},{receive_video:false,send_video:true}],
+ [{receiveVideo:true,sendVideo:true},{receive_video:true,send_video:true}],
+ [{sendVideo:true},{receive_video:true,send_video:true}],
+]){
+ await engine.startHaSoftphone('Caffè @ Office',source,intent);
+ const actual=requests.at(-1);
+ assert.equal(actual.destination,'Caffè @ Office');
+ assert.equal(actual.receive_video,expected.receive_video);
+ assert.equal(actual.send_video,expected.send_video);
+}
+'''.replace("ENGINE", json.dumps(str(ENGINE)))
+    result = subprocess.run(["node", "--input-type=module", "-e", script], cwd=ROOT,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr or result.stdout

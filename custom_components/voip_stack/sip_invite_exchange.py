@@ -20,12 +20,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(f"{__package__}.sip_client")
 
 
-def _sip_header_token(value: str) -> str:
-    return "".join(
-        ch for ch in str(value or "").strip() if ch.isalnum() or ch in " _-."
-    ).strip()
-
-
 @dataclass(slots=True)
 class InviteExchange:
     """Transient request data; the SIP client owns the transport, transaction and dialog."""
@@ -57,7 +51,7 @@ class InviteExchange:
         remote_uri: str, dialog: sip.SipDialogIds, contact_uri: str,
         body: bytes, transport: str, via_sent_by: tuple[str, int],
         local_name: str, target_display_name: str, answer_mode: str = "",
-        include_route_metadata: bool = False,
+        max_forwards: int = 70,
         authorization_headers: Iterable[tuple[str, str]] = (),
     ) -> bytes:
         """Compose current transaction facts without changing client or dialog state."""
@@ -74,6 +68,7 @@ class InviteExchange:
             via_sent_by=via_sent_by,
             local_display_name=local_name,
             remote_display_name=target_display_name,
+            max_forwards=max_forwards,
         )
         headers.extend(("Route", value) for value in routing.route_headers)
         if answer_mode:
@@ -84,15 +79,6 @@ class InviteExchange:
                     ("Call-Info", f"<{local_uri}>;answer-after=0"),
                     ("Alert-Info", "<http://127.0.0.1>;info=alert-autoanswer;delay=0"),
                 ])
-        if include_route_metadata:
-            for name, value in (
-                ("X-Voip-Stack-Caller-Name", local_name),
-                ("X-Voip-Stack-Caller-Route", sip.parse_sip_uri(local_uri).user),
-                ("X-Voip-Stack-Dest-Name", target_display_name),
-                ("X-Voip-Stack-Dest-Route", sip.parse_sip_uri(request_uri).user),
-            ):
-                if token := _sip_header_token(value):
-                    headers.append((name, token))
         headers.extend(authorization_headers)
         return sip.build_request("INVITE", routing.request_uri, headers, body)
 

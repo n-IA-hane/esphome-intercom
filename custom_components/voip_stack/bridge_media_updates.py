@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 
 from .endpoint_lifecycle import call_registry
+from .endpoint_session import TerminationIntent
 from .media_offer_answer import validate_bridged_video_reoffer
 from .media_ports import release_sip_rtp_port_pair, reserve_sip_video_relay_media
 from .runtime_data import sip_endpoint_manager
@@ -124,6 +125,108 @@ async def prepare_owned_video_generation(registry, session, video, *, left, righ
                 undo()
 
     return commit_owned, rollback_owned
+
+
+async def prepare_retained_video_handoff(hass, session, video, source, destination, *, source_client=None, wire_id=None,
+                                 source_side="left", error_type=RuntimeError):
+    """Stage a retained peer change with the existing dialog and relay generations."""
+
+    registry = call_registry(hass)
+    source_owner = registry.resource_for(session.call_id, "relay")
+    source_generation = session.generation
+
+    def owns_source():
+        return (session.live and registry.is_generation_current(session.call_id, source_generation)
+            and registry.resource_for(session.call_id, "relay") is source_owner
+            and getattr(source_owner, "video_relay", None) is video)
+
+    def terminate_failed_restore():
+        if owns_source():
+            registry.request_termination(session.call_id,
+                TerminationIntent("video_handoff_restore_failed"), generation=source_generation)
+
+    previous_source, previous_destination = video._peers(source_side)
+    source_port = getattr(video, f"{source_side}_port")
+    destination_side = "right" if source_side == "left" else "left"
+    previous_formats = tuple(dict.fromkeys((previous_source.recv_format, previous_source.send_format)))
+    _, undo_left = video.stage_peer_reconfiguration(source_side, source)
+    try:
+        _, undo_right = video.stage_peer_reconfiguration(destination_side, destination)
+    except BaseException:
+        undo_left()
+        raise
+    prepared = None
+    commit_video = rollback_video = None
+    settled = ""
+
+    async def rollback():
+        nonlocal settled
+        if settled == "rolled_back":
+            return
+        committed = settled == "committed"
+        settled = "rolled_back"
+        if committed:
+            if owns_source():
+                try:
+                    restoring = await prepare_retained_video_handoff(hass, session, video, previous_source, previous_destination,
+                        source_client=source_client, wire_id=wire_id, source_side=source_side, error_type=error_type)
+                    await restoring.commit()
+                except BaseException:
+                    terminate_failed_restore()
+                    raise
+            return
+        if rollback_video is not None:
+            await rollback_video()
+        else:
+            undo_left()
+            undo_right()
+        if prepared is not None and owns_source():
+            if not await prepared.restore(local_video_rtp_port=source_port, video_formats=previous_formats):
+                terminate_failed_restore()
+                raise error_type("The retained video dialog could not be restored")
+
+    try:
+        # Validate conversion admission before changing the retained SIP leg.
+        directions = video.transcode_directions_for(
+            **{source_side: source, destination_side: destination})
+        if directions and video._transcode_hass is None:
+            from .config import transport_config
+            from .const import CONF_VIDEO_TRANSCODING
+            if not transport_config(hass).get(CONF_VIDEO_TRANSCODING, False):
+                raise error_type("The retained video formats require unavailable conversion")
+            video.configure_transcoding(hass, session.call_id)
+        prepared = await prepare_source_video_update(hass, wire_id or session.call_id, source_client=source_client,
+            local_video_rtp_port=source_port,
+            video_formats=tuple(dict.fromkeys((source.recv_format, source.send_format))),
+            video_direction=sdp.local_direction_for_remote(source.video_format.direction))
+        if prepared is None:
+            raise error_type("The retained caller rejected the video update")
+        if not owns_source():
+            raise error_type("The retained video owner changed before preparation")
+        actual_source = (dialog_video_rtp_peer(prepared.candidate) if source_client is not None
+                         else invite_video_rtp_peer(prepared.candidate))
+        video.update_staged_peer(source_side, source, actual_source)
+        commit_video, rollback_video = await prepare_owned_video_generation(call_registry(hass), session, video,
+            **{source_side: actual_source, destination_side: destination})
+        if not session.live or video._stop_requested or not prepared.commit():
+            raise error_type("The retained video call changed before commit")
+    except BaseException:
+        await async_wait_for_cleanup(asyncio.create_task(rollback(), name="voip-retained-video-rollback"))
+        raise
+
+    async def commit():
+        if settled:
+            raise error_type("The video handoff has already settled")
+        if not session.live or video._stop_requested:
+            raise error_type("The retained caller ended before video handoff")
+        async def apply():
+            nonlocal settled
+            await commit_video()
+            settled = "committed"
+        await async_wait_for_cleanup(asyncio.create_task(apply(), name="voip-retained-video-settlement"))
+
+    return PreparedDialogMediaUpdate(commit, rollback,
+        answer_video_format=destination.send_format, answer_video_rtp_port=getattr(video, f"{destination_side}_port"))
 
 
 @dataclass(slots=True)

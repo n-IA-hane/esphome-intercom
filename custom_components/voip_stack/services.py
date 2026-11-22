@@ -8,6 +8,7 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.selector import MediaSelector
 
 from .authorization import (
     async_require_service_admin,
@@ -52,7 +53,7 @@ async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -
         if not row.enabled:
             continue
         phone = row.metadata.get("endpoint_kind") in {"esphome", "sip_account", "browser", "ha_softphone"}
-        target = row.extension or row.number or (row.id if phone else "") or row.sip_uri or row.name
+        target = row.id if phone else row.extension or row.number or row.sip_uri or row.name
         if target:
             destinations.setdefault(target, row.display_name)
     destination_options = [{"value": target, "label": label}
@@ -62,9 +63,12 @@ async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -
         for key, field in fields.items():
             if "fields" in field:
                 populate(field["fields"])
-            if key not in {"destination", "fallback_destination", "return_destination"}:
+            if key not in {"destination", "fallback_destination", "return_destination", "forward_to",
+                           "busy_to", "unavailable_to", "no_answer_to", "fallback", "fallback_full",
+                           "fallback_timeout", "fallback_no_agents", "fallback_disabled", "fallback_removed", "targets"}:
                 continue
-            field["selector"] = {"select": {"options": destination_options, "custom_value": True, "mode": "dropdown"}}
+            field["selector"] = {"select": {"options": destination_options, "custom_value": True,
+                                             "mode": "dropdown", "multiple": key == "targets"}}
 
     changed = False
     for name, description in descriptions.items():
@@ -110,15 +114,6 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     )
     phone_selector_fields = {vol.Optional("device_id"): IDENTIFIER_TEXT,
                              vol.Optional("line_id"): IDENTIFIER_TEXT}
-    purge_schema = vol.Schema(
-        {
-            **phone_selector_fields,
-            vol.Optional("min_unavailable_hours", default=0): vol.All(
-                vol.Coerce(float), vol.Range(min=0, max=87600)
-            ),
-        },
-        extra=vol.PREVENT_EXTRA,
-    )
     sip_answer_schema = vol.Schema(
         {
             **phone_selector_fields,
@@ -158,6 +153,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("answer_timeout", default=30): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
             vol.Optional("ha_bridge", default=False): cv.boolean,
             vol.Optional("send_video", default=False): cv.boolean,
+            vol.Optional("receive_video"): cv.boolean,
             vol.Optional("media_client_id", default=""): IDENTIFIER_TEXT,
         },
         extra=vol.PREVENT_EXTRA,
@@ -381,7 +377,6 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     )
 
     admin_services = {
-        "purge_devices",
         "set_external_call_access",
         "add_contact",
         "remove_contact",
@@ -422,13 +417,29 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             else:
                 await async_require_service_control(hass, call)
             from .automation_context import bind_call_action
+            from .sip_account_identity import canonical_ha_destination
 
+            fields = {"destination", "fallback_destination", "return_destination", "forward_to", "busy_to",
+                      "unavailable_to", "no_answer_to", "fallback", "fallback_full", "fallback_timeout",
+                      "fallback_no_agents", "fallback_disabled", "fallback_removed", "endpoint_id",
+                      "source_endpoint_id", "dest_endpoint_id", "target_endpoint_id", "targets"}
+            values = dict(call.data)
+            identity_fields = {"endpoint_id", "source_endpoint_id", "dest_endpoint_id", "target_endpoint_id"}
+            for field in fields & values.keys():
+                value = values[field]
+                if isinstance(value, str):
+                    values[field] = canonical_ha_destination(hass, value, device_selector=field in identity_fields)
+                elif isinstance(value, (list, tuple)):
+                    values[field] = [canonical_ha_destination(hass, item, device_selector=field in identity_fields)
+                                     if isinstance(item, str) else item for item in value]
+            if values != dict(call.data):
+                call = ServiceCall(hass, call.domain, call.service, values,
+                                   context=call.context, return_response=call.return_response)
             call = bind_call_action(call)
             return await handlers[name](call)
 
         return _handle
 
-    hass.services.async_register(DOMAIN, "purge_devices", handler_for("purge_devices"), schema=purge_schema)
     hass.services.async_register(DOMAIN, "set_phone_queues", handler_for("set_phone_queues"),
         schema=vol.Schema({vol.Required("phone"): IDENTIFIER_TEXT,
                            vol.Required("queues"): vol.Any(SHORT_TEXT, [IDENTIFIER_TEXT])}, extra=vol.PREVENT_EXTRA))
@@ -459,7 +470,8 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("no_agent_wait"): vol.All(vol.Coerce(float), vol.Range(min=0, max=120)),
             vol.Optional("retry_delay"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=120)),
             vol.Optional("wrap_up"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
-            vol.Optional("fallback"): SHORT_TEXT, vol.Optional("hold_media"): URI_TEXT,
+            vol.Optional("fallback"): SHORT_TEXT,
+            vol.Optional("hold_media"): vol.Any(URI_TEXT, MediaSelector({"accept": ["audio/*"]})),
             vol.Optional("strategy"): vol.In(["ring_all", "round_robin", "longest_idle", "ordered"]),
             vol.Optional("agent_order"): vol.All([IDENTIFIER_TEXT], vol.Length(max=128)),
             vol.Optional("auto_pause_after"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),

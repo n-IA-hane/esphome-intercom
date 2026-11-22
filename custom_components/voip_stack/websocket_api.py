@@ -23,6 +23,7 @@ from .authorization import (
     require_websocket_endpoint_read,
     require_websocket_endpoint_control,
     require_websocket_read,
+    require_websocket_authenticated,
     websocket_can_control_endpoint,
 )
 from .const import DOMAIN
@@ -150,14 +151,17 @@ def websocket_subscribe_call_events(
         if not user_active():
             return False
         try:
-            require_websocket_read(hass, connection)
+            if requested_endpoint and selected_endpoint is not None:
+                require_websocket_endpoint_read(hass, connection, selected_endpoint)
+            else:
+                require_websocket_read(hass, connection)
         except Unauthorized:
             return False
         return True
 
     # Readiness has no phone/call payload. Endpoint-only readers may use this
     # same transport without gaining global call or activity permissions.
-    if not msg.get("include_runtime_ready", False):
+    if not (msg.get("endpoint_id") or msg.get("device_id") or msg.get("include_runtime_ready", False)):
         require_websocket_read(hass, connection)
     elif not user_active():
         raise Unauthorized(user_id=getattr(connection.user, "id", None))
@@ -187,19 +191,27 @@ def websocket_subscribe_call_events(
     def forward_call_event(event) -> None:
         if not readable_calls():
             return
-        event_endpoint = str(event.data.get("endpoint_id") or "").strip()
+        event_endpoint = str(event.data.get("account_username") or event.data.get("endpoint_id") or "").strip()
         if requested_endpoint:
             if event_endpoint and event_endpoint != requested_endpoint:
                 return
             if not event_endpoint:
                 return
-        connection.send_event(msg_id, {"event_type": CALL_EVENT, "data": event.data})
+        data = dict(event.data)
+        for prefix in ("", "source_", "dest_", "target_", "peer_"):
+            if data.get(prefix + "account_username"):
+                data[prefix + "endpoint_id"] = data[prefix + "account_username"]
+        connection.send_event(msg_id, {"event_type": CALL_EVENT, "data": data})
 
     from .phone_state import phone_state_observer
 
     @callback
     def forward_activity(activity):
-        if readable_calls():
+        try:
+            require_websocket_read(hass, connection)
+        except Unauthorized:
+            return
+        if user_active():
             connection.send_event(msg_id, {"event_type": f"{DOMAIN}.activity", "data": activity})
 
     listeners = [hass.bus.async_listen(CALL_EVENT, forward_call_event)]
@@ -275,7 +287,7 @@ def websocket_subscribe_ha_softphone_state(
     msg: Dict[str, Any],
 ) -> None:
     """Stream authoritative HA softphone snapshots."""
-    require_websocket_read(hass, connection)
+    require_websocket_authenticated(connection)
     msg_id = msg["id"]
     try:
         requested_endpoint = _endpoint_id_from_selector(
@@ -320,7 +332,7 @@ def websocket_subscribe_ha_softphone_state(
             connection.send_event(msg_id, {
                 "kind": "closed", "reason": reason,
                 "endpoint_id": requested_endpoint,
-                "device_id": getattr(selected_endpoint, "device_id", ""),
+                "device_id": getattr(selected_endpoint, "ha_device_id", ""),
             })
         finally:
             unsubscribe()
@@ -428,7 +440,7 @@ async def websocket_ha_softphone_state(
     connection: websocket_api.ActiveConnection,
     msg: Dict[str, Any],
 ) -> None:
-    require_websocket_read(hass, connection)
+    require_websocket_authenticated(connection)
     try:
         endpoint_id = _endpoint_id_from_selector(
             hass,
@@ -472,16 +484,22 @@ async def websocket_list_devices(
 ) -> None:
     from .entity_identity import shared_entity_ids
 
-    require_websocket_read(hass, connection)
+    require_websocket_authenticated(connection)
     devices = []
     for device in [*_ha_softphone_devices(hass), *(await _get_voip_devices(hass))]:
         endpoint = _endpoint_registry(hass).get(device.get("endpoint_id"))
+        if device.get('managed') and endpoint is not None and endpoint.supports_ha_client:
+            continue
+        if endpoint is None:
+            endpoint = _native_device_endpoint(device)
         if endpoint is not None:
             try:
                 require_websocket_endpoint_read(hass, connection, endpoint)
             except Unauthorized:
                 continue
             device["can_control"] = websocket_can_control_endpoint(hass, connection, endpoint)
+        else:
+            continue
         devices.append(device)
     connection.send_result(
         msg["id"],
@@ -501,16 +519,19 @@ async def websocket_resolve_device(
     connection: websocket_api.ActiveConnection,
     msg: Dict[str, Any],
 ) -> None:
-    require_websocket_read(hass, connection)
+    require_websocket_authenticated(connection)
     device_id = str(msg.get("device_id") or "")
     registry = _endpoint_registry(hass)
     from .service_endpoints import resolve_service_phone
     try:
-        endpoint = resolve_service_phone(registry, device_id) if registry is not None else None
+        endpoint = resolve_service_phone(registry, device_id, hass=hass) if registry is not None else None
     except ServiceValidationError as error:
         connection.send_error(msg["id"], "invalid_phone", str(error))
         return
-    if endpoint is not None and endpoint.supports_ha_client:
+    hardware_control = bool(endpoint is not None and endpoint.account_device_id and device_id == endpoint.device_id)
+    if endpoint is not None and not hardware_control:
+        require_websocket_endpoint_read(hass, connection, endpoint)
+    if endpoint is not None and endpoint.supports_ha_client and not hardware_control:
         require_websocket_endpoint_read(hass, connection, endpoint)
         connection.send_result(
             msg["id"],
@@ -520,16 +541,35 @@ async def websocket_resolve_device(
     selected_device_id = endpoint.device_id if endpoint is not None else device_id
     for device in await _get_voip_devices(hass):
         if str(device.get("device_id") or "") == selected_device_id:
+            permission_endpoint = _native_device_endpoint(device)
+            if permission_endpoint is None:
+                connection.send_result(msg["id"], {"device": None})
+                return
+            require_websocket_endpoint_read(hass, connection, permission_endpoint)
+            device["can_control"] = websocket_can_control_endpoint(hass, connection, permission_endpoint)
             connection.send_result(msg["id"], {"device": device})
             return
     connection.send_result(msg["id"], {"device": None})
+
+
+def _native_device_endpoint(device):
+    """Use the same native entities for unresolved physical list and resolve rows."""
+    from .phone_endpoint import PhoneEndpoint, EndpointKind
+
+    identities = frozenset(value for value in (device.get("entities") or {}).values()
+                           if isinstance(value, str) and "." in value)
+    identity = str(device.get("endpoint_username") or device.get("endpoint_id") or device.get("device_id") or "")
+    if not identity or not identities:
+        return None
+    return PhoneEndpoint(endpoint_id=identity, name=str(device.get("name") or identity),
+        kind=EndpointKind.ESPHOME, device_id=str(device.get("device_id") or ""), entity_ids=identities)
 
 
 @websocket_api.websocket_command({vol.Required("type"): "voip_stack/ha_popup_binding",
     vol.Required("binding_id"): vol.Match(r"^[A-Za-z0-9._~-]{16,128}$")})
 @callback
 def websocket_ha_popup_binding(hass, connection, msg):
-    require_websocket_read(hass, connection)
+    require_websocket_authenticated(connection)
     owner = require_runtime_data(hass).ha_bindings
     connection.send_result(msg["id"], owner.popup_binding(connection.user.id, msg["binding_id"]) if owner is not None else None)
 
@@ -539,7 +579,7 @@ def websocket_ha_popup_binding(hass, connection, msg):
     vol.Required("endpoint_id"): str, vol.Required("enabled"): bool})
 @websocket_api.async_response
 async def websocket_set_ha_popup_binding(hass, connection, msg):
-    require_websocket_read(hass, connection)
+    require_websocket_authenticated(connection)
     owner = require_runtime_data(hass).ha_bindings
     if owner is None:
         connection.send_error(msg["id"], "not_ready", "HA client associations are unavailable")

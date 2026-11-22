@@ -16,7 +16,7 @@ class AccountCallPlan:
     def ring_policy(self) -> RingPolicy:
         # SIP transaction timers remain in SipCallClient. A transport fork must
         # not substitute the ring group's deadline for the account's policy.
-        return RingPolicy(overall_timeout=float("inf"), step_timeout=float("inf"))
+        return RingPolicy(overall_timeout=float("inf"), step_timeout=15.0)
 
 
 def account_call_plan(entry):
@@ -50,9 +50,12 @@ def account_fork_entry(hass, endpoint, entry):
     SIP Contacts still expand through the ordinary contact planner. This value
     is local to the operation; it is never published as a new ring group.
     """
-    if (endpoint is None or entry is None or not getattr(endpoint, "supports_ha_client", False)
-            or not account_has_ha_binding(hass, endpoint.endpoint_id)
-            or not entry.metadata.get("sip_contacts")):
+    if endpoint is None or entry is None:
+        return None
+    contacts = entry.metadata.get("sip_contacts") or ()
+    browser = (getattr(endpoint, "supports_ha_client", False)
+               and account_has_ha_binding(hass, endpoint.endpoint_id))
+    if not contacts or (len(contacts) == 1 and not browser):
         return None
     return replace(entry, metadata={
         **entry.metadata,

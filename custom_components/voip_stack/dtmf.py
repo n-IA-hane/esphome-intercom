@@ -8,9 +8,10 @@ import re
 import socket
 import struct
 import time
+from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from .core.rtp import parse_packet
+from .core.rtp import RtpReceiveState, parse_packet
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ async def send_rtp_dtmf_event(
     *,
     clock_rate: int,
     duration_ms: int,
-    emit: Callable[[int, bool, bool], Awaitable[bool]],
+    emit: Callable[[int, bool, bool, int], Awaitable[bool]],
 ) -> bool:
     """Pace one RFC 4733 event and repeat its final report three times."""
 
@@ -103,55 +104,153 @@ async def send_rtp_dtmf_event(
     rate = max(1, int(clock_rate))
     duration_ms = max(40, min(5000, int(duration_ms)))
     elapsed_ms = 0
-    if not await emit(1, True, False):
+    if not await emit(1, True, False, 0):
         return False
+    previous_segment = 0
     while elapsed_ms < duration_ms:
         step_ms = min(50, duration_ms - elapsed_ms)
         await asyncio.sleep(step_ms / 1000)
         elapsed_ms += step_ms
-        duration = min(0xFFFF, max(1, round(elapsed_ms * rate / 1000)))
-        if not await emit(duration, False, elapsed_ms >= duration_ms):
-            return False
+        duration = max(1, round(elapsed_ms * rate / 1000))
+        for offset, segment_duration, end in telephone_event_segments(duration,
+                previous_segment=previous_segment, end=elapsed_ms >= duration_ms):
+            if not await emit(segment_duration, False, end, offset):
+                return False
+        previous_segment = (duration - 1) // 65535
     for _repeat in range(2):
         await asyncio.sleep(0.05)
-        if not await emit(duration, False, True):
+        offset, segment_duration, _end = next(telephone_event_segments(duration,
+            previous_segment=previous_segment, end=True))
+        if not await emit(segment_duration, False, True, offset):
             return False
     return True
+
+
+@dataclass(frozen=True, slots=True)
+class RtpDtmfReport:
+    digit: str
+    timestamp: int
+    ssrc: int
+    duration: int
+    end: bool
+    volume: int
+    marker: bool
+    first: bool
+    source_changed: bool = False
+    sequence: int = 0
+    sample_rate: int = 8000
+    shared_audio: bool = False
+
+
+def telephone_event_segments(duration, *, previous_segment=0, end=False):
+    """Split a long RFC 4733 event into continuous 16-bit duration segments."""
+    duration = max(1, int(duration))
+    segment = (duration - 1) // 65535
+    if segment < previous_segment:
+        return
+    for index in range(previous_segment, segment):
+        yield index * 65535, 65535, False
+    yield segment * 65535, (duration - 1) % 65535 + 1, end
 
 
 class RtpDtmfDecoder:
     """Decode one event per RFC 4733 DTMF press from a negotiated RTP PT."""
 
-    def __init__(self, payload_type: int) -> None:
-        self.payload_type = int(payload_type)
+    def __init__(self, payload_type, *, receive_state=None, audio_receiver=None) -> None:
+        from .core.sdp_types import RtpDtmfFormat
+
+        formats = (RtpDtmfFormat(int(payload_type), 8000),) if isinstance(payload_type, int) else tuple(payload_type)
+        self.formats = {fmt.payload_type: fmt for fmt in formats}
+        self.payload_type = next(iter(self.formats))
+        self.audio_receiver = audio_receiver
+        self._clock_states = {}
         self.ssrc: int | None = None
-        self._seen_events: set[tuple[int, int]] = set()
+        self._seen_events: dict[tuple[int, int, int], tuple[int, bool, RtpDtmfFormat]] = {}
+        self._receive_state = receive_state if receive_state is not None else RtpReceiveState()
+        self._clock_states[self.formats[self.payload_type].sample_rate] = self._receive_state
+        self._active_events = {}
+
+    @property
+    def receive_state(self):
+        return self._receive_state
+
+    def accepts(self, payload_type):
+        return payload_type in self.formats
 
     def decode(self, data: bytes, *, expected_ssrc: int | None = None) -> str:
+        report = self.decode_report(data, expected_ssrc=expected_ssrc)
+        return report.digit if report is not None and report.first else ""
+
+    def decode_report(self, data: bytes, *, expected_ssrc: int | None = None) -> RtpDtmfReport | None:
+        """Keep duration/progress/end while presenting one callback per press."""
         try:
             packet = parse_packet(data)
         except ValueError:
-            return ""
-        if packet.payload_type != self.payload_type or len(packet.payload) < 4:
-            return ""
-        if expected_ssrc is not None and packet.ssrc != expected_ssrc:
-            return ""
-        if self.ssrc is None:
-            self.ssrc = packet.ssrc
-        elif packet.ssrc != self.ssrc:
-            return ""
+            return None
+        fmt = self.formats.get(packet.payload_type)
+        if fmt is None or len(packet.payload) < 4:
+            return None
         event = packet.payload[0]
         digit = _EVENT_DIGITS.get(event, "")
-        if not digit:
-            return ""
-        key = (packet.timestamp, event)
-        if key in self._seen_events:
-            return ""
-        self._seen_events.add(key)
+        flags, duration = packet.payload[1], int.from_bytes(packet.payload[2:4], "big")
+        if not digit or event not in fmt.events or flags & 64 or not duration:
+            return None
+        key = (packet.ssrc, packet.timestamp, event)
+        previous = self._seen_events.get(key)
+        if previous is not None and previous[2].sample_rate != fmt.sample_rate:
+            return None
+        receiver = self.audio_receiver
+        shared = bool(receiver is not None and fmt.sample_rate == (
+            receiver.source_clock_rate or receiver.selected_format.rtp_clock_rate)
+            and (receiver.source_ssrc is None or packet.ssrc == receiver.source_ssrc
+                 or packet.ssrc == receiver.receive_state.probation_ssrc))
+        if receiver is not None:
+            self._receive_state = receiver.receive_state if shared else self._clock_states.setdefault(fmt.sample_rate, RtpReceiveState())
+        else:
+            self._receive_state = self._clock_states.setdefault(fmt.sample_rate, RtpReceiveState())
+        if self._receive_state.ssrc is None and expected_ssrc is not None:
+            self._receive_state.ssrc = expected_ssrc
+        if not self._receive_state.admit(packet):
+            return None
+        if self._receive_state.changed:
+            self._seen_events = {key: value for key, value in self._seen_events.items() if key[0] != packet.ssrc}
+            self._active_events = {key: value for key, value in self._active_events.items() if key[0] != packet.ssrc}
+        self.ssrc = packet.ssrc
+        key = (packet.ssrc, packet.timestamp, event)
+        previous = self._seen_events.get(key)
+        ended = bool(flags & 128)
+        if previous is not None and (duration < previous[0] or (previous[1] and not ended)):
+            return None
+        self._seen_events[key] = (duration, ended, fmt)
         if len(self._seen_events) > 256:
-            self._seen_events.clear()
-            self._seen_events.add(key)
-        return digit
+            del self._seen_events[next(iter(self._seen_events))]
+        active_key = (packet.ssrc, event)
+        active = self._active_events.get(active_key)
+        first = previous is None
+        origin, elapsed = packet.timestamp, duration
+        if active is not None:
+            source_timestamp, origin, base, active_ended, active_clock = active
+            if (source_timestamp != packet.timestamp and previous is not None
+                    and ((packet.timestamp - source_timestamp) & 0xFFFFFFFF) > 0x80000000):
+                return None
+            if source_timestamp == packet.timestamp:
+                elapsed += base
+            elif (not active_ended and not packet.marker
+                    and ((packet.timestamp - source_timestamp) & 0xFFFFFFFF) == 65535):
+                if active_clock != fmt.sample_rate:
+                    return None
+                base += 65535
+                elapsed += base
+                first = False
+            else:
+                origin, base = packet.timestamp, 0
+        else:
+            base = 0
+        self._active_events[active_key] = (packet.timestamp, origin, base, ended, fmt.sample_rate)
+        if len(self._active_events) > 64:
+            del self._active_events[next(iter(self._active_events))]
+        return RtpDtmfReport(digit, origin, packet.ssrc, elapsed, ended,
+            flags & 63, packet.marker, first, self._receive_state.changed, packet.sequence, fmt.sample_rate, shared)
 
 
 async def collect_info_digits(

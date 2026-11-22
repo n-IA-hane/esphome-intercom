@@ -126,9 +126,21 @@ class EndpointEntityManager(Generic[_EntityT]):
     def _on_registry_event(self, event: EndpointRegistryEvent) -> None:
         endpoint_id = event.endpoint.endpoint_id
         event_type = str(getattr(event.event_type, "value", event.event_type))
+        if event.previous is not None and event.previous.endpoint_id != endpoint_id:
+            entity = self.entities.pop(event.previous.endpoint_id, None)
+            if entity is not None:
+                self.entities[endpoint_id] = entity
+                prefix = "phone_endpoint_" + event.previous.endpoint_id + "_"
+                identity = str(getattr(entity, "unique_id", "") or "")
+                if identity.startswith(prefix):
+                    entity._attr_unique_id = "phone_endpoint_" + endpoint_id + "_" + identity[len(prefix):]
         if event_type == "removed" or not self._supports_endpoint(event.endpoint):
-            entity = self.entities.pop(endpoint_id, None)
-            if entity is not None and entity.hass is not None:
+            subentry_id = self._subentry_id(endpoint_id)
+            permanent = (event_type == "removed" and (
+                endpoint_id in self.registry.pending_removals
+                or (subentry_id is not None and subentry_id not in self.entry.subentries)))
+            entity = self.entities.pop(endpoint_id, None) if permanent else self.entities.get(endpoint_id)
+            if permanent and entity is not None and entity.hass is not None:
                 record = er.async_get(self.hass).async_get(entity.entity_id)
                 if record is not None and (
                     not record.config_subentry_id or record.config_subentry_id in self.entry.subentries
@@ -198,16 +210,16 @@ def event_matches_endpoint(
     # describe the shared call and must not make both entities apply both
     # states (calling then ringing, or vice versa).
     if owner_scoped:
-        owner_endpoint_id = str(payload.get("endpoint_id") or "").strip()
+        owner_endpoint_id = str(payload.get("account_username") or payload.get("endpoint_id") or "").strip()
         if owner_endpoint_id:
             return owner_endpoint_id.casefold() == endpoint.endpoint_id.casefold()
         owner_device_id = str(payload.get("device_id") or "").strip()
         if owner_device_id:
-            device_id = str(getattr(endpoint, "device_id", "") or "")
+            device_id = endpoint.ha_device_id
             return bool(device_id and owner_device_id == device_id)
 
     endpoint_ids = {
-        str(payload.get(key) or "").strip()
+        str(payload.get(key.replace("endpoint_id", "account_username")) or payload.get(key) or "").strip()
         for key in (
             "endpoint_id",
             "source_endpoint_id",
@@ -215,7 +227,7 @@ def event_matches_endpoint(
             "target_endpoint_id",
         )
     }
-    participant_endpoint_ids = payload.get("participant_endpoint_ids")
+    participant_endpoint_ids = payload.get("participant_account_usernames") or payload.get("participant_endpoint_ids")
     if isinstance(participant_endpoint_ids, (list, tuple, set, frozenset)):
         endpoint_ids.update(
             str(value or "").strip() for value in participant_endpoint_ids
@@ -223,7 +235,7 @@ def event_matches_endpoint(
     if endpoint.endpoint_id in endpoint_ids:
         return True
 
-    device_id = str(getattr(endpoint, "device_id", "") or "")
+    device_id = endpoint.ha_device_id
     device_ids = {
         str(payload.get(key) or "").strip()
         for key in (

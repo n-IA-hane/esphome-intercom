@@ -6,7 +6,7 @@ import secrets
 
 from .bridge_manager import async_watch_sip_bridge_destination
 from .bridge_media_updates import BridgeMediaUpdateBinder
-from .call_projection import publish_bridge_projection, publish_esp_media_route
+from .call_projection import publish_bridge_projection, publish_media_route
 from .core.sip_transfer import SipTransferResult
 from .dtmf_events import attach_dtmf_event_bridge
 from .endpoint_session import CleanupStage, LegPhase, SessionHandoff, TerminationIntent
@@ -172,7 +172,7 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
     else:
         after_refer()
     publish_bridge_projection(hass, goal, event_type="transferred", last_sip_event="REFER")
-    publish_esp_media_route(hass, goal.call_id, relay.media_route)
+    publish_media_route(hass, goal.call_id, relay.media_route)
     results = await async_wait_for_cleanup(asyncio.gather(
         source_relay.stop(), destination_relay.stop(),
         *(task for task in (old_watcher, new_watcher) if task is not None),

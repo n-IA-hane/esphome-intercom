@@ -237,7 +237,7 @@ class _ForwardAdmission:
         if (
             self.request.resolved_decision is None
             and context is not None
-            and len(context.route_history) >= 8
+            and context.route_hops >= 8
         ):
             raise _service_error(
                 f"call_id {self.request.call_id} exceeded 8 routing hops",
@@ -556,9 +556,21 @@ class _ForwardAdmission:
             peers,
             _registered_roster_entries(hass),
         )
-        decision = self.request.resolved_decision or _route_preflight(
-            lambda: route_resolver.route(destination, roster_entries)
-        )
+        def resolve_destination(target):
+            from .inbound_routing.targets import resolve_phone_target
+
+            selected = self.request.resolved_decision or route_resolver.route(target, roster_entries)
+            resolution = resolve_phone_target(
+                decision=selected, endpoint_registry=endpoint_directory(hass),
+                roster_entries=roster_entries, route_resolver=route_resolver.route,
+                call_id=call_id, apply_policy=self.request.resolved_decision is None,
+            )
+            if resolution.failure is not None:
+                return replace(resolution.decision, action=RouteAction.REJECT,
+                               status=resolution.failure.status)
+            return resolution.decision
+
+        decision = _route_preflight(lambda: resolve_destination(destination))
         if self.pickup_claim is not None:
             self.validate_pickup()
         rejected_queues = set()
@@ -578,9 +590,7 @@ class _ForwardAdmission:
             rejection = queues.admission_rejection(queue_id)
             if rejection is None:
                 break
-            if queue_id in rejected_queues or len(rejected_queues) >= 8 - len(
-                context.route_history if context else ()
-            ):
+            if queue_id in rejected_queues or len(rejected_queues) >= 8 - (context.route_hops if context else 0):
                 raise _routing_service_error(
                     f"call_id {call_id} exceeded 8 routing hops",
                     "route_hop_limit_exceeded",
@@ -598,7 +608,7 @@ class _ForwardAdmission:
                 break
             destination = rejection.destination
             decision = _route_preflight(
-                lambda: route_resolver.route(destination, roster_entries)
+                lambda: resolve_destination(destination)
             )
             if (
                 application is not None
@@ -857,7 +867,7 @@ class _ForwardAdmission:
             source.native_destination is not None
             and not source.native_destination.retired
         ):
-            source.native_destination.restore_preparation()
+            await source.native_destination.restore_preparation()
         if (
             source.native_destination is not None
             and source.native_destination.retired
@@ -865,7 +875,7 @@ class _ForwardAdmission:
             and source.session.live
         ):
             if self.request.on_failure == "resume":
-                source.native_destination.resume()
+                await source.native_destination.resume()
             else:
                 await self.registry.terminate_call_wait(
                     self.request.call_id, reason="forward_cancelled"

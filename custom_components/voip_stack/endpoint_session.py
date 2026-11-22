@@ -234,6 +234,7 @@ class CallEventContext:
     state: str = ""
     previous_state: str = ""
     route_history: list[dict[str, Any]] = field(default_factory=list)
+    route_hops: int = field(default=0, kw_only=True)
     connected_at: float = 0.0
     duration_seconds: int | None = None
     terminal_summary_claimed: bool = False

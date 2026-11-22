@@ -1,11 +1,10 @@
-"""Entry-owned directory refresh, legacy projection and ESP phonebook delivery."""
+"""Entry-owned directory refresh and Home Assistant presentation."""
 
 import asyncio
 import contextlib
 import logging
 
 from homeassistant.components import persistent_notification
-from homeassistant.const import EVENT_SERVICE_REGISTERED
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -13,8 +12,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .device_resolver import entity_role
 from .directory_runtime import async_refresh_directory
-from .peer import Peer
-from .phonebook_runtime import format_entry_unified, push_roster_json_to_esps
+from .phonebook_runtime import format_entry_unified
 from .roster import dump_roster_json
 from .runtime_data import runtime_data
 
@@ -55,16 +53,10 @@ class PhonebookCoordinator:
         self.count = 0
         self._name_conflicts: tuple[str, ...] | None = None
         self._tracked_entities: set[str] = set()
-        self._known_esp_peers: dict[str, Peer] = {}
-        self._online_esp_services: dict[str, str] = {}
-        self._rehydrate_services: set[str] = set()
         self._unsub_state = None
         self._unsub_registry = None
-        self._unsub_service = None
         self._recompute_task: asyncio.Task | None = None
         self._recompute_requested = False
-        self._push_requested = False
-        self._delivery_ready = False
         self.closed = False
 
     def _current(self) -> bool:
@@ -75,17 +67,12 @@ class PhonebookCoordinator:
         if self.closed or self._unsub_registry is not None:
             return
         self._unsub_registry = self.hass.bus.async_listen("entity_registry_updated", self._registry_changed)
-        self._unsub_service = self.hass.bus.async_listen(EVENT_SERVICE_REGISTERED, self._service_registered)
         try:
             self._refresh_tracked_entities(initial=True)
             await self.async_refresh()
         except BaseException:
             await self.async_close()
             raise
-
-    @callback
-    def enable_delivery(self) -> None:
-        self._delivery_ready = True
 
     @callback
     def _registry_changed(self, event) -> None:
@@ -97,15 +84,6 @@ class PhonebookCoordinator:
                 or event.data.get("old_entity_id") in self._tracked_entities):
             if self._refresh_tracked_entities():
                 self._schedule_recompute()
-
-    @callback
-    def _service_registered(self, event) -> None:
-        if not self._current():
-            return
-        service = str(event.data.get("service") or "")
-        if event.data.get("domain") == "esphome" and service.endswith("_set_roster_json"):
-            self._rehydrate_services.add(service)
-            self._schedule_recompute()
 
     @callback
     def _stop_state_tracking(self) -> None:
@@ -124,9 +102,6 @@ class PhonebookCoordinator:
         if self._unsub_registry is not None:
             self._unsub_registry()
             self._unsub_registry = None
-        if self._unsub_service is not None:
-            self._unsub_service()
-            self._unsub_service = None
         self._recompute_requested = False
         if self._recompute_task is not None:
             self._recompute_task.cancel()
@@ -138,6 +113,10 @@ class PhonebookCoordinator:
                 await self._recompute_task
 
     @callback
+    def request_refresh(self) -> None:
+        """Coalesce a committed account change without delaying SIP replies."""
+        self._schedule_recompute()
+
     def _schedule_recompute(self) -> None:
         if not self._current():
             return
@@ -158,10 +137,11 @@ class PhonebookCoordinator:
     async def async_refresh(self, *, deliver=False) -> None:
         if not self._current():
             return
-        self._push_requested |= deliver
         self._schedule_recompute()
         if self._recompute_task is not None:
             await asyncio.shield(self._recompute_task)
+        if deliver and self._current() and self.runtime.phone_provisioning is not None:
+            self.runtime.phone_provisioning.schedule()
 
     @callback
     def _refresh_tracked_entities(self, initial=False) -> bool:
@@ -219,11 +199,11 @@ class PhonebookCoordinator:
         return True
 
     async def _recompute(self) -> None:
-        legacy_rows = []
+        compact_rows = []
 
         def prepare_peers(live_peers):
-            peers = self._stable_phonebook_peers(live_peers)
-            legacy_rows.extend(format_entry_unified(peer) for peer in peers)
+            peers = live_peers
+            compact_rows.extend(format_entry_unified(peer) for peer in peers)
             return peers
 
         rows = await async_refresh_directory(self.hass, prepare_peers=prepare_peers)
@@ -239,7 +219,7 @@ class PhonebookCoordinator:
 
         async_sync_extension_issues(self.hass, rows)
         self._report_name_conflicts(rows)
-        phonebook = ",".join(legacy_rows)
+        phonebook = ",".join(compact_rows)
         roster_json = dump_roster_json(rows)
         changed = self.phonebook != phonebook or self.roster_json != roster_json
         if changed:
@@ -250,16 +230,9 @@ class PhonebookCoordinator:
             if not self._current():
                 return
             async_dispatcher_send(self.hass, PHONEBOOK_UPDATED, self)
-        if not self._delivery_ready:
-            return
-        target_services = self._rehydrate_services
-        self._rehydrate_services = set()
-        for service in target_services:
-            self.runtime.phonebook_delivered_roster.pop(service, None)
-        push_all = changed or self._push_requested
-        self._push_requested = False
-        if push_all or target_services:
-            await push_roster_json_to_esps(self.hass, roster_json, target_services=None if push_all else target_services)
+        if changed and self._current() and self.runtime.phone_provisioning is not None:
+            # Deliver LDAP configuration/refresh commands, never directory rows.
+            self.runtime.phone_provisioning.schedule()
 
     @callback
     def _report_name_conflicts(self, entries) -> None:
@@ -311,61 +284,3 @@ class PhonebookCoordinator:
             self.hass, message, title="VoIP Stack: duplicate phonebook names",
             notification_id=notification_id,
         )
-
-    def _stable_phonebook_peers(self, live_peers: list[Peer]) -> list[Peer]:
-        """Keep configured ESP contacts stable across API reconnects."""
-
-        browser_peers: list[Peer] = []
-        online_services: dict[str, str] = {}
-        live_esp_keys: set[str] = set()
-        for peer in live_peers:
-            if peer.endpoint_kind != "esphome":
-                browser_peers.append(peer)
-                continue
-            key = peer.device_id or peer.endpoint_id
-            live_esp_keys.add(key)
-            previous = self._known_esp_peers.get(key)
-            entities = (peer.device or {}).get("entities") or {}
-            restoring = any(
-                (state := self.hass.states.get(str(entities.get(role) or "")))
-                is None
-                or str(state.state or "").strip().lower()
-                in {"unknown", "unavailable"}
-                for role in (
-                    "voip_state",
-                    "voip_extension",
-                    "voip_ring_groups",
-                    "voip_conference_groups",
-                    "voip_conference_ring",
-                )
-                if entities.get(role)
-            )
-            if previous is None or not restoring:
-                self._known_esp_peers[key] = peer
-            route_id = str((peer.device or {}).get("route_id") or "")
-            if route_id:
-                online_services[key] = f"{route_id}_set_roster_json"
-
-        runtime = self.runtime
-        for key, service in self._online_esp_services.items():
-            if online_services.get(key) != service:
-                runtime.phonebook_delivered_roster.pop(service, None)
-        self._rehydrate_services.update(service for key, service in online_services.items()
-                                        if self._online_esp_services.get(key) != service)
-        self._online_esp_services = online_services
-
-        for key, peer in tuple(self._known_esp_peers.items()):
-            state_entity = str(
-                (((peer.device or {}).get("entities") or {}).get("voip_state")) or ""
-            )
-            if state_entity and state_entity not in self._tracked_entities:
-                self._known_esp_peers.pop(key, None)
-
-        return [
-            *(
-                self._known_esp_peers[key]
-                for key in sorted(live_esp_keys)
-                if key in self._known_esp_peers
-            ),
-            *browser_peers,
-        ]

@@ -15,7 +15,6 @@ from .peer_media_profile import resolve_peer_media_profile
 from .call_projection import publish_phone_projection
 from .codec_settings import effective_codec_policy
 from .counterpart_display import connected_display_name, counterpart_display
-from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
 from .config import (
     transport_config as _get_transport_config,
@@ -42,13 +41,7 @@ from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     EndpointRouteResolver,
     peer_video_codec,
-    device_formats as _device_formats,
-    roster_entry_formats as _roster_entry_formats,
-    sip_target_audio_profile as _sip_target_audio_profile,
-    sip_target_offer_common_audio,
     sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
-    supports_directional_audio_payloads as _supports_directional_audio_payloads,
-    supports_independent_audio_ptime,
 )
 from .esphome_actions import async_resolve_target_device as _resolve_target_device
 from .fsm import (
@@ -108,9 +101,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-def _local_video_capable(endpoint) -> bool:
-    # Receive negotiation is independent from permission to transmit a camera.
-    return bool(endpoint is not None and endpoint.supports("video"))
+def _local_video_receive_requested(call, endpoint) -> bool:
+    requested = call.data.get("receive_video", call.data.get("send_video", False))
+    return bool(requested and endpoint is not None and endpoint.supports("video"))
 
 
 async def _mark_sip_account_unreachable(hass: HomeAssistant, username: str) -> None:
@@ -295,6 +288,8 @@ async def _async_resolve_browser_call_route(
     from .automation_routing import RouteRequest, has_native_route_window
 
     identity = RouteRequest("", local_name, target,
+        source_account_username=str(getattr(browser_endpoint, "username", "") or ""),
+        source_extension=str(getattr(browser_endpoint, "extension", "") or ""),
         caller_number=str(getattr(browser_endpoint, "extension", "") or getattr(browser_endpoint, "username", "") or local_name),
         caller_name=local_name, called_number=str(getattr(route.entry, "number", "") or target),
         outbound_trunk_id=trunk_selection.identity)
@@ -335,7 +330,7 @@ async def _async_resolve_browser_call_route(
             selected = endpoint_directory(hass).get(override.endpoint_id)
             if selected is None:
                 raise _service_error("The selected phone is unavailable", "phone_unavailable", phone=target)
-            target = selected.name
+            target = selected.username or selected.sip_uri_user
             explicit_route = True
         route = resolve_route(target, contacts)
         routing_call_id = session.call_id
@@ -405,7 +400,7 @@ async def _async_dispatch_browser_call_route(
                 hass,
                 endpoint_id,
                 browser_destination.endpoint_id,
-                request_video=_local_video_capable(browser_endpoint),
+                request_video=_local_video_receive_requested(call, browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
                     and call.data.get("send_video", False)
@@ -506,7 +501,7 @@ async def _async_dispatch_browser_call_route(
                 endpoint_id=endpoint_id,
                 media_client_id=str(call.data.get("media_client_id") or ""),
                 **({"call_id": routing_call_id} if routing_call_id else {}),
-                request_video=_local_video_capable(browser_endpoint),
+                request_video=_local_video_receive_requested(call, browser_endpoint),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
                     and call.data.get("send_video", False)
@@ -642,41 +637,13 @@ async def _async_prepare_browser_sip_call(
     codec_policy = effective_codec_policy(hass, endpoint_id=str(getattr(target_endpoint, "endpoint_id", "") or ""),
                                           fallback_endpoint_id=endpoint_id,
                                           trunk_id=trunk_selection.identity if use_trunk else None)
-    remote_tx_formats = _roster_entry_formats(
-        route.entry, "tx_formats"
-    ) or _device_formats(dest_device, "tx_formats")
-    remote_rx_formats = _roster_entry_formats(
-        route.entry, "rx_formats"
-    ) or _device_formats(dest_device, "rx_formats")
-    sip_send_formats, sip_recv_formats = _sip_target_audio_profile(
-        remote_tx_formats=remote_tx_formats,
-        remote_rx_formats=remote_rx_formats,
-        target=target,
-    )
     rtp_audio_profile = _sip_target_rtp_audio_profile(
-        None,
         route.entry,
-        dest_device,
         codec_policy=codec_policy,
+        trunk=use_trunk,
     )
-    native_audio_endpoint = bool(
-        entry_metadata.get("local_ha")
-        or entry_metadata.get("virtual_endpoint")
-        or entry_metadata.get("group_type")
-        or str(entry_metadata.get("endpoint_kind") or "").strip().lower()
-        == EndpointKind.ESPHOME.value
-    )
-    esphome_sip_endpoint = (
-        str(entry_metadata.get("endpoint_kind") or "").strip().lower()
-        == EndpointKind.ESPHOME.value
-    )
-    if use_trunk or (peer_profile.is_dahua and not native_audio_endpoint):
-        sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
-        sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
-        rtp_audio_profile = None
-    elif rtp_audio_profile is not None:
-        sip_send_formats = list(rtp_audio_profile.send_formats)
-        sip_recv_formats = list(rtp_audio_profile.recv_formats)
+    sip_send_formats = list(rtp_audio_profile.send_formats)
+    sip_recv_formats = list(rtp_audio_profile.recv_formats)
     target_device_id = str(
         getattr(target_endpoint, "device_id", "")
         or entry_metadata.get("device_id")
@@ -693,31 +660,26 @@ async def _async_prepare_browser_sip_call(
         and (not use_trunk or bool(trunk_cfg.get("trunk_video_codecs", ["H264"])))
         and source_video_enabled
         and target_video_enabled
-        and (use_trunk or not native_audio_endpoint or esphome_sip_endpoint)
     )
     camera_send_enabled = bool(
         video_capable
         and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
         and call.data.get("send_video", False)
     )
+    receive_video_enabled = bool(video_capable and
+        call.data.get("receive_video", call.data.get("send_video", False)))
     target_video_codec = str(
-        entry_metadata.get("sip_video_codec")
-        or ((dest_device or {}).get("sip_video_codec"))
+        target_video_contract
         or ""
     ).strip()
-    # Some Dahua door stations add H.264 even to an audio-only answer. Offer
-    # an honest receive-only stream for the existing peer profile instead of
-    # accepting an unsolicited m-line or requiring the user's camera.
-    dahua_receive_only = bool(
-        video_capable
-        and not camera_send_enabled
-        and (not use_trunk or peer_profile.explicit_dahua)
-        and not native_audio_endpoint
-        and peer_profile.is_dahua
-        and target_video_codec.upper() in {"", "H264"}
-        and (target_endpoint is None or target_endpoint.supports("video"))
-    )
-    video_enabled = video_capable
+    from .core.sdp import plan_browser_video_offer
+
+    offered_video_formats = plan_browser_video_offer(target_video_codec,
+        camera_send=camera_send_enabled, receive=receive_video_enabled,
+        peer_profile=peer_profile, trunk=use_trunk, codec_policy=codec_policy)
+    video_enabled = bool(offered_video_formats)
+    video_direction = ("sendrecv" if receive_video_enabled and camera_send_enabled else
+                       "sendonly" if camera_send_enabled else "recvonly" if receive_video_enabled else "inactive")
     video_reservation = None
     video_rtp_socket = None
     video_rtcp_socket = None
@@ -741,43 +703,10 @@ async def _async_prepare_browser_sip_call(
     else:
         local_rtp_port = _allocate_sip_rtp_port(hass)
         local_video_rtp_port = 0
-    from .core.sdp import (
-        DEFAULT_H264_FORMAT,
-        DEFAULT_VIDEO_FORMATS,
-        browser_video_send_supported,
-        video_offer_formats_for_target_codec,
-    )
-
-    # Camera permission controls transmission; capable phones can receive
-    # video with their camera off.
-    offered_video_formats = (
-        tuple(
-            item for item in DEFAULT_VIDEO_FORMATS if browser_video_send_supported(item)
-        )
-        if camera_send_enabled
-        else DEFAULT_VIDEO_FORMATS
-    )
-    offered_video_formats = video_offer_formats_for_target_codec(
-        target_video_codec,
-        offered_video_formats,
-    )
-    if dahua_receive_only:
-        # RFC 6184 defaults an absent fmtp to Baseline Level 1, mode 0.
-        # Advertise our existing Level 3.1 receive envelope; the answer may
-        # select a lower level. Mode 0 is supported by the receive bridge.
-        offered_video_formats = (
-            replace(
-                DEFAULT_H264_FORMAT,
-                payload_type=105,
-                profile_level_id="42001f",
-                packetization_mode=0,
-                level_asymmetry_allowed=False,
-            ),
-        )
-
     provider_identity = (
         _trunk_leg_identity(trunk_cfg, local_name) if use_trunk else local_name
     )
+    # Preserve the engine's complete RTP catalog through the SIP writer.
     client = SipCallClient(
         **({"call_id": routing_call_id} if routing_call_id else {}),
         codec_policy=codec_policy,
@@ -797,16 +726,8 @@ async def _async_prepare_browser_sip_call(
         local_rtp_port=local_rtp_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
-        supported_send_rtp_formats=(
-            rtp_audio_profile.send_rtp_formats
-            if rtp_audio_profile is not None
-            else None
-        ),
-        supported_recv_rtp_formats=(
-            rtp_audio_profile.recv_rtp_formats
-            if rtp_audio_profile is not None
-            else None
-        ),
+        supported_send_rtp_formats=rtp_audio_profile.send_rtp_formats,
+        supported_recv_rtp_formats=rtp_audio_profile.recv_rtp_formats,
         signaling_transport=_sip_uri_transport(uri),
         auth_username=str(trunk_cfg.get(CONF_TRUNK_AUTH_USERNAME) or ""),
         username=str(trunk_cfg.get(CONF_TRUNK_USERNAME) or ""),
@@ -814,27 +735,13 @@ async def _async_prepare_browser_sip_call(
         outbound_proxy=str(trunk_cfg.get(CONF_TRUNK_OUTBOUND_PROXY) or "")
         if use_trunk
         else "",
-        include_dahua_pcm=peer_profile.include_dahua_pcm if not native_audio_endpoint else None,
-        match_received_codec=peer_profile.match_received_codec,
-        include_common_codecs=(peer_profile.is_dahua and not native_audio_endpoint)
-        or use_trunk
-        or video_enabled
-        or sip_target_offer_common_audio(None, route.entry, dest_device),
-        allow_directional_audio_payloads=_supports_directional_audio_payloads(
-            None,
-            route.entry,
-        )
-        or bool(
-            rtp_audio_profile is not None
-            and "directional_audio_v1" in rtp_audio_profile.sdp_features
-        ),
-        independent_audio_ptime=supports_independent_audio_ptime(None, route.entry)
-        or bool(rtp_audio_profile is not None
-            and "independent_audio_ptime_v1" in rtp_audio_profile.sdp_features),
+        include_dahua_pcm=rtp_audio_profile.include_dahua_pcm,
+        match_received_codec=rtp_audio_profile.match_received_codec,
+        include_common_codecs=False,
         peer_user_agent=str(entry_metadata.get("user_agent") or ""),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),
-        video_direction=("sendrecv" if camera_send_enabled else "recvonly"),
+        video_direction=video_direction,
         media_reservation=video_reservation,
         video_rtp_socket=video_rtp_socket,
         video_rtcp_socket=video_rtcp_socket,

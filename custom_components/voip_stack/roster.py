@@ -31,11 +31,25 @@ class RosterEntry:
 
 
 def _entry_from_mapping(raw: dict[str, Any]) -> RosterEntry:
+    for key in ("id", "name", "extension", "number", "address", "host", "sip_uri"):
+        value = str(raw.get(key) or "")
+        budget = 2048 if key in {"address", "host", "sip_uri"} else 1024
+        if len(value.encode("utf-8")) > budget or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise RosterError(f"Invalid {key}: control characters or excessive UTF-8 length")
     entry_id = str(raw.get("id") or raw.get("name") or "").strip()
     if not entry_id:
         raise RosterError("roster entry missing id")
     address = str(raw.get("address") or raw.get("host") or "").strip()
     sip_uri = str(raw.get("sip_uri") or "").strip()
+    if sip_uri:
+        from .core.sip import SipError, parse_sip_uri
+
+        try:
+            sip_uri = str(parse_sip_uri(sip_uri))
+        except SipError:
+            raise RosterError("Invalid SIP URI") from None
+        if len(sip_uri.encode("utf-8")) > 2048:
+            raise RosterError("Encoded SIP URI exceeds its wire byte budget")
     extension = str(raw.get("extension") or "").strip()
     number = str(raw.get("number") or "").strip()
     metadata = dict(raw.get("metadata") or {})

@@ -81,7 +81,11 @@ class _PolyphaseResampler:
         if self._identity:
             return
 
-        taps = _RESAMPLER_TAPS_PER_PHASE
+        # The transition band is set by the lower Nyquist rate. Decimation
+        # therefore needs proportionally more source taps than interpolation.
+        # Round to complete phases so every branch retains the same history.
+        taps = (_RESAMPLER_TAPS_PER_PHASE * max(self._up, self._down)
+                + self._up - 1) // self._up
         filter_len = taps * self._up
         n = np.arange(filter_len) - (filter_len - 1) / 2.0
         cutoff = _ROLLOFF * min(1.0 / self._up, 1.0 / self._down)
@@ -141,10 +145,14 @@ class PcmFrameConverter:
         self._pending = np.empty((dst.channels, 0), dtype=np.float64)
 
     def _same_pcm_contract(self) -> bool:
+        return self.same_pcm_format(self.src, self.dst)
+
+    @staticmethod
+    def same_pcm_format(source, target) -> bool:
         return (
-            self.src.sample_rate == self.dst.sample_rate
-            and self.src.pcm_format is self.dst.pcm_format
-            and self.src.channels == self.dst.channels
+            source.sample_rate == target.sample_rate
+            and source.pcm_format is target.pcm_format
+            and source.channels == target.channels
         )
 
     @property

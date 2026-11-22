@@ -141,11 +141,13 @@ class LocalCallSnapshot:
     caller_media: LocalEndpointMediaSnapshot
     callee_media: LocalEndpointMediaSnapshot
     end_reason: LocalCallEndReason | None = None
+    caller_video_receive: bool = True
 
     @property
     def video_active(self) -> bool:
         """Whether either participant has enabled a negotiated video sender."""
-        return self.video_enabled and (self.caller_video_send or self.callee_video_send)
+        return self.video_enabled and (self.caller_video_send or
+                                      (self.callee_video_send and self.caller_video_receive))
 
     @property
     def ended(self) -> bool:
@@ -172,9 +174,9 @@ class LocalCallSnapshot:
         endpoint = str(endpoint_id or "").strip().casefold()
         if endpoint == self.caller_endpoint_id.casefold():
             can_send = self.caller_video_send
-            can_receive = self.callee_video_send
+            can_receive = self.callee_video_send and self.caller_video_receive
         elif endpoint == self.callee_endpoint_id.casefold():
-            can_send = self.callee_video_send
+            can_send = self.callee_video_send and self.caller_video_receive
             can_receive = self.caller_video_send
         else:
             raise LocalCallStateError(
@@ -256,6 +258,7 @@ class _LocalCall:
     video_requested: bool
     video_enabled: bool
     caller_video_send: bool
+    caller_video_receive: bool
     callee_video_send: bool
     answer_owner_id: str
     caller_media: _EndpointMedia
@@ -304,6 +307,7 @@ class _LocalCall:
             video_requested=self.video_requested,
             video_enabled=self.video_enabled,
             caller_video_send=self.caller_video_send,
+            caller_video_receive=self.caller_video_receive,
             callee_video_send=self.callee_video_send,
             answer_owner_id=self.answer_owner_id,
             caller_media_owner_id=(
@@ -422,7 +426,7 @@ class LocalSoftphoneBridge:
                     f"{logical_call_id!r} outside this bridge"
                 )
 
-        video_requested = bool(request_video)
+        video_requested = bool(request_video or enable_caller_video_send)
         video_enabled = (
             video_requested
             and caller.supports(LocalMediaKind.VIDEO)
@@ -449,6 +453,7 @@ class LocalSoftphoneBridge:
                 caller_video_send=bool(
                     video_enabled and enable_caller_video_send
                 ),
+                caller_video_receive=bool(request_video),
                 callee_video_send=False,
                 answer_owner_id=str(answered_owner_id or ""),
                 caller_media=self._new_endpoint_media(caller.endpoint_id),
@@ -510,6 +515,7 @@ class LocalSoftphoneBridge:
         old_media = call.media_for(previous)
         retained_media = call.media_for(retained)
         retained_video_send = call.caller_video_send if retained == call.caller_endpoint_id else call.callee_video_send
+        retained_video_receive = call.caller_video_receive if retained == call.caller_endpoint_id else call.video_enabled
         call.caller_endpoint_id = retained
         call.caller_media = retained_media
         call.callee_endpoint_id = target.endpoint_id
@@ -518,6 +524,8 @@ class LocalSoftphoneBridge:
         call.callee_state = LocalCallState.RINGING
         call.answer_owner_id = ""
         call.callee_video_send = False
+        call.caller_video_receive = retained_video_receive
+        call.video_requested = bool(retained_video_send or retained_video_receive)
         call.video_enabled = bool(call.video_requested and self._registry.require(retained).supports(LocalMediaKind.VIDEO)
                                   and target.supports(LocalMediaKind.VIDEO))
         call.caller_video_send = bool(retained_video_send and call.video_enabled)
@@ -609,7 +617,7 @@ class LocalSoftphoneBridge:
             call.caller_state = LocalCallState.IN_CALL
             call.callee_state = LocalCallState.IN_CALL
             call.callee_video_send = bool(
-                call.video_enabled and enable_video_send
+                call.video_enabled and enable_video_send and call.caller_video_receive
             )
             snapshot = call.snapshot()
             self._emit(
@@ -650,6 +658,8 @@ class LocalSoftphoneBridge:
             and callee.supports(LocalMediaKind.VIDEO)
         ):
             raise LocalBridgeError("both endpoints must support video")
+        if enabled and endpoint == call.callee_endpoint_id and not call.caller_video_receive:
+            raise LocalMediaNotNegotiatedError("the caller did not request video reception")
         if enabled:
             call.video_requested = True
             call.video_enabled = True

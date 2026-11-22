@@ -252,18 +252,26 @@ class SipTcpServer:
                     keepalive_half = not keepalive_half
                     continue
                 keepalive_half = False
-                first_message = False
                 try:
                     msg = sip.parse_message(raw)
-                except Exception:
-                    msg = None
+                except sip.SipError:
+                    break
+                first_message = False
                 if msg is not None:
                     queue = self._dialog_queues.get((addr, msg.header("Call-ID")))
                     if queue is not None:
                         if put_drop_oldest(queue, raw):
                             _LOGGER.debug("SIP TCP dialog queue full for %s; dropped oldest message", addr)
                         continue
-                endpoint.submit_datagram(raw, addr)
+                endpoint.submit_datagram(raw, addr, parsed=msg)
+        except sip.SipMessageTooLarge as err:
+            oversized = sip.oversized_request_envelope(err.headers, err.status)
+            if oversized is not None:
+                request, status = oversized
+                response = sip.build_uas_response(request, status,
+                    "Request Entity Too Large" if status == 413 else "Message Too Large")
+                writer.write(response)
+                await writer.drain()
         except ConnectionError as err:
             flow_error = err
             _LOGGER.debug("SIP TCP peer disconnected %s:%s: %s", addr[0], addr[1], err)

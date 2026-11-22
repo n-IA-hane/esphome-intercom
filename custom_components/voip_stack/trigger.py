@@ -13,7 +13,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.trigger import Trigger, TriggerConfig
 
 from .automation_context import CallExecution, current_execution
-from .automation_routing import automation_event_type, matches_call
+from .automation_routing import MATCH_MODES, _number, automation_event_type, matches_call
 from .call_deadlines import CallDeadline
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CallToken, TerminationIntent
@@ -50,6 +50,16 @@ OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional("caller"): cv.string,
         vol.Optional("destination"): cv.string,
+        vol.Optional("caller_account"): cv.string,
+        vol.Optional("destination_account"): cv.string,
+        vol.Optional("caller_number"): cv.string,
+        vol.Optional("caller_extension"): cv.string,
+        vol.Optional("destination_number"): cv.string,
+        vol.Optional("destination_extension"): cv.string,
+        vol.Optional("caller_match"): vol.In(MATCH_MODES),
+        vol.Optional("destination_match"): vol.In(MATCH_MODES),
+        vol.Optional("caller_range_end"): cv.string,
+        vol.Optional("destination_range_end"): cv.string,
         vol.Optional("ingress"): vol.In(["trunk", "extension"]),
         vol.Optional("trunk"): cv.string,
         vol.Optional("inbound_trunk_id"): cv.string,
@@ -72,6 +82,24 @@ class VoipCallTrigger(Trigger):
         )
         if result["options"].get("trunk"):
             result["options"]["trunk"] = _trunk_selector_id(hass, result["options"]["trunk"])
+        from .sip_account_identity import ha_account_username
+        for field in ("caller_account", "destination_account"):
+            if result["options"].get(field) and not ha_account_username(hass, result["options"][field]):
+                raise vol.Invalid("Select a configured SIP account device")
+        for side in ("caller", "destination"):
+            options = result["options"]
+            mode = options.get(side + "_match", "exact")
+            values = [str(options[field]).strip() for field in (side, side + "_number", side + "_extension")
+                      if options.get(field)]
+            if mode == "pattern":
+                for value in values:
+                    if len(value) > 256:
+                        raise vol.Invalid("Call match patterns must not exceed 256 characters")
+                    cv.is_regex(value)
+            elif mode == "range":
+                end = _number(options.get(side + "_range_end", ""))
+                if not values or end is None or any(_number(value) is None or _number(value) > end for value in values):
+                    raise vol.Invalid("A call number range requires numeric start and end values in ascending order")
         return result
 
     def __init__(self, hass, config: TriggerConfig):
@@ -185,14 +213,14 @@ class VoipCallTrigger(Trigger):
             )
             if payload.get("scope") == "phone_policy":
                 if (self._kind == "call_unanswered" and self._options.get("for") is None
-                        and matches_call(payload, self._options)):
+                        and matches_call(payload, self._options, hass=self._hass)):
                     dispatch(event, payload)
                 return
             token = CallToken(
                 str(payload.get("call_id") or ""), int(payload.get("generation") or 0)
             )
             matched = kind in TRIGGER_EVENTS[self._kind] and matches_call(
-                payload, self._options
+                payload, self._options, hass=self._hass
             )
             if self._kind != "call_unanswered":
                 if matched:
@@ -287,7 +315,7 @@ class VoicemailReceivedTrigger(Trigger):
             if selector:
                 endpoints = endpoint_directory(self._hass)
                 try:
-                    endpoint = resolve_service_phone(endpoints, selector, allow_internal=True)
+                    endpoint = resolve_service_phone(endpoints, selector, allow_internal=True, hass=self._hass)
                 except ServiceValidationError:
                     return
                 if endpoint is None or endpoint.endpoint_id != data.get("mailbox_id"):
@@ -368,7 +396,7 @@ class PhoneStateTrigger(Trigger):
                 snapshot = {
                     **call,
                     "endpoint_id": endpoint.endpoint_id,
-                    "device_id": endpoint.device_id,
+                    "device_id": endpoint.ha_device_id,
                 }
                 execution = CallExecution(
                     CallToken(call["call_id"], call["generation"]), snapshot

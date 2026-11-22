@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import importlib
+import ipaddress
 import random
 import socket
 import time
@@ -84,6 +85,14 @@ class SipServerResolver:
         transport: str = "",
     ) -> tuple[SipServerTarget, ...]:
         requested = self._requested_transport(uri, transport)
+        try:
+            ipaddress.ip_address(uri.host)
+        except ValueError:
+            pass
+        else:
+            protocol = requested or ("TLS" if uri.scheme == "sips" else "UDP")
+            return (SipServerTarget(uri.host, int(uri.port or (5061 if protocol == "TLS" else 5060)),
+                                    protocol, (uri.host,)),)
         if uri.port is not None:
             return (
                 await self._address_target(

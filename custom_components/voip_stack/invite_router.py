@@ -80,7 +80,6 @@ class InviteRuntime:
     browser_leg_for_member: Callable[..., Any]
     defer_invite_to_softphone: Callable[..., None]
     enable_reused_sip_tcp_connection: Callable[..., Any]
-    on_conference_inbound_timeout: Callable[..., Any]
     ring_conference_members: Callable[..., Any]
     run_ring_group_call: Callable[..., Any]
     run_trunk_inbound_route_guarded: Callable[..., Any]
@@ -136,15 +135,19 @@ async def route_invite(
         from .queue_agent import route_queue_agent_call
         return await route_queue_agent_call(runtime, invite, registry,
                                             source_endpoint)
-    from .esphome_origination import apply_correlated_invite, CorrelationError
-    try:
-        requested_trunk = apply_correlated_invite(registry, invite, source_endpoint_id)
-    except CorrelationError as err:
-        return SipInviteResult(err.status, "Forbidden" if err.status == 403 else "Call/Transaction Does Not Exist",
-                              decline_reason=err.reason)
+    from .trunk_selection import parse_public_trunk_destination
+
+    requested_trunk, dial_target = (parse_public_trunk_destination(hass, invite.routing_target)
+                                    if not trunk_invite else ("", invite.routing_target))
     if requested_trunk:
-        invite = replace(invite, outbound_trunk_id=requested_trunk)
-    decision = _inbound_route_decision(invite, peers, roster_entries)
+        invite = replace(invite, target_route=dial_target, target=dial_target,
+                         outbound_trunk_id=requested_trunk)
+        from .router import RouteAction, RouteDecision
+
+        decision = RouteDecision(RouteAction.TRUNK, target=dial_target,
+                                 trunk_id=requested_trunk, source="trunk")
+    else:
+        decision = _inbound_route_decision(invite, peers, roster_entries)
     if getattr(decision, "trunk_id", ""):
         invite = replace(invite, outbound_trunk_id=decision.trunk_id)
     if trunk_invite:

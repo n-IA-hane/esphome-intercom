@@ -243,6 +243,11 @@ class PhoneEndpoint:
         """Return whether a normalized capability is advertised."""
         return str(capability or "").strip().casefold() in self.capabilities
 
+    @property
+    def ha_device_id(self) -> str:
+        """Return the native Account SIP selector, independently of linked hardware."""
+        return self.account_device_id or self.device_id
+
 
 def ha_client_endpoint(endpoint: PhoneEndpoint | None) -> PhoneEndpoint | None:
     """Return an unregistered browser transport view of the canonical account."""
@@ -250,5 +255,5 @@ def ha_client_endpoint(endpoint: PhoneEndpoint | None) -> PhoneEndpoint | None:
         return None
     if endpoint.kind is EndpointKind.BROWSER:
         return endpoint
-    return replace(endpoint, kind=EndpointKind.BROWSER,
+    return replace(endpoint, kind=EndpointKind.BROWSER, device_id=endpoint.ha_device_id,
                    offline_policy=OfflinePolicy.UNAVAILABLE, offline_forward_target="")

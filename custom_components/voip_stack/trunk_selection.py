@@ -67,3 +67,34 @@ def select_call_trunk(hass, *, requested: str = "", endpoint_id: str = "", inher
     if identity:
         return TrunkSelection(identity, normalized_trunk_config({}), None)
     return TrunkSelection("", trunk_config(hass), sip_trunk(hass))
+
+
+def public_trunk_destination(hass, identity, destination):
+    """Build the same public PBX address that any SIP phone can dial."""
+    entry = config_entry(hass)
+    record = next((item for item in trunk_subentries(entry)
+                   if str(item.data.get("trunk_id") or item.subentry_id) == identity), None) if entry else None
+    if record is None:
+        raise ServiceValidationError("Select a configured SIP trunk")
+    return f"trunk.{record.title}.{destination}"
+
+
+def parse_public_trunk_destination(hass, destination):
+    """Resolve an explicit trunk name without private headers or session state."""
+    target = str(destination or "").strip()
+    runtime = require_runtime_data(hass)
+    if runtime.endpoints.by_username(target) is not None:
+        return "", target
+    entry = config_entry(hass)
+    matches = []
+    for record in trunk_subentries(entry) if entry else ():
+        prefix = f"trunk.{record.title}."
+        if target.casefold().startswith(prefix.casefold()) and target[len(prefix):]:
+            matches.append((len(prefix), str(record.data.get("trunk_id") or record.subentry_id), target[len(prefix):]))
+    if not matches:
+        return "", target
+    longest = max(item[0] for item in matches)
+    selected = [item for item in matches if item[0] == longest]
+    if len(selected) != 1:
+        raise ServiceValidationError("The selected trunk name is ambiguous")
+    return selected[0][1], selected[0][2]

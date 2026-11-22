@@ -132,6 +132,19 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_browser_pcm_edge_ha.py
+  tests/test_browser_replacement_media_chromium_ha.py
+  tests/test_call_account_filters_ha.py
+  tests/test_group_configuration_native_ha.py
+  tests/test_local_video_intent_ha.py
+  tests/test_media_adapter_plan_ha.py
+  tests/test_media_consolidation_ha.py
+  tests/test_media_consumers_consolidation_ha.py
+  tests/test_native_blind_transfer_handoff_ha.py
+  tests/test_registrar_storage_ha.py
+  tests/test_session_refresh_consolidation_ha.py
+  tests/test_sip_account_username_identity_ha.py
+  tests/test_video_relay_role_handoff_ha.py
   tests/test_media_contract_expectations_ha.py
   tests/test_media_duplex_receive_budget_ha.py
   tests/test_local_call_media_packet_time_ha.py

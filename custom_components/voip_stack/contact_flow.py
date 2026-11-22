@@ -45,6 +45,7 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
         return await self.async_step_contact(user_input)
 
     async def async_step_contact(self, user_input=None):
+        from .group_flow import destination_options
         previous = dict(self._current.data) if self._current is not None else {}
         values = {**previous, **previous.get("metadata", {})}
         values["timeout"] = values.get("automation_timeout", 30)
@@ -96,7 +97,8 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
                     vol.Optional(
                         "fallback_destination",
                         default=values.get("fallback_destination", ""),
-                    ): TextSelector(),
+                    ): SelectSelector({"options": destination_options(self.hass, self._get_entry()),
+                                       "custom_value": True, "mode": "dropdown"}),
                     vol.Required(
                         "timeout", default=values.get("timeout", 30)
                     ): NumberSelector(

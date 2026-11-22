@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
@@ -15,6 +16,11 @@ SIP_T2 = 4.0
 SIP_TIMER_B = 64 * SIP_T1
 SIP_TIMER_F = 64 * SIP_T1
 SIP_TIMER_H = 64 * SIP_T1
+
+
+def reinvite_retry_delay(*, owns_call_id: bool) -> float:
+    """Choose the RFC 3261 glare backoff in ten-millisecond units."""
+    return (210 + secrets.randbelow(191) if owns_call_id else secrets.randbelow(201)) / 100
 
 _T = TypeVar("_T")
 _C = TypeVar("_C")
@@ -49,22 +55,48 @@ class SessionTimerDriver:
         return await self.refresh()
 
     async def refresh(self) -> str:
-        for _attempt in range(2):
-            response = await self.send(
-                self.refresh_method,
-                extra_headers=(
-                    ("Supported", "timer"),
-                    ("Session-Expires", f"{self.state.interval};refresher={self.local_role}"),
-                ),
-            )
+        method = self.state.refresh_method or self.refresh_method
+        expiration = self.state.deadline
+        interval_retry = False
+        glare_retry = False
+        for _attempt in range(4):
+            remaining = expiration - self.now() if expiration else None
+            if remaining is not None and remaining <= 0:
+                return "session_timer_failed"
+            try:
+                async with asyncio.timeout(remaining):
+                    response = await self.send(method, extra_headers=(
+                        ("Supported", "timer"),
+                        ("Session-Expires", f"{self.state.interval};refresher={self.local_role}"),
+                    ))
+            except TimeoutError:
+                return "session_timer_failed"
             result = sip.apply_session_refresh_response(
                 self.state,
                 response,
                 local_role=self.local_role,
                 now=self.now(),
             )
-            if result != "retry":
-                return "refreshed" if result == "refreshed" else "session_timer_failed"
+            if result == "unsupported" and method == "UPDATE":
+                method = "INVITE"
+                self.state.refresh_method = method
+                continue
+            if result == "retry" and not interval_retry:
+                interval_retry = True
+                continue
+            if result == "retry_later" and not glare_retry:
+                glare_retry = True
+                delay = reinvite_retry_delay(owns_call_id=self.local_role == "uac")
+                if expiration and self.now() + delay >= expiration:
+                    return "session_timer_failed"
+                await asyncio.sleep(delay)
+                continue
+            if result == "retry_later" and expiration and self.now() < expiration:
+                # Preserve the original lease after bounded glare retries.
+                # Reaching it wakes the same owner, which then ends the call.
+                self.state.refresh_at = expiration
+                return "waiting"
+            return "refreshed" if result == "refreshed" else "session_timer_failed"
         return "session_timer_failed"
 
     async def run(self) -> str:
@@ -197,6 +229,11 @@ class SipClientTransaction(Generic[_T]):
         if self.deadline is None:
             self.reset_deadline(self.timeout)
 
+    def wake_reader(self) -> None:
+        """Let the sole response owner select a newly started transaction."""
+        if self._read_window is not None and not self._read_window.expired():
+            self._read_window.reschedule(asyncio.get_running_loop().time())
+
     async def receive(
         self,
         reader: ResponseReader[_T],
@@ -292,13 +329,12 @@ async def async_run_dialog_request_transaction(
         return None
     if on_sent is not None:
         on_sent()
-    received_provisional = False
     while active():
         try:
             received = await transaction.receive(
                 receive,
                 retransmit,
-                retransmit_enabled=not received_provisional,
+                retransmit_enabled=True,
             )
         except _TransactionInactive:
             return None
@@ -309,7 +345,10 @@ async def async_run_dialog_request_transaction(
             if on_final is not None:
                 on_final(response, context)
             return response
-        received_provisional = True
+        # A non-INVITE transaction continues Timer E at T2 in Proceeding.
+        if not transaction.reliable:
+            transaction.interval = transaction.t2
+            transaction.next_retransmit = asyncio.get_running_loop().time() + transaction.t2
         if on_provisional is not None:
             await on_provisional(response, context)
     return None

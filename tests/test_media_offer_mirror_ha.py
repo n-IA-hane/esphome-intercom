@@ -1,10 +1,4 @@
-"""Mirror test across repositories: the new engine offers, the firmware answers.
-
-The reduced offer for a phone that declared its formats is written by the new engine and given
-to the host build of the firmware negotiator. The firmware must select the formats the real
-device uses, and the new engine must read the size of the two descriptions as far smaller than
-the offers Home Assistant sends today.
-"""
+"""The production HA offer and ESP answer agree on standard asymmetric audio."""
 
 import json
 import os
@@ -33,8 +27,7 @@ EXPECTED = {
 def written_offer(device):
     return _write_offer_plan(
         declared_offer(device), "192.0.2.1", "192.0.2.1", 40000,
-        audio_direction="sendrecv", audio_rtcp=True, directional=True,
-        independent=True, video_port=0, video_formats=(),
+        audio_direction="sendrecv", audio_rtcp=False, video_port=0, video_formats=(),
         video_direction="inactive", codec_policy=None)
 
 
@@ -72,8 +65,8 @@ def test_firmware_accepts_the_reduced_offer_with_the_formats_it_uses(firmware_ne
 
 
 @pytest.mark.parametrize("device", sorted(EXPECTED))
-def test_the_reduced_offer_is_much_smaller_than_the_one_sent_today(device):
-    """Measured on a real call: 1760 bytes for an audio only INVITE, above the 1300 byte limit."""
+def test_bounded_standard_offer_fits_the_sip_transaction_budget(device):
+    """Compare the actual transaction with the preserved large-offer witness."""
     body = written_offer(device)
     reduced = len(body.encode())
     captured = min(len((case / "01_local_offer.sdp").read_bytes().split(b"m=video")[0])

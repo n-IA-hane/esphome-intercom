@@ -399,7 +399,7 @@ async def browser_replacement_owner(hass, phones, socket_enabled, request):
                            previous=previous, invite=invite, media=media)
 
 
-@pytest.mark.parametrize("failure", ["video", "owner", "claim", "answer", "upsert", "publish"])
+@pytest.mark.parametrize("failure", ["owner", "claim", "answer", "upsert", "publish"])
 async def test_rejected_browser_replacement_releases_automatic_grant_and_allows_retry(browser_replacement_owner, monkeypatch, failure):
     from dataclasses import replace
     from custom_components.voip_stack import browser_replacement, call_replaces
@@ -408,9 +408,7 @@ async def test_rejected_browser_replacement_releases_automatic_grant_and_allows_
 
     lab = browser_replacement_owner
     candidate = lab.invite
-    if failure == "video":
-        candidate = replace(candidate, video_format=sdp.RtpVideoFormat(103, "VP8"))
-    elif failure == "claim":
+    if failure == "claim":
         lab.calls.release_endpoint_claim(lab.old.call_id, "kitchen")
     with monkeypatch.context() as inject:
         if failure in {"answer", "upsert", "publish"}:
@@ -538,3 +536,93 @@ async def test_consecutive_browser_transfer_retirements_keep_distinct_owned_task
             await asyncio.gather(*leftovers, return_exceptions=True)
         for client in clients:
             await client.close()
+
+
+@pytest.mark.parametrize("camera", [False, True])
+@pytest.mark.parametrize("settle", ["rollback", "commit"])
+async def test_browser_replaces_video_uses_standard_contract_and_owned_reservation(
+    browser_replacement_owner, camera, settle,
+):
+    from dataclasses import replace
+    from custom_components.voip_stack.browser_replacement import prepare_browser_replacement
+    from custom_components.voip_stack.call_replaces import ReplacementGrant
+    from custom_components.voip_stack.const import CONF_VIDEO_CAMERA_SEND
+    from custom_components.voip_stack.core import sdp
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.media_ports import bind_sip_video_sockets
+
+    lab = browser_replacement_owner
+    lab.runtime.endpoints.update("kitchen", capabilities=frozenset({"audio", "video", "dtmf"}))
+    lab.runtime.transport_config[CONF_VIDEO_CAMERA_SEND] = camera
+    video = sdp.RtpVideoFormat(103, "VP8", direction="sendrecv")
+    offer = lab.previous.remote_sdp + (
+        "m=video 19002 RTP/AVP 103\r\na=rtpmap:103 VP8/90000\r\na=sendrecv\r\n").encode()
+    previous = replace(lab.previous, remote_sdp=offer, video_format=video,
+        remote_video_rtp_host="127.0.0.1", remote_video_rtp_port=19002)
+    old_rtp, old_rtcp = bind_sip_video_sockets(18002)
+    lab.media.update(invite=previous, local_video_rtp_port=18002,
+        video_rtp_socket=old_rtp, video_rtcp_socket=old_rtcp, camera_send_authorized=camera)
+    # This fixture seeds an already authorized grant. The independent wire
+    # tests cover REFER authorization and the Replaces tag matching itself.
+    lab.calls.release_endpoint_claim(lab.old.call_id, "office")
+    lab.calls.observe_leg(lab.old.call_id, "browser:kitchen", role="ha_softphone",
+        endpoint_id="kitchen", state="in_call", generation=lab.old.generation)
+    grant = ReplacementGrant(lab.old, lab.old, "office", lab.invite.replaces)
+    grant.attach()
+    incoming = replace(previous, call_id=lab.invite.call_id, replaces=lab.invite.replaces)
+    result = await prepare_browser_replacement(lab.hass, lab.runtime, incoming, "127.0.0.1", lab.old, grant)
+    assert result.status == 200
+    assert "a=x-" not in result.answer_sdp
+    assert "a=rtpmap:103 VP8/90000" in result.answer_sdp
+    assert ("a=sendrecv" if camera else "a=recvonly") in result.answer_sdp.split("m=video", 1)[1]
+    assert lab.runtime.rtp_port_pool.get("used")
+    if settle == "rollback":
+        await result.rollback()
+        assert lab.old.live and lab.calls.resource_for(lab.old.call_id, "softphone_media") is lab.media
+        assert old_rtp.fileno() >= 0 and old_rtcp.fileno() >= 0
+        assert not lab.runtime.rtp_port_pool.get("used")
+    else:
+        await result.commit()
+        current = lab.calls.get_session(incoming.call_id)
+        descriptor = lab.calls.resource_for(incoming.call_id, "softphone_media")
+        assert current.live and lab.runtime.endpoints.require("kitchen").active_call_id == incoming.call_id
+        assert descriptor["video_direction"] == ("sendrecv" if camera else "recvonly")
+        assert descriptor["rtp_reservation"] is not None and not descriptor["rtp_reservation"].released
+        assert descriptor["media_handoff"] == {"previous_call_id": lab.old.call_id, "endpoint_id": "kitchen"}
+        assert "browser:kitchen" not in lab.old.legs
+        await lab.calls.terminate_call_wait(current.call_id, intent=TerminationIntent("test_complete"))
+        assert not lab.runtime.rtp_port_pool.get("used")
+    if lab.old.live:
+        await lab.calls.terminate_call_wait(lab.old.call_id, intent=TerminationIntent("test_complete"))
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_browser_refer_uses_destination_no_answer_policy_beyond_thirty_seconds(trunks, monkeypatch):
+    from custom_components.voip_stack.phone_policy import PhonePolicy, PhoneDestination
+
+    lab = trunks
+    session = await browser_call(lab, monkeypatch)
+    lab.runtime.endpoints.update("sip:bedroom1", policy=PhonePolicy(
+        ringing_timeout=45, no_answer=PhoneDestination("contact", "bedroom0")))
+    phone, target = lab.phones
+    target.auto_answer = False
+    receive = phone.datagram_received
+    def dispatch(raw, address):
+        message = sip.parse_message(raw)
+        receive(raw, address)
+        if message.method == "NOTIFY":
+            phone.respond(message, address, 200)
+    monkeypatch.setattr(phone, "datagram_received", dispatch)
+    send_refer(lab, f'sip:bedroom1@127.0.0.1:{lab.runtime.transport_config["sip_port"]}')
+    await asyncio.wait_for(target.invited.wait(), 4)
+    source = lab.calls.sip_client_for(session.call_id)
+    await asyncio.sleep(30.2)
+    assert session.live and source._incoming_refer_task is not None
+    assert not source._incoming_refer_task.done() and source.dialog is not None
+    target.answer()
+    await wait_for(lambda: session.state == "in_call" and "sip:bedroom1" in session.endpoint_claims)
+    await lab.hass.services.async_call("voip_stack", "hangup", {
+        "device_id": "device-retained", "call_id": session.call_id,
+    }, blocking=True)
+    await wait_for(lambda: not lab.calls.sessions)
+    assert_call_resources_released(lab)

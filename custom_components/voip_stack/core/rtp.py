@@ -139,6 +139,11 @@ def validate_audio_payload_size(payload: bytes, fmt: _AudioRtpFormat) -> None:
             f"RTP audio payload too large for {fmt.encoding}/{fmt.sample_rate}/"
             f"{fmt.channels}/{fmt.frame_ms}ms: {len(payload)} bytes; max is {limit}"
         )
+    if fmt.encoding == "OPUS":
+        duration = opus_packet_duration_ms(payload)
+        maximum = float(getattr(fmt, "max_frame_ms", 0) or 120)
+        if duration > maximum:
+            raise RtpError(f"Opus packet duration {duration:g} ms exceeds maxptime {maximum:g} ms")
     spec = CODECS.get(fmt.encoding)
     if spec is not None and spec.pyav_decoder == "g726le":
         quantum_bytes = spec.sample_quantum * spec.bits_per_sample // 8
@@ -154,6 +159,148 @@ def validate_audio_payload_size(payload: bytes, fmt: _AudioRtpFormat) -> None:
     elif fmt.encoding == "CN":
         if not payload or payload[0] & 0x80 or 255 in payload[1:]:
             raise RtpError("Invalid RFC 3389 comfort-noise payload")
+    elif fmt.encoding in {"L16", "L24", "PCM", "PCMA", "PCMU", "G722"}:
+        stride = (2 if fmt.encoding in {"L16", "PCM"} else 3 if fmt.encoding == "L24" else 1) * fmt.channels
+        if not payload or len(payload) % stride:
+            raise RtpError("RTP audio payload is empty or not sample-aligned")
+
+
+def opus_packet_duration_ms(payload: bytes) -> float:
+    """Validate RFC 6716 section 3 framing and return actual media duration."""
+    if not payload:
+        raise RtpError("empty Opus packet")
+    config, code = payload[0] >> 3, payload[0] & 3
+    frame_ms = ((10, 20, 40, 60)[config & 3] if config < 12 else
+                (10, 20)[config & 1] if config < 16 else
+                (2.5, 5, 10, 20)[config & 3])
+    offset, end = 1, len(payload)
+
+    def length():
+        nonlocal offset
+        if offset >= end:
+            raise RtpError("truncated Opus frame length")
+        first = payload[offset]
+        offset += 1
+        if first < 252:
+            return first
+        if offset >= end:
+            raise RtpError("truncated Opus two-byte frame length")
+        second = payload[offset]
+        offset += 1
+        return first + 4 * second
+
+    if code == 0:
+        sizes = [end - offset]
+    elif code == 1:
+        if (end - offset) % 2:
+            raise RtpError("unequal Opus CBR frame lengths")
+        sizes = [(end - offset) // 2] * 2
+    elif code == 2:
+        first = length()
+        sizes = [first, end - offset - first]
+    else:
+        if offset >= end:
+            raise RtpError("missing Opus frame count")
+        control = payload[offset]
+        offset += 1
+        count = control & 63
+        if not 1 <= count <= 48 or count * frame_ms > 120:
+            raise RtpError("invalid Opus frame count or duration")
+        padding = 0
+        if control & 64:
+            while True:
+                if offset >= end:
+                    raise RtpError("truncated Opus padding length")
+                value = payload[offset]
+                offset += 1
+                padding += 254 if value == 255 else value
+                if value != 255:
+                    break
+            end -= padding
+            if end < offset:
+                raise RtpError("Opus padding exceeds packet length")
+        if control & 128:
+            sizes = [length() for _ in range(count - 1)]
+            sizes.append(end - offset - sum(sizes))
+        else:
+            if (end - offset) % count:
+                raise RtpError("unequal Opus CBR frame lengths")
+            sizes = [(end - offset) // count] * count
+    if any(size < 0 or size > _MAX_OPUS_FRAME_BYTES for size in sizes):
+        raise RtpError("invalid Opus frame length")
+    duration = len(sizes) * frame_ms
+    if duration > 120:
+        raise RtpError("Opus packet duration exceeds 120 ms")
+    return duration
+
+
+def audio_payload_duration_ms(payload, fmt) -> float:
+    """Media duration from validated encoded data, independent of preferred ptime."""
+    if fmt.encoding == "OPUS":
+        return opus_packet_duration_ms(payload)
+    spec = CODECS.get(fmt.encoding)
+    if spec is not None and spec.octets_per_sample:
+        return len(payload) * 1000 / (spec.octets_per_sample * fmt.channels * fmt.sample_rate)
+    return fmt.frame_ms
+
+
+class RtpReceiveState:
+    """Bound duplicate history and validate a source change with two packets.
+
+    Callers validate the negotiated origin, payload mapping and media envelope
+    before admission. A source change needs consecutive sequence numbers;
+    retired sources cannot displace the current source with delayed packets.
+    """
+
+    def __init__(self, *, window: int = 128) -> None:
+        self.ssrc: int | None = None
+        self.highest: int | None = None
+        self._seen: set[int] = set()
+        self._retired: set[int] = set()
+        self._candidate: tuple[int, int] | None = None
+        self._restart: int | None = None
+        self.window = window
+        self.changed = False
+
+    def admit(self, packet: RtpPacket) -> bool:
+        self.changed = False
+        if self.ssrc is None:
+            self.ssrc = packet.ssrc
+        elif packet.ssrc != self.ssrc:
+            if packet.ssrc in self._retired:
+                return False
+            if self._candidate != (packet.ssrc, (packet.sequence - 1) & 65535):
+                self._candidate = (packet.ssrc, packet.sequence)
+                return False
+            self._retired.add(self.ssrc)
+            if len(self._retired) > 8:
+                self._retired.pop()
+            self.ssrc = packet.ssrc
+            self.highest = None
+            self._seen.clear()
+            self._candidate = None
+            self.changed = True
+        sequence = packet.sequence
+        extended = sequence if self.highest is None else self.highest + (
+            (sequence - self.highest + 32768) % 65536 - 32768)
+        if self.highest is not None and abs(extended - self.highest) > 3000:
+            if self._restart != sequence:
+                self._restart = (sequence + 1) & 65535
+                return False
+            self.highest = extended
+            self._seen.clear()
+            self._restart = None
+            self.changed = True
+        if extended in self._seen or (self.highest is not None and extended <= self.highest - self.window):
+            return False
+        self.highest = max(extended, self.highest if self.highest is not None else extended)
+        self._seen.add(extended)
+        self._seen = {value for value in self._seen if value > self.highest - self.window}
+        return True
+
+    @property
+    def probation_ssrc(self):
+        return self._candidate[0] if self._candidate is not None else None
 
 
 def build_packet(packet: RtpPacket) -> bytes:

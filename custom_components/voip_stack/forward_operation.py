@@ -131,6 +131,8 @@ class ForwardOperation:
         self.parked_audio_socket = None
         self.parked_media = None
         self.retained_media = None
+        self.retained_video_update = None
+        self.retained_video_answer = None
         self.preanswered = None
 
     async def commit_source_answer(
@@ -200,6 +202,10 @@ class ForwardOperation:
         registry = self.registry
         session = self.source.session
         call_id = self.source.call_id
+        if self.retained_video_update is not None:
+            if self.retained_video_update.rollback is not None:
+                await self.retained_video_update.rollback()
+            self.retained_video_update = None
         if self.parked_audio_socket is not None:
             self.parked_audio_socket.close()
             self.parked_audio_socket = None
@@ -255,7 +261,7 @@ class ForwardOperation:
         if endpoint.availability is EndpointAvailability.UNAVAILABLE:
             raise RuntimeError("target Home Assistant phone is disabled")
         if local_source is not None and local_source.outgoing and local_source.established:
-            await local_source.forward_to_browser(self.runtime, endpoint, timeout=self.plan.ring_timeout or 30)
+            await local_source.forward_to_browser(self.runtime, endpoint, timeout=self.plan.ring_timeout)
             return TransferResult("connected", destination)
         if (
             application is not None
@@ -271,7 +277,7 @@ class ForwardOperation:
                 self.invite,
                 endpoint,
                 application,
-                timeout=self.plan.ring_timeout or 30,
+                timeout=self.plan.ring_timeout,
             )
             return TransferResult("connected", destination)
         if local_source is not None and (
@@ -609,7 +615,7 @@ class ForwardOperation:
             else ""
         )
         forward_video_enabled = bool(
-            (self.preanswered is None or self.parked_media is not None)
+            (self.preanswered is None or self.parked_media is not None or self.retained_media is not None)
             and self.runtime.config.get(CONF_SIP_VIDEO, False)
             and invite.video_format is not None
         )
@@ -658,7 +664,6 @@ class ForwardOperation:
                 username=str(trunk_cfg.get(CONF_TRUNK_USERNAME) or ""),
                 password=str(trunk_cfg.get(CONF_TRUNK_PASSWORD) or ""),
                 outbound_proxy=str(trunk_cfg.get(CONF_TRUNK_OUTBOUND_PROXY) or ""),
-                force_common_audio=bridge_to_trunk,
                 reuse_registered_flow=not bridge_to_trunk,
                 use_trunk_flow=bridge_to_trunk,
                 trunk_id=selected_trunk_id if bridge_to_trunk else "",
@@ -723,6 +728,13 @@ class ForwardOperation:
         )
 
     async def _prepare_parked_socket(self, direct_winner):
+        if self.retained_media is not None and self.retained_media.video_relay is not None:
+            self.retained_media.validate(self.registry)
+            if self.video_relay is None:
+                raise RuntimeError("The transfer target cannot retain the source video")
+            # The new SIP leg uses the existing destination sockets. Its
+            # unused reservation remains local until the answer is planned.
+            self.client.local_video_rtp_port = self.retained_media.video_relay.right_port
         if self.parked_media is not None:
             if self.video_relay is None:
                 raise RuntimeError("The pickup target cannot retain the parked video")
@@ -799,9 +811,28 @@ class ForwardOperation:
                 raise RuntimeError(result)
         return result
 
-    async def _prepare_destination_media(self):
+    async def _prepare_destination_media(self, direct_winner):
         application = self.source.application
-        if self.parked_media is not None:
+        if self.retained_media is not None and self.retained_media.video_relay is not None:
+            from .bridge_media_updates import prepare_retained_video_handoff
+            from .sip_bridge import configure_answered_invite_video_relay
+
+            self.retained_media.validate(self.registry)
+            planned_video = direct_winner.video_relay
+            if planned_video is None or self.client.dialog is None:
+                raise RuntimeError("The transfer destination did not negotiate video")
+            self.retained_video_answer = configure_answered_invite_video_relay(
+                self.invite, self.client.dialog, planned_video, hass=self.runtime.hass,
+                enable_transcoding=bool(self.runtime.config.get(CONF_VIDEO_TRANSCODING, False)))
+            if self.retained_video_answer is None:
+                raise RuntimeError("The transfer destination has no usable video contract")
+            source_peer, destination_peer = planned_video.left, planned_video.right
+            await planned_video.stop()
+            self.video_relay = direct_winner.video_relay = None
+            self.retained_video_update = await prepare_retained_video_handoff(
+                self.runtime.hass, self.source.session, self.retained_media.video_relay,
+                source_peer, destination_peer, source_client=self.retained_media.source_client)
+        elif self.parked_media is not None:
             from .local_call_media import ApplicationCallSource
             from .local_media_bridge import LocalMediaBridge
 
@@ -857,18 +888,19 @@ class ForwardOperation:
                 local_endpoint_id=local_source.call.caller_endpoint_id
                 if local_source is not None
                 else "",
-                source_client=application.source_client
-                if application is not None
-                else None,
+                source_client=application.source_client if application is not None
+                else self.retained_media.source_client if self.retained_media is not None else None,
                 prepared_media=self.prepared_media,
                 retained_media=self.retained_media,
+                retained_video_update=self.retained_video_update,
+                retained_video_answer=self.retained_video_answer,
             ),
             BridgeCommitPolicy(
                 route_kind=decision.action.value,
                 caller=invite.caller,
                 callee=destination,
                 connected_party=destination,
-                source_role="trunk" if self.preanswered is not None else "caller",
+                source_role="trunk" if invite.received_via_trunk else "caller",
                 source_state=(
                     CallState.IN_CALL.value
                     if response_already_sent
@@ -897,6 +929,7 @@ class ForwardOperation:
         )
         if committed is None:
             raise RuntimeError(TerminalReason.CANCELLED.value)
+        self.retained_video_update = None
         if self.parked_media is not None:
             await application.release_media_for_forward()
         await self.retire_application()
@@ -929,7 +962,7 @@ class ForwardOperation:
         winner, source_id, wants_video, transcode = self.prepare_sip_target()
         await self._prepare_parked_socket(winner)
         result = await self._invite_sip_target(winner)
-        await self._prepare_destination_media()
+        await self._prepare_destination_media(winner)
         await self.commit_sip(winner, source_id, wants_video, transcode, result)
         return TransferResult(
             "connected"
@@ -1022,9 +1055,7 @@ class ForwardOperation:
             )
             failure_endpoint = failure_destination = None
             if (
-                self.plan.initial_selection
-                and self.source.native_caller
-                and self.plan.decision.action is RouteAction.FORWARD
+                self.plan.decision.action is RouteAction.FORWARD
                 and self.client is not None
             ):
                 from .phone_policy_runtime import phone_failure_destination
@@ -1037,6 +1068,12 @@ class ForwardOperation:
                     failure_endpoint, self.client.last_sip_status_code
                 )
             await self.cleanup_failed_route(reason)
+            if self.plan.decision.action is RouteAction.GROUP and self.plan.decision.entry is not None:
+                fallback = str(self.plan.decision.entry.metadata.get("fallback_destination") or "")
+                if fallback:
+                    from .route_decisions import dispatch_route_fallback
+                    if dispatch_route_fallback(self.runtime.hass, session, fallback):
+                        return TransferResult("ringing", fallback, reason)
             if failure_destination is not None:
                 from .phone_policy_runtime import dispatch_phone_failure
 

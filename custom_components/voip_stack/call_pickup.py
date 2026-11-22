@@ -34,7 +34,7 @@ class RetiredForward:
 def ringing_target(hass, target, *, call_id="", generation=None, leg_id=""):
     """Resolve one eligible call, never the phone's latest selected call."""
     runtime = require_runtime_data(hass)
-    endpoint = resolve_service_phone(runtime.endpoints, target, allow_internal=True)
+    endpoint = resolve_service_phone(runtime.endpoints, target, allow_internal=True, hass=hass)
     candidates = []
     if endpoint is not None:
         for session in tuple(runtime.sip.sessions.values()):
@@ -86,7 +86,7 @@ async def pickup_browser(call, endpoint, target):
     try:
         task = await runtime.sip.forward_call(
             call_id=session.call_id,
-            destination=endpoint.name,
+            destination=endpoint.username,
             on_failure="resume",
             precondition=CallPrecondition.capture(session),
             _resolved_decision=RouteDecision(RouteAction.ANSWER_HA, target=endpoint.name,
@@ -129,7 +129,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
     from .core.sdp import build_answer_directional, first_offered_dtmf_format
     from .session_cleanup import async_wait_for_cleanup
     from .core.rtp import AudioRtpSenderState
-    from .call_projection import publish_bridge_projection, publish_esp_media_route
+    from .call_projection import publish_bridge_projection, publish_media_route
     from .dtmf_events import attach_dtmf_event_bridge
     from .inbound_answer import async_commit_runtime_answer
     from .local_softphone_runtime import PendingLocalSource, local_softphone_bridge
@@ -576,7 +576,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 f"{application.owner}:{session.call_id}",
                 value=application,
             )
-        publish_esp_media_route(hass, session.call_id, relay.media_route)
+        publish_media_route(hass, session.call_id, relay.media_route)
         publish_bridge_projection(hass, session, event_type="answered", route_kind="pickup")
         publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
 
@@ -646,7 +646,7 @@ async def async_pickup_call(call):
                 raise ServiceValidationError("Call routing is unavailable")
             await runtime.sip.forward_call(
                 call_id=session.call_id,
-                destination=endpoint.name,
+                destination=endpoint.username,
                 on_failure="resume",
                 precondition=CallPrecondition.capture(session),
             )
@@ -823,7 +823,7 @@ async def _pickup_group_phone(call, endpoint, session):
                         "The ringing group ended before pickup"
                     )
                 attempt = dialer.prepare_outbound_leg(
-                    member=endpoint.name,
+                    member=endpoint.username,
                     peers=peers,
                     roster_entries=entries,
                     local_name=session.caller,
@@ -846,7 +846,7 @@ async def _pickup_group_phone(call, endpoint, session):
                     if gate.on_leg_state is not None:
                         gate.on_leg_state(attempt, "calling")
                     status = await attempt.client.invite(
-                        target=attempt.uri.user or endpoint.name,
+                        target=attempt.uri.user or endpoint.username,
                         request_uri=str(attempt.uri),
                         remote_host=attempt.uri.host,
                         remote_sip_port=sip_default_port(attempt.uri),

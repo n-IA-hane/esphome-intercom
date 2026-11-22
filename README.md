@@ -463,8 +463,11 @@ for an existing SIP account in each receiving browser or Companion app.
 
 An ESP joins through the normal ESPHome integration with its matching firmware.
 The Marketplace updates the integration and its bundled cards. ESP firmware
-is updated separately. Follow [migration notes](docs/BREAKING_CHANGES.md) when
-updating a copied configuration.
+is updated separately. For the current LDAP-only directory and native call
+commands, rebuild and upload matching ESP firmware and update maintained HA
+packages together. Updating HA alone leaves the old native API on the device.
+Follow the [ESP migration guide](docs/ESP_ENTITY_SURFACE.md) when updating a
+copied configuration.
 
 ## Supported hardware
 

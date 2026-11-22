@@ -612,8 +612,7 @@ class SipApplicationMethods:
                     f"Voice-Message: {min(new, 4294967295)}/{min(old, 4294967295)} (0/0)\r\n").encode()
             content_type = "application/simple-message-summary"
         else:
-            body = ((_endpoint_pidf(_uri_from_header(subscription.request.header("To")), False)
-                     if subscription.presence_endpoint_id else _closed_pidf(subscription.target))
+            body = (_endpoint_pidf(_uri_from_header(subscription.request.header("To")), False)
                     if terminated and termination_reason == "noresource"
                     else self._presence_body(subscription))
             content_type = "application/pidf+xml"
@@ -825,15 +824,14 @@ class SipApplicationMethods:
         publisher = endpoint.username if endpoint is not None and endpoint.username else subscription.target
         account = self.registrar.accounts.get(publisher.casefold())
         if account is not None and not account.enabled:
-            return (_endpoint_pidf(resource_uri, False) if subscription.presence_endpoint_id
-                    else _closed_pidf(subscription.target))
+            return _endpoint_pidf(resource_uri, False)
         publication = self._publication(publisher)
         if endpoint is not None:
             return _endpoint_pidf(resource_uri, endpoint.availability.value == "available",
                                   publication.body if publication is not None else None)
         if publication is not None:
             return publication.body
-        return _closed_pidf(subscription.target)
+        return _endpoint_pidf(resource_uri, False)
 
     def _presence_publisher(self, subscription):
         endpoint = self._presence_endpoint(endpoint_id=subscription.presence_endpoint_id) if subscription.presence_endpoint_id else None
@@ -1341,10 +1339,6 @@ def _uri_from_header(value: str) -> str:
     if start >= 0 and end > start:
         return value[start + 1 : end].strip()
     return value.split(";", 1)[0].strip()
-
-
-def _closed_pidf(target: str) -> bytes:
-    return _endpoint_pidf(f"sip:{target}@localhost", False)
 
 
 def _endpoint_pidf(uri: str, available: bool, publication: bytes | None = None) -> bytes:

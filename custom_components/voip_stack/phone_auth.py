@@ -36,20 +36,16 @@ class PhoneAccountAuthenticator:
         if (endpoint is None or endpoint.availability is EndpointAvailability.UNAVAILABLE
                 or endpoint.kind not in {EndpointKind.ESPHOME, EndpointKind.SIP_ACCOUNT}):
             return None
-        from .store import sip_accounts
-        configured = next((item for item in sip_accounts(self.hass)
-                           if item.username.casefold() == account.username.casefold() and item.enabled), None)
-        if configured is None or not hmac.compare_digest(configured.password.encode(), account.password.encode()):
+        # The registrar owns the current account generation. Resolve only this
+        # subentry instead of reconstructing every account for each LDAP frame.
+        configured = self.entry.subentries.get(self.runtime.endpoints.subentry_ids.get(endpoint.endpoint_id))
+        if configured is None or (
+                not configured.data.get("enabled", True)
+                or configured.data.get("username") != account.username
+                or not hmac.compare_digest(str(configured.data.get("password", "")).encode(), account.password.encode())):
             return None
-        if endpoint.kind is EndpointKind.ESPHOME:
-            from .managed_phones import managed_records
-            phone = managed_records(self.entry).get(endpoint.device_id)
-            controller = self.runtime.phone_provisioning
-            if (phone is None or phone.endpoint_id != endpoint.endpoint_id or not phone.active
-                    or controller is None or controller.is_removed(phone.origin_entry_id, phone.device_id)):
-                return None
         generation = self.registrar.authentication_generation(account.username)
-        return PhonePrincipal(account.username.casefold(), endpoint.endpoint_id, generation) if generation else None
+        return PhonePrincipal(account.username, endpoint.endpoint_id, generation) if generation else None
 
     def valid(self, principal):
         return isinstance(principal, PhonePrincipal) and self.principal(principal.username) == principal

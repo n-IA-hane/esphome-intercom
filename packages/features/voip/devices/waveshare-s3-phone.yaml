@@ -41,8 +41,6 @@ voip_stack:
   microphone: mic_main
   speaker: voip_speaker_input
   dc_offset_removal: false
-  delete_contact_missing_from:
-    updates_number: 1
   use_ha_as_first_contact: true
 select:
 - platform: template

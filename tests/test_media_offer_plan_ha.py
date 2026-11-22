@@ -15,7 +15,8 @@ pytestmark = pytest.mark.ha
 
 # What the two phones of the captures declare (firmware YAML: transmit and receive formats).
 DECLARED = {
-    "esp-p4": (["L16/16000/1/20", "L16/16000/1/10"], ["L16/48000/1/10", "L16/16000/1/10"]),
+    "esp-p4": (["L16/16000/1/20", "L16/16000/1/10", "L16/48000/1/10"],
+               ["L16/48000/1/10", "L16/48000/1/20", "L16/16000/1/20", "L16/16000/1/10"]),
     "esp-box-opus": (["OPUS/48000/2/20"], ["OPUS/48000/2/20"]),
 }
 CASES = [(path.parent, device) for path in sorted((CORPUS / "cases").glob("esp-*-answers-*/case.json"))
@@ -31,7 +32,7 @@ def declared_offer(device: str, *, complete: bool = True):
     return negotiator.create_offer(
         HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS,
         evidence(device, complete=complete), capabilities=HA_AUDIO_CAPABILITIES,
-        common=True, directional=True, independent=True)
+        common=True)
 
 
 def test_a_p4_is_offered_its_two_formats_instead_of_nine():
@@ -54,15 +55,15 @@ def test_incomplete_evidence_never_narrows_an_offer():
         negotiator.create_offer(
             HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS,
             PeerEvidence(complete=True), capabilities=HA_AUDIO_CAPABILITIES,
-            common=True, directional=True, independent=True)
+            common=True)
 
 
 def test_declared_packet_times_stay_with_their_mapping():
-    """Principle 3: 10 ms declared for 48 kHz does not become a 48 kHz capability at 20 ms."""
+    """Transmitter durations and real receiver capacity remain separate facts."""
     declared = evidence("esp-p4")
     assert {item.mapping: item.times.explicit for item in declared.receives} == {
-        ("L16", 48000, 1): (10,), ("L16", 16000, 1): (10,)}
-    assert {item.mapping: item.times.explicit for item in declared.sends} == {("L16", 16000, 1): (20, 10)}
+        ("L16", 48000, 1): (10, 20), ("L16", 16000, 1): (20, 10)}
+    assert {item.mapping: item.times.explicit for item in declared.sends} == {("L16", 16000, 1): (20, 10), ("L16", 48000, 1): (10,)}
 
 
 @pytest.mark.parametrize("case,device", CASES, ids=lambda value: getattr(value, "name", value))

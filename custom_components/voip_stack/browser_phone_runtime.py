@@ -217,7 +217,8 @@ async def _async_load_ha_softphone_store(
     runtime = _ha_softphone_store(hass, endpoint_id)
     if config_entry is not None:
         runtime["config_entry_id"] = str(getattr(config_entry, "entry_id", ""))
-    data = endpoint_data or {}
+    from .phone_queue_membership import project_phone_memberships
+    data = project_phone_memberships(config_entry, endpoint_id, endpoint_data or {})
     runtime["dnd"] = bool(data.get(CONF_PHONE_DND, runtime.get("dnd", False)))
     runtime["auto_answer"] = bool(
         data.get(CONF_PHONE_AUTO_ANSWER, runtime.get("auto_answer", False))
@@ -249,7 +250,7 @@ async def _async_load_ha_softphone_store(
     }
     endpoint = _browser_endpoint(hass, endpoint_id)
     if endpoint is not None:
-        runtime["device_id"] = endpoint.device_id
+        runtime["device_id"] = endpoint.ha_device_id
         runtime["local_name"] = endpoint.name
 
 

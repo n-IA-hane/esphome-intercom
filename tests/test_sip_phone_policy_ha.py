@@ -5,7 +5,6 @@ import asyncio
 import pytest
 
 from custom_components.voip_stack.phone_policy import PhonePolicy
-from custom_components.voip_stack.phone_policy_runtime import setup_phone_policy_events
 from custom_components.voip_stack.store import config_entry
 from .support.sip_observer import sip_messages as sip_messages
 from .test_sip_phone_transfers_ha import registered_phones as registered_phones
@@ -29,7 +28,6 @@ async def test_native_sip_noanswer_forward_preserves_caller_and_cleanup(
             }
         ),
     )
-    setup_phone_policy_events(runtime.hass, config_entry(runtime.hass))
     caller, original, replacement = registered_phones
     await asyncio.to_thread(caller.command, "/dial transfer_b")
     async with asyncio.timeout(3):
@@ -80,7 +78,6 @@ async def test_final_sip_answer_wins_noanswer_timer_before_media_commit(
             }
         ),
     )
-    setup_phone_policy_events(runtime.hass, config_entry(runtime.hass))
     entered, release = asyncio.Event(), asyncio.Event()
     original = outbound_bridge_commit.async_start_sip_bridge_media
 
@@ -191,7 +188,6 @@ async def test_native_sip_noanswer_reaches_own_mailbox(
             }
         ),
     )
-    setup_phone_policy_events(runtime.hass, entry)
 
     class Speech:
         def async_set_message(self, _text):
@@ -455,7 +451,6 @@ async def test_native_unanswered_automation_overrides_phone_default(
             }
         ),
     )
-    setup_phone_policy_events(runtime.hass, config_entry(runtime.hass))
 
     class Speech:
         def async_set_message(self, _text):
@@ -674,7 +669,6 @@ async def test_native_sip_busy_response_uses_phone_busy_destination(
             }
         ),
     )
-    setup_phone_policy_events(runtime.hass, config_entry(runtime.hass))
     caller, original, replacement = registered_phones
     if source_kind == "browser":
         from unittest.mock import AsyncMock
@@ -905,7 +899,6 @@ async def test_noanswer_policy_tracks_destination_leg_of_answered_caller(
             }
         ),
     )
-    setup_phone_policy_events(runtime.hass, entry)
     caller, original, replacement = registered_phones
     await asyncio.to_thread(caller.dial, "700")
     session = next(iter(runtime.calls.sessions.values()))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import asdict, replace
 import logging
 from typing import Any
 
@@ -16,7 +17,6 @@ from .const import (
     CONF_ASSIST_EXTENSION,
 )
 from .directory_runtime import async_refresh_directory
-from .phonebook_runtime import push_roster_json_to_esps
 from .runtime_data import endpoint_directory
 from .roster import RosterEntry, dump_roster_json, normalize_roster_key, parse_roster_json
 from .store import manual_roster_entries, store_manual_roster_entries
@@ -73,6 +73,13 @@ def _runtime_route_mappings(hass: Any) -> list[Mapping[str, Any]]:
                 "extension": assist_extension,
             }
         )
+    from .store import config_entry
+    from .group_config import group_records
+    from .paging_config import paging_group_configs
+    entry = config_entry(hass)
+    if entry is not None:
+        mappings.extend(group_records(entry).values())
+        mappings.extend(paging_group_configs(entry).values())
     return mappings
 
 
@@ -112,6 +119,25 @@ def _validate_contact_namespace(
 
 class ContactProfileError(ValueError):
     """A contact's explicit SIP compatibility settings are inconsistent."""
+
+
+def _store_administrator_contacts(hass, entries, *, group_commands=()):
+    """Consume import membership commands into native groups before storing contacts."""
+    from .store import config_entry
+    from .group_config import contact_group_destination, prepare_contact_group_commands
+
+    entry = config_entry(hass)
+    if entry is None:
+        raise ServiceValidationError('VoIP Stack configuration is unavailable')
+    commands = list(group_commands)
+    cleaned = []
+    for contact in entries:
+        if 'ring_group' in contact.metadata:
+            commands.append((contact_group_destination(asdict(contact)), contact.metadata['ring_group']))
+        cleaned.append(replace(contact, metadata={key: value for key, value in contact.metadata.items() if key != 'ring_group'}))
+    commit = prepare_contact_group_commands(hass, entry, commands, contacts=[asdict(contact) for contact in cleaned])
+    store_manual_roster_entries(hass, cleaned)
+    commit()
 
 
 def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
@@ -218,7 +244,12 @@ def build_phonebook_service_handlers(
         ]
         _validate_contact_namespace(hass, [entry], existing_manual=entries)
         entries.append(entry)
-        store_manual_roster_entries(hass, entries)
+        commands = ()
+        if 'ring_group' in call.data:
+            from .group_config import contact_group_destination
+            commands = ((contact_group_destination(asdict(entry)), call.data['ring_group']),)
+            entries[-1] = replace(entry, metadata={key: value for key, value in entry.metadata.items() if key != 'ring_group'})
+        _store_administrator_contacts(hass, entries, group_commands=commands)
         await refresh_and_push_phonebook(hass)
         _LOGGER.info("Phonebook contact added: %s", entry.id)
 
@@ -236,7 +267,7 @@ def build_phonebook_service_handlers(
             and getattr(item, "extension", "").lower() != wanted
             and getattr(item, "number", "").lower() != wanted
         ]
-        store_manual_roster_entries(hass, entries)
+        _store_administrator_contacts(hass, entries)
         await refresh_and_push_phonebook(hass)
         _LOGGER.info("Phonebook contact removed: %s (%d removed)", name, before - len(entries))
 
@@ -244,13 +275,13 @@ def build_phonebook_service_handlers(
         hass = call.hass
         entries = parse_roster_json(str(call.data.get("roster_json") or "[]"))
         _validate_contact_namespace(hass, entries)
-        store_manual_roster_entries(hass, entries)
+        _store_administrator_contacts(hass, entries)
         await refresh_and_push_phonebook(hass)
         _LOGGER.info("Phonebook manual contacts replaced: %d entries", len(entries))
 
     async def clear_contacts(call: ServiceCall) -> None:
         hass = call.hass
-        store_manual_roster_entries(hass, [])
+        _store_administrator_contacts(hass, [])
         await refresh_and_push_phonebook(hass)
         _LOGGER.info("Phonebook manual contacts cleared")
 
@@ -261,9 +292,8 @@ def build_phonebook_service_handlers(
 
     async def push_phonebook(call: ServiceCall) -> None:
         hass = call.hass
-        roster_json = await _async_directory_json(hass)
-        await push_roster_json_to_esps(hass, roster_json)
-        _LOGGER.info("Phonebook push requested (%d bytes)", len(roster_json))
+        await refresh_and_push_phonebook(hass)
+        _LOGGER.info("LDAP phone directory refresh requested")
 
     return {
         "add_contact": add_contact,

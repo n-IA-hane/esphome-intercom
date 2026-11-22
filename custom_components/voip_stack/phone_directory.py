@@ -143,6 +143,24 @@ class PhoneDirectory:
             return [str(value).strip() for value in values if value]
 
         rows = tuple(entries)
+        # Configured dial identities precede presentation-only phone aliases.
+        # A group's public name can match another phone's display label.
+        primary = {}
+        for entry in rows:
+            metadata = getattr(entry, "metadata", {}) or {}
+            phone = metadata.get("endpoint_kind") in {"sip_account", "esphome", "browser", "ha_softphone"}
+            values = [entry.id] if phone else [entry.name]
+            if include_extension:
+                values.append(entry.extension)
+            if include_number:
+                values.append(getattr(entry, "number", ""))
+            if any(str(value or "").strip().casefold() == raw for value in values if value):
+                identity = str(metadata.get("endpoint_id") or entry.id).casefold()
+                primary[identity] = entry
+        if len(primary) > 1:
+            raise RosterError("The configured dial destination is ambiguous")
+        if primary:
+            return next(iter(primary.values()))
         for internal, normalize in ((True, lambda value: value.casefold()), (False, normalize_roster_key)):
             wanted = normalize(raw)
             matches = {}

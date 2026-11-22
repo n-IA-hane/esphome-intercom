@@ -357,6 +357,8 @@ def invite_rtp_peer(
         send_payload_type=invite.send_format.payload_type,
         send_audio_format=invite.send_format.audio_format,
         send_rtp_format=invite.send_format,
+        inbound_dtmf_formats=invite.recv_dtmf_formats,
+        outbound_dtmf_formats=invite.send_dtmf_formats,
         dtmf_payload_type=(dtmf.payload_type if dtmf is not None else None),
         dtmf_clock_rate=(dtmf.sample_rate if dtmf is not None else 8000),
         dtmf_events=(dtmf.events if dtmf is not None else frozenset()),
@@ -371,49 +373,10 @@ def invite_rtp_peer(
         connection_held=invite.remote_audio_connection_held,
         signaling_host=invite.source_host,
     )
-    if established is None:
-        return updated
-    offered = {
-        (
-            item.payload_type,
-            item.encoding,
-            item.sample_rate,
-            item.channels,
-        )
-        for item in sdp.offered_pcm_formats(
-            invite.remote_sdp,
-            allow_dahua_pcm=invite.peer_profile == "dahua",
-        )
-    }
-
-    def is_offered(item: sdp.RtpPcmFormat) -> bool:
-        return (
-            item.payload_type,
-            item.encoding,
-            item.sample_rate,
-            item.channels,
-        ) in offered
-
-    inbound = established.inbound_rtp_format
-    outbound = established.outbound_rtp_format
-    if not (is_offered(inbound) and is_offered(outbound)):
-        return updated
-    # This UAS keeps one established primary. Auxiliary receive mappings must
-    # follow that actual primary, including its clock and output quantum.
-    receives = (inbound, *(replace(fmt, frame_ms=inbound.frame_ms)
-        for fmt in updated.inbound_rtp_formats
-        if fmt.encoding == "CN" and inbound.channels == 1
-        and (fmt.sample_rate, fmt.channels) == (inbound.sample_rate, 1)))
-    return replace(
-        updated,
-        payload_type=inbound.payload_type,
-        audio_format=inbound.audio_format,
-        rtp_format=inbound,
-        inbound_rtp_formats=receives if updated.inbound_rtp_formats else (),
-        send_payload_type=outbound.payload_type,
-        send_audio_format=outbound.audio_format,
-        send_rtp_format=outbound,
-    )
+    # The negotiation engine already applied established mappings and the
+    # new receiver bounds. Reusing the preceding peer here would erase a
+    # valid ptime/maxptime change accepted by that same engine.
+    return updated
 
 
 def dialog_rtp_peer(dialog: SipDialog) -> RtpPeer:
@@ -431,6 +394,8 @@ def dialog_rtp_peer(dialog: SipDialog) -> RtpPeer:
         send_payload_type=dialog.send_format.payload_type,
         send_audio_format=dialog.send_format.audio_format,
         send_rtp_format=dialog.send_format,
+        inbound_dtmf_formats=dialog.recv_dtmf_formats,
+        outbound_dtmf_formats=dialog.send_dtmf_formats,
         dtmf_payload_type=dialog.dtmf_payload_type,
         dtmf_clock_rate=dialog.dtmf_clock_rate,
         dtmf_events=dialog.dtmf_events,

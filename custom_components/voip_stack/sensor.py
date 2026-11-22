@@ -1,15 +1,14 @@
 """Home Assistant sensor projections for the phonebook and logical phone call state."""
 
+import time
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .endpoint_device import (
     endpoint_call_state_attributes,
-    endpoint_config_subentry_id,
     endpoint_public_attributes,
     enum_value,
 )
@@ -21,6 +20,7 @@ from .endpoint_entity_manager import (
 from .phonebook_coordinator import PHONEBOOK_UPDATED, PhonebookCoordinator
 from .phone_entity import PhoneEndpointEntity
 from .runtime_data import require_runtime_data, runtime_data
+from .service_entity import NativeServiceEntity, async_setup_native_service_entities
 
 PARALLEL_UPDATES = 0
 PHONE_CALL_STATES = [
@@ -45,36 +45,6 @@ TERMINAL_CALL_STATES = {
     "protocol_error",
     "error",
 }
-LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID = "voip_stack_ha_softphone_call_state"
-
-
-@callback
-def _migrate_default_call_state_entity(hass, entry, endpoint) -> None:
-    """Move the historical HA-phone entity onto the unified endpoint class."""
-
-    entity_registry = er.async_get(hass)
-    old_entity_id = entity_registry.async_get_entity_id(
-        "sensor", entry.domain, LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID
-    )
-    if old_entity_id is None:
-        return
-    new_unique_id = f"phone_endpoint_{endpoint.endpoint_id}_call_state"
-    duplicate_id = entity_registry.async_get_entity_id(
-        "sensor", entry.domain, new_unique_id
-    )
-    if duplicate_id is not None and duplicate_id != old_entity_id:
-        entity_registry.async_remove(duplicate_id)
-    entity_registry.async_update_entity(
-        old_entity_id,
-        new_unique_id=new_unique_id,
-        config_entry_id=entry.entry_id,
-        config_subentry_id=endpoint_config_subentry_id(hass, endpoint.endpoint_id),
-        device_id=endpoint.device_id or None,
-        has_entity_name=True,
-        translation_key="phone_endpoint_call_state",
-    )
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -84,6 +54,25 @@ async def async_setup_entry(
     await async_setup_physical_phone_sensors(hass, entry, async_add_entities)
     runtime = require_runtime_data(hass)
     async_add_entities([VoipPhonebookSensor(runtime.phonebook)])
+    counters = [PbxCountSensor(entry, key) for key in ("active_calls", "registered_contacts")]
+    async_add_entities(counters)
+
+    @callback
+    def refresh_counters(_change=None):
+        for entity in counters:
+            entity.refresh()
+
+    if runtime.sip is not None:
+        entry.async_on_unload(runtime.sip.subscribe_state(refresh_counters))
+        registrar = runtime.sip.component("registrar")
+        if registrar is not None:
+            entry.async_on_unload(registrar.subscribe_contact_changes(refresh_counters))
+            entry.async_on_unload(registrar.subscribe_account_changes(refresh_counters))
+    reconcile_queues = async_setup_native_service_entities(hass, entry, async_add_entities,
+        lambda owner, row: [QueueCountSensor(owner, row.subentry_id, key) for key in ("waiting", "available_agents")],
+        include=lambda row: row.subentry_type == "group" and row.data.get("kind") == "queue")
+    from .call_queues import EVENT_QUEUE_CHANGED
+    entry.async_on_unload(hass.bus.async_listen(EVENT_QUEUE_CHANGED, reconcile_queues))
     endpoint_manager = EndpointEntityManager(
         hass,
         entry,
@@ -94,6 +83,52 @@ async def async_setup_entry(
     register_endpoint_entity_manager(
         entry, "endpoint_call_state_entity_manager", endpoint_manager
     )
+
+
+class PbxCountSensor(NativeServiceEntity, SensorEntity):
+    """Count the existing live session and registrar owners on the PBX device."""
+
+    def __init__(self, entry, key):
+        super().__init__(entry, None, key)
+        self.key = key
+        self._attr_translation_key = "pbx_" + key
+        self._attr_icon = "mdi:phone-in-talk" if key == "active_calls" else "mdi:phone-check"
+
+    @property
+    def native_value(self):
+        owner = self.runtime.sip
+        if owner is None:
+            return None
+        if self.key == "active_calls":
+            return sum(session.live for session in owner.sessions.values())
+        registrar = owner.component("registrar")
+        if registrar is None:
+            return 0
+        now = time.time()
+        return sum(binding.expires_at > now and binding.username.casefold() in registrar.accounts
+                   and registrar.accounts[binding.username.casefold()].enabled
+                   for binding in registrar.registrations.values())
+
+
+class QueueCountSensor(NativeServiceEntity, SensorEntity):
+    """Read waiting and eligible agent counts from the existing queue manager."""
+
+    def __init__(self, entry, subentry_id, key):
+        super().__init__(entry, subentry_id, key)
+        self.key = key
+        self._attr_translation_key = "queue_" + key
+        self._attr_icon = "mdi:account-clock" if key == "waiting" else "mdi:account-check"
+
+    @property
+    def native_value(self):
+        row, owner = self.record, self.runtime.queues
+        if row is None or owner is None:
+            return None
+        try:
+            state = owner.get_state(row.data["group_id"])
+        except ValueError:
+            return None
+        return state["waiting"] if self.key == "waiting" else sum(member["available"] for member in state["members"])
 
 
 class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):

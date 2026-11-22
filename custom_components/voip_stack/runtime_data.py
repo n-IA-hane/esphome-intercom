@@ -83,6 +83,7 @@ class VoipStackRuntime:
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     capability_probes: dict[tuple[str, str], asyncio.Task[Any]] = field(default_factory=dict)
     shutdown_task: asyncio.Task[Any] | None = None
+    cleanup_task: asyncio.Task[Any] | None = None
     entity_managers: dict[str, Any] = field(default_factory=dict)
     entry_runtime_signature: dict[str, Any] | None = None
     entry_phone_signature: tuple[Any, ...] | None = None
@@ -102,8 +103,6 @@ class VoipStackRuntime:
     softphones: dict[str, dict[str, Any]] = field(default_factory=dict)
     softphone_presence: dict[str, int] = field(default_factory=dict)
     phonebook: PhonebookCoordinator | None = None
-    phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
-    phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None
     phone_provisioning: Any | None = None
     physical_phones: Any | None = None

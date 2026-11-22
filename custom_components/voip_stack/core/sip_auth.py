@@ -230,12 +230,18 @@ def verify_digest_authorization(
     realm: str,
     nonce: str,
     body: str | bytes = b"",
+    offered_algorithms: frozenset[str] | None = None,
+    offered_qops: frozenset[str] | None = None,
 ) -> tuple[str, str, int]:
     """Verify one Digest response and return algorithm, cnonce and nonce-count."""
 
     params = parse_digest_challenge(authorization_header)
     algorithm = (params.get("algorithm") or "MD5").upper()
     qop = params.get("qop", "").lower()
+    if offered_algorithms is not None and algorithm not in offered_algorithms:
+        raise ValueError("SIP Digest algorithm was not offered")
+    if offered_qops is not None and qop not in offered_qops:
+        raise ValueError("SIP Digest qop was not offered")
     cnonce = params.get("cnonce", "")
     nc = params.get("nc", "")
     if (

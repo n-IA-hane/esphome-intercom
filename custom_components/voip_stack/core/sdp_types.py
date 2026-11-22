@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .audio_format import AudioFormat, PcmFormat
 from .imageattr import ImageAttributes
 from .media.codecs import CODECS
+from .media.payload_map import PayloadMap
 
 
 class SdpError(ValueError):
@@ -77,6 +78,8 @@ class RtpDtmfDirection:
 
     send: RtpDtmfFormat | None
     recv: RtpDtmfFormat | None
+    send_formats: tuple[RtpDtmfFormat, ...] = ()
+    recv_formats: tuple[RtpDtmfFormat, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +88,7 @@ class RtpPcmDirection:
     recv: RtpPcmFormat
     recv_formats: tuple[RtpPcmFormat, ...] = ()
     send_formats: tuple[RtpPcmFormat, ...] = ()
+    payloads: PayloadMap | None = None
 
     @property
     def selected_format(self) -> RtpPcmFormat:

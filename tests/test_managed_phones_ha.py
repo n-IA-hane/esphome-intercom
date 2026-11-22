@@ -26,7 +26,7 @@ def custom_integration_path(enable_custom_integrations):
     custom_components.__path__ = previous
 
 
-def native_services(register_name=None):
+def native_services(*, managed=True):
     string = UserServiceArgType.STRING
     integer = UserServiceArgType.INT
     boolean = UserServiceArgType.BOOL
@@ -39,8 +39,10 @@ def native_services(register_name=None):
                                      "transport", "expires", "persist")],
         "register_account": [("account_id", string)],
     }
-    if register_name:
-        fields[register_name] = []
+    if managed:
+        fields["register_ha_account"] = []
+    fields["start_call_on_line"] = [("dest", string), ("line", string),
+        ("send_video", boolean), ("receive_video", boolean)]
     return {key: UserService(name=name, key=key,
                             args=[UserServiceArg(name=arg, type=kind) for arg, kind in args])
             for key, (name, args) in enumerate(fields.items(), 1)}
@@ -132,7 +134,7 @@ async def test_setup_entry_provisions_device_name_on_existing_native_owner(phone
     assert list(lab.entry.subentries) == [account.subentry_id]
     assert account.data["username"] == "Ingresso" and "managed_esphome_phones" not in lab.entry.data
     assert [name for name, _data in lab.sent] == [
-        "set_ha_display_name", "set_account", "register_account"]
+        "set_ha_display_name", "set_account", "register_ha_account"]
     assert lab.events == []
     assert len(dr.async_get(lab.hass).devices) == 2
     account_service_device(lab)
@@ -472,7 +474,7 @@ async def test_only_complete_mac_verified_real_native_actions_enroll(managed, mo
     elif mode == "legacy":
         native.services = {}
     else:
-        native.services = {key: service for key, service in native.services.items() if service.name != "register_account"}
+        native.services = {key: service for key, service in native.services.items() if service.name != "register_ha_account"}
     await lab.controller.async_sync()
     assert not lab.entry.subentries
     assert not lab.registrar.accounts and not lab.sent
@@ -899,55 +901,51 @@ async def test_quarantine_record_migration_preserves_matching_mac_origin_identit
     assert lab.sent[1][1]["password"] == "synthetic-retained-password"
 
 
-@pytest.mark.parametrize(("action", "node", "friendly", "expected"), [
-    ("register_ha_account_by_node_name", "door-000001", "Piano Terra 000001", "door-000001"),
-    ("register_ha_account_by_friendly_name", "door-000001", "Piano Terra", "Piano Terra"),
-    ("register_ha_account_by_friendly_name", "door", "", "door"),
-    ("register_ha_account_by_friendly_name", "door", "Ingresso Caffè 2", "Ingresso Caffè 2"),
-    ("register_ha_account_by_friendly_name", "door", "esp_84c7bb000001", "esp_84c7bb000001"),
+@pytest.mark.parametrize(("node", "friendly", "expected"), [
+    ("door-000001", "Piano Terra 000001", "Piano Terra 000001"),
+    ("door-000001", "Piano Terra", "Piano Terra"),
+    ("door", "", "door"),
+    ("door", "Ingresso Caffè 2", "Ingresso Caffè 2"),
+    ("door", "esp_84c7bb000001", "esp_84c7bb000001"),
 ])
-async def test_native_name_selection_is_exact_and_independent_of_ha(managed, action, node, friendly, expected):
+async def test_native_name_selection_is_exact_and_independent_of_ha(managed, node, friendly, expected):
     lab = managed
     native = lab.native.runtime_data
     native.device_info = replace(native.device_info, name=node, friendly_name=friendly)
-    native.services = native_services(action)
+    native.services = native_services()
     dr.async_get(lab.hass).async_update_device(lab.device.id, name_by_user="My HA label")
     await lab.controller.async_sync()
     phone = phone_record(lab)
     assert phone.username == expected and phone.display_name == "My HA label"
     assert lab.sent[1][1]["username"] == lab.sent[1][1]["auth_username"] == expected
-    assert lab.sent[2] == (action, {})
+    assert lab.sent[2] == ("register_ha_account", {})
     await bind_account(lab, phone)
     assert lab.registrar.registered_contacts(expected)
     native.device_info = replace(native.device_info, name="new_node", friendly_name="New friendly name")
     await lab.controller.async_sync()
-    assert phone_record(lab).username == expected and len(lab.sent) == 3
+    assert phone_record(lab).username == "New friendly name"
+    assert lab.sent[-2][1]["username"] == "New friendly name"
 
 
 @pytest.mark.parametrize(("node", "friendly"), [("door-000001", "Desk"), ("door", "Piano Terra")])
-async def test_old_firmware_defers_ambiguous_or_unsupported_new_names(managed, node, friendly):
-    from homeassistant.helpers import issue_registry as ir
-
+async def test_unsupported_native_surface_waits_for_the_complete_current_contract(managed, node, friendly):
     lab = managed
     native = lab.native.runtime_data
     native.device_info = replace(native.device_info, name=node, friendly_name=friendly)
+    native.services = native_services(managed=False)
     await lab.controller.async_sync()
-    issue = ("voip_stack", f"esphome_account_name_{lab.device.id}")
-    assert ir.async_get(lab.hass).issues[issue].translation_key == "esphome_account_firmware"
     assert not lab.sent and not lab.registrar.accounts
-    native.services = native_services("register_ha_account_by_friendly_name")
+    native.services = native_services()
     await lab.controller.async_sync()
     assert phone_record(lab).username == friendly
-    assert issue not in ir.async_get(lab.hass).issues
 
 
-async def test_name_limit_repairs_and_commissioned_literal_survives_firmware_downgrade(managed):
+async def test_name_limit_repairs_and_native_named_account_recovers_after_unavailable_surface(managed):
     from homeassistant.helpers import issue_registry as ir
 
     lab = managed
     native = lab.native.runtime_data
-    action = "register_ha_account_by_friendly_name"
-    native.services = native_services(action)
+    native.services = native_services()
     native.device_info = replace(native.device_info, friendly_name="à" * 33)
     await lab.controller.async_sync()
     issue = ("voip_stack", f"esphome_account_name_{lab.device.id}")
@@ -957,15 +955,16 @@ async def test_name_limit_repairs_and_commissioned_literal_survives_firmware_dow
     await lab.controller.async_sync()
     commissioned = phone_record(lab)
     assert issue not in ir.async_get(lab.hass).issues
-    native.services = native_services()
+    native.services = native_services(managed=False)
     await lab.controller.async_sync()
-    assert ir.async_get(lab.hass).issues[issue].translation_key == "esphome_account_firmware"
     assert phone_record(lab) == commissioned and len(lab.sent) == 3
-    native.services = native_services(action)
+    native.services = native_services()
     native.device_info = replace(native.device_info, friendly_name="Renamed")
     await lab.controller.async_sync()
-    assert phone_record(lab) == commissioned
-    assert lab.sent[-2][1]["username"] == "Piano Terra"
+    renamed = phone_record(lab)
+    assert renamed.username == "Renamed" and renamed.password == commissioned.password
+    assert renamed.device_id == commissioned.device_id and renamed.origin_entry_id == commissioned.origin_entry_id
+    assert lab.sent[-2][1]["username"] == "Renamed"
     assert issue not in ir.async_get(lab.hass).issues
 
 
@@ -1132,11 +1131,10 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     restored = dr.async_get(lab.hass).async_get_or_create(config_entry_id=new.entry_id,
         identifiers=lab.device.identifiers, connections=lab.device.connections, name=new.title)
     assert new.entry_id != lab.native.entry_id and restored.id == lab.device.id
-    action = "register_ha_account_by_friendly_name"
     client = SimpleNamespace(is_connected=True, execute_service=AsyncMock())
     new.runtime_data = RuntimeEntryData(entry_id=new.entry_id, title=new.title, client=client, store=MagicMock(),
         device_info=replace(native.device_info, friendly_name=new.title),
-        services=native_services(action), available=True)
+        services=native_services(), available=True)
     new.runtime_data.first_connect_done.set()
     if inflight:
         lab.gate.release.set()
@@ -1265,7 +1263,7 @@ async def test_public_esphome_action_follows_registered_owner_and_emits_service_
     ]
     await lab.controller.async_sync()
     assert [name for name, _data in lab.sent[1:]] == [
-        "set_ha_display_name", "set_account", "register_account"
+        "set_ha_display_name", "set_account", "register_ha_account"
     ]
     assert replacement_calls == [(replacement_advertisement, {"name": "Second label"})]
     await lab.hass.async_block_till_done()

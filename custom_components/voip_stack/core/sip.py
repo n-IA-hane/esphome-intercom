@@ -9,6 +9,7 @@ ordinary SIP/2.0 messages.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import ipaddress
 import re
 from secrets import token_hex
@@ -71,6 +72,15 @@ _SINGLETON_HEADERS = frozenset({"call-id", "cseq", "from", "to"})
 
 class SipError(ValueError):
     """Malformed or unsupported SIP message."""
+
+
+class SipMessageTooLarge(SipError):
+    """A framed request can be rejected before reading its oversized body."""
+
+    def __init__(self, headers: bytes, status: int):
+        super().__init__("SIP request exceeds the configured size limit")
+        self.headers = headers
+        self.status = status
 
 
 class SipSessionIntervalTooSmall(SipError):
@@ -198,11 +208,14 @@ class SipMessage:
         wanted = name.lower()
         canonical = _CANONICAL_HEADER_NAMES.get(wanted, wanted)
         compact = _COMPACT_HEADER_NAMES.get(canonical)
-        return [
+        values = [
             value
             for key, value in self.headers
             if key.lower() == canonical or (compact is not None and key.lower() == compact)
         ]
+        if canonical == "via":
+            return [item for value in values for item in _split_comma_header_values(value)]
+        return values
 
     def header(self, name: str, default: str = "") -> str:
         values = self.header_values(name)
@@ -249,6 +262,7 @@ class SipSessionTimer:
     local_refresher: bool = False
     deadline: float = 0.0
     refresh_at: float = 0.0
+    refresh_method: str = ""
 
     def configure(
         self,
@@ -287,6 +301,10 @@ def apply_session_refresh_response(
     """Apply one RFC 4028 refresh response to dialog timer state."""
     if response is None:
         return "failed"
+    if response.status_code in {405, 501}:
+        return "unsupported"
+    if response.status_code == 491:
+        return "retry_later"
     if response.status_code == 422:
         try:
             minimum = parse_session_expires(response.header("Min-SE")).seconds
@@ -635,10 +653,28 @@ def unsupported_required_options(message: SipMessage) -> tuple[str, ...]:
     return tuple(sorted(option_tags(message, "Require") - RECOGNIZED_OPTION_TAGS))
 
 
+def max_forwards(message: SipMessage) -> int:
+    """Read the remaining RFC 7332 forwarding budget without resetting it."""
+    raw = message.header("Max-Forwards", "70")
+    if not raw.isascii() or not raw.isdecimal() or not 0 <= int(raw) <= 255:
+        raise SipError("bad Max-Forwards header")
+    return int(raw)
+
+
+def identity_uri(value: str) -> str:
+    """Validate a dialog identity without treating tel URIs as SIP routes."""
+    raw = str(value or "").strip()
+    if raw.lower().startswith("tel:"):
+        if len(raw) <= 4 or any(char.isspace() or ord(char) < 32 or char in '<>"' for char in raw):
+            raise SipError("bad telephone identity URI")
+        return raw
+    return str(parse_sip_uri(raw))
+
+
 def format_name_addr(uri: str | SipUri, display_name: str = "") -> str:
     """Render one standards-compliant SIP name-address."""
 
-    uri_text = str(parse_sip_uri(str(uri)))
+    uri_text = identity_uri(str(uri))
     display = str(display_name or "").strip()
     if not display:
         return f"<{uri_text}>"
@@ -732,7 +768,7 @@ def _split_semicolon_params(value: str) -> tuple[str, tuple[tuple[str, str | Non
 
 
 def parse_via(value: str) -> SipVia:
-    head, params = _split_semicolon_params(value.strip())
+    head, params = _split_semicolon_params(_split_comma_header_values(value.strip())[0])
     bits = head.split()
     if len(bits) != 2 or not bits[0].upper().startswith("SIP/2.0/"):
         raise SipError(f"bad Via header: {value!r}")
@@ -1041,6 +1077,12 @@ def build_uas_response(
 ) -> bytes:
     """Build one standards-shaped response shared by every UAS role."""
 
+    if int(status_code) > 100 and not to_tag and not extract_tag(request.header("To")):
+        # Stable for a retransmitted request, without retaining another cache.
+        seed = "\0".join((request.header("Call-ID"), request.header("From"),
+                           request.header("CSeq"), request.header("Via")))
+        to_tag = hashlib.sha256(seed.encode()).hexdigest()[:20]
+
     vias = request.header_values("Via")
     headers = [("Via", top_via or vias[0])] if vias else []
     headers.extend(("Via", value) for value in vias[1:])
@@ -1072,8 +1114,7 @@ def build_uas_response(
         quoted = clean_reason.replace("\\", "\\\\").replace('"', '\\"')
         headers.extend(
             (
-                ("Reason", f'X-Voip-Stack;cause={int(status_code)};text="{quoted}"'),
-                ("X-Voip-Stack-Decline-Reason", clean_reason),
+                ("Reason", f'SIP;cause={int(status_code)};text="{quoted}"'),
             )
         )
     return build_response(status_code, reason, headers, body)
@@ -1131,3 +1172,53 @@ def dialog_headers(
         headers.append(("Content-Type", content_type))
     parse_sip_uri(request_uri)
     return headers
+
+
+def is_merged_request(request: SipMessage, prior: SipMessage) -> bool:
+    """RFC 3261 merged initial requests share identity outside a transaction."""
+    return (not extract_tag(request.header("To"))
+            and request.header("Call-ID") == prior.header("Call-ID")
+            and extract_tag(request.header("From")) == extract_tag(prior.header("From"))
+            and parse_cseq(request.header("CSeq")) == parse_cseq(prior.header("CSeq")))
+
+
+def oversized_request_envelope(data: bytes, status: int = 0):
+    """Recover only bounded transaction headers for a size-limit response."""
+    prefix = data[:MAX_SIP_MESSAGE_BYTES]
+    end = prefix.find(b"\r\n\r\n")
+    head = prefix[:end] if end >= 0 else prefix.rsplit(b"\r\n", 1)[0]
+    try:
+        lines = head.decode("utf-8").split("\r\n")
+        method, uri, version = lines[0].split()
+        if version != SIP_VERSION or method == "ACK" or not is_sip_token(method):
+            return None
+        parse_sip_uri(uri)
+        headers = []
+        length = 0
+        for line in lines[1:]:
+            if not line or line[0].isspace() or ":" not in line:
+                return None
+            key, value = line.split(":", 1)
+            key, value = key.strip(), value.strip()
+            canonical = _CANONICAL_HEADER_NAMES.get(key.lower(), key.lower())
+            canonical = next((name for name, compact in _COMPACT_HEADER_NAMES.items()
+                              if compact == canonical), canonical)
+            if canonical == "content-length":
+                length = int(value)
+            if canonical in {"via", "from", "to", "call-id", "cseq"}:
+                if any(ord(char) < 32 for char in value):
+                    return None
+                headers.append((canonical, value))
+        envelope = SipMessage(method=method, uri=uri, headers=tuple(headers))
+        for name in ("From", "To", "Call-ID", "CSeq"):
+            if len(envelope.header_values(name)) != 1:
+                return None
+        parse_via(envelope.header_values("Via")[0])
+        if parse_cseq(envelope.header("CSeq")).method != method:
+            return None
+        body_bytes = len(data) - end - 4 if end >= 0 else 0
+        status = status or (413 if max(length, body_bytes) > MAX_SIP_BODY_BYTES else
+                            513 if len(data) > MAX_SIP_MESSAGE_BYTES else 0)
+        return (envelope, status) if status else None
+    except (ValueError, IndexError, SipError):
+        return None

@@ -139,6 +139,9 @@ async def _async_originate_application_call(
     from .automation_routing import RouteRequest, has_native_route_window
 
     identity = RouteRequest("", source.display_name, destination,
+        source_account_username=(source.id if source.metadata.get("endpoint_kind") == "phone"
+                                 and not source.metadata.get("virtual_endpoint") else ""),
+        source_extension=source.extension,
         caller_number=source.extension or source.id, caller_name=source.display_name,
         called_number=str(getattr(initial_route.entry, "number", "") or destination),
         outbound_trunk_id=trunk_selection.identity)
@@ -219,7 +222,7 @@ async def _async_originate_application_call(
                 auth_username=cfg.get("trunk_auth_username", "") if use_trunk else "",
                 password=cfg.get("trunk_password", "") if use_trunk else "",
                 outbound_proxy=cfg.get("trunk_outbound_proxy", "") if use_trunk else "",
-                force_common_audio=use_trunk, use_trunk_flow=use_trunk,
+                use_trunk_flow=use_trunk,
                 reuse_registered_flow=not use_trunk, allow_video=False,
                 trunk_id=trunk_selection.identity if use_trunk else "",
             ),

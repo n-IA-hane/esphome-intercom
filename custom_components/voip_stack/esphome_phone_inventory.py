@@ -18,13 +18,13 @@ from .endpoint_registry import EndpointCollisionError
 from .phone_queue_membership import normalize_phone_queues
 from .browser_phone_data import _endpoint_registry
 
-_LOGGER = logging.getLogger(f"{__package__}.websocket_api")
+_LOGGER = logging.getLogger(__name__)
 
 
 def upsert_esphome_endpoint(registry, candidate):
     """Write one physical identity without adopting another transport owner."""
     previous = registry.get(candidate.endpoint_id)
-    if previous is not None and (previous.kind is not EndpointKind.ESPHOME
+    if previous is not None and (previous.username != candidate.username
                                  or previous.device_id != candidate.device_id):
         raise EndpointCollisionError(field="endpoint_id", value=candidate.endpoint_id,
             endpoint_id=candidate.endpoint_id, conflicting_endpoint_id=previous.endpoint_id)
@@ -36,10 +36,10 @@ def sync_managed_phone_endpoint(registry, phone):
     previous = registry.get(phone.endpoint_id)
     candidate = previous if previous is not None else PhoneEndpoint(
         endpoint_id=phone.endpoint_id, device_id=phone.device_id,
-        kind=EndpointKind.ESPHOME, name=phone.display_name,
+        kind=EndpointKind.SIP_ACCOUNT, name=phone.display_name,
         capabilities=frozenset({"audio", "dtmf"}))
     return upsert_esphome_endpoint(registry, replace(candidate,
-        device_id=phone.device_id, name=phone.display_name, username=phone.username,
+        kind=EndpointKind.SIP_ACCOUNT, device_id=phone.device_id, name=phone.display_name, username=phone.username,
         extension=phone.extension, ring_group=phone.ring_group, queues=phone.queues,
         conference_group=phone.conference_group, conference_ring=phone.conference_ring))
 
@@ -77,6 +77,8 @@ def restore_esp_identities(hass, runtime):
 
     entry = config_entry(hass)
     records = managed_records(entry) if entry is not None else {}
+    for phone in records.values():
+        sync_managed_phone_endpoint(runtime.endpoints, phone)
     entities = er.async_get(hass)
     devices = dr.async_get(hass)
     eligible_devices = set()
@@ -107,13 +109,15 @@ def restore_esp_identities(hass, runtime):
             fallback = getattr(phone, field, False if field == "conference_ring" else "")
             value = state.state if state is not None and state.state not in {"unknown", "unavailable"} else fallback
             fields[field] = str(value).casefold() in {"on", "true", "1"} if field == "conference_ring" else str(value)
-        endpoint_id = phone.endpoint_id if phone is not None else f"esphome:{device.id}"
+        endpoint_id = phone.username if phone is not None else str(origin.data.get("device_name") or "")
+        if not endpoint_id:
+            continue
         candidate = PhoneEndpoint(endpoint_id=endpoint_id, device_id=device.id,
             account_device_id=account_device_id_for_endpoint(hass, entry, endpoint_id) if phone else "",
             name=(device.name_by_user or (phone.display_name if phone is not None else "")
                   or device.name or origin.title or (phone.username if phone is not None else "ESPHome")),
             username=phone.username if phone is not None else str(origin.data.get("device_name") or ""),
-            kind=EndpointKind.ESPHOME, entity_ids=frozenset(entity.entity_id for entity in native_entities),
+            kind=EndpointKind.SIP_ACCOUNT if phone else EndpointKind.ESPHOME, entity_ids=frozenset(entity.entity_id for entity in native_entities),
             availability=EndpointAvailability.OFFLINE, capabilities=frozenset({"audio", "dtmf"}),
             policy=esphome_phone_policy(entry, endpoint_id), **fields)
         try:
@@ -153,7 +157,9 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         name = str(device.get("name") or "").strip()
         if not device_id or not name:
             continue
-        endpoint_id = str(device.get("endpoint_id") or f"esphome:{device_id}")
+        endpoint_id = str(device.get("endpoint_username") or device.get("sip_uri_user") or "")
+        if not endpoint_id:
+            continue
         discovered_ids.add(endpoint_id)
         previous = registry.get(endpoint_id)
         capabilities = frozenset(
@@ -172,7 +178,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         endpoint = PhoneEndpoint(
             endpoint_id=endpoint_id,
             name=name,
-            kind=EndpointKind.ESPHOME,
+            kind=EndpointKind.SIP_ACCOUNT if device.get("managed") else EndpointKind.ESPHOME,
             extension=str(device.get("extension") or ""),
             username=str(device.get("endpoint_username") or device.get("sip_uri_user") or ""),
             device_id=device_id,
@@ -187,7 +193,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             conference_group=str(device.get("conference_group") or ""),
             conference_ring=bool(device.get("conference_ring", False)),
             active_call_id=(previous.active_call_id if previous is not None else ""),
-            policy=esphome_phone_policy(entry, endpoint_id),
+            policy=previous.policy if previous is not None and device.get("managed") else esphome_phone_policy(entry, endpoint_id),
         )
         try:
             upsert_esphome_endpoint(registry, endpoint)
