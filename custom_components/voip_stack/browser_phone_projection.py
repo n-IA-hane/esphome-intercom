@@ -294,13 +294,22 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     if projection is not None and projection["calls"]:
         selected = next((call for call in projection["calls"] if call["call_id"] == store.get("call_id")), projection["calls"][0])
         identity = selected["call_id"]
+        selected_state = (
+            "held" if selected["state"] == "confirmed" and selected["held"]
+            else "in_call" if selected["state"] == "confirmed"
+            else "ringing" if selected["state"] == "early"
+            else "connecting" if selected["state"] == "proceeding"
+            else "calling"
+        )
         if identity != store.get("call_id") or not _account_browser_media(require_runtime_data(hass), call_registry(hass), endpoint_id, identity):
             current = call_registry(hass).get_session(identity)
             incoming = selected["direction"] == "recipient"
-            store.update(call_id=identity, state=projection["state"], sip_state=projection["state"],
+            store.update(call_id=identity, state=selected_state, sip_state=selected_state,
                 direction="incoming" if incoming else "outgoing", peer_name=selected["peer_name"],
                 caller=current.caller if current is not None else "", callee=current.callee if current is not None else "")
-    elif projection is not None and store.get("state") in {"calling", "connecting", "ringing", "remote_ringing", "answering", "in_call", "terminating"}:
+        elif store.get("state") in {"in_call", "held"} and selected_state in {"in_call", "held"}:
+            store.update(state=selected_state, sip_state=selected_state)
+    elif projection is not None and store.get("state") in {"calling", "connecting", "ringing", "remote_ringing", "answering", "in_call", "held", "terminating"}:
         from .endpoint_session import LegPhase
         registry = call_registry(hass)
         current = registry.get_session(registry.resolve_session_id(str(store.get("call_id") or "")))
@@ -336,6 +345,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         CallState.RINGING.value,
         CallState.CONNECTING.value,
         CallState.IN_CALL.value,
+        CallState.HELD.value,
         CallState.TERMINATING.value,
     }
     # Integration-wide registrar/trunk diagnostics never describe an unrelated

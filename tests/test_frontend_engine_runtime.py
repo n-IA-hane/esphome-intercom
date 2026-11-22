@@ -1178,6 +1178,20 @@ await reconcile.reconcileSession({{
 assert.deepEqual(reconciled, [true]);
 assert.equal(reconcile._audioDirection, "recvonly");
 
+// Hold preserves the same browser pipeline and reconciles the negotiated
+// direction through the existing media owner. Resume does not reset identity.
+await reconcile.reconcileSession({{
+  state:"held",call_id:"call-video",audio_direction:"inactive",video_active:false,
+}});
+assert.deepEqual(reconciled,[true,false]);
+assert.equal(reconcile._audioDirection,"inactive");
+assert.equal(reconcile._callId,"call-video");
+await reconcile.reconcileSession({{
+  state:"in_call",call_id:"call-video",audio_direction:"sendrecv",video_active:true,
+}});
+assert.equal(reconcile._audioDirection,"sendrecv");
+assert.equal(reconcile._callId,"call-video");
+
 // A stuck attach for A cannot head-of-line block B. Identity checks in the
 // real attach path make A tear down only its local, unpublished pipeline.
 const preempt = new Engine();

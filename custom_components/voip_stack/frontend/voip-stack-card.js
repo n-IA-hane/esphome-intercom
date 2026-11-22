@@ -32,6 +32,7 @@ const [
     availableQueueNames,
     queueDeclarationText,
     isPagingAutoAnswer,
+    isEstablishedCallState,
     phoneCallPresentation,
     formatListFromMetadata,
     formatCallDuration,
@@ -405,8 +406,8 @@ class VoipStackCard extends HTMLElement {
     const data = event?.data || {};
     if (!this._eventConcernsThisCard(data)) return;
     const state = String(data.state || data.sip_state || "").toLowerCase();
-    this._mirroredCallId = state === "in_call" ? String(data.call_id || "") : "";
-    if (state === "in_call" || state === "answering") {
+    this._mirroredCallId = isEstablishedCallState(state) ? String(data.call_id || "") : "";
+    if (isEstablishedCallState(state) || state === "answering") {
       this._mirroredConnectedPeer = mirroredEndpointPeerLabel(
         data,
         this._cardPeerName(),
@@ -651,7 +652,7 @@ class VoipStackCard extends HTMLElement {
     };
     this._activeSessionDeviceId =
       snapshot.session_device_id || snapshot.device_id || this._activeSessionDeviceId || "";
-    const activePhoneState = ["calling", "remote_ringing", "ringing", "answering", "in_call", "connecting", "terminating"].includes(snapshot.state);
+    const activePhoneState = ["calling", "remote_ringing", "ringing", "answering", "in_call", "held", "connecting", "terminating"].includes(snapshot.state);
     if (activePhoneState || payload.kind === "closed") {
       this._lastSoftphoneTerminalKey = "";
       this._clearEndReason(false);
@@ -682,7 +683,7 @@ class VoipStackCard extends HTMLElement {
   _ensureHaSoftphoneAudioPath(snapshot = {}) {
     if (!this._isSoftphoneController()) return;
     if (snapshot.can_attach_media === false) return;
-    if (String(snapshot.state || "").toLowerCase() !== "in_call") return;
+    if (!isEstablishedCallState(snapshot.state)) return;
     // Hangup deliberately closes the local media socket before the backend
     // snapshot becomes idle. Engine cleanup emits synchronously, so without
     // this gate the still-in-call snapshot can start a second audio attach
@@ -1439,7 +1440,7 @@ class VoipStackCard extends HTMLElement {
   _activeNativeCameraEntityId(espState) {
     if (
       !this._isHaSoftphoneMode() ||
-      String(espState || "").trim().toLowerCase() !== "in_call"
+      !isEstablishedCallState(espState)
     ) return "";
     const peer = this._activeSoftphonePeerDevice();
     if (!peer) return "";
@@ -1965,7 +1966,8 @@ class VoipStackCard extends HTMLElement {
         statusClass = "transitioning";
         break;
       case "in_call":
-        statusText = `In Call: ${
+      case "held":
+        statusText = `${espState.toLowerCase() === "held" ? this._t("On hold") : this._t("In Call")}: ${
           (!this._isHaSoftphoneMode() && this._mirroredConnectedPeer) ||
           caller || destination || "Active"
         }`;
@@ -2005,13 +2007,13 @@ class VoipStackCard extends HTMLElement {
     // own manual buffer and calls the ESPHome start_call service directly.
     const softphoneMode = this._isHaSoftphoneMode();
     const ownsVideoCanvas = softphoneMode &&
-      espState.toLowerCase() === "in_call" &&
+      isEstablishedCallState(espState) &&
       voipStackEngine.endpointId === this._getSoftphoneEndpointId() &&
       this._isSoftphoneController()
       ? voipStackEngine.claimVideoCanvas(this, els.videoCanvas, this._getSoftphoneEndpointId())
       : (voipStackEngine.releaseVideoCanvas(this), false);
     const videoVisible = !transferring && ownsVideoCanvas &&
-      espState.toLowerCase() === "in_call" &&
+      isEstablishedCallState(espState) &&
       voipStackEngine.videoVisible;
     const nativeCameraVisible = !transferring && !videoVisible && this._syncNativeCameraCard(
       this._activeNativeCameraEntityId(espState),
@@ -2026,7 +2028,7 @@ class VoipStackCard extends HTMLElement {
     this._syncVideoDurationTimer(showHangup && connectedAt > 0);
     const activePeer = (!softphoneMode && this._mirroredConnectedPeer) || caller || destination || this._t("Active call");
     const callDuration = this._formatVideoCallDuration();
-    const showCallTime = showHangup && !visualMediaVisible && connectedAt > 0 && espState === "in_call";
+    const showCallTime = showHangup && !visualMediaVisible && connectedAt > 0 && isEstablishedCallState(espState);
     els.audioCallSummary.hidden = !showCallTime;
     els.audioCallDuration.textContent = callDuration;
     if (els.hangupPeer) {
@@ -2041,7 +2043,7 @@ class VoipStackCard extends HTMLElement {
               ? "Answering"
               : normalizedState === "terminating"
                 ? "Ending"
-            : "In call");
+            : normalizedState === "held" ? "On hold" : "In call");
       els.hangupPeer.textContent = activePeer;
       els.hangupDuration.textContent = callDuration;
     }
@@ -2290,7 +2292,7 @@ class VoipStackCard extends HTMLElement {
     const ownId = this._getSoftphoneEndpointId() || this._activeDeviceInfo?.endpoint_id;
     const deviceId = this._getConfigDeviceId();
     const activity = this._phoneActivity || {};
-    const active = ["calling", "connecting", "remote_ringing", "ringing", "incoming", "answering", "in_call", "terminating"]
+    const active = ["calling", "connecting", "remote_ringing", "ringing", "incoming", "answering", "in_call", "held", "terminating"]
       .includes(this._getEspState().toLowerCase());
     const peer = active ? this._activeSoftphonePeerDevice() : null;
     // Mirrors have ESP entity state, not a browser session snapshot. The shared
@@ -2837,7 +2839,7 @@ class VoipStackCard extends HTMLElement {
   async _mailboxMessage(messageId, remove) {
     if (this._mailboxBusy || !this._isHaSoftphoneMode()) return;
     const endpointId = this._getSoftphoneEndpointId();
-    const active = ["calling", "remote_ringing", "ringing", "answering", "in_call", "connecting", "terminating"]
+    const active = ["calling", "remote_ringing", "ringing", "answering", "in_call", "held", "connecting", "terminating"]
       .includes(this._softphoneSnapshot?.state);
     let callId = active ? this._sessionCallId() : "";
     if (callId && callId !== this._mailboxCallId) {

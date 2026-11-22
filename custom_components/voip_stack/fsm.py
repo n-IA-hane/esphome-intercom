@@ -13,6 +13,7 @@ class CallState(StrEnum):
     RINGING = "ringing"
     CONNECTING = "connecting"
     IN_CALL = "in_call"
+    HELD = "held"
     TERMINATING = "terminating"
     BUSY = "busy"
     DECLINED = "declined"
@@ -81,6 +82,7 @@ def sip_public_state(state: str) -> str:
         "calling": CallState.CALLING.value,
         "answered": CallState.IN_CALL.value,
         "in_call": CallState.IN_CALL.value,
+        "held": CallState.HELD.value,
         "ringing": CallState.RINGING.value,
         "remote_ringing": CallState.REMOTE_RINGING.value,
         "connecting": CallState.CONNECTING.value,

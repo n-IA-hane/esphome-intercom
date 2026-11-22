@@ -75,6 +75,10 @@ export function phoneCallPresentation(snapshot = {}) {
     state: offered && !incoming ? outgoing ? "remote_ringing" : "connecting" : state };
 }
 
+export function isEstablishedCallState(state) {
+  return ["in_call", "held"].includes(String(state || "").trim().toLowerCase());
+}
+
 export function isPagingAutoAnswer(snapshot = {}) {
   return phoneCallPresentation(snapshot).incoming && !!String(snapshot.announcement_id || "").trim() && snapshot.answer_mode === "auto" &&
     snapshot.audio_direction === "recvonly";
@@ -121,7 +125,7 @@ export function mirroredEndpointPeerLabel(snapshot = {}, localName = "") {
 }
 
 const ACTIVE_CALL_STATES = new Set([
-  "calling", "remote_ringing", "ringing", "answering", "connecting", "in_call",
+  "calling", "remote_ringing", "ringing", "answering", "connecting", "in_call", "held",
 ]);
 const TERMINAL_CALL_STATES = new Set([
   "idle", "busy", "declined", "cancelled", "media_incompatible",

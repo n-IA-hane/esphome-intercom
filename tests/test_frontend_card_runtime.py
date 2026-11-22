@@ -1428,6 +1428,37 @@ sipDurationObserver._updateCallDuration();
 assert.equal(sipDurationObserver._els.audioCallDuration.textContent, "01:06");
 sipDurationObserver._syncVideoDurationTimer(false);
 
+// Hold is an established presentation for native observers and browser owners.
+// It retains its clock, Hangup and media ownership until the actual terminal.
+for (const localMedia of [false, true]) {{
+  const heldCard = makeCard();
+  const clock = Date.now() / 1000 - 65;
+  const heldBase = {{endpoint_id:"casa", device_id:"device-casa", call_id:"held-card",
+    state:"in_call", direction:"incoming", connected_at:clock, can_attach_media:localMedia,
+    can_control:true, sequence:10, revision:1}};
+  heldCard._applySoftphoneSnapshot(heldBase);
+  if (localMedia) engine.claimSoftphoneSession("held-card", "casa");
+  const beforeHoldEvents = engineEvents.length;
+  heldCard._applySoftphoneSnapshot({{...heldBase,state:"held",revision:2}});
+  heldCard._render();
+  assert.equal(heldCard._softphoneSnapshot.state,"held");
+  assert.equal(heldCard._softphoneSnapshot.connected_at,clock);
+  assert.equal(heldCard._els.hangupBtn.hidden,false);
+  assert.equal(heldCard._els.callBtn.hidden,true);
+  assert.equal(heldCard._els.audioCallSummary.hidden,false);
+  assert.equal(heldCard._els.audioCallDuration.textContent,"01:05");
+  assert.equal(heldCard._lastEndInfo,null);
+  assert.equal(engineEvents.length,beforeHoldEvents);
+  if (localMedia) assert.equal(engine.ownsSoftphoneSession("held-card","casa"),true);
+  heldCard._applySoftphoneSnapshot({{...heldBase,revision:3}});
+  heldCard._render();
+  assert.equal(heldCard._els.hangupBtn.hidden,false);
+  assert.equal(heldCard._els.audioCallSummary.hidden,false);
+  assert.equal(heldCard._softphoneSnapshot.connected_at,clock);
+  heldCard._syncVideoDurationTimer(false);
+  engine.releaseSoftphoneSession("held-card","casa");
+}}
+
 // Provisional SIP responses never render as an answered call. Only the
 // authoritative final state can switch the card to "In Call".
 assert.equal(card._applySoftphoneSnapshot({{ ...base, state: "calling", sequence: 1 }}), true);

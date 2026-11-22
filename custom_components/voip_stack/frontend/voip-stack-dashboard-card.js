@@ -418,7 +418,7 @@ class VoipStackDashboardCard extends HTMLElement {
     const sameCall = this._ownerSnapshot?.call_id === call.id;
     return { ...(sameCall ? this._ownerSnapshot : {}), endpoint_id: owner.endpoint_id, device_id: owner.device_id,
       call_id: call.id, generation: call.generation,
-      state: call.state === "early" ? "ringing" : call.state === "confirmed" ? "in_call" : owner.state,
+      state: call.state === "early" ? "ringing" : call.state === "confirmed" ? call.held ? "held" : "in_call" : owner.state,
       peer_name: call.peer_name, direction: call.direction };
   }
 

@@ -481,6 +481,20 @@ def test_dashboard_header_opens_hidden_owner_multiple_calls_and_controls(dashboa
     assert page.evaluate("card._tileData.get('endpoint:studio').owner") is True
 
 
+@pytest.mark.browser_real
+def test_dashboard_selected_held_call_preserves_its_state_and_clock(dashboard_page):
+    page = dashboard_page
+    assert page.evaluate("""() => {
+      const owner=fixture.phones.find(phone=>phone.endpoint_id==='studio');
+      const call={id:'held-selected',generation:5,state:'confirmed',held:true,
+        peer_name:'Customer',direction:'outgoing'};
+      card._ownerSnapshot={endpoint_id:owner.endpoint_id,call_id:call.id,
+        state:'held',connected_at:12345,can_attach_media:false};
+      const selected=card._callSnapshot({...owner,state:'ringing'},call);
+      return [selected.call_id,selected.state,selected.connected_at,selected.can_attach_media];
+    }""") == ["held-selected", "held", 12345, False]
+
+
 def install_native_phone_contract(page):
     """Probe the dashboard's public child API without duplicating a softphone."""
     page.evaluate("""()=>{
