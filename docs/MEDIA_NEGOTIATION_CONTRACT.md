@@ -258,7 +258,7 @@ and preconditions it names. Old and new expectations are both pinned.
 | CC-8 | An answer to a local offer passes through the policy of that offer | | S6 | none known |
 | CC-9 | A renumbered video answer is accepted for sending when unambiguous | No receive alias | P3 | Keep: H264/120 control, static mappings, packetization mode, profile and level |
 | CC-11 | Default transmit packet time when no feasible peer request or local policy chooses another legal value: L16 32 kHz mono 10 ms, L16 48 kHz stereo 5 ms (also when the peer asks for 10 ms, which needs 1920 bytes), a trunk leg at 48 kHz 10 ms, Opus 20 ms | An explicit feasible `a=ptime` still wins (Opus with `a=ptime:10` sends 10 ms and asks for 20 ms). 16 ms and 6.25 ms stay available as capabilities. The 11025 Hz arithmetic and the stereo budget tests stay | T2 | `test_bridge_local_tx_capabilities_ha.py`, matrix |
-| CC-12 | Static payload numbers 10 and 11 (L16 at 44.1 kHz, RFC 3551 section 6) are recognized, bare and with an explicit rtpmap | Later phase, with its own vectors. The 44.1 kHz capture is refused today because of this, not because of its minimum | S1 | `core/sdp_audio.py` static mapping filter |
+| CC-12 | Static payload numbers 10 and 11 (L16 at 44.1 kHz, RFC 3551 section 6) are recognized, bare and with an explicit rtpmap | Static mappings are covered by `test_media_static_payloads_ha.py`; sample geometry and packet budget still apply | S1 | `test_media_static_payloads_ha.py` |
 | CC-13 | The receiver checks the real duration of an Opus packet against the hard maximum, not only its size | Receiver and relay phase. Longer than preferred and within the envelope stays accepted | R2 | receiver tests |
 
 Withdrawn after review: CC-3 (accepting above the advertised maximum) and CC-10 (tolerating a
@@ -292,55 +292,20 @@ usable only on a receive only stream. No codec depends on a system package.
 SRTP, ICE, a TLS listener, T.38, AAC, music on hold. A description that requires one of them is
 refused with an explicit reason instead of a generic 488.
 
-## 9. Review log
+## 9. Verification boundaries
 
-First review: `CODEX_REVIEW_MEDIA_CONTRACT_20261121.md`, against draft one.
+The corpus preserves captured descriptions and explicit expected contracts. Its
+historical golden is a comparison input, not a selectable production engine.
+Initial offer/answer cases alone do not qualify renegotiation, a media relay or
+hardware. The complementary production-owner tests cover payload history,
+re-offers, bridged directions, PRACK replay and RTP admission. Firmware corpus
+and transport tests execute the ESP implementation separately.
 
-| Point | Reviewer's decision | Resolution in this draft |
-|---|---|---|
-| S4 | Approve one primary codec; a listed extra does not authorize RTP | S4, S5, S6, principle 6 |
-| CC-1 | Approve as soft, with explicit precedence and three kinds of minimum | T4, CC-1 preconditions and kept tests |
-| CC-2 | Approve explicit receive policy; no invented combinations | Terms (capability, fixed set), R1, R3, principle 3 |
-| CC-3 | Reject blanket acceptance above a hard maximum | Withdrawn. R2 states the envelope |
-| B3 | Freeze per dialog and exchange; bodyless progress leaves the caller free; gate early descriptions | B3, B6 |
-| CC-10 | Keep the remap refusal | Withdrawn. P4 |
-| CC-9 | Directional renumbering without ambiguous alias | P3 |
-| X1 | Binding, route set and transaction decide | X1 to X4 |
-| CC-6 | Discovery ranks; narrowing needs complete current evidence; bounded retry | X4 |
-| N1, P7 | Retention needs the full per direction mapping; remote limits reach the sender | N1, P6 |
-| N2 to N5, V | Replay per transaction; three hold states; V1 before V2 | N2, N4, N5, V1 to V3 |
-| B2 | Directional tie break; preserve an uncompressed caller rate | B2 |
-| CC-4, CC-5, CC-7, CC-8 | Details per direction and per attribute; no fallback to an excluded codec | P5, P6, CC-7, CC-8, section 6 |
-| Registry | Keep the working domain; probes per direction; later additions declared | Section 7 |
-| Gate | Differential ledger against the frozen reference; one production engine | `tests/media_corpus/ledger.json`; normative production corpus tests |
-
-Second review: `CODEX_REVIEW_MEDIA_CONTRACT_20261121_R2.md`, against draft two.
-
-| Point | Reviewer's decision | Resolution |
-|---|---|---|
-| Ledger | Rows must be verified against the engine and the case, with negative controls | `ledger_problems` and its tests in `tests/test_media_corpus_ha.py` |
-| Golden | Byte level oracle for complete descriptions and for the offer writer; writing separate from asserting | `answer_bytes` and `offer:*` entries; `python -m tests.media_corpus_support --write-golden` |
-| 44.1 kHz capture | Refused because of static payload 11, not the minimum | CC-12; CC-1 is witnessed by the 32 kHz capture |
-| Opus duration | Enforcing the maximum by duration is a real receiver change | CC-13 |
-| Defaults | Opus default and the infeasible stereo request need preconditions | CC-11 |
-| Question 1 | A bare minimum never demotes the chosen codec | T4 |
-| Question 2 | Accept the exception for a live authenticated Outbound binding | X3 |
-| Question 3 | Intended service plus feasible direction | B3 |
-| Question 4 | Keep issue 94 as a reconstruction; it does not prove the payload 120 path | case note; `test_fritzbox_pcma_packets_are_reframed_to_assist_duration` stays |
-| N2, N4, N5, P6 | Distinct commit points; symmetric parameters | N2, N4, N5, P6 |
-
-Coverage of the corpus today: 33 inbound initial offers and 26 answers to local offers, in Home
-Assistant only. No step applies a re-offer, drives the bridge, carries RTP or runs the ESP
-engine. Each of those witnesses is added before its first functional change.
-
-Answered in the second review (kept for the record):
-
-1. T4 (b): is trying another codec before sending below a bare media minimum right, or should a
-   bare media minimum never change the codec?
-2. X3: the qualified exception for an oversized request on a UDP only Outbound binding.
-3. B3: the exact condition for "usable early media path that is intended".
-4. Issue 94 has no original description in the report. The corpus case is a reconstruction and
-   claims only that the offer is accepted with standard packet times.
+A regression must identify the applicable rule and observe the committed
+contract, actual response bytes, decoded media or resource release. Source-text
+checks can protect composition and packaging, but cannot establish those runtime
+properties. Physical qualification records the exact coordinated source set,
+firmware image and route independently of these software results.
 
 ## Optional runtime audio implementations
 

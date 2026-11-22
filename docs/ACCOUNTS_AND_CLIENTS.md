@@ -32,8 +32,7 @@ and Italian entity names. A custom entity name takes precedence.
 
 ## Upgrade existing HA phones
 
-Version 7 of the integration configuration converts existing HA/browser phone
-records to SIP accounts in place. Endpoint IDs, subentry IDs, device IDs, entity
+Existing HA/browser phone records are converted to SIP accounts in place. Endpoint IDs, subentry IDs, device IDs, entity
 identities, extensions, names, routing rules and mailbox references are retained.
 An identifier beginning with `browser:` remains a valid opaque account ID.
 A softphone named `Casa` gets the SIP username `Casa`. A softphone named
@@ -41,7 +40,7 @@ A softphone named `Casa` gets the SIP username `Casa`. A softphone named
 had no SIP credentials. VoIP Stack creates a password when one is
 needed and keeps any existing credentials. The card signs in through HA.
 
-Configuration upgrade 7.3 preserves every saved login, including values that
+The upgrade preserves every saved login, including values that
 resemble retired generated names. A migration association does not prove who
 chose the current login. Upgrades from older versions follow the same rule;
 new accounts without an explicit login still derive it from their name.

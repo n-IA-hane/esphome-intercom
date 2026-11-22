@@ -237,7 +237,8 @@ def test_public_markdown_headings_use_sentence_case_without_emoji() -> None:
                 continue
             if emoji.search(heading):
                 errors.append(f"{document.relative_to(ROOT)}: emoji in {heading!r}")
-            words = heading.split()
+            # A section number is not the first word of the sentence.
+            words = re.sub(r"^\d+(?:\.\d+)*\.?\s+", "", heading).split()
             for raw_word in words[1:]:
                 word = raw_word.strip("`*_.,:;!?()[]{}")
                 if (

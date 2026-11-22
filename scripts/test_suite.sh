@@ -322,6 +322,7 @@ ha_tests=(
   tests/test_video_keepalive_runtime.py
   tests/test_video_socket_gap.py
   tests/test_video_io_lifecycle_ha.py
+  tests/test_video_receive_workers_ha.py
   tests/test_media_sip_audit_regressions_ha.py
   tests/test_account_projection_privacy_ha.py
   tests/test_held_account_projection_ha.py
