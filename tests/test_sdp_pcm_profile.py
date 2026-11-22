@@ -1233,7 +1233,7 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertEqual(selected.encoding, "L16")
         self.assertEqual(selected.sample_rate, 48000)
 
-    def test_negotiate_48k_10ms_when_softphone_offers_20ms_with_minptime_10(self) -> None:
+    def test_negotiate_48k_tx10_rx20_when_softphone_offers_20ms_with_minptime_10(self) -> None:
         offer = (
             "v=0\r\n"
             "o=- 0 0 IN IP4 192.168.1.48\r\n"
@@ -1259,10 +1259,11 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertIsNotNone(selected)
         assert selected is not None
         self.assertEqual(selected.send.audio_format, audio_format.AudioFormat(48000, "s16le", 1, 10))
-        self.assertEqual(selected.recv.audio_format, audio_format.AudioFormat(48000, "s16le", 1, 10))
+        # R1/CC-2: the existing receive envelope admits 20 ms independently of TX.
+        self.assertEqual(selected.recv.audio_format, audio_format.AudioFormat(48000, "s16le", 1, 20))
         answer = sdp.build_answer_directional("192.168.1.10", "192.168.1.10", 40000, selected.send, selected.recv)
         self.assertIn("a=rtpmap:96 L16/48000/1", answer)
-        self.assertIn("a=ptime:10", answer)
+        self.assertIn("a=ptime:20", answer)
 
     def test_g711_rtp_payload_converts_to_internal_s16le(self) -> None:
         pcm = b"\x00\x00\x00\x10\x00\xf0"

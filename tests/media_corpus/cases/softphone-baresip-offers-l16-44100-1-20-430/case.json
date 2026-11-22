@@ -28,7 +28,7 @@
       },
       "recv": {
         "codec": "L16/44100/1",
-        "ptime": 10,
+        "ptime": 20,
         "payload": 11
       },
       "dtmf": {

@@ -31,7 +31,9 @@ def test_answer_keeps_only_common_producible_transmit_alternatives():
     assert [(fmt.payload_type, fmt.encoding, fmt.frame_ms) for fmt in selected.send_formats] == [
         (0, "PCMU", 20), (120, "L16", 20)]
     assert selected.send.payload_type == 0
-    assert [(fmt.payload_type, fmt.encoding) for fmt in selected.recv_formats] == [(0, "PCMU"), (96, "L16")]
+    # R1/S5: the offered 48 kHz receiver is independent of the fixed TX budget.
+    assert [(fmt.payload_type, fmt.encoding, fmt.frame_ms) for fmt in selected.recv_formats] == [
+        (0, "PCMU", 20), (96, "L16", 20), (97, "L16", 20)]
 
 
 def test_answer_hard_packet_ceiling_excludes_a_fixed_longer_alternative():

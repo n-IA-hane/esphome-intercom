@@ -119,7 +119,9 @@ local sender can produce for that codec and geometry, and the budget.
 
 - R1. The packet time this side advertises comes from the policy of the leg, never from the
   peer's own `ptime`. A media section has one advertised `ptime` and one `maxptime` that span all
-  its payloads, so both must hold for every listed payload.
+  its payloads, so both must hold for every listed payload. Receive feasibility uses this side's
+  receive envelope, including on duplex legs; the transmit payload budget does not constrain it.
+  Applying an answer validates the receive time already offered without replacing it.
 - R2. The advertised `maxptime` is the hard receive envelope for the receivable primary audio
   mappings of the section, and the receiver enforces exactly that, by duration and by size. A
   fixed set keeps its holes below the maximum. A redundant `maxptime` stays omitted where it is

@@ -208,28 +208,12 @@
   "cc": "CC-1"
  },
  {
-  "step": "softphone-baresip-offers-l16-44100-1-20-430#0",
-  "entry_point": "inbound initial offer",
-  "field": "recv.ptime",
-  "prior": 20,
-  "intended": 10,
-  "cc": "CC-2"
- },
- {
   "step": "softphone-baresip-offers-l16-48000-2-10-430#0",
   "entry_point": "inbound initial offer",
   "field": "send.ptime",
   "prior": 4,
   "intended": 5,
   "cc": "CC-11"
- },
- {
-  "step": "softphone-baresip-offers-l16-48000-2-10-430#0",
-  "entry_point": "inbound initial offer",
-  "field": "recv.ptime",
-  "prior": 20,
-  "intended": 5,
-  "cc": "CC-2"
  },
  {
   "step": "softphone-baresip-offers-opus-48000-2-20-101#0",
@@ -289,6 +273,38 @@
  },
  {
   "step": "softphone-opus-receiver-limits#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-48000-1-10-101#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-48000-1-10-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-all-20-101#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.ptime",
+  "prior": 10,
+  "intended": 20,
+  "cc": "CC-2"
+ },
+ {
+  "step": "softphone-baresip-offers-all-430#0",
   "entry_point": "inbound initial offer",
   "field": "recv.ptime",
   "prior": 10,

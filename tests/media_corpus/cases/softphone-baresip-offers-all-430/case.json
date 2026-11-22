@@ -20,7 +20,10 @@
   ],
   "expect": [
     {
-      "outcome": "accept"
+      "outcome": "accept",
+      "recv": {
+        "ptime": 20
+      }
     }
   ],
   "rules": [

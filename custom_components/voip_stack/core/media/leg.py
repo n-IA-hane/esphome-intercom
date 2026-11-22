@@ -129,7 +129,7 @@ def _fixed_times(fmt: RtpPcmFormat, formats: tuple[AudioFormat, ...] | None) -> 
 
 
 def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBounds, *,
-                       receive: bool = False, default_ms: float = 0, receive_only: bool = False):
+                       receive: bool = False, default_ms: float = 0):
     formats = policy.receive_capabilities if receive else policy.send_capabilities
     fixed = _fixed_times(fmt, formats)
     if fixed is not None and not fixed.explicit:
@@ -139,12 +139,20 @@ def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBou
         spec, fmt.sample_rate, fmt.channels,
         producible=fixed if fixed is not None else (OPUS_FRAMES if fmt.encoding == "OPUS" else ANY_DURATION),
         default_ms=default_ms or spec.assumed_packet_ms or policy.default_packet_ms, receiver=bounds,
-        budget=HA_AUDIO_CAPABILITIES.receive_payload_bytes if receive_only else policy.budget,
+        budget=(policy.capabilities or HA_AUDIO_CAPABILITIES).receive_payload_bytes if receive else policy.budget,
     )
     if choice is not None and policy.capabilities is not None:
         if not policy.capabilities.supports_rtp(replace(fmt, frame_ms=choice.packet_ms), receive=receive):
             return None
     return choice
+
+
+def _receivable_as_offered(fmt: RtpPcmFormat, policy: LegPolicy) -> bool:
+    """Validate the receiver already advertised without replacing its packet time (R1)."""
+    fixed = _fixed_times(fmt, policy.receive_capabilities)
+    return ((fixed is None or fmt.frame_ms in fixed.explicit)
+            and (not fmt.max_frame_ms or fmt.frame_ms <= fmt.max_frame_ms)
+            and (policy.capabilities or HA_AUDIO_CAPABILITIES).supports_rtp(fmt, receive=True))
 
 
 def _codec_rank(policy: LegPolicy, fmt: RtpPcmFormat) -> int:
@@ -256,42 +264,42 @@ def answer_offer(
         retained = kept(candidate, in_use_send)
         transmit = _choose_local_time(candidate, policy, ReceiverBounds(
             ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms),
-            default_ms=in_use_send.frame_ms if retained else 0, receive=not needs_send,
-            receive_only=not needs_send)
+            default_ms=in_use_send.frame_ms if retained else 0, receive=not needs_send)
         if transmit is None:
             trace.append(f"S1/T3 {candidate.encoding}/{candidate.sample_rate}: no producible format within the receiver bounds")
             continue
         if retained:
             trace.append("N1 kept the mapping in use to send")
         if directional and needs_receive:
-            receive_from = min(peer_sends, key=lambda fmt: (
+            receive_candidates = sorted(peer_sends, key=lambda fmt: (
                 not kept(fmt, in_use_receive), _codec_rank(policy, fmt),
                 _rank(policy.receive_rank, fmt), offered.index(fmt)))
         else:
-            receive_from = candidate
+            receive_candidates = [candidate]
         legacy_time = transmit.packet_ms if directional and not supports_independent_audio_ptime(remote_sdp) else 0
-        asked = _choose_local_time(receive_from, policy, ReceiverBounds(ptime=legacy_time),
-            receive=needs_receive, receive_only=not needs_send,
-            default_ms=in_use_receive.frame_ms if kept(receive_from, in_use_receive) else 0)
-        if asked is None:
-            trace.append(f"R1 {receive_from.encoding}/{receive_from.sample_rate}: nothing receivable")
-            continue
-        if legacy_time and asked.packet_ms != legacy_time:
-            trace.append("R3 legacy directional peer has no common packet time")
-            continue
-        trace.append(f"S2 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
-        trace.append(f"{transmit.rule} send {transmit.packet_ms} ms"
-                     + (" below the stated minimum" if transmit.below_minimum else ""))
-        trace.append(f"R1 ask {asked.packet_ms} ms")
-        receiver = _local_receiver(receive_from, asked.packet_ms, policy)
-        auxiliary = receive_auxiliary_formats(remote_sdp, receiver, policy)
-        return LegContract(
-            send=replace(candidate, frame_ms=transmit.packet_ms),
-            receive=receiver,
-            receive_accept=(receiver, *auxiliary) if auxiliary else (),
-            dtmf=_dtmf(remote_sdp, candidate),
-            trace=tuple(trace),
-        )
+        for receive_from in receive_candidates:
+            asked = _choose_local_time(receive_from, policy, ReceiverBounds(ptime=legacy_time),
+                receive=needs_receive,
+                default_ms=in_use_receive.frame_ms if kept(receive_from, in_use_receive) else 0)
+            if asked is None:
+                trace.append(f"R1 {receive_from.encoding}/{receive_from.sample_rate}: nothing receivable")
+                continue
+            if legacy_time and asked.packet_ms != legacy_time:
+                trace.append("R3 legacy directional peer has no common packet time")
+                continue
+            trace.append(f"S2 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
+            trace.append(f"{transmit.rule} send {transmit.packet_ms} ms"
+                         + (" below the stated minimum" if transmit.below_minimum else ""))
+            trace.append(f"R1 ask {asked.packet_ms} ms")
+            receiver = _local_receiver(receive_from, asked.packet_ms, policy)
+            auxiliary = receive_auxiliary_formats(remote_sdp, receiver, policy)
+            return LegContract(
+                send=replace(candidate, frame_ms=transmit.packet_ms),
+                receive=receiver,
+                receive_accept=(receiver, *auxiliary) if auxiliary else (),
+                dtmf=_dtmf(remote_sdp, candidate),
+                trace=tuple(trace),
+            )
     return Refusal("no offered codec has a feasible packet time", tuple(trace))
 
 
@@ -328,46 +336,49 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     for candidate in send_candidates:
         transmit = _choose_local_time(candidate, policy, ReceiverBounds(
             ptime=candidate.frame_ms, maxptime=candidate.max_frame_ms, minimum=candidate.min_frame_ms),
-            receive=not needs_send, receive_only=not needs_send)
+            receive=not needs_send)
         if transmit is None:
             trace.append(f"T3 {candidate.encoding}/{candidate.sample_rate}: no feasible packet time")
             continue
         if directional:
-            receive_from = min(peer_sends, key=lambda fmt: (
+            receive_candidates = sorted(peer_sends, key=lambda fmt: (
                 _codec_rank(policy, fmt), _rank(policy.receive_rank, fmt), answered.index(fmt)))
         else:
-            receive_from = candidate
-        own = local[_mapping(receive_from)]
-        # R1: what this side asked for in its own offer stands; the answer does not change it.
-        asked = _choose_local_time(own, policy, ReceiverBounds(ptime=own.frame_ms), receive=needs_receive,
-                                   receive_only=not needs_send)
-        if asked is None:
-            continue
-        trace.append(f"S5 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
-        trace.append(f"{transmit.rule} send {transmit.packet_ms} ms; R1 receive {asked.packet_ms} ms")
-        return LegContract(
-            send=replace(candidate, frame_ms=transmit.packet_ms),
-            # P3: packets arrive on the number of the offer, whatever number the answer used.
-            receive=replace(own, frame_ms=asked.packet_ms,
-                max_frame_ms=own.max_frame_ms or _receive_maximum(own, policy)),
-            dtmf=_answered_dtmf(local_offer_sdp, answer_sdp, candidate),
-            trace=tuple(trace),
-            send_accept=tuple(
-                replace(fmt, frame_ms=sent.packet_ms)
-                for fmt in peer_receives
-                if needs_send and (sent := _choose_local_time(fmt, policy,
-                    ReceiverBounds(ptime=fmt.frame_ms, maxptime=fmt.max_frame_ms,
-                                   minimum=fmt.min_frame_ms))) is not None),
-            receive_accept=tuple(
-                replace(fmt, frame_ms=received.packet_ms,
-                        max_frame_ms=fmt.max_frame_ms or _receive_maximum(fmt, policy))
-                for mapping, fmt in local.items()
-                if mapping in receive_mappings
-                and (received := _choose_local_time(fmt, policy,
-                    ReceiverBounds(ptime=fmt.frame_ms), receive=True)) is not None)
-                + receive_auxiliary_formats(answer_sdp, replace(own, frame_ms=asked.packet_ms), policy,
-                                            own_description=local_offer_sdp),
-        )
+            receive_candidates = [candidate]
+        for receive_from in receive_candidates:
+            own = local[_mapping(receive_from)]
+            # R1: what this side asked for in its own offer stands; the answer does not change it.
+            if needs_receive:
+                if not _receivable_as_offered(own, policy):
+                    continue
+                receive_ms = own.frame_ms
+            else:
+                asked = _choose_local_time(own, policy, ReceiverBounds(ptime=own.frame_ms))
+                if asked is None:
+                    continue
+                receive_ms = asked.packet_ms
+            trace.append(f"S5 {candidate.encoding}/{candidate.sample_rate}/{candidate.channels}")
+            trace.append(f"{transmit.rule} send {transmit.packet_ms} ms; R1 receive {receive_ms} ms")
+            return LegContract(
+                send=replace(candidate, frame_ms=transmit.packet_ms),
+                # P3: packets arrive on the number of the offer, whatever number the answer used.
+                receive=replace(own, frame_ms=receive_ms,
+                    max_frame_ms=own.max_frame_ms or _receive_maximum(own, policy)),
+                dtmf=_answered_dtmf(local_offer_sdp, answer_sdp, candidate),
+                trace=tuple(trace),
+                send_accept=tuple(
+                    replace(fmt, frame_ms=sent.packet_ms)
+                    for fmt in peer_receives
+                    if needs_send and (sent := _choose_local_time(fmt, policy,
+                        ReceiverBounds(ptime=fmt.frame_ms, maxptime=fmt.max_frame_ms,
+                                       minimum=fmt.min_frame_ms))) is not None),
+                receive_accept=tuple(
+                    replace(fmt, max_frame_ms=fmt.max_frame_ms or _receive_maximum(fmt, policy))
+                    for mapping, fmt in local.items()
+                    if mapping in receive_mappings and _receivable_as_offered(fmt, policy))
+                    + receive_auxiliary_formats(answer_sdp, replace(own, frame_ms=receive_ms), policy,
+                                                own_description=local_offer_sdp),
+            )
     return Refusal("no answered codec has a feasible packet time", tuple(trace))
 
 
