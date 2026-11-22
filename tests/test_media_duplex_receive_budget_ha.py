@@ -20,7 +20,7 @@ TX = AudioFormat(16000, "s16le", 1, 20)
 
 
 
-def multiformat_sdp(rate=44100, channels=2, *, ptime=20, maximum=0,
+def multiformat_sdp(rate=48000, channels=2, *, ptime=20, maximum=0,
                     transmit_payload=96, receive_payload=97):
     rows = [
         "v=0", "o=- 1 1 IN IP4 192.0.2.2", "s=Duplex receiver",
@@ -35,25 +35,68 @@ def multiformat_sdp(rate=44100, channels=2, *, ptime=20, maximum=0,
     return ("\r\n".join(rows) + "\r\n").encode()
 
 
-def test_duplex_receive_44100_stereo20_fits_rx_envelope_without_using_tx_budget():
-    """F1: 3528 RX bytes fit 12 KiB while the independent TX remains 640 bytes."""
+def single_format_sdp(rate, channels, *, payload=97, ptime=20, maximum=20, direction="sendonly"):
+    return ("v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Independent PCM receiver\r\n"
+        "c=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+        f"m=audio 5000 RTP/AVP {payload}\r\na=rtpmap:{payload} L16/{rate}/{channels}\r\n"
+        f"a=ptime:{ptime}\r\na=maxptime:{maximum}\r\na={direction}\r\n").encode()
+
+
+def test_duplex_receive_48000_stereo20_fits_rx_envelope_with_bounded_tx_fallback():
+    """RX3840 fits12KiB; the common stereo mapping has a real5ms/960B sender."""
     body = multiformat_sdp()
-    result = sdp.negotiate_directional(body, [TX], [AudioFormat(44100, "s16le", 2, 20)],
+    result = sdp.negotiate_directional(body, [TX], [AudioFormat(48000, "s16le", 2, 20)],
         local_capabilities=HA_AUDIO_CAPABILITIES)
     assert result is not None
     assert (result.send.payload_type, result.send.sample_rate, result.send.channels,
             result.send.frame_ms) == (96, 16000, 1, 20)
     assert (result.recv.payload_type, result.recv.sample_rate, result.recv.channels,
-            result.recv.frame_ms) == (97, 44100, 2, 20)
+            result.recv.frame_ms) == (97, 48000, 2, 20)
     assert result.send.audio_format.nominal_frame_bytes == 640 <= HA_AUDIO_CAPABILITIES.transmit_payload_bytes
-    assert HA_AUDIO_CAPABILITIES.transmit_payload_bytes < result.recv.audio_format.nominal_frame_bytes == 3528
+    assert result.recv.audio_format.nominal_frame_bytes == 3840 > HA_AUDIO_CAPABILITIES.transmit_payload_bytes
     assert result.recv.audio_format.nominal_frame_bytes <= HA_AUDIO_CAPABILITIES.receive_payload_bytes
+    stereo_sender = next(fmt for fmt in result.send_formats if fmt.channels == 2)
+    assert stereo_sender.frame_ms == 5 and stereo_sender.audio_format.nominal_frame_bytes == 960
     answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 4000,
-        result.send, result.recv, remote_sdp=body)
-    assert "a=ptime:20\r\n" in answer
+        result.send, result.recv, recv_formats=result.recv_formats, remote_sdp=body)
+    assert "a=ptime:20\r\n" in answer and "x-voip-stack" not in answer
 
 
-@pytest.mark.parametrize("rate,channels", [(44100, 2), (48000, 1)])
+def test_44100_stereo_duplex_alternative_requires_a_real_sender_under_1200_bytes():
+    pcm = AudioFormat(44100, "s16le", 2, 20)
+    assert pcm.nominal_frame_bytes == 3528 and HA_AUDIO_CAPABILITIES.supports_rtp(
+        sdp.RtpPcmFormat(97, "L16", 44100, 2, 20), receive=True)
+    # Whole-millisecond44100Hz packets need multiples of10ms: the smallest
+    # stereo packet is1764B, exceeding this sender's1200B hard budget.
+    assert 44100 * 10 * 2 * 2 // 1000 == 1764 > HA_AUDIO_CAPABILITIES.transmit_payload_bytes
+    shared = sdp.negotiate_directional(multiformat_sdp(44100, 2), [TX], [pcm],
+        local_capabilities=HA_AUDIO_CAPABILITIES)
+    assert shared is not None
+    assert {fmt.sample_rate for fmt in (*shared.send_formats, *shared.recv_formats)} == {16000}
+    unsupported = single_format_sdp(44100, 2, direction="sendrecv")
+    assert sdp.negotiate_directional(unsupported, [TX], [pcm],
+        local_capabilities=HA_AUDIO_CAPABILITIES) is None
+
+
+def test_44100_stereo_receive_only_preserves_the_exact_offered_receiver():
+    from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
+
+    pcm = AudioFormat(44100, "s16le", 2, 20)
+    offer = single_format_sdp(44100, 2, direction="recvonly")
+    answer = single_format_sdp(44100, 2, payload=111, ptime=10, maximum=10, direction="sendonly")
+    result = sdp.negotiate_answer_directional(answer, [], [pcm], local_offer_sdp=offer,
+        local_capabilities=HA_AUDIO_CAPABILITIES)
+    assert result is not None and not result.send_formats
+    assert (result.recv.payload_type, result.recv.frame_ms, result.recv.max_frame_ms) == (97, 20, 20)
+    samples = tuple(index % 4000 - 2000 for index in range(1764))
+    receiver = RtpAudioReceiver(result.recv)
+    try:
+        assert receiver.decode(97, struct.pack("!1764h", *samples)) == [struct.pack("<1764h", *samples)]
+    finally:
+        receiver.close()
+
+
+@pytest.mark.parametrize("rate,channels", [(48000, 2), (48000, 1)])
 def test_apply_answer_preserves_the_offered_receive_time_and_bounds(rate, channels):
     """R1 and P3: the remote RX preference cannot rewrite the local RX contract."""
     offer = multiformat_sdp(rate, channels, maximum=20)
@@ -70,9 +113,9 @@ def test_apply_answer_preserves_the_offered_receive_time_and_bounds(rate, channe
 
 
 @pytest.mark.parametrize("receive_bytes,expected_ms", [(2000, 10), (1000, None)])
-def test_duplex_receive_obeys_the_actual_receiver_budget(receive_bytes, expected_ms):
+def test_receive_only_obeys_the_actual_receiver_budget(receive_bytes, expected_ms):
     capabilities = AudioCapabilities(receive_payload_bytes=receive_bytes)
-    result = sdp.negotiate_directional(multiformat_sdp(), [TX], [AudioFormat(44100, "s16le", 2, 20)],
+    result = sdp.negotiate_directional(single_format_sdp(44100, 2), [], [AudioFormat(44100, "s16le", 2, 20)],
         local_capabilities=capabilities)
     if expected_ms is None:
         assert result is None
@@ -80,20 +123,20 @@ def test_duplex_receive_obeys_the_actual_receiver_budget(receive_bytes, expected
         assert result is not None
         assert result.recv.frame_ms == expected_ms
         assert result.recv.audio_format.nominal_frame_bytes <= receive_bytes
-        assert result.send.frame_ms == 20
+        assert not result.send_formats
 
 
 def test_apply_answer_refuses_an_unusable_offered_receive_time_instead_of_retiming_it():
     """An inconsistent offer/capability input must not rewrite the advertised RX."""
-    offer = multiformat_sdp(48000, 1, maximum=20)
-    answer = multiformat_sdp(48000, 1, ptime=10, maximum=10)
+    offer = single_format_sdp(48000, 1, direction="recvonly")
+    answer = single_format_sdp(48000, 1, ptime=10, maximum=10, direction="sendonly")
     result = sdp.negotiate_answer_directional(answer, [TX], [AudioFormat(48000, "s16le", 1, 20)],
         local_offer_sdp=offer, local_capabilities=AudioCapabilities(receive_payload_bytes=1000))
     assert result is None
 
 
 def test_directional_offer_tries_the_next_feasible_receive_mapping():
-    body = multiformat_sdp().replace(b"RTP/AVP 96 97", b"RTP/AVP 96 97 98")
+    body = multiformat_sdp(44100, 2).replace(b"RTP/AVP 96 97", b"RTP/AVP 96 97 98")
     body += b"a=rtpmap:98 L16/8000/1\r\n"
     result = sdp.negotiate_directional(body, [TX],
         [AudioFormat(44100, "s16le", 2, 20), AudioFormat(8000, "s16le", 1, 20)],

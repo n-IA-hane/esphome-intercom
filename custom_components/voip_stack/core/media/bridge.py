@@ -213,6 +213,18 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
         selected = replace(selected, recv=caller.recv, recv_formats=tuple(
             previous_receives[receive_mapping(fmt)] for fmt in selected.recv_formats))
         trace.append("B2 unchanged receive mappings; retain admitted timing and bounds")
+    selected_receives = {receive_mapping(fmt): fmt for fmt in selected.recv_formats}
+    if (can_retain_receive and caller.recv.encoding in {"L16", "L24", "PCM"}
+            and selected.recv.encoding in {"L16", "L24", "PCM"}
+            and receive_mapping(caller.recv) in selected_receives
+            and all(not fmt.max_frame_ms or caller.recv.max_frame_ms <= fmt.max_frame_ms
+                    for fmt in selected.recv_formats)):
+        # Standard alternatives let the source keep transmitting its native
+        # mapping. Changing our primary cannot promise to remove a conversion.
+        selected = replace(selected, recv=caller.recv, recv_formats=tuple(dict.fromkeys((
+            caller.recv, *(previous_receives.get(receive_mapping(fmt), fmt)
+                           for fmt in selected.recv_formats)))))
+        trace.append("B2 retain admitted linear receive preference; adapt the actual source mapping")
     if _pcm_shape(selected.recv) != _pcm_shape(caller.recv):
         original_conversions = sum((_pcm_shape(caller.recv) != _pcm_shape(callee.send),
                                     _pcm_shape(callee.recv) != _pcm_shape(caller.send)))

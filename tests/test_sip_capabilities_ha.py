@@ -580,8 +580,8 @@ async def test_options_wire_describes_audio_without_allocating_a_call(socket_ena
     loop = asyncio.get_running_loop()
     config = dict(local_ip="127.0.0.1", local_rtp_port=34000,
         supported_formats=[AudioFormat(16000, frame_ms=10)],
-        supported_send_formats=[AudioFormat(16000, frame_ms=10)],
-        supported_recv_formats=[AudioFormat(48000, frame_ms=10)],
+        supported_send_formats=[AudioFormat(16000, frame_ms=20), AudioFormat(48000, frame_ms=10)],
+        supported_recv_formats=[AudioFormat(48000, frame_ms=10), AudioFormat(16000, frame_ms=20)],
         on_invite=unexpected_invite)
     if signaling == "UDP":
         endpoint = SipUdpEndpoint(**config)

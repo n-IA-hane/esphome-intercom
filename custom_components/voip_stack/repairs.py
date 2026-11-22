@@ -48,7 +48,7 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
                 choices.append({'value': 'legacy_ha_default', 'label': str(self.hass.config.location_name or 'Home Assistant phone')})
         if not choices:
             return await self.async_step_confirm(user_input)
-        if user_input is not None:
+        if user_input is not None and "account" in user_input:
             self.subentry_id = user_input["account"]
             return await self.async_step_edit_account()
         return self.async_show_form(step_id="init", data_schema=vol.Schema({

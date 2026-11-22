@@ -103,7 +103,8 @@ async def test_cc4_negotiated_event_mapping_clock_and_identity_reach_real_udp(so
             "a=rtpmap:115 telephone-event/16000\r\na=fmtp:115 0-15\r\n"
             "a=rtpmap:116 telephone-event/8000\r\na=fmtp:116 0-15\r\n"
             "a=ptime:10\r\na=maxptime:20\r\na=sendrecv\r\n")
-    selected=sdp.negotiate_answer_directional(answer,[wide.audio_format],[narrow.audio_format],local_offer_sdp=offer)
+    selected=sdp.negotiate_answer_directional(answer,[wide.audio_format,narrow.audio_format],
+        [narrow.audio_format,wide.audio_format],local_offer_sdp=offer)
     assert selected is not None
     events=sdp.negotiate_dtmf_answer_directional(answer,offer,audio=selected)
     assert (events.send.payload_type,events.send.sample_rate)==(114,48000)

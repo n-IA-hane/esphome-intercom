@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.voip_stack.core import rtp, sdp, sip
+from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.audio_pcm import PcmFrameConverter
 from custom_components.voip_stack.audio_ws_frames import BrowserAudioReceiver
 from custom_components.voip_stack.conference import ConferenceRoom, _ConferenceLeg, CONFERENCE_FORMAT, conference_manager
@@ -20,7 +20,10 @@ from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpo
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 from custom_components.voip_stack.sip_client import SipCallClient
+from custom_components.voip_stack.sip_registrar import SipAccount
 from tests.test_automation_originate_ha import lab as lab
+from tests.test_sip_capabilities_ha import register_peer, wait_until
+from tests.test_trunk_calls_ha import trunks as trunks
 
 pytestmark = pytest.mark.ha
 
@@ -110,13 +113,20 @@ def test_conference_receiver_changes_source_without_joining_old_partial_pcm():
 class IndependentSipPeer(asyncio.DatagramProtocol):
     def __init__(self):
         self.queue = asyncio.Queue()
+        self.messages = asyncio.Queue()
         self.transport = None
 
     def connection_made(self, transport):
         self.transport = transport
 
     def datagram_received(self, data, address):
-        self.queue.put_nowait((sip.parse_message(data), address))
+        message = sip.parse_message(data)
+        if message.is_response:
+            self.messages.put_nowait((message, address))
+        elif message.method == "OPTIONS":
+            self.answer(message, address, 405)
+        else:
+            self.queue.put_nowait((message, address))
 
     async def receive(self, method):
         async with asyncio.timeout(5):
@@ -137,7 +147,9 @@ class IndependentSipPeer(asyncio.DatagramProtocol):
         self.transport.sendto(sip.build_response(status, "Response", headers, body), address)
 
 
-async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2xx(lab, monkeypatch):
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2xx(trunks):
+    lab = trunks
     manager = conference_manager(lab.hass, local_ip="127.0.0.1")
     room = ConferenceRoom(lab.hass, name="Pending room", local_ip="127.0.0.1")
     manager.rooms[room.name] = room
@@ -163,6 +175,12 @@ async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2
     uri = sip.parse_sip_uri(f"sip:member@127.0.0.1:{transport.get_extra_info('sockname')[1]}")
     endpoint = lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:conference-member",
         name="Pending member", kind=EndpointKind.SIP_ACCOUNT, username="member"))
+    registrar = lab.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([*registrar.accounts.values(), SipAccount("member", endpoint.name, "fixture-only")])
+    await register_peer(lab, peer, username="member", call_id="conference-member-registration")
+    await wait_until(lambda: lab.runtime.endpoints.require(endpoint.endpoint_id).availability.value == "available")
+    assert registrar.registered_contacts("member")[0].contact_uri == str(uri)
     attempt = OutboundLeg("Pending member", uri, client, ports, endpoint_id=endpoint.endpoint_id)
     runtime = ConferenceRingRuntime(lab.hass, {}, "127.0.0.1", lambda *_args: None,
                                     lambda **_kwargs: attempt)
@@ -197,12 +215,15 @@ async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2
             task.cancel()
         await asyncio.gather(task, *(tuple([termination]) if termination is not None else ()), return_exceptions=True)
         await client.close()
+        await register_peer(lab, peer, username="member", call_id="conference-member-registration", cseq=3, expires=0)
         ports.release()
         transport.close()
         await manager.close(reason="test_done")
 
 
-async def test_answered_conference_member_moves_to_its_own_session_lifetime(lab):
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_answered_conference_member_moves_to_its_own_session_lifetime(trunks):
+    lab = trunks
     manager = conference_manager(lab.hass, local_ip="127.0.0.1")
     room = ConferenceRoom(lab.hass, name="Answered room", local_ip="127.0.0.1")
     manager.rooms[room.name] = room
@@ -225,6 +246,12 @@ async def test_answered_conference_member_moves_to_its_own_session_lifetime(lab)
     uri = sip.parse_sip_uri(f"sip:member@127.0.0.1:{transport.get_extra_info('sockname')[1]}")
     endpoint = lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:conference-member",
         name="Answered member", kind=EndpointKind.SIP_ACCOUNT, username="member"))
+    registrar = lab.calls.component("registrar")
+    registrar.enabled = True
+    registrar.update_accounts([*registrar.accounts.values(), SipAccount("member", endpoint.name, "fixture-only")])
+    await register_peer(lab, peer, username="member", call_id="conference-member-registration")
+    await wait_until(lambda: lab.runtime.endpoints.require(endpoint.endpoint_id).availability.value == "available")
+    assert registrar.registered_contacts("member")[0].contact_uri == str(uri)
     attempt = OutboundLeg("Answered member", uri, client, ports, endpoint_id=endpoint.endpoint_id)
     runtime = ConferenceRingRuntime(lab.hass, {}, "127.0.0.1", lambda *_args: None,
                                     lambda **_kwargs: attempt)
@@ -264,6 +291,7 @@ async def test_answered_conference_member_moves_to_its_own_session_lifetime(lab)
                 pass
         await asyncio.gather(ringing, cleanup, return_exceptions=True)
         await client.close()
+        await register_peer(lab, peer, username="member", call_id="conference-member-registration", cseq=3, expires=0)
         ports.release()
         transport.close()
 

@@ -437,6 +437,7 @@ def test_offer_maxptime_is_safe_for_every_receivable_mapping():
         [fmt.audio_format for fmt in receive],
         recv_rtp_formats=receive,
         audio_direction="recvonly",
+        local_capabilities=HA_AUDIO_CAPABILITIES,
     )
     parsed = sdp.parse_sdp(offer)
     maximum = parsed["maxptime"]

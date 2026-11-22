@@ -1,12 +1,16 @@
 """The pure bridge planner preserves leg contracts and explains adaptation."""
 
+import math
+import struct
+
 import pytest
 
-from custom_components.voip_stack.core import sdp
+from custom_components.voip_stack.core import rtp, sdp
 from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.audio_format import AudioFormat, HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.media.bridge import AudioOperation, plan_audio_flow, plan_caller_audio
+from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 
 pytestmark = pytest.mark.ha
 
@@ -48,6 +52,20 @@ def test_free_pcm_caller_keeps_48k_receive_contract_and_resamples_both_direction
                              receive_capabilities=HA_SIP_PCM_RX_FORMATS)
     assert (plan.caller.send.sample_rate, plan.caller.send.frame_ms) == (48000, 10)
     assert (plan.caller.recv.sample_rate, plan.caller.recv.frame_ms) == (16000, 20)
+    answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 42000,
+        plan.caller.send, plan.caller.recv, recv_formats=plan.caller.recv_formats,
+        remote_sdp=body)
+    assert "a=ptime:20\r\n" in answer and "x-voip-stack" not in answer
+    assert "L16/16000/1" in answer and "L16/48000/1" in answer
+    samples = tuple(round(10000 * math.sin(2 * math.pi * 3000 * index / 16000)) for index in range(320))
+    native = struct.pack("<320h", *samples)
+    receiver = RtpAudioReceiver(plan.caller.recv, plan.caller.recv_formats)
+    try:
+        decoded = receiver.decode_rtp(rtp.RtpPacket(plan.caller.recv.payload_type,
+            1, 0, 99, struct.pack("!320h", *samples)))
+        assert decoded == [native]
+    finally:
+        receiver.close()
     assert plan.caller_to_callee.source.frame_ms == plan.callee_to_caller.source.frame_ms == 20
     assert plan.caller_to_callee.target.frame_ms == plan.callee_to_caller.target.frame_ms == 10
     assert plan.caller_to_callee.operations == plan.callee_to_caller.operations == (

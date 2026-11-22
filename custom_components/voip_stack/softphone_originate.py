@@ -63,7 +63,6 @@ from .outbound_lifecycle import (
 from .peer_snapshot import async_advertise_host as _ha_advertise_host
 from .phone_endpoint import (
     EndpointAvailability,
-    EndpointKind,
 )
 from .router import RouteAction, RouteReason, ha_uri_for
 from .runtime_data import (

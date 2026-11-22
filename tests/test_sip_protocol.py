@@ -4683,6 +4683,14 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             routed.append(initial)
             return sip_listener.UasDelayedOfferPlan(local_offer, accept_answer)
 
+        def send(raw, address):
+            sent.append(raw)
+            message = sip.parse_message(raw)
+            if message.method == "BYE":
+                response = sip.build_uas_response(message, 200, "OK")
+                asyncio.get_running_loop().call_soon(endpoint.submit_datagram, response, address)
+            return True
+
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="127.0.0.1",
             local_sip_port=5060,
@@ -4690,7 +4698,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[pcm],
             on_invite=on_invite,
             on_offerless_invite=on_offerless,
-            send_override=lambda raw, _addr: not sent.append(raw),
+            send_override=send,
         )
         call_id = "initial-delayed-offer"
         remote_tag = "remote"
@@ -4864,7 +4872,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             "z9hG4bKack",
             to_tag=sip.extract_tag(final.header("To")),
         )
-        with patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.02):
+        from custom_components.voip_stack import sip_server_dialogs
+
+        with patch.object(sip_server_dialogs, "_INVITE_2XX_TIMEOUT", 0.02):
             await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
             await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
             await endpoint.wait_closed()

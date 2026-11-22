@@ -401,9 +401,7 @@ async def browser_replacement_owner(hass, phones, socket_enabled, request):
 
 @pytest.mark.parametrize("failure", ["owner", "claim", "answer", "upsert", "publish"])
 async def test_rejected_browser_replacement_releases_automatic_grant_and_allows_retry(browser_replacement_owner, monkeypatch, failure):
-    from dataclasses import replace
     from custom_components.voip_stack import browser_replacement, call_replaces
-    from custom_components.voip_stack.core import sdp
     from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 
     lab = browser_replacement_owner

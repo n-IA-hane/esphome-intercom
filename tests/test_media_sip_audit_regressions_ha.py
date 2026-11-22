@@ -43,7 +43,7 @@ def test_answer_cannot_add_an_unoffered_mapping():
 def test_standard_answer_keeps_offer_receive_numbers(renumber):
     offer = description(((96, 48000), (97, 16000)))
     tx, rx = (110, 111) if renumber else (96, 97)
-    answer = description(((tx, 48000, "recv"), (rx, 16000, "send")), ptime=10)
+    answer = description(((tx, 48000), (rx, 16000)), ptime=10)
     selected = apply_answer(offer, answer)
     assert selected is not None
     assert (selected.send.sample_rate, selected.send.payload_type) == (48000, tx)
@@ -72,9 +72,9 @@ def test_standard_answer_without_private_roles_still_accepts_renumbering():
     assert selected.send.payload_type == 110 and selected.recv.payload_type == 96
 
 
-def packet(*, ssrc=100, pt=96, samples=320, malformed=False):
+def packet(*, ssrc=100, pt=96, samples=320, malformed=False, sequence=1, timestamp=0):
     payload = b"\x01" if malformed else struct.pack(f"!{samples}h", *([1234] * samples))
-    return struct.pack("!BBHII", 0x80, pt, 1, 0, ssrc) + payload
+    return struct.pack("!BBHII", 0x80, pt, sequence, timestamp, ssrc) + payload
 
 
 @asynccontextmanager
@@ -105,11 +105,11 @@ async def test_malformed_first_packet_cannot_pin_the_legitimate_rtp_source():
 async def test_only_valid_same_ssrc_media_can_rebind_the_symmetric_port():
     async with local_media() as media:
         media.handle_rtp(packet(), ("192.0.2.2", 40000))
-        media.handle_rtp(packet(malformed=True), ("192.0.2.2", 40001))
+        media.handle_rtp(packet(malformed=True, sequence=2, timestamp=320), ("192.0.2.2", 40001))
         assert media.remote_rtp_port == 40000
-        media.handle_rtp(packet(), ("192.0.2.2", 40002))
+        media.handle_rtp(packet(sequence=2, timestamp=320), ("192.0.2.2", 40002))
         assert media.remote_ssrc == 100 and media.remote_rtp_port == 40002
-        media.handle_rtp(packet(ssrc=999), ("192.0.2.2", 40003))
+        media.handle_rtp(packet(ssrc=999, sequence=3, timestamp=640), ("192.0.2.2", 40003))
         assert media.remote_ssrc == 100 and media.remote_rtp_port == 40002
         assert media.counters["drop_decode"] == media.counters["drop_ssrc"] == 1
 
@@ -121,7 +121,7 @@ async def test_valid_short_packet_establishes_source_before_emitting_a_pcm_frame
         assert media.remote_ssrc == 100 and media.remote_rtp_port == 40001
         assert media.counters["rtp_rx"] == 1 and media.counters["drop_decode"] == 0
         assert media.rx_queue.empty()
-        media.handle_rtp(packet(samples=160), ("192.0.2.2", 40001))
+        media.handle_rtp(packet(samples=160, sequence=2, timestamp=160), ("192.0.2.2", 40001))
         assert media.counters["rtp_rx"] == 2
         assert media.rx_queue.get_nowait() == struct.pack("<320h", *([1234] * 320))
 

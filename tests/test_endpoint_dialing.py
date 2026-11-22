@@ -205,7 +205,7 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
         local_name="Caller",
         local_rtp_port_index=1,
         uri_override="sip:100@example.test;transport=tcp",
-        invite=SimpleNamespace(routing_caller="source", video_format=None,
+        invite=SimpleNamespace(routing_caller="source", video_format=None, max_forwards=None,
             send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
             recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20)),
         port_reservation=reservation,
@@ -241,7 +241,7 @@ def test_audio_only_trunk_does_not_reserve_video_for_incoming_video(monkeypatch)
     leg = dialer.prepare_outbound_leg(
         member="100", peers=[], roster_entries=[], local_name="Caller",
         local_rtp_port_index=1, uri_override="sip:100@example.test",
-        invite=SimpleNamespace(routing_caller="source", video_format=object(),
+        invite=SimpleNamespace(routing_caller="source", video_format=object(), max_forwards=None,
             send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
             recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20)),
         port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock()),

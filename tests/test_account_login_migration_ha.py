@@ -50,12 +50,17 @@ async def test_saved_generated_shaped_login_is_ambiguous_after_native_editor(has
         data={"initial_phone_created": True})
     entry.add_to_hass(hass)
     subentry = add_account(hass, entry, "browser:user", username="previous-login")
+    hass.config_entries.async_update_subentry(entry, subentry,
+        data={**subentry.data, "voicemail": {"enabled": True}})
     result = await hass.config_entries.subentries.async_init((entry.entry_id, "phone"),
         context={"source": "reconfigure", "subentry_id": subentry.subentry_id})
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], {
         "name": "Casa", "username": "ha_browser_user", "password": subentry.data["password"],
     })
-    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful", result
+    assert subentry.data["username"] == "ha_browser_user"
+    assert subentry.data["username_source"] == "user"
+    assert subentry.data["call_policy"]["no_answer"] == {"kind": "voicemail", "target": "ha_browser_user"}
     before = encoded(subentry.as_dict())
     assert subentry.data["ha_bindings"][0] == {
         "source": "migration", "reference": "legacy_ha_phone:browser:user"}

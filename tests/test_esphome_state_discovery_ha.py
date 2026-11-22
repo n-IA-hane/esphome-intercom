@@ -74,7 +74,7 @@ async def test_direct_sip_uses_explicit_existing_contact_and_survives_entity_ren
     store_manual_roster_entries(lab.hass, [contact])
     device, = await VoipDeviceResolver(lab.hass).list_devices()
     assert (device["host"], device["sip_port"], device["sip_transport"]) == ("127.0.0.2", 5077, transport)
-    assert device["audio_mode"] is None and device["sip_audio_tx_formats"] == []
+    assert device["audio_mode"] is None and "sip_audio_tx_formats" not in device
     assert device_is_phonebook_available(lab.hass, device)
     registry = er.async_get(lab.hass)
     registry.async_update_entity(device["entities"]["voip_state"], new_entity_id="sensor.renamed_phone_state")
@@ -105,8 +105,9 @@ async def test_authenticated_contact_and_options_are_authoritative_without_endpo
     assert device["registered"] and device["sip_capabilities_known"]
     assert (device["host"], device["sip_port"], device["sip_transport"]) == ("127.0.0.2", 41000, "udp")
     assert device["audio_mode"] == "full_duplex"
-    assert device["sip_audio_tx_formats"] == ["L16/16000/1", "L16/48000/1"]
-    assert device["sip_audio_rx_formats"] == ["L16/16000/1/10", "L16/48000/1/10"]
+    assert "sip_audio_tx_formats" not in device and "sip_audio_rx_formats" not in device
+    assert binding.capabilities["sip_audio_tx_formats"] == ["L16/16000/1", "L16/48000/1"]
+    assert binding.capabilities["sip_audio_rx_formats"] == ["L16/16000/1/10", "L16/48000/1/10"]
     assert device["sip_video_codec"] == "jpeg" and "video" in device["capabilities"]
     with pytest.raises(sdp.SdpError):
         sdp.offered_video_formats(body)  # RTCP zero is not an ordinary media endpoint.

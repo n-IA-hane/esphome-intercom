@@ -1327,7 +1327,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                     errors[field + '_to'] = 'phone_forward_loop'
                 if selected_action == 'voicemail':
                     from .mailbox import mailbox_settings
-                    enabled = bool(voicemail.get('enabled')) if selected.casefold() == username.casefold() else (
+                    enabled = bool(voicemail.get('enabled')) if selected.casefold() in {username.casefold(), endpoint_id.casefold()} else (
                         bool(mailbox_settings(self.hass, selected).get('enabled')) if runtime is not None else False)
                     if not enabled:
                         errors[field + '_to'] = 'phone_mailbox_required'

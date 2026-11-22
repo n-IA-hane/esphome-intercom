@@ -24,7 +24,7 @@ from .esphome_native import (
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_registry import EndpointCollisionError
 from .managed_phones import (CONF_ESPHOME_ENROLLMENTS, MANAGED_ACCOUNT_ID,
-    ManagedNameError, ManagedPhone, REGISTER_HA_ACCOUNT, active_managed_accounts, managed_device_username,
+    ManagedNameError, ManagedPhone, REGISTER_HA_ACCOUNT, managed_device_username,
     managed_account_subentries, managed_phone_mode, managed_records,
     normalize_mac, save_managed_account)
 from .phone_endpoint import EndpointKind
