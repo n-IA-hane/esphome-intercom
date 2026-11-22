@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from .counterpart_display import counterpart_display
 from .endpoint_session import (
     CallToken,
+    CleanupStage,
     EndpointCallSession,
     LegPhase,
     SessionPhase,
@@ -166,6 +167,39 @@ def stage_bridge_presentation(session, **details):
     return True
 
 
+def _bind_esp_media_route(hass, registry, session) -> None:
+    """Keep the existing projection attached to its current relay owner."""
+    from .sip_rtp_bridge import SipRtpRelay
+
+    token = session.token
+
+    def bind(resource):
+        relay = resource.value
+        if not resource.name.startswith("relay:") or not isinstance(relay, SipRtpRelay):
+            return
+        name = f"media_route_projection:{id(resource):x}"
+        if any(item.name == name for item in session.resources):
+            return
+
+        def changed(route, *, relay=relay, resource=resource):
+            if (relay.on_media_route_changed is not changed
+                    or not session.owns(token) or session.state != "in_call"
+                    or registry.get_session(token.call_id, generation=token.generation) is not session
+                    or not any(item is resource and item.value is relay for item in session.resources)):
+                return
+            publish_esp_media_route(hass, session.call_id, route)
+
+        def close(_reason, *, relay=relay, callback=changed):
+            if relay.on_media_route_changed is callback:
+                relay.on_media_route_changed = None
+
+        session.add_resource(name, changed, close, stage=CleanupStage.OBSERVER)
+        relay.on_media_route_changed = changed
+
+    for resource in tuple(session.resources):
+        bind(resource)
+
+
 def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> None:
     """Project a committed media owner's decision onto its physical call legs."""
     if route not in {"direct", "ha_transcoding"}:
@@ -176,6 +210,7 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
     session = data.sip.get_session(call_id)
     if session is None or not session.live or session.state != "in_call":
         return
+    _bind_esp_media_route(hass, data.sip, session)
     # Local media endpoints such as Assist share relay lifecycle ownership,
     # but do not expose a relay's media-route decision.
     if any(
@@ -206,6 +241,22 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
         targets[endpoint.device_id] = leg_call_id
     if not targets:
         return
+    media_owners = tuple(
+        (resource, resource.value, getattr(resource.value, "on_media_route_changed", None))
+        for resource in session.resources if resource.name.startswith("relay:")
+    )
+
+    def current() -> bool:
+        if (not session.owns(token) or session.state != "in_call"
+                or data.sip.get_session(token.call_id, generation=token.generation) is not session
+                or session.metadata.get("committed_media_route") != route):
+            return False
+        return all(
+            any(item is resource and item.value is owner for item in session.resources)
+            and (not hasattr(owner, "on_media_route_changed")
+                 or callback is not None and owner.on_media_route_changed is callback)
+            for resource, owner, callback in media_owners
+        )
 
     async def notify() -> None:
         from .device_resolver import get_resolver
@@ -217,8 +268,7 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
             leg_call_id = targets.get(device_id)
             if not leg_call_id or not has_action(hass, device, "set_media_route"):
                 continue
-            if (not session.owns(token) or session.state != "in_call"
-                    or session.metadata.get("committed_media_route") != route):
+            if not current():
                 return
             delivered = session.metadata.setdefault("esp_media_routes", {})
             value = (leg_call_id, route)
@@ -232,7 +282,7 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
                 # Presentation must never fail an established media session.
                 _LOGGER.debug("ESP media route projection failed", exc_info=True)
             else:
-                if session.owns(token) and session.metadata.get("committed_media_route") == route:
+                if current():
                     delivered[device_id] = value
 
     session.create_task(notify(), name=f"voip-media-route-{session.call_id}")

@@ -152,6 +152,168 @@ async def test_media_route_cannot_outlive_its_call_generation(monkeypatch):
     assert not session.tasks
 
 
+@pytest.mark.asyncio
+async def test_media_route_queued_notification_cannot_outlive_relay_owner(monkeypatch):
+    from custom_components.voip_stack import device_resolver, esphome_actions
+    from custom_components.voip_stack.core.sdp import RtpPcmFormat
+    from custom_components.voip_stack.sip_rtp_bridge import RtpPeer, SipRtpRelay
+
+    runtime = _runtime(monkeypatch)
+    lookup_started, lookup_finish = asyncio.Event(), asyncio.Event()
+    lookups = 0
+
+    async def devices():
+        nonlocal lookups
+        lookups += 1
+        if lookups == 1:
+            lookup_started.set()
+            await lookup_finish.wait()
+        return [{"device_id": "dev-1"}]
+
+    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(
+        list_devices=devices))
+    sink = AsyncMock()
+    monkeypatch.setattr(esphome_actions, "async_call_action", sink)
+    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
+    fmt = RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+    relay = SipRtpRelay(
+        left=RtpPeer("192.0.2.10", 40000, fmt.payload_type, fmt.audio_format,
+                     rtp_format=fmt, send_rtp_format=fmt),
+        right=RtpPeer("192.0.2.20", 41000, fmt.payload_type, fmt.audio_format,
+                      rtp_format=fmt, send_rtp_format=fmt),
+        left_port=42000, right_port=42002,
+    )
+    previous = runtime.upsert("previous-call", state="in_call", source_endpoint_id="p4")
+    current = runtime.upsert("current-call", state="in_call", source_endpoint_id="p4")
+    runtime.attach_relay(previous.call_id, relay)
+    try:
+        call_projection.publish_esp_media_route(object(), previous.call_id, relay.media_route)
+        await asyncio.wait_for(lookup_started.wait(), 1)
+        pending = tuple(previous.tasks)
+        previous.release_resource(f"relay:{previous.call_id}", value=relay)
+        runtime.attach_relay(current.call_id, relay)
+        call_projection.publish_esp_media_route(object(), current.call_id, relay.media_route)
+        await asyncio.gather(*tuple(current.tasks))
+        assert previous.live and previous.state == "in_call"
+        lookup_finish.set()
+        await asyncio.gather(*pending)
+
+        assert {
+            "notifications": [(call.args[3]["call_id"], call.args[3]["route"])
+                              for call in sink.call_args_list],
+            "previous_delivery": previous.metadata.get("esp_media_routes", {}),
+        } == {
+            "notifications": [(current.call_id, relay.media_route)],
+            "previous_delivery": {},
+        }
+        assert not previous.tasks and not current.tasks
+    finally:
+        lookup_finish.set()
+        await previous.terminate(TerminationIntent("test_done"))
+        await current.terminate(TerminationIntent("test_done"))
+        await relay.stop()
+
+
+@pytest.mark.asyncio
+async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(monkeypatch):
+    from custom_components.voip_stack import device_resolver, esphome_actions
+    from custom_components.voip_stack.core.sdp import RtpPcmFormat
+    from custom_components.voip_stack.sip_rtp_bridge import RtpPeer, SipRtpRelay
+
+    runtime = _runtime(monkeypatch)
+    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(
+        list_devices=AsyncMock(return_value=[{"device_id": "dev-1"}])))
+    sink = AsyncMock()
+    monkeypatch.setattr(esphome_actions, "async_call_action", sink)
+    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
+    fmt = RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+    relay = SipRtpRelay(
+        left=RtpPeer("192.0.2.10", 40000, fmt.payload_type, fmt.audio_format,
+                     rtp_format=fmt, send_rtp_format=fmt),
+        right=RtpPeer("192.0.2.20", 41000, fmt.payload_type, fmt.audio_format,
+                      rtp_format=fmt, send_rtp_format=fmt),
+        left_port=42000, right_port=42002,
+    )
+    relay.left_to_right_passthrough = relay.right_to_left_passthrough = False
+    previous = runtime.upsert("previous-call", state="in_call", source_endpoint_id="p4")
+    current = runtime.upsert("current-call", state="in_call", source_endpoint_id="p4")
+    runtime.attach_relay(previous.call_id, relay)
+
+    try:
+        call_projection.publish_esp_media_route(object(), previous.call_id, relay.media_route)
+        await asyncio.gather(*tuple(previous.tasks))
+        previous_callback = relay.on_media_route_changed
+        assert callable(previous_callback)
+        assert previous.metadata["committed_media_route"] == "ha_transcoding"
+
+        previous.release_resource(f"relay:{previous.call_id}", value=relay)
+        runtime.attach_relay(current.call_id, relay)
+        relay.left_to_right_passthrough = relay.right_to_left_passthrough = True
+        previous_callback(relay.media_route)
+        assert not previous.tasks
+        assert previous.metadata["committed_media_route"] == "ha_transcoding"
+        assert "committed_media_route" not in current.metadata
+        assert sink.await_count == 1
+
+        call_projection.publish_esp_media_route(object(), current.call_id, relay.media_route)
+        await asyncio.gather(*tuple(current.tasks))
+        current_callback = relay.on_media_route_changed
+        assert callable(current_callback) and current_callback is not previous_callback
+        assert current.metadata["committed_media_route"] == "direct"
+        await previous.terminate(TerminationIntent("forwarded"))
+        assert relay.on_media_route_changed is current_callback
+
+        relay.left_to_right_passthrough = False
+        previous_callback(relay.media_route)
+        assert not previous.tasks and not current.tasks
+        assert current.metadata["committed_media_route"] == "direct"
+        assert sink.await_count == 2
+        current_callback(relay.media_route)
+        await asyncio.gather(*tuple(current.tasks))
+        assert current.metadata["committed_media_route"] == "ha_transcoding"
+        assert [(call.args[3]["call_id"], call.args[3]["route"])
+                for call in sink.call_args_list] == [
+            (previous.call_id, "ha_transcoding"),
+            (current.call_id, "direct"),
+            (current.call_id, "ha_transcoding"),
+        ]
+
+        detached_callback = relay.on_media_route_changed
+        assert callable(detached_callback)
+        current.release_resource(f"relay:{current.call_id}", value=relay)
+        runtime.attach_relay(current.call_id, relay)
+        relay.left_to_right_passthrough = True
+        detached_callback(relay.media_route)
+        assert not current.tasks
+        assert current.metadata["committed_media_route"] == "ha_transcoding"
+        assert sink.await_count == 3
+
+        call_projection.publish_esp_media_route(object(), current.call_id, relay.media_route)
+        await asyncio.gather(*tuple(current.tasks))
+        current_callback = relay.on_media_route_changed
+        assert callable(current_callback) and current_callback is not detached_callback
+        assert current.metadata["committed_media_route"] == "direct"
+        assert sink.await_count == 4
+        relay.left_to_right_passthrough = False
+        previous_callback(relay.media_route)
+        detached_callback(relay.media_route)
+        assert not previous.tasks and not current.tasks
+        assert current.metadata["committed_media_route"] == "direct"
+        assert relay.on_media_route_changed is current_callback
+        assert sink.await_count == 4
+
+        await relay.stop()
+        assert relay.on_media_route_changed is None
+        current_callback(relay.media_route)
+        assert not current.tasks
+        assert current.metadata["committed_media_route"] == "direct"
+        assert sink.await_count == 4
+    finally:
+        await previous.terminate(TerminationIntent("test_done"))
+        await current.terminate(TerminationIntent("test_done"))
+        await relay.stop()
+
+
 def test_phone_projection_derives_authoritative_identity(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
     sink = Mock()

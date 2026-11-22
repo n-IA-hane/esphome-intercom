@@ -364,13 +364,16 @@ async def test_sip_phone_picks_up_local_browser_call(
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("registered_phones", [{"l16": ("transfer_c",)}], indirect=True)
+@pytest.mark.parametrize("picker_codec,expected_route", [
+    ("PCMA", "direct"), ("L16", "ha_transcoding"),
+])
 async def test_sip_pickup_publishes_committed_relay_media_route(
-    trunks, registered_phones, monkeypatch
+    trunks, registered_phones, monkeypatch, picker_codec, expected_route
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from homeassistant.config_entries import ConfigSubentry
-    from custom_components.voip_stack import device_resolver, esphome_actions
+    from custom_components.voip_stack import call_projection, device_resolver, esphome_actions
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
     from custom_components.voip_stack.roster import RosterEntry
 
@@ -385,7 +388,7 @@ async def test_sip_pickup_publishes_committed_relay_media_route(
     runtime.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Picker", unique_id="phone:transfer_c",
         data={"endpoint_id": "transfer_c", "username": "transfer_c",
-              "name": "Picker", "kind": "sip_account", "audio_codecs": ["L16"]},
+              "name": "Picker", "kind": "sip_account", "audio_codecs": [picker_codec]},
     ))
     runtime.runtime.endpoints.register(PhoneEndpoint(
         endpoint_id="browser-target", name="browser-target", device_id="browser-device",
@@ -404,6 +407,14 @@ async def test_sip_pickup_publishes_committed_relay_media_route(
     sink = AsyncMock()
     monkeypatch.setattr(esphome_actions, "async_call_action", sink)
     monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
+    projected_routes = []
+    publish = call_projection.publish_esp_media_route
+
+    def observe(hass, call_id, route):
+        projected_routes.append(route)
+        publish(hass, call_id, route)
+
+    monkeypatch.setattr(call_projection, "publish_esp_media_route", observe)
     caller, _other, picker = registered_phones
 
     async def wait_for(predicate):
@@ -423,17 +434,24 @@ async def test_sip_pickup_publishes_committed_relay_media_route(
         relay = runtime.calls.resource_for(session.call_id, "relay")
         await wait_for(lambda: relay.left_tx_packets > 20 and relay.right_tx_packets > 20)
         assert relay.left.inbound_rtp_format.encoding == "PCMA"
-        assert relay.right.inbound_rtp_format.encoding == "L16"
-        assert relay.media_route == "ha_transcoding"
-        assert session.metadata.get("committed_media_route") == "ha_transcoding"
-        await wait_for(lambda: sink.await_count == 2)
+        assert relay.right.inbound_rtp_format.encoding == picker_codec
+        assert projected_routes[0] == "ha_transcoding"
+        assert relay.media_route == expected_route
+        assert session.metadata.get("committed_media_route") == expected_route
+        assert projected_routes == (["ha_transcoding", "direct"]
+                                    if expected_route == "direct" else ["ha_transcoding"])
+        await wait_for(lambda: sum(call.args[3]["route"] == expected_route
+                                  for call in sink.call_args_list) == 2)
         picker_call_id = next(leg.sip_call_id for leg in session.legs.values()
                               if leg.endpoint_id == "transfer_c" and leg.sip_call_id)
         assert {(call.args[1]["device_id"], call.args[2], call.args[3]["call_id"],
-                 call.args[3]["route"]) for call in sink.call_args_list} == {
-            ("device-transfer_a", "set_media_route", session.call_id, "ha_transcoding"),
-            ("device-transfer_c", "set_media_route", picker_call_id, "ha_transcoding"),
+                 call.args[3]["route"]) for call in sink.call_args_list
+                if call.args[3]["route"] == expected_route} == {
+            ("device-transfer_a", "set_media_route", session.call_id, expected_route),
+            ("device-transfer_c", "set_media_route", picker_call_id, expected_route),
         }
+        assert all(call.args[1]["device_id"] != "browser-device"
+                   for call in sink.call_args_list)
         assert not runtime.runtime.endpoints.get("browser-target").active_call_id
     finally:
         await asyncio.to_thread(caller.hangup)

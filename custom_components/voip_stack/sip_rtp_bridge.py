@@ -366,6 +366,7 @@ class SipRtpRelay:
         on_release: Callable[[tuple[int, int]], None] | None = None,
         on_dtmf: Callable[[str, str, str], None] | None = None,
         on_dtmf_fallback: Callable[[str, str], Awaitable[bool]] | None = None,
+        on_media_route_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.left = left
         self.right = right
@@ -379,6 +380,7 @@ class SipRtpRelay:
         self._on_release = on_release
         self.on_dtmf = on_dtmf
         self.on_dtmf_fallback = on_dtmf_fallback
+        self.on_media_route_changed = on_media_route_changed
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
         self._start_task: asyncio.Task[None] | None = None
@@ -801,6 +803,7 @@ class SipRtpRelay:
 
     def _request_stop(self) -> None:
         self._stop_requested = True
+        self.on_media_route_changed = None
         self._stop_signal.set()
 
     async def stop(self) -> None:
@@ -1240,6 +1243,7 @@ class SipRtpRelay:
                     _LOGGER.warning("RTP relay DTMF callback failed: %s", err)
             self.relay_dtmf(side, digit)
             return
+        previous_route = self.media_route if self.on_media_route_changed is not None else None
         try:
             packet = rtp.parse_packet(data)
             decoder = self.left_decoder if side == "left" else self.right_decoder
@@ -1352,6 +1356,14 @@ class SipRtpRelay:
         dest.sequence = sequence
         dest.timestamp = timestamp
         self._arm_comfort_noise(side)
+        callback = self.on_media_route_changed
+        if callback is not None and not self._stop_requested:
+            route = self.media_route
+            if route != previous_route:
+                try:
+                    callback(route)
+                except Exception:
+                    _LOGGER.debug("RTP media route observer failed", exc_info=True)
 
     def _encode_received_pcm(self, side, pcm_frames):
         """Use the same converter, encoder and RTP source for packets and CN."""
