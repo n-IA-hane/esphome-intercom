@@ -161,39 +161,28 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("state in {", phone_sensor)
 
     def test_video_reorder_timeout_and_teardown_publish_final_loss(self) -> None:
-        body = VIDEO_WS.read_text(encoding="utf-8")
-
-        input_timeout = body.index(
-            "except TimeoutError:", body.index("async def rtp_to_transcoder")
-        )
-        direct_timeout = body.index(
-            "except TimeoutError:", body.index("async def rtp_to_access_units")
-        )
-        final_store = body.index(
-            "store_counters(force=True)",
-            body.index('counters["video_rtp_dropped_packets"]'),
-        )
-        self.assertIn(
-            "_sync_video_reorder_counters(",
-            body[input_timeout : input_timeout + 500],
-        )
-        self.assertIn(
-            "_sync_video_reorder_counters(",
-            body[direct_timeout : direct_timeout + 500],
-        )
-        self.assertIn(
-            "_sync_video_reorder_counters(", body[final_store - 300 : final_store]
-        )
+        receive = VIDEO_WS.with_name("video_receive.py").read_text()
+        tree = ast.parse(receive)
+        workers = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)}
+        for name in ("rtp_to_transcoder", "rtp_to_access_units"):
+            timeout = next(handler for handler in ast.walk(workers[name])
+                           if isinstance(handler, ast.ExceptHandler)
+                           and isinstance(handler.type, ast.Name) and handler.type.id == "TimeoutError")
+            self.assertTrue(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                                and node.func.attr == "sync_reorder" for node in ast.walk(timeout)))
+        owner = _function_body(VIDEO_WS.read_text(), "_run_video_session")
+        final_store = owner.index("store_counters(force=True)")
+        self.assertIn("_sync_video_reorder_counters(", owner[final_store - 300:final_store])
 
     def test_nonfatal_video_rtcp_and_keepalive_failures_are_observable(self) -> None:
-        body = VIDEO_WS.read_text(encoding="utf-8")
-
-        self.assertIn('counters["video_rtcp_send_errors"] += 1', body)
-        self.assertIn('record_rtcp_send_error("keyframe feedback", err)', body)
-        self.assertIn('record_rtcp_send_error("report", err)', body)
-        self.assertIn("failures & (failures - 1) == 0", body)
-        self.assertIn('counters["video_keepalive_task_errors"] += 1', body)
-        self.assertIn("_observe_nonfatal_video_task", body)
+        rtcp = VIDEO_WS.with_name("video_rtcp_worker.py").read_text()
+        keepalive = VIDEO_WS.with_name("video_rtp_keepalive.py").read_text()
+        self.assertIn('self.state.counters["video_rtcp_send_errors"] += 1', rtcp)
+        self.assertIn('self.record_rtcp_send_error("keyframe feedback", err)', rtcp)
+        self.assertIn('self.record_rtcp_send_error("report", err)', rtcp)
+        self.assertIn("failures & (failures - 1) == 0", rtcp)
+        self.assertIn('counters["video_keepalive_task_errors"] += 1', keepalive)
+        self.assertIn("_observe_nonfatal_video_task", VIDEO_WS.read_text())
 
     def test_dependent_browser_video_is_paced_without_dropping_a_gop(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
@@ -213,53 +202,52 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("keepalive_task.add_done_callback", body)
 
     def test_video_media_floods_yield_and_share_one_rtp_source_lock(self) -> None:
-        body = VIDEO_WS.read_text(encoding="utf-8")
-
-        frames = VIDEO_WS.with_name("video_ws_frames.py").read_text(encoding="utf-8")
-        self.assertIn("rtp_send_lock = asyncio.Lock()", body)
-        self.assertIn("BrowserVideoSender(rtp_source, transport, rtp_send_lock,", body)
+        owner = VIDEO_WS.read_text()
+        frames = VIDEO_WS.with_name("video_ws_frames.py").read_text()
+        receive = VIDEO_WS.with_name("video_receive.py").read_text()
+        rtcp = VIDEO_WS.with_name("video_rtcp_worker.py").read_text()
+        generation = VIDEO_WS.with_name("video_receive_generation.py").read_text()
+        keepalive = VIDEO_WS.with_name("video_rtp_keepalive.py").read_text()
+        self.assertIn("rtp_send_lock = asyncio.Lock()", owner)
+        self.assertIn("BrowserVideoSender(rtp_source, transport, rtp_send_lock,", owner)
         self.assertIn("self.send_lock = send_lock", frames)
-        self.assertGreaterEqual(body.count("async with rtp_send_lock:") + frames.count("async with self.send_lock:"), 4)
-        self.assertGreaterEqual((body + frames).count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4)
-        self.assertIn("build_keepalive(", body)
-        self.assertIn("sequence = int(rtp_source.sequence)", body)
+        self.assertGreaterEqual(keepalive.count("async with rtp_send_lock:") +
+            generation.count("async with self.rtp_send_lock:") + frames.count("async with self.send_lock:"), 4)
+        self.assertGreaterEqual((receive + rtcp).count(">= self.receive_burst_packets") +
+            frames.count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4)
+        self.assertIn("build_keepalive(", keepalive)
+        self.assertIn("sequence = int(rtp_source.sequence)", keepalive)
         self.assertIn("browser video TX drops=%s", frames)
-        self.assertIn("video RTP RX drops=%s", body)
-        self.assertIn("video transcode input drops=%s", body)
+        self.assertIn("video RTP RX drops=%s", receive)
+        self.assertIn("video transcode input drops=%s", receive)
 
     def test_video_rtcp_reports_cover_send_only_and_use_current_rtp_clock(self) -> None:
-        body = VIDEO_WS.read_text(encoding="utf-8")
-        reports = body.split("    async def rtcp_reports()", 1)[1].split(
-            "\n    async def rtcp_to_browser_feedback", 1
-        )[0]
-
+        rtcp = VIDEO_WS.with_name("video_rtcp_worker.py").read_text()
+        node = next(node for node in ast.walk(ast.parse(rtcp))
+                    if isinstance(node, ast.AsyncFunctionDef) and node.name == "rtcp_reports")
+        reports = ast.get_source_segment(rtcp, node)
         initial_guard = reports.split("report_kwargs =", 1)[0]
         self.assertNotIn("latched_ssrc is None", initial_guard)
-        self.assertIn('if counters["video_rtp_tx_packets"]:', reports)
-        self.assertIn(
-            "build_sender_compound(\n                    ssrc,\n                    latched_ssrc,",
-            reports,
-        )
-        self.assertIn("rtp_timestamp=outbound_clock.current(monotonic_now)", reports)
-        self.assertIn("elif latched_ssrc is not None:", reports)
-        self.assertIn("extended_sequence.observe(packet.sequence)", body)
-        self.assertIn("extended_sequence.reset()", body)
+        self.assertIn('if self.state.counters["video_rtp_tx_packets"]:', reports)
+        self.assertIn("self.hooks.build_sender_compound(", reports)
+        self.assertIn("rtp_timestamp=self.outbound_clock.current(monotonic_now)", reports)
+        self.assertIn("elif self.state.route.latched_ssrc is not None:", reports)
+        self.assertIn("extended_sequence.observe(packet.sequence)", VIDEO_WS.with_name("video_receive.py").read_text())
+        self.assertIn("extended_sequence.reset()", VIDEO_WS.with_name("video_receive_generation.py").read_text())
 
     def test_video_pipeline_changes_restart_the_media_owner(self) -> None:
-        body = VIDEO_WS.read_text(encoding="utf-8")
-        refresh = body.split("    async def refresh_media_state", 1)[1].split(
-            "\n    try:", 1
-        )[0]
-
-        self.assertIn("_video_pipeline_signature(session)", refresh)
+        generation = VIDEO_WS.with_name("video_receive_generation.py").read_text()
+        node = next(node for node in ast.walk(ast.parse(generation))
+                    if isinstance(node, ast.AsyncFunctionDef) and node.name == "refresh")
+        refresh = ast.get_source_segment(generation, node)
+        self.assertIn("self.hooks.pipeline_signature(self.session)", refresh)
         self.assertIn('payload["restart_required"] = True', refresh)
         self.assertIn('payload["restart_reason"] = "video_pipeline_changed"', refresh)
-        self.assertIn('counters["video_pipeline_restarts"] += 1', refresh)
+        self.assertIn('self.state.counters["video_pipeline_restarts"] += 1', refresh)
         self.assertIn("return False", refresh)
-        self.assertGreaterEqual(
-            body.count("if not await refresh_media_state("),
-            5,
-        )
+        receive = VIDEO_WS.with_name("video_receive.py").read_text()
+        self.assertEqual(receive.count("if not await self.refresh_media_state("), 4)
+        self.assertIn("if not await self.refresh(generation)", generation)
 
     def test_audio_reinvite_rebuilds_codec_timing_and_capture_generation(self) -> None:
         audio_ws = (
@@ -351,34 +339,27 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("session.signaling_host", audio_ws)
 
     def test_video_rtp_setup_failure_releases_prebound_rtp_and_rtcp(self) -> None:
-        video_ws = VIDEO_WS.read_text()
-        body = _function_body(video_ws, "_run_video_session")
-        setup_failure = body.split(
-            "except (OSError, RuntimeError, ValueError) as err:", 1
-        )[1].split("browser_format =", 1)[0]
-        socket_cleanup = body.split("def close_detached_sockets()", 1)[1].split(
-            "try:", 1
-        )[0]
-        self.assertIn("session.rtp_socket.close()", socket_cleanup)
-        self.assertIn("session.rtp_socket = None", socket_cleanup)
-        self.assertIn("session.rtcp_socket.close()", socket_cleanup)
-        self.assertIn("session.rtcp_socket = None", socket_cleanup)
-        self.assertIn("close_detached_sockets()", setup_failure)
+        io = VIDEO_WS.with_name("video_ws_io.py").read_text()
+        close = _function_body(io, "close_detached_video_sockets")
+        receiver = _function_body(io, "async_open_video_receiver")
+        self.assertIn('("rtp_socket", "rtcp_socket")', close)
+        self.assertIn("sock.close()", close)
+        self.assertIn("setattr(session, name, None)", close)
+        self.assertIn("except BaseException:", receiver)
+        self.assertIn("close_detached_video_sockets(session)", receiver)
+        owner = _function_body(VIDEO_WS.read_text(), "_run_video_session")
+        self.assertIn("await async_open_video_receiver(session, protocol)", owner)
 
     def test_video_rtcp_accepts_separately_advertised_host(self) -> None:
-        video_ws = VIDEO_WS.read_text()
-        start = video_ws.index("    async def rtcp_to_browser_feedback()")
-        body = video_ws[
-            start : video_ws.index("    try:\n        if session.rtcp_socket", start)
-        ]
+        rtcp = VIDEO_WS.with_name("video_rtcp_worker.py").read_text()
+        node = next(node for node in ast.walk(ast.parse(rtcp))
+                    if isinstance(node, ast.AsyncFunctionDef) and node.name == "rtcp_to_browser_feedback")
+        body = ast.get_source_segment(rtcp, node)
         allowed = body.split("allowed_hosts = {", 1)[1].split("}", 1)[0]
-        self.assertIn("session.remote_rtcp_host", allowed)
-        self.assertIn("remote_rtcp_host", allowed)
-        self.assertIn("remote_rtcp_host_explicit", video_ws)
-        self.assertIn(
-            "latched_rtcp_source is None and not remote_rtcp_host_explicit",
-            video_ws,
-        )
+        self.assertIn("self.session.remote_rtcp_host", allowed)
+        self.assertIn("self.state.route.remote_rtcp_host", allowed)
+        receive = VIDEO_WS.with_name("video_receive.py").read_text()
+        self.assertIn("latched_rtcp_source is None and not self.state.route.remote_rtcp_host_explicit", receive)
 
     def test_final_audio_counters_preserve_terminal_sip_event(self) -> None:
         audio_ws = (
@@ -426,30 +407,21 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
 
     def test_final_video_snapshot_includes_pending_rtcp_queue_drops(self) -> None:
-        video_ws = VIDEO_WS.read_text()
-        start = video_ws.index("    def store_counters(*, force: bool = False)")
-        end = video_ws.index("    def queue_access_unit", start)
-        body = video_ws[start:end]
-        drain = body.index("_sync_video_protocol_drop_counters(")
-        persist = body.index("store.update(counters)")
-        self.assertLess(drain, persist)
-        sync_start = video_ws.index("def _sync_video_protocol_drop_counters(")
-        sync_end = video_ws.index("def _sync_video_reorder_counters(", sync_start)
-        sync_body = video_ws[sync_start:sync_end]
-        self.assertIn("rtcp_protocol.take_drop_counts()", sync_body)
-        self.assertIn('counters["video_rtcp_drop_queue"] += queue_drops', sync_body)
-        debug_line = next(
-            line for line in body.splitlines() if "if debug_mode(hass):" in line
-        )
-        publish_line = next(
-            line
-            for line in body.splitlines()
-            if "_publish_ha_softphone_state(hass, endpoint_id=endpoint_id)" in line
-        )
-        self.assertEqual(
-            len(debug_line) - len(debug_line.lstrip()),
-            len(publish_line) - len(publish_line.lstrip()),
-        )
+        source = VIDEO_WS.with_name("video_receive_diagnostics.py").read_text()
+        node = next(node for node in ast.walk(ast.parse(source))
+                    if isinstance(node, ast.FunctionDef) and node.name == "store_counters")
+        body = ast.get_source_segment(source, node)
+        self.assertLess(body.index("self.hooks.sync_protocol_drops("),
+                        body.index("store.update(self.state.counters)"))
+        sync = _function_body(VIDEO_WS.read_text(), "_sync_video_protocol_drop_counters")
+        self.assertIn("rtcp_protocol.take_drop_counts()", sync)
+        self.assertIn('counters["video_rtcp_drop_queue"] += queue_drops', sync)
+        # Both paths must publish; global debug is an optional projection only.
+        method = ast.parse(body).body[0]
+        publish = next(node for node in ast.walk(method)
+                       if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                       and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "publish")
+        self.assertIn(publish, method.body)
 
     def test_softphone_tx_dejitters_browser_delivery_on_a_bounded_playout_clock(
         self,

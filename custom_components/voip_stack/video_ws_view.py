@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 import json
 import logging
 import socket
-import struct
-import time
+import struct as struct
+import time as time
 
 from aiohttp import WSMsgType, web
 
@@ -33,7 +33,12 @@ from .video_ws_io import (
     async_open_video_receiver, async_open_receive_transcoder,
 )
 from .video_rtp_keepalive import run_symmetric_video_keepalive
-from .queue_utils import drain_queue
+from .video_receive_state import VideoReceiveRoute, VideoReceiveState, video_receive_counters
+from .video_receive import VideoReceiveHooks, VideoReceiveWorkers
+from .video_receive_generation import VideoGenerationHooks, VideoGenerationUpdates
+from .video_receive_diagnostics import VideoDiagnosticHooks, VideoReceiveDiagnostics
+from .video_rtcp_worker import VideoRtcpHooks, VideoRtcpWorkers
+from .queue_utils import drain_queue as drain_queue
 from .runtime_data import (
     call_projection,
     registration_data,
@@ -41,7 +46,7 @@ from .runtime_data import (
     sip_endpoint_manager,
 )
 from .core.video_rtcp import (
-    RtcpError,
+    RtcpError as RtcpError,
     build_fir,
     build_pli,
     build_receiver_compound,
@@ -54,11 +59,11 @@ from .video_transcoder import (
     VideoTranscoderError,
 )
 from .core.video_rtp import (
-    RtpExtendedSequenceTracker,
+    RtpExtendedSequenceTracker as RtpExtendedSequenceTracker,
     RtpReorderBuffer,
     RtpSenderState,
-    VideoAccessUnit,
-    split_annex_b,
+    VideoAccessUnit as VideoAccessUnit,
+    split_annex_b as split_annex_b,
 )
 from .core.imageattr import constraints_payload
 from .browser_phone_data import _ha_softphone_store
@@ -90,7 +95,6 @@ _KEYFRAME_FEEDBACK_INTERVAL = 1.0
 _SYMMETRIC_RTP_KEEPALIVE_INTERVAL = 0.25
 _SYMMETRIC_RTP_KEEPALIVE_ATTEMPTS = 8
 _SYMMETRIC_RTP_REFRESH_INTERVAL = 15.0
-
 
 
 def _video_loss_requires_key_frame(
@@ -214,11 +218,6 @@ def _video_pipeline_signature(session: _VideoMediaSession) -> tuple[object, ...]
         _transcoder_format_signature(session.recv_video_format),
         _transcoder_format_signature(session.browser_receive_format),
     )
-
-
-
-
-
 
 
 class VoipVideoWebSocketView(HomeAssistantView):
@@ -671,7 +670,6 @@ async def _run_local_video_session(
         )
 
 
-
 def _video_format_payload(
     video_format: sdp.RtpVideoFormat,
 ) -> dict[str, object]:
@@ -720,7 +718,6 @@ def _video_negotiation_payload(
     return payload
 
 
-
 def _sync_video_protocol_drop_counters(
     counters: dict[str, int],
     protocol: _RtpVideoProtocol,
@@ -755,7 +752,6 @@ def _sync_video_reorder_counters(
     counters["video_reordered_packets"] = active_reorder.reordered
     counters["video_lost_packets"] = active_reorder.lost
     counters["video_duplicate_packets"] = active_reorder.duplicates
-
 
 
 class _BrowserJpegNormalizer:
@@ -838,24 +834,13 @@ async def _run_video_session(
     *,
     endpoint_id: str,
 ) -> None:
-    remote_host = str(session.remote_rtp_host)
-    remote_port = int(session.remote_rtp_port)
-    remote_rtcp_host = str(session.remote_rtcp_host or remote_host)
-    remote_rtcp_port = int(session.remote_rtcp_port)
-    remote_rtcp_host_explicit = bool(
-        session.remote_rtcp_host and session.remote_rtcp_host != session.remote_rtp_host
-    )
-    remote_rtcp_offset = (
-        0
-        if session.remote_rtcp_mux
-        else int(session.remote_rtcp_port) - int(session.remote_rtp_port)
-    )
+    route = VideoReceiveRoute.from_session(session)
 
     def rtp_source_allowed(host: str) -> bool:
         return host in {
             str(session.remote_rtp_host),
             str(session.signaling_host),
-            remote_host,
+            route.remote_host,
         }
 
     queue = _ByteBudgetQueue(
@@ -953,17 +938,10 @@ async def _run_video_session(
         now=loop.time(),
     )
     session.rtp_source = rtp_source
-    sender = BrowserVideoSender(rtp_source, transport, rtp_send_lock, lambda: (remote_host, remote_port), loop)
+    sender = BrowserVideoSender(rtp_source, transport, rtp_send_lock, route.rtp_destination, loop)
     ssrc = sender.ssrc
     outbound_clock = rtp_source.clock
     outbound_clock.reset_browser()
-    applied_media_generation = int(session.media_generation)
-    active_pipeline_signature = _video_pipeline_signature(session)
-    restart_notified_generation = -1
-    media_reset_lock = asyncio.Lock()
-    latched_source: tuple[str, int] | None = None
-    latched_ssrc: int | None = None
-    latched_rtcp_source: tuple[str, int] | None = None
     registry = call_projection(hass)
     cached_parameter_sets: tuple[bytes, ...] = ()
     if registry is not None:
@@ -976,18 +954,11 @@ async def _run_video_session(
         registry,
         cached_parameter_sets,
     )
-    reorder: RtpReorderBuffer[rtp.RtpPacket] = RtpReorderBuffer()
-    input_reorder: RtpReorderBuffer[tuple[bytes, rtp.RtpPacket]] = RtpReorderBuffer()
     access_units = _ByteBudgetQueue(
         maxsize=_VIDEO_ACCESS_UNIT_QUEUE,
         max_bytes=_VIDEO_ACCESS_UNIT_QUEUE_BYTES,
         item_size=lambda item: len(item.data),
     )
-    needs_key_frame = True
-    extended_sequence = RtpExtendedSequenceTracker()
-    highest_sequence = 0
-    last_keyframe_feedback = 0.0
-    keyframe_task: asyncio.Task[bool] | None = None
     rtcp_transport: asyncio.DatagramTransport | None = None
     rtcp_queue = _ByteBudgetQueue(
         maxsize=_VIDEO_RTCP_PACKET_QUEUE,
@@ -1002,123 +973,33 @@ async def _run_video_session(
                 str(session.remote_rtp_host),
                 str(session.remote_rtcp_host),
                 str(session.signaling_host),
-                remote_host,
-                remote_rtcp_host,
+                route.remote_host,
+                route.remote_rtcp_host,
             }
         ),
         min_datagram_bytes=4,
     )
-    last_browser_keyframe_feedback = 0.0
-    counters = {
-        "video_rtp_rx_packets": 0,
-        "video_rtp_tx_packets": 0,
-        "video_rtp_rx_bytes": 0,
-        "video_rtp_tx_bytes": 0,
-        "video_rtp_tx_payload_bytes": 0,
-        "video_rtp_drop_queue": 0,
-        "video_access_units_rx": 0,
-        "video_access_units_tx": 0,
-        "video_drop_addr": 0,
-        "video_drop_payload_type": 0,
-        "video_drop_error": 0,
-        "video_drop_wait_keyframe": 0,
-        "video_drop_direction": 0,
-        "video_drop_connection_hold": 0,
-        "video_reordered_packets": 0,
-        "video_lost_packets": 0,
-        "video_duplicate_packets": 0,
-        "video_keyframe_requests": 0,
-        "video_sip_keyframe_requests": 0,
-        "video_sip_keyframe_accepted": 0,
-        "video_symmetric_rtp_keepalives": int(rtp_source.keepalives),
-        "video_symmetric_rtp_keepalive_payload_type": 0,
-        "video_access_unit_queue_max": 0,
-        "video_access_unit_queue_drops": 0,
-        "video_rate_limited_access_units": 0,
-        "video_browser_keyframe_requests": 0,
-        "video_rtcp_rx_packets": 0,
-        "video_rtcp_rx_bytes": 0,
-        "video_rtcp_tx_packets": 0,
-        "video_rtcp_tx_bytes": 0,
-        "video_rtcp_drop_addr": 0,
-        "video_rtcp_drop_error": 0,
-        "video_rtcp_drop_queue": 0,
-        "video_rtcp_send_errors": 0,
-        "video_rtcp_task_errors": 0,
-        "video_keepalive_task_errors": 0,
-        "video_rtcp_pli_rx": 0,
-        "video_rtcp_fir_rx": 0,
-        "video_rtcp_keyframe_requests_to_browser": 0,
-        "video_pipeline_restarts": 0,
-        "video_jpeg_normalized": 0,
-        "video_jpeg_normalizer_errors": 0,
-    }
+    counters = video_receive_counters(int(rtp_source.keepalives))
+    state = VideoReceiveState(route, browser_format, depacketizer,
+        int(session.media_generation), _video_pipeline_signature(session), counters)
+    diagnostics = VideoReceiveDiagnostics(hass, endpoint_id, session, state,
+        protocol, rtcp_protocol, transcode_protocol, loop,
+        VideoDiagnosticHooks(_ha_softphone_store, debug_mode, merge_media_debug,
+            _publish_ha_softphone_state, _sync_video_protocol_drop_counters))
+    store_counters = diagnostics.store_counters
+    updates = VideoGenerationUpdates(session, state, registry, cached_parameter_sets,
+        queue, media_queue, access_units, ws, ws_send_lock, rtp_send_lock,
+        outbound_clock, closed, keepalive_updated, store_counters,
+        VideoGenerationHooks(_video_pipeline_signature, _video_negotiation_payload, _make_video_depacketizer))
+    feedback = VideoRtcpWorkers(session, state, ssrc, outbound_clock, ws, ws_send_lock,
+        closed, rtcp_queue, store_counters,
+        VideoRtcpHooks(build_pli, build_fir, build_receiver_compound, build_sender_compound, parse_compound),
+        loop, _RTCP_REPORT_INTERVAL, _KEYFRAME_FEEDBACK_INTERVAL, _VIDEO_RTP_RECEIVE_BURST_PACKETS)
+    receiver = VideoReceiveWorkers(session, state, queue, media_queue, access_units,
+        closed, registry, transcoder, updates.refresh, feedback.request_key_frame, store_counters,
+        VideoReceiveHooks(decode_browser_video_packet, _video_loss_requires_key_frame, _sync_video_reorder_counters),
+        _MAX_BROWSER_RECEIVE_ACCESS_UNIT_BYTES, _VIDEO_RTP_RECEIVE_BURST_PACKETS)
     jpeg_normalizer = _BrowserJpegNormalizer(hass, session, counters)
-
-    async def refresh_media_state(generation: int) -> bool:
-        """Atomically discard packets and codec state from an older SDP generation."""
-
-        nonlocal applied_media_generation
-        nonlocal restart_notified_generation
-        nonlocal browser_format, depacketizer, reorder, input_reorder
-        nonlocal latched_source, latched_ssrc, latched_rtcp_source
-        nonlocal needs_key_frame, highest_sequence
-        nonlocal remote_host, remote_port, remote_rtcp_host, remote_rtcp_port
-        nonlocal remote_rtcp_offset, remote_rtcp_host_explicit
-        nonlocal last_keyframe_feedback
-        if generation == applied_media_generation:
-            return True
-        async with media_reset_lock:
-            if generation == applied_media_generation:
-                return True
-            if _video_pipeline_signature(session) != active_pipeline_signature:
-                if restart_notified_generation != generation:
-                    payload = _video_negotiation_payload(
-                        session, message_type="media_update"
-                    )
-                    payload["restart_required"] = True
-                    payload["restart_reason"] = "video_pipeline_changed"
-                    async with ws_send_lock:
-                        await ws.send_json(payload)
-                    restart_notified_generation = generation
-                    counters["video_pipeline_restarts"] += 1
-                    store_counters()
-                return False
-            browser_format = session.browser_receive_format
-            remote_host = str(session.remote_rtp_host)
-            remote_port = int(session.remote_rtp_port)
-            remote_rtcp_host = str(session.remote_rtcp_host or remote_host)
-            remote_rtcp_port = int(session.remote_rtcp_port)
-            remote_rtcp_host_explicit = bool(
-                session.remote_rtcp_host
-                and session.remote_rtcp_host != session.remote_rtp_host
-            )
-            remote_rtcp_offset = (
-                0 if session.remote_rtcp_mux else remote_rtcp_port - remote_port
-            )
-            latched_source = None
-            latched_ssrc = None
-            latched_rtcp_source = None
-            depacketizer = _make_video_depacketizer(
-                session.call_id,
-                browser_format,
-                registry,
-                cached_parameter_sets,
-            )
-            reorder = RtpReorderBuffer()
-            input_reorder = RtpReorderBuffer()
-            drain_queue(queue)
-            if media_queue is not queue:
-                drain_queue(media_queue)
-            drain_queue(access_units)
-            needs_key_frame = True
-            extended_sequence.reset()
-            highest_sequence = 0
-            last_keyframe_feedback = 0.0
-            async with rtp_send_lock:
-                outbound_clock.reset_browser()
-            applied_media_generation = generation
-            return True
 
     try:
         await ws.send_json(_video_negotiation_payload(session))
@@ -1147,567 +1028,6 @@ async def _run_video_session(
         session.local_direction,
     )
 
-    last_counter_event = 0.0
-
-    def store_counters(*, force: bool = False) -> None:
-        """Persist diagnostics without emitting a call lifecycle occurrence."""
-
-        nonlocal last_counter_event
-        now = loop.time()
-        interval = 0.5 if session.debug_mode else 5.0
-        if not force and now - last_counter_event < interval:
-            return
-        last_counter_event = now
-        _sync_video_protocol_drop_counters(
-            counters,
-            protocol,
-            rtcp_protocol,
-            transcode_protocol,
-        )
-        store = _ha_softphone_store(hass, endpoint_id)
-        current_call_id = str(store.get("call_id") or "")
-        if current_call_id:
-            if current_call_id != session.call_id:
-                return
-        elif str(store.get("last_terminal_call_id") or "") != session.call_id:
-            return
-        store.update(counters)
-        store["video_rtp_dropped_packets"] = protocol.dropped_packets + int(
-            transcode_protocol.dropped_packets if transcode_protocol is not None else 0
-        )
-        if debug_mode(hass):
-            merge_media_debug(
-                store,
-                call_id=session.call_id,
-                channel="video",
-                values={
-                    "local_rtp_port": session.local_rtp_port,
-                    "remote_rtp_host": remote_host,
-                    "remote_rtp_port": remote_port,
-                    "remote_rtcp_host": remote_rtcp_host,
-                    "remote_rtcp_port": remote_rtcp_port,
-                    "format": session.recv_video_format.wire_token(),
-                    "send_format": session.send_video_format.wire_token(),
-                    "receive_format": session.recv_video_format.wire_token(),
-                    "direction": session.local_direction,
-                    "remote_connection_held": session.remote_connection_held,
-                    **counters,
-                    "video_rtp_dropped_packets": store["video_rtp_dropped_packets"],
-                },
-            )
-        _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
-
-    def record_rtcp_send_error(context: str, err: BaseException) -> None:
-        """Count persistent RTCP send failures without flooding HA logs."""
-
-        counters["video_rtcp_send_errors"] += 1
-        failures = counters["video_rtcp_send_errors"]
-        # Log the first failure and powers of two thereafter. Diagnostics retain
-        # the exact count while a broken route cannot emit a warning every RTP
-        # loss or five-second report interval indefinitely.
-        if failures & (failures - 1) == 0:
-            _LOGGER.warning(
-                "HA softphone video RTCP %s failed call_id=%s failures=%d error=%s",
-                context,
-                session.call_id,
-                failures,
-                err,
-            )
-        store_counters()
-
-    def queue_access_unit(access_unit: VideoAccessUnit, now: float) -> None:
-        nonlocal needs_key_frame
-        if len(access_unit.data) > _MAX_BROWSER_RECEIVE_ACCESS_UNIT_BYTES:
-            counters["video_access_unit_queue_drops"] += 1
-            counters["video_drop_error"] += 1
-            needs_key_frame = browser_format.encoding != "JPEG"
-            request_key_frame(now)
-            return
-        if browser_format.encoding == "JPEG":
-            # Every RTP/JPEG frame is independently decodable. Retain only the
-            # newest complete image instead of allowing a slow browser to
-            # accumulate stale full-frame work.
-            dropped = 0
-            while True:
-                try:
-                    access_units.get_nowait()
-                    dropped += 1
-                except asyncio.QueueEmpty:
-                    break
-            counters["video_access_unit_queue_drops"] += dropped
-            counters["video_drop_error"] += dropped
-        if access_units.full() or not access_units.can_fit(access_unit):
-            dropped = 0
-            while True:
-                try:
-                    access_units.get_nowait()
-                    dropped += 1
-                except asyncio.QueueEmpty:
-                    break
-            counters["video_access_unit_queue_drops"] += dropped
-            counters["video_drop_error"] += dropped
-            if not access_unit.key_frame:
-                # VP8 decoders can conceal loss from later complete frames.
-                # H264 and decoded/transcoded input still require a clean IDR.
-                counters["video_access_unit_queue_drops"] += 1
-                counters["video_drop_error"] += 1
-                recover_from_video_loss(now)
-                return
-            needs_key_frame = False
-        if not access_units.can_fit(access_unit):
-            counters["video_access_unit_queue_drops"] += 1
-            counters["video_drop_error"] += 1
-            recover_from_video_loss(now)
-            return
-        access_units.put_nowait(access_unit)
-        counters["video_access_unit_queue_max"] = max(
-            counters["video_access_unit_queue_max"], access_units.qsize()
-        )
-
-    def request_key_frame(now: float) -> None:
-        nonlocal keyframe_task, last_keyframe_feedback
-        if (
-            session.remote_connection_held
-            or latched_ssrc is None
-            or now - last_keyframe_feedback < _KEYFRAME_FEEDBACK_INTERVAL
-        ):
-            return
-        feedback = set(session.send_video_format.rtcp_feedback)
-        feedback_packet = None
-        if "nack pli" in feedback:
-            feedback_packet = build_pli(ssrc, latched_ssrc)
-        elif "ccm fir" in feedback:
-            feedback_packet = build_fir(
-                ssrc,
-                latched_ssrc,
-                counters["video_keyframe_requests"] + 1,
-            )
-        if feedback_packet is None:
-            request = session.request_remote_keyframe
-            if request is None or (
-                keyframe_task is not None and not keyframe_task.done()
-            ):
-                return
-            last_keyframe_feedback = now
-            counters["video_keyframe_requests"] += 1
-
-            async def request_intra_frame() -> bool:
-                counters["video_sip_keyframe_requests"] += 1
-                try:
-                    accepted = await request()
-                except asyncio.CancelledError:
-                    raise
-                except (ConnectionError, OSError, RuntimeError, ValueError) as err:
-                    _LOGGER.info(
-                        "SIP video keyframe request failed call_id=%s error=%s",
-                        session.call_id,
-                        err,
-                    )
-                    store_counters()
-                    return False
-                if accepted:
-                    counters["video_sip_keyframe_accepted"] += 1
-                store_counters()
-                return accepted
-
-            keyframe_task = asyncio.create_task(
-                request_intra_frame(),
-                name=f"voip-video-keyframe-{session.call_id}",
-            )
-            return
-        if rtcp_transport is None:
-            return
-        raw = build_receiver_compound(
-            ssrc,
-            latched_ssrc,
-            cumulative_lost=(
-                input_reorder.lost
-                if session.requires_receive_transcoding
-                else reorder.lost
-            ),
-            highest_sequence=highest_sequence,
-            feedback=feedback_packet,
-        )
-        try:
-            rtcp_transport.sendto(raw, (remote_rtcp_host, remote_rtcp_port))
-        except (OSError, RuntimeError, ValueError) as err:
-            # Feedback is advisory. A closed/unreachable RTCP transport must
-            # not tear down the video receive task or the audio SIP dialog.
-            last_keyframe_feedback = now
-            record_rtcp_send_error("keyframe feedback", err)
-            return
-        counters["video_rtcp_tx_packets"] += 1
-        counters["video_rtcp_tx_bytes"] += len(raw)
-        last_keyframe_feedback = now
-        counters["video_keyframe_requests"] += 1
-
-    def recover_from_video_loss(now: float) -> None:
-        """Request recovery while preserving VP8 decoder error concealment."""
-
-        nonlocal needs_key_frame
-        needs_key_frame = needs_key_frame or bool(
-            _video_loss_requires_key_frame(
-                browser_format.encoding,
-                receive_transcoding=session.requires_receive_transcoding,
-            )
-        )
-        request_key_frame(now)
-
-    def consume_ordered(packet: rtp.RtpPacket, now: float) -> None:
-        nonlocal needs_key_frame, highest_sequence
-        if not session.requires_receive_transcoding:
-            highest_sequence = extended_sequence.observe(packet.sequence)
-        if depacketizer is None:
-            counters["video_drop_error"] += 1
-            return
-        access_unit = decode_browser_video_packet(
-            depacketizer, packet, browser_format, registry, session.call_id, now, recover_from_video_loss
-        )
-        if access_unit is None:
-            return
-        if needs_key_frame and not access_unit.key_frame:
-            counters["video_drop_error"] += 1
-            counters["video_drop_wait_keyframe"] += 1
-            if counters["video_drop_wait_keyframe"] == 1:
-                _LOGGER.info(
-                    "HA softphone video waiting for key frame call_id=%s "
-                    "codec=%s payload_type=%s key_frame=%s nal_types=%s",
-                    session.call_id,
-                    browser_format.encoding,
-                    packet.payload_type,
-                    access_unit.key_frame,
-                    tuple(nal[0] & 0x1F for nal in split_annex_b(access_unit.data))
-                    if browser_format.encoding == "H264" else (),
-                )
-            request_key_frame(now)
-            return
-        if access_unit.key_frame:
-            needs_key_frame = False
-        queue_access_unit(access_unit, now)
-        counters["video_access_units_rx"] += 1
-        if counters["video_access_units_rx"] % 30 == 0:
-            store_counters()
-
-    def forward_ordered_to_transcoder(item: tuple[bytes, rtp.RtpPacket]) -> None:
-        nonlocal highest_sequence
-        if transcoder is None:
-            return
-        raw, packet = item
-        highest_sequence = extended_sequence.observe(packet.sequence)
-        transcoder.send_rtp(raw)
-
-    async def rtp_to_transcoder() -> None:
-        nonlocal latched_source, latched_ssrc, remote_host, remote_port, needs_key_frame
-        nonlocal remote_rtcp_host, remote_rtcp_port
-        assert transcoder is not None
-        local_loop = asyncio.get_running_loop()
-        observed_generation = int(session.media_generation)
-        dequeued_in_burst = 0
-        drop_logs = 0
-        while not closed.is_set():
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                if not await refresh_media_state(observed_generation):
-                    return
-            deadline = input_reorder.next_deadline
-            timeout = (
-                None if deadline is None else max(0.0, deadline - local_loop.time())
-            )
-            try:
-                data, addr = await asyncio.wait_for(queue.get(), timeout=timeout)
-            except TimeoutError:
-                lost_before = input_reorder.lost
-                for ordered in input_reorder.flush(local_loop.time()):
-                    forward_ordered_to_transcoder(ordered)
-                if input_reorder.lost > lost_before:
-                    recover_from_video_loss(local_loop.time())
-                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
-                continue
-            dequeued_in_burst += 1
-            if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
-                dequeued_in_burst = 0
-                await asyncio.sleep(0)
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                if not await refresh_media_state(observed_generation):
-                    return
-            try:
-                if str(addr[0]) not in {
-                    session.remote_rtp_host,
-                    session.signaling_host,
-                }:
-                    counters["video_drop_addr"] += 1
-                    continue
-                packet = rtp.parse_packet(data)
-                if packet.payload_type != session.recv_video_format.payload_type:
-                    counters["video_drop_payload_type"] += 1
-                    continue
-                source = (str(addr[0]), int(addr[1]))
-                if latched_ssrc is not None and packet.ssrc != latched_ssrc:
-                    counters["video_drop_addr"] += 1
-                    continue
-                if latched_source is None:
-                    latched_source = source
-                    latched_ssrc = packet.ssrc
-                    remote_host, remote_port = source
-                    if latched_rtcp_source is None and not remote_rtcp_host_explicit:
-                        remote_rtcp_host = source[0]
-                        remote_rtcp_port = source[1] + remote_rtcp_offset
-                    request_key_frame(local_loop.time())
-                elif source[0] != latched_source[0]:
-                    counters["video_drop_addr"] += 1
-                    continue
-                elif source[1] != latched_source[1]:
-                    latched_source = source
-                    remote_port = source[1]
-                    if latched_rtcp_source is None and not remote_rtcp_host_explicit:
-                        remote_rtcp_port = source[1] + remote_rtcp_offset
-                counters["video_rtp_rx_packets"] += 1
-                counters["video_rtp_rx_bytes"] += len(data)
-                lost_before = input_reorder.lost
-                for ordered in input_reorder.push(
-                    packet.sequence, (data, packet), local_loop.time()
-                ):
-                    forward_ordered_to_transcoder(ordered)
-                if input_reorder.lost > lost_before:
-                    recover_from_video_loss(local_loop.time())
-                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
-            except (OSError, RuntimeError, ValueError) as err:
-                counters["video_drop_error"] += 1
-                drop_logs += 1
-                if drop_logs & (drop_logs - 1) == 0:
-                    _LOGGER.debug(
-                        "HA softphone video transcode input drops=%s latest=%s",
-                        drop_logs,
-                        err,
-                    )
-
-    async def rtp_to_access_units() -> None:
-        nonlocal latched_source, latched_ssrc, remote_host, remote_port, needs_key_frame
-        nonlocal remote_rtcp_host, remote_rtcp_port
-        loop = asyncio.get_running_loop()
-        observed_generation = int(session.media_generation)
-        dequeued_in_burst = 0
-        drop_logs = 0
-        while not closed.is_set():
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                if not await refresh_media_state(observed_generation):
-                    return
-            deadline = reorder.next_deadline
-            timeout = None if deadline is None else max(0.0, deadline - loop.time())
-            try:
-                data, addr = await asyncio.wait_for(media_queue.get(), timeout=timeout)
-            except TimeoutError:
-                lost_before = reorder.lost
-                for ordered in reorder.flush(loop.time()):
-                    consume_ordered(ordered, loop.time())
-                if reorder.lost > lost_before:
-                    recover_from_video_loss(loop.time())
-                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
-                continue
-            dequeued_in_burst += 1
-            if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
-                dequeued_in_burst = 0
-                await asyncio.sleep(0)
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                if not await refresh_media_state(observed_generation):
-                    return
-            if not session.can_receive:
-                counters["video_drop_direction"] += 1
-                continue
-            try:
-                packet = rtp.parse_packet(data)
-                if packet.payload_type != browser_format.payload_type:
-                    counters["video_drop_payload_type"] += 1
-                    continue
-                if session.requires_receive_transcoding:
-                    lost_before = reorder.lost
-                    for ordered in reorder.push(packet.sequence, packet, loop.time()):
-                        consume_ordered(ordered, loop.time())
-                    if reorder.lost > lost_before:
-                        recover_from_video_loss(loop.time())
-                    continue
-                if str(addr[0]) not in {
-                    session.remote_rtp_host,
-                    session.signaling_host,
-                }:
-                    counters["video_drop_addr"] += 1
-                    continue
-                source = (str(addr[0]), int(addr[1]))
-                if latched_ssrc is not None and packet.ssrc != latched_ssrc:
-                    counters["video_drop_addr"] += 1
-                    continue
-                if latched_source is None:
-                    latched_source = source
-                    latched_ssrc = packet.ssrc
-                    # RFC 3264 does not require an RTP packet's source tuple
-                    # to equal the c=/m= destination advertised in SDP.  Latch
-                    # the first valid negotiated payload/SSRC and send media
-                    # back to that symmetric RTP tuple, which is essential for
-                    # ordinary SIP phones behind NAT.
-                    remote_host = source[0]
-                    remote_port = source[1]
-                    if latched_rtcp_source is None and not remote_rtcp_host_explicit:
-                        remote_rtcp_host = source[0]
-                        remote_rtcp_port = source[1] + remote_rtcp_offset
-                    request_key_frame(loop.time())
-                elif source[0] != latched_source[0]:
-                    counters["video_drop_addr"] += 1
-                    continue
-                elif source[1] != latched_source[1]:
-                    latched_source = source
-                    remote_port = source[1]
-                    if latched_rtcp_source is None and not remote_rtcp_host_explicit:
-                        remote_rtcp_port = source[1] + remote_rtcp_offset
-                counters["video_rtp_rx_packets"] += 1
-                counters["video_rtp_rx_bytes"] += len(data)
-                lost_before = reorder.lost
-                for ordered in reorder.push(packet.sequence, packet, loop.time()):
-                    consume_ordered(ordered, loop.time())
-                if reorder.lost > lost_before:
-                    recover_from_video_loss(loop.time())
-                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
-            except Exception as err:  # noqa: BLE001 - a bad frame must not stop audio/call control.
-                counters["video_drop_error"] += 1
-                drop_logs += 1
-                if drop_logs & (drop_logs - 1) == 0:
-                    _LOGGER.debug(
-                        "HA softphone video RTP RX drops=%s latest=%s",
-                        drop_logs,
-                        err,
-                    )
-
-    async def rtcp_reports() -> None:
-        while not closed.is_set():
-            try:
-                await asyncio.wait_for(closed.wait(), timeout=_RTCP_REPORT_INTERVAL)
-            except TimeoutError:
-                pass
-            if (
-                closed.is_set()
-                or session.remote_connection_held
-                or rtcp_transport is None
-            ):
-                continue
-            report_kwargs = {
-                "cumulative_lost": (
-                    input_reorder.lost
-                    if session.requires_receive_transcoding
-                    else reorder.lost
-                ),
-                "highest_sequence": highest_sequence,
-            }
-            if counters["video_rtp_tx_packets"]:
-                # A send-only source has no inbound SSRC to report on. RFC
-                # 3550 still requires periodic SR/SDES, with RC=0 in that case.
-                monotonic_now = loop.time()
-                unix_now = time.time()
-                unix_seconds = int(unix_now)
-                report = build_sender_compound(
-                    ssrc,
-                    latched_ssrc,
-                    ntp_seconds=unix_seconds + 2_208_988_800,
-                    ntp_fraction=int((unix_now - unix_seconds) * (1 << 32)),
-                    rtp_timestamp=outbound_clock.current(monotonic_now),
-                    packet_count=counters["video_rtp_tx_packets"],
-                    octet_count=counters["video_rtp_tx_payload_bytes"],
-                    **report_kwargs,
-                )
-            elif latched_ssrc is not None:
-                report = build_receiver_compound(
-                    ssrc,
-                    latched_ssrc,
-                    **report_kwargs,
-                )
-            else:
-                continue
-            try:
-                rtcp_transport.sendto(report, (remote_rtcp_host, remote_rtcp_port))
-            except (OSError, RuntimeError, ValueError) as err:
-                record_rtcp_send_error("report", err)
-                continue
-            counters["video_rtcp_tx_packets"] += 1
-            counters["video_rtcp_tx_bytes"] += len(report)
-
-    async def rtcp_to_browser_feedback() -> None:
-        """Forward valid remote PLI/FIR feedback to the browser encoder."""
-
-        nonlocal latched_rtcp_source, remote_rtcp_host, remote_rtcp_port
-        nonlocal last_browser_keyframe_feedback
-        dequeued_in_burst = 0
-        while not closed.is_set():
-            data, addr = await rtcp_queue.get()
-            dequeued_in_burst += 1
-            if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
-                dequeued_in_burst = 0
-                await asyncio.sleep(0)
-            source = (str(addr[0]), int(addr[1]))
-            allowed_hosts = {
-                str(session.remote_rtp_host),
-                str(session.remote_rtcp_host),
-                str(session.signaling_host),
-                str(remote_host),
-                str(remote_rtcp_host),
-            }
-            if source[0] not in allowed_hosts:
-                counters["video_rtcp_drop_addr"] += 1
-                continue
-            if latched_rtcp_source is not None and source[0] != latched_rtcp_source[0]:
-                counters["video_rtcp_drop_addr"] += 1
-                continue
-            try:
-                packets = parse_compound(data)
-            except RtcpError:
-                counters["video_rtcp_drop_error"] += 1
-                continue
-
-            feedback = ""
-            invalid_target = False
-            for packet in packets:
-                if packet.packet_type != 206:
-                    continue
-                if packet.fmt == 1:
-                    if len(packet.payload) != 8:
-                        invalid_target = True
-                        continue
-                    _sender_ssrc, media_ssrc = struct.unpack_from("!II", packet.payload)
-                    if media_ssrc != ssrc:
-                        invalid_target = True
-                        continue
-                    counters["video_rtcp_pli_rx"] += 1
-                    feedback = "pli"
-                elif packet.fmt == 4:
-                    if len(packet.payload) < 16 or (len(packet.payload) - 8) % 8:
-                        invalid_target = True
-                        continue
-                    fir_targets = {
-                        struct.unpack_from("!I", packet.payload, offset)[0]
-                        for offset in range(8, len(packet.payload) - 7, 8)
-                    }
-                    if ssrc not in fir_targets:
-                        invalid_target = True
-                        continue
-                    counters["video_rtcp_fir_rx"] += 1
-                    feedback = "fir"
-            if invalid_target and not feedback:
-                counters["video_rtcp_drop_error"] += 1
-                continue
-
-            latched_rtcp_source = source
-            remote_rtcp_host, remote_rtcp_port = source
-            counters["video_rtcp_rx_packets"] += 1
-            counters["video_rtcp_rx_bytes"] += len(data)
-            now = loop.time()
-            if feedback and now - last_browser_keyframe_feedback >= 0.2:
-                async with ws_send_lock:
-                    await ws.send_json(
-                        {"type": "force_key_frame", "feedback": feedback}
-                    )
-                last_browser_keyframe_feedback = now
-                counters["video_rtcp_keyframe_requests_to_browser"] += 1
-                store_counters()
 
     try:
         if session.rtcp_socket is not None:
@@ -1736,46 +1056,26 @@ async def _run_video_session(
         await close_setup_resources()
         raise
 
+    feedback.transport = rtcp_transport
+
     call_ended, remove_call_listener = listen_for_media_call_end(
         hass, session.call_id, endpoint_id
     )
 
-    async def session_updates_to_ws() -> None:
-        """Apply committed re-INVITEs and notify the attached browser."""
 
-        observed_generation = int(session.media_generation)
-        while not closed.is_set():
-            await session.update_event.wait()
-            session.update_event.clear()
-            generation = int(session.media_generation)
-            if generation == observed_generation:
-                continue
-            if session.removed:
-                return
-            if not await refresh_media_state(generation):
-                return
-            observed_generation = generation
-            keepalive_updated.set()
-            async with ws_send_lock:
-                await ws.send_json(
-                    _video_negotiation_payload(session, message_type="media_update")
-                )
-
-
-
-    rx_task = asyncio.create_task(rtp_to_access_units())
+    rx_task = asyncio.create_task(receiver.rtp_to_access_units())
     ws_task = asyncio.create_task(
         _video_access_units_to_ws(ws, closed, access_units, ws_send_lock)
     )
     rtcp_task = asyncio.create_task(
-        rtcp_reports(), name=f"voip-video-rtcp-{session.call_id}"
+        feedback.rtcp_reports(), name=f"voip-video-rtcp-{session.call_id}"
     )
-    rtcp_input_task = asyncio.create_task(rtcp_to_browser_feedback())
+    rtcp_input_task = asyncio.create_task(feedback.rtcp_to_browser_feedback())
     lifetime_task = asyncio.create_task(call_ended.wait())
-    update_task = asyncio.create_task(session_updates_to_ws())
+    update_task = asyncio.create_task(updates.run())
     browser_task = asyncio.create_task(sender.run(
         ws, session, closed=closed, call_ended=call_ended, counters=counters,
-        refresh_media_state=refresh_media_state, request_key_frame=request_key_frame,
+        refresh_media_state=updates.refresh, request_key_frame=feedback.request_key_frame,
         store_counters=store_counters, jpeg_normalizer=jpeg_normalizer,
     ))
     keepalive_task = asyncio.create_task(
@@ -1783,7 +1083,7 @@ async def _run_video_session(
             session, closed=closed, keepalive_updated=keepalive_updated,
             counters=counters, sender=sender, rtp_send_lock=rtp_send_lock,
             rtp_source=rtp_source, transport=transport,
-            destination=lambda: (remote_host, remote_port), store_counters=store_counters,
+            destination=route.rtp_destination, store_counters=store_counters,
             probe_interval=_SYMMETRIC_RTP_KEEPALIVE_INTERVAL,
             probe_attempts=_SYMMETRIC_RTP_KEEPALIVE_ATTEMPTS,
             refresh_interval=_SYMMETRIC_RTP_REFRESH_INTERVAL,
@@ -1809,7 +1109,7 @@ async def _run_video_session(
         )
     )
     transcode_input_task = (
-        asyncio.create_task(rtp_to_transcoder()) if transcoder is not None else None
+        asyncio.create_task(receiver.rtp_to_transcoder()) if transcoder is not None else None
     )
     try:
         critical_tasks = {
@@ -1845,8 +1145,8 @@ async def _run_video_session(
         ]
         if transcode_input_task is not None:
             tasks.append(transcode_input_task)
-        if keyframe_task is not None:
-            tasks.append(keyframe_task)
+        if feedback.keyframe_task is not None:
+            tasks.append(feedback.keyframe_task)
         caller_cancelled = await async_stop_media_workers(
             tasks, (transport, transcode_transport, rtcp_transport)
         )
@@ -1870,7 +1170,7 @@ async def _run_video_session(
                 if transcode_protocol is not None
                 else 0
             )
-            _sync_video_reorder_counters(counters, session, reorder, input_reorder)
+            _sync_video_reorder_counters(counters, session, state.reorder, state.input_reorder)
             store_counters(force=True)
             _LOGGER.info(
                 "HA softphone video websocket detached call_id=%s counters=%s",
