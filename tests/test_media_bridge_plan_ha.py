@@ -80,6 +80,23 @@ def test_admitted_generic_caller_survives_no_feasible_bridge_optimization():
     assert plan.caller is caller
 
 
+@pytest.mark.parametrize("receive_bytes", [1920, 12288])
+def test_bridge_keeps_the_admitting_backend_receive_envelope_instead_of_preset_times(receive_bytes):
+    from custom_components.voip_stack.core.audio_capabilities import AudioCapabilities
+
+    body = ("v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 40000 RTP/AVP 96\r\n"
+            "a=rtpmap:96 L16/48000/1\r\na=ptime:10\r\na=maxptime:60\r\n").encode()
+    preferences = (AudioFormat(48000, frame_ms=10),)
+    backend = AudioCapabilities(receive_payload_bytes=receive_bytes)
+    caller = sdp.negotiate_directional(body, list(preferences), list(preferences), local_capabilities=backend)
+    callee = sdp.RtpPcmDirection(fmt(16000, ms=10), fmt(48000, ms=10))
+    plan = plan_caller_audio(body, caller, callee, send_capabilities=preferences,
+                             receive_capabilities=preferences, capabilities=backend)
+    assert plan.caller is caller
+    assert plan.caller.recv.max_frame_ms == receive_bytes // 96
+    assert plan.caller.recv.frame_ms == 20 and plan.caller.send.frame_ms == 10
+
+
 @pytest.mark.parametrize("already_accepted", [True, False])
 def test_primary_no_op_retains_hard_bounds_without_hiding_a_new_cn_mapping(already_accepted):
     from dataclasses import replace

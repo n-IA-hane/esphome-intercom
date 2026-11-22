@@ -45,7 +45,8 @@ class DirectionalPhone(ContactPeer):
 
 
 @pytest.mark.parametrize('trunks',[True],indirect=True)
-async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monkeypatch,tmp_path):
+@pytest.mark.parametrize('narrow_presets',[False,True])
+async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monkeypatch,tmp_path,narrow_presets):
     from custom_components.voip_stack.inbound_routing import bridge
     runtime = trunks
     registrar = runtime.calls.component('registrar')
@@ -55,6 +56,12 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
     await sip_trunks(runtime.hass)['work'].stop()
     runtime.runtime.trunk_configs.pop('work')
     runtime.runtime.trunk_configs['home'].update(trunk_inbound_mode='direct',trunk_inbound_default_target='caps')
+    if narrow_presets:
+        endpoint=sip_trunks(runtime.hass)['home'].inbound_endpoint
+        assert endpoint is not None
+        # Presets rank this actual listener's admission; its HA backend is dynamic.
+        monkeypatch.setattr(endpoint,'supported_send_formats',[AudioFormat(48000,'s16le',1,10)])
+        monkeypatch.setattr(endpoint,'supported_recv_formats',[AudioFormat(48000,'s16le',1,10)])
     target_audio=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     target_audio.bind(('127.0.0.1',0))
     target_audio.setblocking(False)
@@ -107,6 +114,9 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         observed['relay_receiver']=asdict(relay.left.inbound_rtp_format)
         receive_limit=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(relay.left.inbound_rtp_format)
         assert receive_limit==128
+        assert sdp.parse_sdp(observed['answer'])['ptime']==20
+        assert sdp.parse_sdp(observed['answer'])['maxptime']==128
+        assert observed['source_before']['max_frame_ms']==observed['source_after']['max_frame_ms']==128
         values=tuple(range(-480,480))
         payload=struct.pack('!960h',*values)
         packet=rtp.build_packet(rtp.RtpPacket(126,123,24000,9876,payload[:960]))[:12]+payload
@@ -127,6 +137,8 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         owner=next(endpoint for endpoint in manager._dialog_endpoints() if session.call_id in endpoint.active_dialogs)
         await wait_until(lambda:not owner.active_dialogs[session.call_id].invite_2xx.active)
         original_capabilities=owner.invite_for_call(session.call_id).local_recv_capabilities
+        original_backend=owner.invite_for_call(session.call_id).local_audio_capabilities
+        assert original_backend is HA_AUDIO_CAPABILITIES
         reoffer=sdp.rewrite_sdp_origin(caller._local_sdp_body,1725022972,1725022973).encode()
         response=await caller._send_in_dialog_request('INVITE',body=reoffer,content_type='application/sdp',timeout=2)
         assert response.status_code==200
@@ -138,6 +150,7 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         await wait_until(lambda:not owner.active_dialogs[session.call_id].invite_2xx.active)
         updated=owner.invite_for_call(session.call_id)
         assert updated.local_recv_capabilities==original_capabilities and updated.recv_format.max_frame_ms==receive_limit
+        assert updated.local_audio_capabilities is original_backend
         assert relay.left.inbound_rtp_format.max_frame_ms==receive_limit
         assert relay.right.outbound_rtp_format.frame_ms==10 and relay.right.outbound_rtp_format.max_frame_ms==10
         again=rtp.build_packet(rtp.RtpPacket(126,124,24960,9876,payload[:960]))[:12]+payload
@@ -151,6 +164,7 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
         parked=await park_established_sip_call(runtime.hass,session.call_id,'caps')
         assert parked.invite.local_recv_capabilities==original_capabilities
+        assert parked.invite.local_audio_capabilities is original_backend
         assert parked.invite.recv_format.max_frame_ms==receive_limit
         assert get_parking_lot(runtime.hass).calls
         await caller.terminate()
@@ -180,14 +194,21 @@ def test_invite_receive_capabilities_are_local_and_survive_replacement():
         ('Content-Type','application/sdp')],AST_OFFER.encode()))
     invite=endpoint._parse_invite(request,('127.0.0.2',5060))
     assert invite.local_recv_capabilities==local and isinstance(invite.local_recv_capabilities,tuple)
+    assert invite.local_audio_capabilities is HA_AUDIO_CAPABILITIES
     copied=replace(invite,cseq='2 INVITE')
     assert copied.local_recv_capabilities is invite.local_recv_capabilities
+    assert copied.local_audio_capabilities is invite.local_audio_capabilities
     destination=SimpleNamespace(recv_format=sdp.RtpPcmFormat(100,'L16',16000,1,10,max_frame_ms=20),
         send_format=sdp.RtpPcmFormat(96,'L16',48000,1,10,max_frame_ms=10))
     selected=bridge_source_audio(copied,destination)
     assert selected.local_recv_capabilities is invite.local_recv_capabilities
+    assert selected.local_audio_capabilities is invite.local_audio_capabilities
     limit=HA_AUDIO_CAPABILITIES.receive_payload_bytes
     assert rtp.audio_payload_size_limit(selected.recv_format)==limit
+    answer=sdp.build_answer_directional('127.0.0.1','127.0.0.1',40000,
+        selected.send_format,selected.recv_format,remote_sdp=selected.remote_sdp)
+    assert re.search(r'^a=ptime:20\r?$',answer,re.MULTILINE)
+    assert re.search(r'^a=maxptime:128\r?$',answer,re.MULTILINE)
     from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
     receiver=RtpAudioReceiver(selected.recv_format)
     values=tuple(range(limit//2))

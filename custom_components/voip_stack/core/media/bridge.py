@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import sdp
-from ..audio_capabilities import HA_AUDIO_CAPABILITIES
+from ..audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
 from ..audio_format import AudioFormat, PcmFormat
 from ..codec_policy import CodecPolicy
 from ..sdp_types import RtpPcmDirection, RtpPcmFormat
@@ -72,7 +72,8 @@ def plan_audio_flow(source: RtpPcmFormat, target: RtpPcmFormat) -> AudioFlowPlan
 def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcmDirection, *,
                       frozen: bool = False, codec_policy: CodecPolicy = CodecPolicy(),
                       send_capabilities: tuple[AudioFormat, ...] = (),
-                      receive_capabilities: tuple[AudioFormat, ...] = (), dahua: bool = False) -> BridgeAudioPlan:
+                      receive_capabilities: tuple[AudioFormat, ...] = (),
+                      capabilities: AudioCapabilities | None = None, dahua: bool = False) -> BridgeAudioPlan:
     """B2/B3: refine a free caller with the existing leg negotiator, or retain it.
 
     ``frozen`` means its description was actually transmitted. A queued offer
@@ -101,10 +102,11 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
         recv_formats = recv_formats[::-1]
     selected = sdp.negotiate_directional(remote_sdp, list(dict.fromkeys(send_formats)),
         list(dict.fromkeys(recv_formats)), allow_dahua_pcm=dahua, codec_policy=codec_policy,
-        local_recv_capabilities=receive_capabilities or None,
-        # The active leg engine treats this invocation's explicit alternatives
-        # as fixed. The generic HA backend remains dynamic for initial calls.
-        local_capabilities=None if send_capabilities else HA_AUDIO_CAPABILITIES)
+        # Carry the backend used for admission. Its preset list ranks choices;
+        # it cannot become a smaller fixed receiver on the bridge boundary.
+        local_recv_capabilities=(receive_capabilities or None) if capabilities is None else None,
+        local_capabilities=(capabilities if capabilities is not None else
+                            None if send_capabilities else HA_AUDIO_CAPABILITIES))
     if selected is None:
         trace.append("B2 no feasible alternative inside the caller's offer and policy")
         return result(caller)

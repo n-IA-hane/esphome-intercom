@@ -31,7 +31,8 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
         sdp.RtpPcmDirection(destination.send_format, destination.recv_format),
         frozen=invite.initial_response_sent, codec_policy=invite.codec_policy,
         send_capabilities=invite.local_send_capabilities,
-        receive_capabilities=invite.local_recv_capabilities, dahua=invite.peer_profile == "dahua")
+        receive_capabilities=invite.local_recv_capabilities,
+        capabilities=invite.local_audio_capabilities, dahua=invite.peer_profile == "dahua")
     if (plan.caller.send == invite.send_format and plan.caller.recv == invite.recv_format
             and plan.caller.recv_formats == invite.recv_formats):
         return invite
