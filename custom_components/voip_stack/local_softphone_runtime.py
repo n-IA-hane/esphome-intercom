@@ -274,6 +274,8 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             direction="incoming", reason="forwarded", last_sip_event="ROUTE_FORWARD",
         )
         registry.remove_leg(snapshot.call_id, f"local:{event.endpoint_id}")
+        if event.endpoint_id not in {snapshot.caller_endpoint_id, snapshot.callee_endpoint_id}:
+            registry.release_endpoint_claim(snapshot.call_id, event.endpoint_id)
     if event.event_type in {LocalBridgeEventType.STARTED, LocalBridgeEventType.REDIRECTED}:
         registry.upsert(
             snapshot.call_id,
@@ -296,6 +298,8 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             source_media_client_id=snapshot.caller_media_owner_id,
             local_bridge=True,
         )
+        registry.claim_endpoint(snapshot.call_id, snapshot.caller_endpoint_id, role="source")
+        registry.claim_endpoint(snapshot.call_id, snapshot.callee_endpoint_id, role="destination")
         registry.add_leg(
             snapshot.call_id,
             f"local:{snapshot.caller_endpoint_id}",

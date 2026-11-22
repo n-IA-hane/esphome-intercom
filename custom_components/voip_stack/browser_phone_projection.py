@@ -253,6 +253,12 @@ def _account_browser_media(runtime, registry, endpoint_id, call_id):
     session = registry.get_session(registry.resolve_session_id(call_id))
     if session is None or not session.live:
         return False
+    # A fork can retire its browser leg while the same participant continues
+    # through the committed local bridge. That current owner takes precedence.
+    local_bridge = getattr(runtime, "local_bridge", None)
+    local = local_bridge.get_call(session.call_id) if local_bridge is not None else None
+    if local is not None and endpoint_id in {local.caller_endpoint_id, local.callee_endpoint_id}:
+        return True
     browser_legs = [leg for leg in session.legs.values() if leg.role == "ha_softphone" and leg.endpoint_id == endpoint_id]
     live_browser_legs = [leg for leg in browser_legs if leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}]
     if browser_legs and not live_browser_legs:
@@ -260,10 +266,6 @@ def _account_browser_media(runtime, registry, endpoint_id, call_id):
     media = (registry.resource_for(call_id, f"softphone_media_endpoint:{endpoint_id}")
              or registry.resource_for(call_id, "softphone_media"))
     if isinstance(media, dict) and media.get("endpoint_id") == endpoint_id:
-        return True
-    local_bridge = getattr(runtime, "local_bridge", None)
-    local = local_bridge.get_call(call_id) if local_bridge is not None else None
-    if local is not None and endpoint_id in {local.caller_endpoint_id, local.callee_endpoint_id}:
         return True
     return bool(live_browser_legs)
 
