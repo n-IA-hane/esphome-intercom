@@ -413,7 +413,8 @@ class LocalCallMedia:
                 return
             elif int(addr[1]) != self.remote_rtp_port:
                 self.remote_rtp_port = int(addr[1])
-            pcm_frames = self.decoder.decode(packet.payload_type, packet.payload)
+            # Resampling consumes the negotiated PCM quantum, independent of RTP packet time.
+            pcm_frames = self.decoder.decode(packet.payload_type, packet.payload, normalize_frames=True)
             self.encoder.follow_received(self.decoder.format_for(packet.payload_type))
             if not pcm_frames:
                 return
