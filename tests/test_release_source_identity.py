@@ -126,3 +126,32 @@ def test_dirty_source_identity_tracks_bytes_modes_and_untracked_inputs(release_s
     assert _repository(repository)["worktree_sha256"] == second["worktree_sha256"]
     target.unlink()
     assert _repository(repository)["worktree_sha256"] != second["worktree_sha256"]
+
+
+def test_assume_unchanged_cannot_hide_changed_source(release_source):
+    repository, source, _, _, _ = release_source
+    before = _repository(repository)
+    _git(repository, "update-index", "--assume-unchanged", "custom_components/voip_stack/__init__.py")
+    (source / "__init__.py").write_text("VALUE = 999\n")
+    assert _git(repository, "status", "--porcelain") == ""
+    after = _repository(repository)
+    assert before["dirty"] is False
+    assert after["dirty"] is True
+    assert candidate_id(before) != candidate_id(after)
+
+
+def test_git_replace_cannot_change_the_source_attested_by_a_commit(release_source):
+    repository, source, head, candidate, archive = release_source
+    (source / "__init__.py").write_text('VALUE = "replacement"\n')
+    _git(repository, "add", ".")
+    _git(repository, "-c", "user.name=Qualification fixture", "-c", "user.email=fixture@example.invalid",
+         "commit", "-qm", "Replacement source")
+    replacement = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "reset", "--hard", head)
+    _git(repository, "replace", head, replacement)
+    _git(repository, "reset", "--hard", head)
+    assert (source / "__init__.py").read_text() == 'VALUE = "replacement"\n'
+    assert _repository(repository)["dirty"] is True
+    with pytest.raises(ValueError, match="bytes differ"):
+        package_candidate(source, archive, candidate, {"head": head})
+    assert not archive.exists()

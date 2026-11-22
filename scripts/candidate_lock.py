@@ -29,6 +29,8 @@ def candidate_id(payload: dict[str, object]) -> str:
 
 
 def _run(*command: str, cwd: Path | None = None) -> str:
+    if command and command[0] == "git":
+        command = ("git", "--no-replace-objects", *command[1:])
     return subprocess.run(
         command,
         cwd=cwd,
@@ -41,22 +43,38 @@ def _run(*command: str, cwd: Path | None = None) -> str:
 def _repository(path: Path) -> dict[str, object]:
     if not _is_worktree(path):
         raise RuntimeError(f"candidate repository is unavailable: {path}")
-    record = {
+    digest, content_dirty = _worktree_state(path)
+    return {
         "commit": _run("git", "rev-parse", "HEAD", cwd=path),
-        "dirty": bool(_run("git", "status", "--porcelain", cwd=path)),
+        "dirty": content_dirty or bool(_run("git", "status", "--porcelain", cwd=path)),
+        "worktree_sha256": digest,
     }
-    if record["dirty"]:
-        record["worktree_sha256"] = _worktree_digest(path)
-    return record
 
 
 def _worktree_digest(path: Path) -> str:
     """Hash tracked and nonignored untracked inputs, including modes/deletions."""
+    return _worktree_state(path)[0]
+
+
+def _worktree_state(path: Path) -> tuple[str, bool]:
+    """Compare bytes to HEAD even if index flags hide them from git status."""
+    committed = subprocess.check_output(
+        ["git", "--no-replace-objects", "ls-tree", "-rz", "HEAD"], cwd=path
+    )
+    expected = {}
+    for row in filter(None, committed.split(b"\0")):
+        metadata, name = row.split(b"\t", 1)
+        mode, kind, object_id = metadata.split()
+        if kind != b"blob":
+            raise RuntimeError(f"candidate input is not an ordinary Git blob: {os.fsdecode(name)}")
+        expected[name] = (mode.decode("ascii"), object_id.decode("ascii"))
+    object_format = _run("git", "rev-parse", "--show-object-format", cwd=path)
     listing = subprocess.check_output(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=path
+        ["git", "--no-replace-objects", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=path
     )
     index = []
-    for raw in sorted(set(filter(None, listing.split(b"\0")))):
+    dirty = False
+    for raw in sorted(set(filter(None, listing.split(b"\0"))) | expected.keys()):
         item = path / os.fsdecode(raw)
         if item.is_symlink():
             mode, content = "120000", os.fsencode(os.readlink(item))
@@ -67,8 +85,11 @@ def _worktree_digest(path: Path) -> str:
             mode, content = "deleted", b""
         else:
             raise RuntimeError(f"unsupported candidate input: {os.fsdecode(raw)}")
+        object_bytes = b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+        object_id = hashlib.new(object_format, object_bytes).hexdigest()
+        dirty |= expected.get(raw) != (mode, object_id)
         index.append((raw.hex(), mode, hashlib.sha256(content).hexdigest()))
-    return hashlib.sha256(json.dumps(index, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(index, separators=(",", ":")).encode()).hexdigest(), dirty
 
 
 def _is_worktree(path: Path) -> bool:

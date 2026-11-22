@@ -14,7 +14,7 @@ COMPONENT = Path("custom_components/voip_stack")
 
 
 def git_bytes(repository: Path, *arguments: str) -> bytes:
-    return subprocess.check_output(["git", "-C", str(repository), *arguments])
+    return subprocess.check_output(["git", "--no-replace-objects", "-C", str(repository), *arguments])
 
 
 def committed_members(repository: Path, commit: str) -> list[tuple[str, bytes]]:
