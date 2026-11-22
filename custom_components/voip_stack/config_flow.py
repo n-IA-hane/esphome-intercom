@@ -441,7 +441,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
     VERSION = 7
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
     _base_input: dict | None = None
 
     @classmethod

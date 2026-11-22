@@ -481,3 +481,46 @@ def test_sip_account_services_share_contact_assist_and_group_namespace() -> None
                 entry,
                 [dict(base, **changes)],
             )
+
+
+@pytest.mark.parametrize("identity,username,reference,expected", [
+    ("browser:legacy", "ha_browser_legacy", "browser:legacy", True),
+    ("browser:legacy", "ha_browser_legacy_2", "browser:legacy", True),
+    ("browser:legacy", "ha_browser_legacy_12", "browser:legacy", True),
+    ("browser:legacy", "ha_phone_legacy", "browser:legacy", True),
+    ("browser:legacy", "ha_phone_legacy_2", "browser:legacy", True),
+    ("browser:legacy", "ha_phone_legacy_12", "browser:legacy", True),
+    ("browser:casa upstairs", "ha_browser_casa_upstairs", "browser:casa upstairs", True),
+    ("browser:casa upstairs", "ha_phone_casa_upstairs", "browser:casa upstairs", True),
+    ("browser:legacy", "ha_browser_other", "browser:legacy", False),
+    ("browser:legacy", "ha_browser_legacy_1", "browser:legacy", False),
+    ("browser:legacy", "ha_browser_legacy_02", "browser:legacy", False),
+    ("browser:legacy", "ha_browser_legacy_2x", "browser:legacy", False),
+    ("browser:legacy", "ha_browser_legacy ", "browser:legacy", False),
+    ("browser:legacy", "ha_browser_legacy", "browser:other", False),
+    ("browser:legacy", "ha_browser_legacy", None, False),
+    ("browser:legacy", "custom-login", "browser:legacy", False),
+])
+def test_generated_login_requires_its_exact_historical_rule_and_migration_owner(identity, username, reference, expected):
+    binding = {"source": "migration"}
+    if reference is not None:
+        binding["reference"] = "legacy_ha_phone:" + reference
+    assert bool(phone_config._is_generated_browser_login({
+        "endpoint_id": identity, "username": username, "ha_bindings": [binding],
+    })) is expected
+
+
+@pytest.mark.parametrize("username,expected", [
+    ("ha_browser_" + "x" * 40, True),
+    ("ha_browser_" + "x" * 40 + "_2", True),
+    ("ha_browser_" + "x" * 41, False),
+    ("ha_phone_" + "x" * 48, True),
+    ("ha_phone_" + "x" * 48 + "_10", True),
+    ("ha_phone_" + "x" * 49, False),
+])
+def test_generated_login_preserves_historical_truncation_boundaries(username, expected):
+    identity = "browser:" + "x" * 60
+    assert bool(phone_config._is_generated_browser_login({
+        "endpoint_id": identity, "username": username,
+        "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:" + identity}],
+    })) is expected

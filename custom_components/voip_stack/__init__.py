@@ -166,8 +166,9 @@ async def async_migrate_entry(
         data.pop("voicemail_enabled", None)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=4)
     if config_entry.version < 7:
-        from .phone_config import migrate_browser_accounts
+        from .phone_config import generated_browser_login_updates, migrate_browser_accounts
         try:
+            generated_browser_login_updates(config_entry)
             migrate_browser_accounts(hass, config_entry)
         except PhoneRouteConflict as error:
             async_sync_account_route_issue(hass, config_entry, error)
@@ -182,13 +183,37 @@ async def async_migrate_entry(
         async_sync_account_route_issue(hass, config_entry)
         hass.config_entries.async_update_entry(config_entry, version=7, minor_version=0)
     if config_entry.version == 7 and config_entry.minor_version < 1:
-        from .phone_config import migrate_phone_identity_storage
+        from .phone_config import generated_browser_login_updates, migrate_phone_identity_storage
         try:
+            generated_browser_login_updates(config_entry)
             migrate_phone_identity_storage(hass, config_entry)
-        except (ValueError, TypeError, KeyError):
+        except PhoneRouteConflict as error:
+            async_sync_account_route_issue(hass, config_entry, error)
+            _LOGGER.error("Cannot migrate VoIP phone identities: %s", error)
+            return False
+        except (ValueError, TypeError, KeyError) as error:
+            if str(error) == "phone_identity_conflict":
+                from .repairs import async_sync_phone_identity_issue
+                async_sync_phone_identity_issue(hass, config_entry, error)
             _LOGGER.error("Cannot migrate VoIP phone identities; resolve the reported identity or route conflict")
             return False
         hass.config_entries.async_update_entry(config_entry, minor_version=1)
+    if config_entry.version == 7 and config_entry.minor_version < 2:
+        from .phone_config import migrate_generated_browser_logins
+        try:
+            migrate_generated_browser_logins(hass, config_entry)
+        except PhoneRouteConflict as error:
+            async_sync_account_route_issue(hass, config_entry, error)
+            _LOGGER.error("Cannot migrate VoIP account logins: %s", error)
+            return False
+        except (ValueError, TypeError, KeyError) as error:
+            if str(error) == "phone_identity_conflict":
+                from .repairs import async_sync_phone_identity_issue
+                async_sync_phone_identity_issue(hass, config_entry, error)
+            _LOGGER.error("Cannot migrate VoIP account logins: account configuration or route namespace is invalid")
+            return False
+        async_sync_account_route_issue(hass, config_entry)
+        hass.config_entries.async_update_entry(config_entry, minor_version=2)
     return True
 
 
