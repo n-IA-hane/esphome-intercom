@@ -2370,6 +2370,8 @@ class VoipStackCard extends HTMLElement {
     if (!card) return;
     this._resizeObserver.disconnect();
     this._resizeObserver.observe(card);
+    const callBar = this._els?.hangupBtn?.parentElement;
+    if (callBar) this._resizeObserver.observe(callBar);
     if (this._els?.keypadPanel) this._resizeObserver.observe(this._els.keypadPanel);
     if (this._els?.runtimeControls) this._resizeObserver.observe(this._els.runtimeControls);
     this._measureLayout();
@@ -2382,6 +2384,10 @@ class VoipStackCard extends HTMLElement {
     const height = card.clientHeight;
     card.style.setProperty("--voip-video-control-size", `${Math.max(24, Math.min(36, width / 12))}px`);
     const controls = this._els?.runtimeControls;
+    const callBar = this._els?.hangupBtn?.parentElement;
+    const callBarHeight = card.classList.contains("video-active") && !this._settingsOpen
+      ? callBar?.getBoundingClientRect().height || 0 : 0;
+    card.style.setProperty("--voip-video-controls-height", `${callBarHeight}px`);
     card.style.setProperty("--voip-video-actions-space", "0px");
     if (controls && card.classList.contains("video-active") && !this._settingsOpen) {
       const bounds = controls.getBoundingClientRect();

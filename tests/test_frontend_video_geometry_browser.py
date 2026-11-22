@@ -81,6 +81,7 @@ GEOMETRY = r"""() => {
  return {slot:rect(holder),host:rect(card),card:rect(e.card),canvas:rect(e.videoCanvas),
    objectFit:style.objectFit,objectPosition:style.objectPosition,
    intrinsic:{width:e.videoCanvas.width,height:e.videoCanvas.height},hangup:rect(e.hangupBtn),
+   toolbar:rect(e.hangupBtn.parentElement),
    actions:[...e.runtimeControls.querySelectorAll('button')].filter(b=>!b.hidden&&b.getBoundingClientRect().width)
      .map(b=>({label:b.getAttribute('aria-label'),rect:rect(b)})),mics,services};
 }"""
@@ -108,7 +109,7 @@ def media_pixels(page, path):
 
 @pytest.mark.parametrize("presenter", ["card", "dashboard"])
 @pytest.mark.parametrize("slot", [(240, 240), (500, 220), (500, 440)])
-@pytest.mark.parametrize("frame", [(320, 240), (240, 425), (240, 240)])
+@pytest.mark.parametrize("frame", [(640, 360), (320, 240), (240, 425), (240, 240)])
 def test_decoded_video_centers_without_cropping_inside_its_visible_slot(video_page, tmp_path, presenter, slot, frame):
     page = video_page
     geometry = show_video(page, presenter, slot, frame)
@@ -121,7 +122,14 @@ def test_decoded_video_centers_without_cropping_inside_its_visible_slot(video_pa
     assert geometry["objectFit"] == "contain" and geometry["objectPosition"] == "50% 50%"
     assert geometry["intrinsic"] == {"width": frame[0], "height": frame[1]}
     assert abs(canvas["x"] + content["x"] + content["width"] / 2 - (viewport["x"] + viewport["width"] / 2)) <= 1.5
-    assert abs(canvas["y"] + content["y"] + content["height"] / 2 - (viewport["y"] + viewport["height"] / 2)) <= 1.5
+    # The actual toolbar occludes the bottom of the card. Center the complete
+    # decoded frame in the region above it, including on narrow HA slots.
+    toolbar = geometry["toolbar"]
+    assert abs(canvas["bottom"] - toolbar["top"]) <= 1.5
+    frame_top = canvas["y"] + content["y"]
+    frame_bottom = frame_top + content["height"]
+    assert abs((frame_top - canvas["top"]) - (toolbar["top"] - frame_bottom)) <= 2
+    assert abs((frame_top + frame_bottom) / 2 - (canvas["top"] + toolbar["top"]) / 2) <= 1.5
     scale = min(canvas["width"] / frame[0], canvas["height"] / frame[1])
     assert abs(content["width"] - frame[0] * scale) <= 2
     assert abs(content["height"] - frame[1] * scale) <= 2
@@ -156,18 +164,56 @@ def test_encoded_black_padding_is_preserved_instead_of_cropped_to_fake_centering
 
 
 @pytest.mark.parametrize("presenter", ["card", "dashboard"])
-def test_small_video_slot_keeps_only_the_left_handset_as_hangup(video_page, presenter):
+@pytest.mark.parametrize("slot", [(320, 240), (500, 440)])
+def test_small_video_slot_keeps_only_the_left_handset_as_hangup(video_page, presenter, slot):
     page = video_page
-    geometry = show_video(page, presenter, (320, 240), (320, 240))
-    page.evaluate("() => { window.hangups=0; card._hangup=()=>hangups++; }")
+    geometry = show_video(page, presenter, slot, (640, 360))
+    page.evaluate("""() => {
+      window.hangups=0; window.parks=[]; card._hangup=()=>hangups++;
+      const send=hass.connection.sendMessagePromise;
+      hass.connection.sendMessagePromise=async request=>{
+        if(request.type==='call_service'&&request.domain==='voip_stack'&&request.service==='park'){
+          parks.push(request);return {};
+        }
+        return send(request);
+      };
+    }""")
     phone = page.locator("voip-stack-card")
     controls = page.locator("voip-stack-dashboard-card") if presenter == "dashboard" else phone
     phone.locator(".hangup-peer").click()
     phone.locator(".hangup-duration").click()
-    for label in ("Options", "Options", "Keypad", "Contacts", "Park call"):
+    for index, label in enumerate(("Options", "Options", "Keypad", "Contacts", "Park call")):
         controls.get_by_role("button", name=label, exact=True).click()
+        if label == "Options":
+            assert page.evaluate("card._settingsOpen") is (index == 0)
+        if label in ("Keypad", "Contacts"):
+            assert page.evaluate("card._keypadOpen()") is (label == "Keypad")
         assert page.evaluate("hangups") == 0
         assert page.evaluate("services.filter(item=>item.service==='hangup').length") == 0
+    assert page.evaluate("parks.length") == 1
+    assert page.evaluate("parks[0].service_data") == {"device_id": "desk-device"}
     phone.get_by_role("button", name="Hang up call", exact=True).click()
     assert page.evaluate("hangups") == 1
     assert geometry["hangup"]["width"] == 48
+
+
+@pytest.mark.parametrize("presenter", ["card", "dashboard"])
+def test_video_region_follows_measured_toolbar_and_slot_resize(video_page, tmp_path, presenter):
+    page = video_page
+    show_video(page, presenter, (500, 440), (640, 360))
+    # A theme can change the actual bar height without resizing the card.
+    page.evaluate("card._els.hangupBtn.parentElement.style.height='73px'")
+    page.wait_for_function("Math.abs(card._els.videoCanvas.getBoundingClientRect().bottom - card._els.hangupBtn.parentElement.getBoundingClientRect().top)<1.5")
+    for width, height in ((500, 440), (240, 240), (500, 220)):
+        page.evaluate("([width,height])=>{holder.style.width=`${width}px`;holder.style.height=`${height}px`}", [width, height])
+        page.wait_for_function("([width,height])=>Math.abs(card.getBoundingClientRect().width-width)<3 && Math.abs(card.getBoundingClientRect().height-height)<3", arg=[width, height])
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        geometry = page.evaluate(GEOMETRY)
+        _, content = media_pixels(page, tmp_path / f"resized-{width}x{height}.png")
+        canvas, toolbar = geometry["canvas"], geometry["toolbar"]
+        assert toolbar["height"] == 73
+        assert abs(canvas["bottom"] - toolbar["top"]) <= 1.5
+        assert abs(canvas["top"] + content["y"] + content["height"] / 2 - (canvas["top"] + toolbar["top"]) / 2) <= 1.5
+        assert geometry["hangup"]["width"] == 48
+        assert geometry["card"]["height"] <= geometry["slot"]["height"] + 1
+        assert geometry["mics"] == 0

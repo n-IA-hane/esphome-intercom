@@ -134,6 +134,10 @@ export function buildMainCardSkeleton(cardVersion) {
         max-width: 100%; max-height: 100%; object-fit: contain; background: #000;
         border-radius: inherit; pointer-events: none;
       }
+      /* Center the complete decoded frame above the actual call controls. */
+      .video-active:not(.settings-open) .video-canvas {
+        height: max(0px, calc(100% - var(--voip-video-controls-height, 0px)));
+      }
       .native-camera {
         position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
         overflow: hidden; background: #000; border-radius: inherit;
