@@ -89,6 +89,7 @@ class CallRuntimeApi:
             context.sequence += 1
         if state == "in_call" and not context.connected_at:
             context.connected_at = time.monotonic()
+            context.connected_at_epoch = time.time()
         if state in TERMINAL_STATES and context.connected_at and context.duration_seconds is None:
             context.duration_seconds = max(
                 0, round(time.monotonic() - context.connected_at)

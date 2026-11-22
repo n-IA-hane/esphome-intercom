@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Any
 
 from homeassistant.core import (
@@ -375,15 +374,6 @@ def _set_ha_softphone_call_state(
     )
     state = canonical["state"]
     next_call_id = str(canonical.get("call_id") or "")
-    previous_state = str(store.get("state") or "").strip().lower()
-    if state == CallState.IN_CALL.value:
-        if (
-            next_call_id != previous_call_id
-            or previous_state != CallState.IN_CALL.value
-        ):
-            extra.setdefault("connected_at", time.time())
-        elif store.get("connected_at"):
-            extra.setdefault("connected_at", store["connected_at"])
     if not terminal:
         if "video_requested" not in extra and "video_offered" in extra:
             extra["video_requested"] = bool(extra.get("video_offered"))
@@ -461,6 +451,8 @@ def _set_ha_softphone_call_state(
         for key, value in extra.items()
         if value not in (None, "") or key in {"target_device_id", "target_endpoint_id"}
     })
+    if state == CallState.IN_CALL.value and session is not None and session.live:
+        payload["connected_at"] = session.event_context.connected_at_epoch
     if terminal and store.get("terminal_reason"):
         payload["terminal_reason"] = store["terminal_reason"]
     if terminal and store.get("last_terminal_dialed_target"):

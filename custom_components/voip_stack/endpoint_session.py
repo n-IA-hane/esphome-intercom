@@ -240,6 +240,7 @@ class CallEventContext:
     terminal_endpoint_ids: frozenset[str] = field(default_factory=frozenset)
     terminal_identity_fields: dict[str, Any] = field(default_factory=dict)
     trigger_sequences: WeakKeyDictionary[object, tuple[int, str]] | None = field(default=None, repr=False)
+    connected_at_epoch: float = 0.0
 
     def accept_trigger(self, subscriber: object, sequence: int, destination: str) -> bool:
         """Publish a call transition once per native subscription and destination."""

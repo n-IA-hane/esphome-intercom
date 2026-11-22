@@ -1409,6 +1409,25 @@ videoParking._softphoneSnapshot.video_active = false;
 videoParking._render();
 assert.equal(videoParking._els.parkBtn.disabled, false);
 
+// An account observed from HA retains the same duration UI when a native SIP
+// Contact owns media. The existing timer updates its text without a rerender.
+const sipDurationObserver = makeCard();
+sipDurationObserver._applySoftphoneSnapshot({{
+  endpoint_id: "casa", device_id: "device-casa", call_id: "shared-sip-winner",
+  state: "in_call", direction: "incoming", peer_name: "Fanvil X3U Pro",
+  connected_at: Date.now() / 1000 - 65, can_attach_media: false, sequence: 3,
+}});
+sipDurationObserver._render();
+assert.equal(sipDurationObserver._els.hangupBtn.hidden, false);
+assert.equal(sipDurationObserver._els.audioCallSummary.hidden, false);
+assert.equal(sipDurationObserver._els.audioCallDuration.textContent, "01:05");
+assert.ok(sipDurationObserver._videoDurationTimer);
+sipDurationObserver._render = () => {{ throw new Error("duration tick rerendered the card"); }};
+sipDurationObserver._softphoneSnapshot.connected_at -= 1;
+sipDurationObserver._updateCallDuration();
+assert.equal(sipDurationObserver._els.audioCallDuration.textContent, "01:06");
+sipDurationObserver._syncVideoDurationTimer(false);
+
 // Provisional SIP responses never render as an answered call. Only the
 // authoritative final state can switch the card to "In Call".
 assert.equal(card._applySoftphoneSnapshot({{ ...base, state: "calling", sequence: 1 }}), true);

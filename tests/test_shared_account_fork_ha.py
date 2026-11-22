@@ -7,6 +7,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -241,6 +242,7 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
                 await asyncio.sleep(.01)
         call_id = initial["calls"][0]["call_id"]
         assert_no_browser_media_owner(runtime)
+        connected_after = time.time()
         await asyncio.to_thread(peers[0].command, "/accept")
         await asyncio.to_thread(caller.wait_for, "Call established", 3)
         await asyncio.to_thread(peers[0].wait_for, "Call established", 3)
@@ -255,6 +257,7 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         evidence = {"call_id": session.call_id, "owner": session.owner, "session_state": session.state,
             "account_claim_retained": "casa" in session.endpoint_claims,
             "account_state": phone["state"], "browser_snapshot_state": snapshot.get("state"),
+            "connected_at": snapshot.get("connected_at"),
             "actual_contacts": len(runtime.calls.component("registrar").registered_contacts(runtime.browser_subentry.data["username"])),
             "callee_console_answered": "Call established" in peers[0].read(),
             "caller_console_answered_once": caller.read().count("Call established") == 1,
@@ -271,13 +274,16 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         assert snapshot["state"] == "in_call", evidence
         assert snapshot["can_attach_media"] is False, evidence
         assert snapshot["can_control"] is True, evidence
+        assert connected_after <= snapshot["connected_at"] <= time.time(), evidence
         from custom_components.voip_stack.websocket_api import _client_phone_state
         readonly = _client_phone_state(runtime.hass, SimpleNamespace(user=hass_read_only_user), "casa")
         assert readonly["state"] == "in_call" and readonly["can_control"] is False
+        assert readonly["connected_at"] == snapshot["connected_at"]
         model = Path(__file__).resolve().parents[1] / "custom_components/voip_stack/frontend/voip-stack-card-model.js"
         subprocess.run(["node", "--input-type=module", "-e",
-            f"import {{phoneCallPresentation}} from {model.as_uri()!r};let input='';for await(const chunk of process.stdin)input+=chunk;"
-            "for(const snapshot of JSON.parse(input))if(phoneCallPresentation(snapshot).state!=='in_call')throw Error('SIP observer lost its call');"],
+            f"import {{phoneCallPresentation,formatCallDuration}} from {model.as_uri()!r};let input='';for await(const chunk of process.stdin)input+=chunk;"
+            "for(const snapshot of JSON.parse(input)){if(phoneCallPresentation(snapshot).state!=='in_call')throw Error('SIP observer lost its call');"
+            "if(formatCallDuration(snapshot.connected_at,snapshot.connected_at+65)!=='01:05')throw Error('SIP observer lost its duration');}"],
             input=json.dumps([snapshot, readonly]), text=True, check=True)
         (tmp_path / "account-observer-payloads.json").write_text(json.dumps([snapshot, readonly], indent=2))
         ha_legs = [leg for leg in session.legs.values() if leg.role == "ha_softphone"]
@@ -291,6 +297,17 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         async with asyncio.timeout(3):
             while min(relay.left_tx_packets, relay.right_tx_packets) < 30:
                 await asyncio.sleep(.01)
+        from custom_components.voip_stack.phone_state import phone_states
+
+        await asyncio.to_thread(peers[0].command, "/hold")
+        await wait_for(lambda: phone_states(runtime.hass)["casa"]["state"] == "held")
+        held = await browser_snapshot(observer)
+        assert held["connected_at"] == snapshot["connected_at"]
+        await asyncio.to_thread(peers[0].command, "/resume")
+        await wait_for(lambda: phone_states(runtime.hass)["casa"]["state"] == "in_call")
+        resumed = await browser_snapshot(observer)
+        assert resumed["connected_at"] == snapshot["connected_at"]
+        assert resumed["can_attach_media"] is False
     finally:
         await observer.close()
         await end_call(runtime, caller)
@@ -402,8 +419,13 @@ async def test_incoming_account_application_takeover_publishes_no_false_outgoing
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 @pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 6}], indirect=True)
 async def test_ha_winner_cancels_both_shared_sip_contacts(shared_account, hass_ws_client):
+    from custom_components.voip_stack.const import CALL_EVENT, SIP_CALL_STATE_EVENT
+
     runtime, caller, peers = shared_account
     observer = await open_browser_ws(runtime, hass_ws_client)
+    events = {CALL_EVENT: [], SIP_CALL_STATE_EVENT: []}
+    unsubscribe = [runtime.hass.bus.async_listen(name,
+        lambda event: events[event.event_type].append(dict(event.data))) for name in events]
     try:
         target = f'sip:221@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}'
         await asyncio.to_thread(caller.command, f"/dial {target}")
@@ -413,6 +435,7 @@ async def test_ha_winner_cancels_both_shared_sip_contacts(shared_account, hass_w
             while (initial := await public_phone(runtime))["state"] != "ringing":
                 await asyncio.sleep(.01)
         call_id, generation = initial["calls"][0]["call_id"], initial["calls"][0]["generation"]
+        connected_after = time.time()
         await runtime.hass.services.async_call("voip_stack", "answer", {"device_id": "browser-casa",
             "call_id": call_id, "media_client_id": "shared-ha-winner"}, blocking=True)
         await asyncio.to_thread(caller.wait_for, "Call established", 3)
@@ -420,12 +443,23 @@ async def test_ha_winner_cancels_both_shared_sip_contacts(shared_account, hass_w
         assert session is not None and session.generation == generation and "casa" in session.endpoint_claims
         snapshot = await browser_snapshot(observer)
         assert snapshot["state"] == "in_call" and snapshot["can_attach_media"] is True
+        assert connected_after <= snapshot["connected_at"] <= time.time()
+        await runtime.hass.async_block_till_done()
+        for values in events.values():
+            answered = [event for event in values if event.get("call_id") == call_id
+                        and event.get("scope") == "session" and event.get("state") == "in_call"]
+            assert answered
+            assert all(event.get("connected_at") == snapshot["connected_at"] for event in answered)
         assert caller.read().count("Call established") == 1
         assert all("Call established" not in peer.read() for peer in peers)
         await assert_no_active_calls(peers)
         await runtime.hass.services.async_call("voip_stack", "hangup", {
             "device_id": "browser-casa", "call_id": call_id, "expected_generation": generation}, blocking=True)
+        ended = await browser_snapshot(observer)
+        assert ended["connected_at"] == 0
     finally:
+        for remove in unsubscribe:
+            remove()
         await observer.close()
         await end_call(runtime, caller)
 

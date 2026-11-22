@@ -28,6 +28,33 @@ class Connection:
         pass
 
 
+@pytest.mark.parametrize("kind", [EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT])
+async def test_duration_projects_the_call_clock_instead_of_a_stale_browser_cache(
+    hass, phones, kind
+):
+    phones.endpoints.update("kitchen", kind=kind)
+    with phones.calls.state_operation():
+        session = phones.calls.upsert(
+            "duration-owner", state="in_call", owner="ha_softphone",
+            caller="Office", callee="Kitchen", dest_endpoint_id="kitchen",
+        )
+        phones.calls.claim_endpoint(session.call_id, "kitchen", role="destination")
+        phones.calls.observe_leg(session.call_id, "browser:kitchen", role="ha_softphone",
+            endpoint_id="kitchen", state="in_call")
+    websocket_api._ha_softphone_store(hass, "kitchen").update(
+        call_id=session.call_id, state="in_call", connected_at=1.0,
+    )
+    state = websocket_api._ha_softphone_state(hass, "kitchen")
+    assert state["connected_at"] == session.event_context.connected_at_epoch
+    assert state["connected_at"] > 1.0
+    assert state["can_attach_media"]
+    await phones.calls.terminate_call_wait(session.call_id, reason="remote_hangup")
+    _set_ha_softphone_call_state(
+        hass, "idle", endpoint_id="kitchen", call_id=session.call_id,
+    )
+    assert websocket_api._ha_softphone_state(hass, "kitchen")["connected_at"] == 0
+
+
 async def test_closing_losing_browser_updates_stream_without_republishing_sip_dialog(
     hass, phones, hass_admin_user
 ):
@@ -156,6 +183,8 @@ async def test_terminal_commit_replay_preserves_native_idle_scope_and_successor(
             calls.claim_endpoint(session.call_id, "kitchen", role="source")
             calls.observe_leg(session.call_id, "caller-A", role="caller",
                 state="in_call", endpoint_id="kitchen")
+        await hass.async_block_till_done()
+        assert connection.events[-1]["connected_at"] > 0
         await calls.terminate_call_wait(session.call_id, reason="remote_hangup")
         await hass.async_block_till_done()
         terminal = session.committed_state
@@ -163,6 +192,7 @@ async def test_terminal_commit_replay_preserves_native_idle_scope_and_successor(
         assert connection.events[-1]["state"] == "idle"
         assert connection.events[-1]["call_id"] == session.call_id
         assert connection.events[-1]["generation"] == session.generation
+        assert connection.events[-1]["connected_at"] == 0
         ended_events = deepcopy(connection.events)
         observer = phone_state_observer(hass)
         observer._committed(terminal)
@@ -186,5 +216,6 @@ async def test_terminal_commit_replay_preserves_native_idle_scope_and_successor(
         assert connection.events == successor_events
         assert connection.events[-1]["state"] == "in_call"
         assert connection.events[-1]["call_id"] == successor.call_id
+        assert connection.events[-1]["connected_at"] == successor.event_context.connected_at_epoch
     finally:
         connection.subscriptions[2]()

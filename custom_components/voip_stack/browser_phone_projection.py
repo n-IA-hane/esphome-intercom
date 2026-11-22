@@ -511,7 +511,12 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "video_transcoding_enabled": bool(
             transport_config.get(CONF_VIDEO_TRANSCODING, False)
         ),
-        "connected_at": float(store.get("connected_at", 0.0) or 0.0),
+        "connected_at": (
+            event_context.connected_at_epoch
+            if session is not None and session.live and event_context is not None
+            and store.get("state") in {"in_call", "held", "transferring"}
+            else 0.0
+        ),
         "sip_transport": store.get("sip_transport", "udp+tcp"),
         "sip_status_code": last_status,
         "terminal_reason": store.get("terminal_reason", ""),

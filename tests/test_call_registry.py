@@ -459,6 +459,25 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         self.assertEqual(ended["duration_seconds"], 45)
 
+    def test_connection_clock_survives_hold_and_resume(self) -> None:
+        registry = _registry()
+        first = registry.upsert("shared", state="ringing", owner="bridge")
+        self.assertEqual(first.event_context.connected_at_epoch, 0.0)
+
+        with mock.patch(
+            "custom_components.voip_stack.call_registry.time.monotonic",
+            return_value=100.0,
+        ), mock.patch(
+            "custom_components.voip_stack.call_registry.time.time",
+            return_value=1_795_314_700.0,
+        ) as wall_clock:
+            registry.upsert("shared", state="in_call")
+            for state in ("held", "in_call", "in_call"):
+                registry.upsert("shared", state=state)
+                self.assertEqual(first.event_context.connected_at, 100.0)
+                self.assertEqual(first.event_context.connected_at_epoch, 1_795_314_700.0)
+            self.assertEqual(wall_clock.call_count, 1)
+
     def test_terminal_duration_is_frozen_and_resets_for_reused_physical_id(
         self,
     ) -> None:
@@ -467,17 +486,26 @@ class CallRegistryEventContextTest(unittest.TestCase):
         with mock.patch(
             "custom_components.voip_stack.call_registry.time.monotonic",
             side_effect=(100.0, 145.4, 200.0, 207.2),
+        ), mock.patch(
+            "custom_components.voip_stack.call_registry.time.time",
+            side_effect=(1_795_314_700.0, 1_795_314_800.0),
         ):
             _observed_event_fields(registry, "physical:esp", "in_call")
+            original_context = registry.event_context("physical:esp")
             first = _observed_event_fields(registry, "physical:esp", "idle")
             duplicate = _observed_event_fields(registry, "physical:esp", "idle")
             _observed_event_fields(registry, "physical:esp", "ringing")
+            current_context = registry.event_context("physical:esp")
+            self.assertEqual(current_context.connected_at_epoch, 0.0)
             _observed_event_fields(registry, "physical:esp", "in_call")
             second = _observed_event_fields(registry, "physical:esp", "idle")
 
         self.assertEqual(first["duration_seconds"], 45)
         self.assertEqual(duplicate["duration_seconds"], 45)
         self.assertEqual(second["duration_seconds"], 7)
+        self.assertIsNot(original_context, current_context)
+        self.assertEqual(original_context.connected_at_epoch, 1_795_314_700.0)
+        self.assertEqual(current_context.connected_at_epoch, 1_795_314_800.0)
 
     def test_terminal_summary_claim_is_once_per_lifecycle(self) -> None:
         registry = _registry()
