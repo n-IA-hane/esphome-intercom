@@ -75,6 +75,33 @@ def test_an_answer_cannot_replace_the_bounds_advertised_in_the_offer():
     assert (result.receive.payload_type, result.receive.frame_ms, result.receive.max_frame_ms) == (96, 20, 20)
 
 
+def test_declared_peer_plan_is_consumed_by_the_production_offer_writer():
+    """Binding evidence must produce the same complete plan as an ordinary call."""
+    from custom_components.voip_stack.core import sdp
+    from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS
+    from custom_components.voip_stack.core.media.capability import PeerEvidence
+    from custom_components.voip_stack.core.sdp_composer import _write_offer_plan
+
+    evidence = PeerEvidence.from_tokens(
+        ["L16/16000/1/20", "L16/16000/1/10"],
+        ["L16/48000/1/10", "L16/16000/1/10"], complete=True)
+    plan = negotiator.create_offer(
+        HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS, evidence,
+        capabilities=HA_AUDIO_CAPABILITIES, common=True,
+        directional=True, independent=True)
+    body = _write_offer_plan(
+        plan, "192.0.2.1", "192.0.2.1", 40000,
+        audio_direction="sendrecv", audio_rtcp=True, directional=True,
+        independent=True, video_port=0, video_formats=(),
+        video_direction="inactive", codec_policy=None)
+
+    assert {(fmt.encoding, fmt.sample_rate, fmt.channels)
+            for fmt in sdp.offered_pcm_formats(body)} == {
+                ("L16", 48000, 1), ("L16", 16000, 1)}
+    assert sdp.offered_dtmf_formats(body)
+    assert sdp.parse_sdp(body)["ptime"] == 20
+
+
 @pytest.mark.parametrize("step", load_steps(), ids=lambda step: step.name)
 def test_public_api_meets_the_same_captured_contracts_as_the_leg_engine(step):
     send, receive = POLICIES[step.policy]

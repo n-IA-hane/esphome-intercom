@@ -16,7 +16,6 @@ from ..codec_capabilities import codec_available
 from ..sdp_audio import offered_dtmf_formats, offered_pcm_formats
 from ..sdp_parser import parse_audio_flow_attributes, parse_sdp, supports_independent_audio_ptime
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
-from .capability import PeerEvidence
 from .codecs import CODECS
 from .packet_time import PacketTimes, ReceiverBounds, choose_transmit_packet_ms
 from .payload_map import TELEPHONE_EVENT, PayloadMap, RtpMapping
@@ -412,68 +411,3 @@ class OfferPlan:
     @property
     def audio(self) -> tuple[RtpMapping, ...]:
         return tuple(mapping for _, mapping in self.payloads if mapping[0] != TELEPHONE_EVENT)
-
-
-def _mapping_rank(order: tuple[Geometry, ...], mapping: RtpMapping) -> int:
-    spec = CODECS.get(mapping[0])
-    geometry = ((spec.decoded_rate or mapping[1]) if spec else mapping[1],
-                (spec.decoded_channels or mapping[2]) if spec else mapping[2])
-    return order.index(geometry) if geometry in order else len(order)
-
-
-def create_offer_for_declared_peer(
-    policy: LegPolicy, evidence: PeerEvidence, previous: PayloadMap | None = None,
-) -> OfferPlan | None:
-    """Plan an offer toward a peer that declared its formats completely (rules X2, X4, R3).
-
-    Only the mappings the peer can use are offered: what it receives, best first for this
-    side's sender, then what it only sends. Returns None when the evidence may not narrow an
-    offer, so the caller keeps the complete offer.
-    """
-    if not evidence.complete or not evidence.receives or not evidence.sends:
-        return None
-    usable = lambda mapping: mapping[0] in CODECS and (  # noqa: E731
-        policy.encodings is None or mapping[0] in policy.encodings)
-    receives = [item for item in evidence.receives if usable(item.mapping)]
-    sends = [item for item in evidence.sends if usable(item.mapping)]
-    if not receives or not sends:
-        return None
-    ordered = [item.mapping for item in sorted(
-        receives, key=lambda item: (_mapping_rank(policy.send_rank, item.mapping), receives.index(item)))]
-    for item in sorted(sends, key=lambda item: (_mapping_rank(policy.receive_rank, item.mapping), sends.index(item))):
-        if item.mapping not in ordered:
-            ordered.append(item.mapping)
-    # R3: ask for a packet time the peer can really send, the default when it has it.
-    heard = min(sends, key=lambda item: (_mapping_rank(policy.receive_rank, item.mapping), sends.index(item)))
-    declared = heard.times.explicit
-    packet_ms = policy.default_packet_ms if policy.default_packet_ms in declared else max(declared)
-    numbered = PayloadMap.for_offer([*ordered, (TELEPHONE_EVENT, 8000, 1)], previous=previous)
-    return OfferPlan(
-        payloads=tuple(numbered.receive.items()),
-        packet_ms=packet_ms,
-        trace=(f"X4 narrowed to {len(ordered)} declared mappings", f"R3 ask {packet_ms} ms from {heard.mapping[0]}/{heard.mapping[1]}"),
-    )
-
-
-def write_offer(plan: OfferPlan, address: str, port: int, *, directional: bool, maxptime: float,
-                session_id: int = 0) -> str:
-    """Serialize an offer plan as a complete session description.
-
-    ``directional`` adds the attributes of profile esp_directional_v1 exactly as the current
-    writer does, every payload marked sendrecv: changing those roles needs proof on devices.
-    """
-    lines = ["v=0", f"o=- {int(session_id)} 0 IN IP4 {address}", "s=VoIP Stack", f"c=IN IP4 {address}", "t=0 0",
-             f"m=audio {int(port)} RTP/AVP " + " ".join(str(number) for number, _ in plan.payloads)]
-    for number, (name, clock, channels) in plan.payloads:
-        if name == TELEPHONE_EVENT:
-            lines += [f"a=rtpmap:{number} telephone-event/{clock}", f"a=fmtp:{number} 0-15"]
-            continue
-        lines.append(f"a=rtpmap:{number} {name}/{clock}/{channels}")
-        if name == "OPUS":
-            lines.append(f"a=fmtp:{number} stereo=0;sprop-stereo=0;maxaveragebitrate=28000")
-        if directional:
-            lines.append(f"a=x-voip-stack-flow:{number} sendrecv")
-    if directional:
-        lines.append("a=x-voip-stack-independent-ptime:1")
-    lines += [f"a=ptime:{plan.packet_ms:g}", f"a=maxptime:{maxptime:g}", "a=sendrecv"]
-    return "\r\n".join(lines) + "\r\n"
