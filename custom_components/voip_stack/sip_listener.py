@@ -367,6 +367,7 @@ class _CompletedRequest:
     addr: tuple[str, int]
     status: int
     reason: str
+    response: bytes = b""
 
 
 InviteHandler = Callable[[SipInvite], Awaitable[SipInviteResult]]
@@ -2288,8 +2289,16 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         decline_reason: str = "",
         extra_headers: tuple[tuple[str, str], ...] = (),
     ) -> bool:
-        clean_reason = _identity_header(decline_reason)
-        raw = sip.build_uas_response(
+        raw = self._build_response(request, addr, status, reason, body=body,
+            to_tag=to_tag, decline_reason=decline_reason, extra_headers=extra_headers)
+        return self._send_response_bytes(raw, addr, status, reason)
+
+    def _build_response(
+        self, request: sip.SipMessage, addr, status: int, reason: str, *,
+        body: bytes = b"", to_tag: str = "", decline_reason: str = "",
+        extra_headers: tuple[tuple[str, str], ...] = (),
+    ) -> bytes:
+        return sip.build_uas_response(
             request,
             status,
             reason,
@@ -2298,8 +2307,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             top_via=_response_via_header(request, addr),
             body=body,
             extra_headers=extra_headers,
-            decline_reason=clean_reason,
+            decline_reason=_identity_header(decline_reason),
         )
+
+    def _send_response_bytes(self, raw: bytes, addr, status: int, reason: str) -> bool:
         if not self._send(raw, addr):
             _LOGGER.warning("SIP TX %s %s dropped for %s:%s", status, reason, addr[0], addr[1])
             return False
@@ -2531,7 +2542,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
     def _replay_completed_request(self, request, addr, completed: _CompletedRequest) -> None:
         if _same_request_transaction(request, completed.request, addr, completed.addr):
-            self._send_response(request, addr, completed.status, completed.reason)
+            if completed.response:
+                self._send_response_bytes(completed.response, addr, completed.status, completed.reason)
+            else:
+                self._send_response(request, addr, completed.status, completed.reason)
         else:
             self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
 
@@ -2613,12 +2627,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
         self._reliable_provisionals.pop(call_id, None)
         self._cancel_reliable_provisional(reliable)
-        self._remember_completed(
-            self.completed_pracks,
-            prack_key,
-            _CompletedRequest(request, addr, 200, "OK"),
-        )
-        sent = self._send_response(
+        response = self._build_response(
             request,
             addr,
             200,
@@ -2629,10 +2638,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 else b""
             ),
         )
-        if not sent:
+        if not self._send_response_bytes(response, addr, 200, "OK"):
             if prack_result is not None and prack_result.rollback is not None:
                 await prack_result.rollback()
             return
+        self._remember_completed(
+            self.completed_pracks,
+            prack_key,
+            _CompletedRequest(request, addr, 200, "OK", response),
+        )
         if prack_result is not None and not await apply_remote_offer_media(
             prack_result.commit, prack_result.rollback, prack_result.finalize
         ):

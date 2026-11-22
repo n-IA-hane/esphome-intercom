@@ -405,16 +405,15 @@ class LocalCallMedia:
             if self.decoder.format_for(packet.payload_type) is None:
                 self.counters["drop_payload_type"] += 1
                 return
-            if self.remote_ssrc is None:
-                self.remote_ssrc = packet.ssrc
-                self.remote_rtp_port = int(addr[1])
-            elif packet.ssrc != self.remote_ssrc:
+            if self.remote_ssrc is not None and packet.ssrc != self.remote_ssrc:
                 self.counters["drop_ssrc"] += 1
                 return
-            elif int(addr[1]) != self.remote_rtp_port:
-                self.remote_rtp_port = int(addr[1])
             # Resampling consumes the negotiated PCM quantum, independent of RTP packet time.
             pcm_frames = self.decoder.decode(packet.payload_type, packet.payload, normalize_frames=True)
+            # A valid short packet may only fill the normalizer. Its source is
+            # still valid; malformed payloads must never establish or rebind it.
+            self.remote_ssrc = packet.ssrc
+            self.remote_rtp_port = int(addr[1])
             self.encoder.follow_received(self.decoder.format_for(packet.payload_type))
             if not pcm_frames:
                 return

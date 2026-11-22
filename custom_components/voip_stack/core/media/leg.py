@@ -334,17 +334,30 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     It cannot establish an offered payload history or an advertised receiver that is absent.
     """
     trace: list[str] = []
-    local = ({_mapping(fmt): fmt for fmt in offered_pcm_formats(local_offer_sdp, allow_dahua_pcm=dahua)}
-             if local_offer_sdp is not None else None)
+    offered = (offered_pcm_formats(local_offer_sdp, allow_dahua_pcm=dahua)
+               if local_offer_sdp is not None else None)
+    local = {_mapping(fmt): fmt for fmt in offered} if offered is not None else None
+    local_flows = parse_audio_flow_attributes(local_offer_sdp) if local is not None else {}
+    local_send = {_mapping(fmt): fmt for fmt in offered or ()
+                  if local_flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}}
+    local_receive = {_mapping(fmt): fmt for fmt in offered or ()
+                     if local_flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}}
     remote_direction = parse_sdp(answer_sdp)["direction"]
     direction = format_direction or {"sendonly": "recvonly", "recvonly": "sendonly"}.get(remote_direction, "sendrecv")
     needs_send = direction != "recvonly"
     needs_receive = direction != "sendonly"
     flows = parse_audio_flow_attributes(answer_sdp) if local is not None else {}
+
+    def permits(fmt: RtpPcmFormat, *, sending: bool) -> bool:
+        peer_roles = {"recv", "sendrecv"} if sending else {"send", "sendrecv"}
+        own_mappings = local_send if sending else local_receive
+        return (flows.get(fmt.payload_type, "sendrecv") in peer_roles
+                and (local is None or _mapping(fmt) in own_mappings))
+
     answered = [fmt for fmt in offered_pcm_formats(answer_sdp, allow_dahua_pcm=dahua)
                 if (local is None or _mapping(fmt) in local) and _usable(fmt, policy, dahua=dahua,
-                    send=needs_send and flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"},
-                    receive=needs_receive and flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"})]
+                    send=needs_send and permits(fmt, sending=True),
+                    receive=needs_receive and permits(fmt, sending=False))]
     if not answered:
         return Refusal("the answer lists no enabled and available codec" if local is None
                        else "the answer lists no codec of the offer", tuple(trace))
@@ -354,11 +367,11 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
         if policy.capabilities is not None:
             send_preferred = policy.capabilities.expand(list(send_preferred), answered)
             receive_preferred = policy.capabilities.expand(list(receive_preferred), answered, receive=True)
-    peer_receives = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"recv", "sendrecv"}]
-    peer_sends = [fmt for fmt in answered if flows.get(fmt.payload_type, "sendrecv") in {"send", "sendrecv"}]
+    peer_receives = [fmt for fmt in answered if permits(fmt, sending=True)]
+    peer_sends = [fmt for fmt in answered if permits(fmt, sending=False)]
     if (needs_send and not peer_receives) or (needs_receive and not peer_sends):
         return Refusal("the answer flow attributes omit a required audio direction", tuple(trace))
-    directional = bool(flows) and bool(peer_receives) and bool(peer_sends)
+    directional = bool(flows or local_flows) and bool(peer_receives) and bool(peer_sends)
     if local is None and not needs_send:
         send_candidates = sorted(answered, key=lambda fmt: (
             _preferred_receiver(fmt, policy, receive_preferred)[0], answered.index(fmt)))
@@ -394,7 +407,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
                 else:
                     receiver = replace(candidate, frame_ms=transmit.packet_ms)
             else:
-                own = local[_mapping(receive_from)]
+                own = (local_receive if needs_receive else local)[_mapping(receive_from)]
                 # R1: the receiver already advertised stands; the answer does not change it.
                 if needs_receive:
                     if not _receivable_as_offered(own, policy):
@@ -425,7 +438,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
                                        minimum=fmt.min_frame_ms))) is not None)
                 receive_accept = tuple(
                     replace(fmt, max_frame_ms=fmt.max_frame_ms or _receive_maximum(fmt, policy))
-                    for mapping, fmt in local.items()
+                    for mapping, fmt in local_receive.items()
                     if mapping in receive_mappings and _receivable_as_offered(fmt, policy)
                 ) + receive_auxiliary_formats(answer_sdp, receiver, policy, own_description=local_offer_sdp)
             return LegContract(
