@@ -89,22 +89,52 @@ async def test_generation_resets_processing_and_announces_pipeline_restart_once(
     updates = generation(lab)
     lab.state.route.latched_source = ("192.0.2.1", 49999)
     lab.state.route.latched_ssrc = 55
+    lab.state.route.latched_rtcp_source = ("198.51.100.2", 49998)
     lab.state.extended_sequence.observe(65535)
     lab.state.highest_sequence = 65535
     lab.state.needs_key_frame = False
+    lab.state.last_keyframe_feedback = 123.0
+    old_depacketizer = lab.state.depacketizer
+    for reorder in (lab.state.reorder, lab.state.input_reorder):
+        reorder.push(1, b"old", 0)
+        reorder.push(3, b"old", 0)
+        assert reorder.next_deadline is not None
     for target in (lab.queue, lab.media_queue):
         target.put_nowait((b"old", ("192.0.2.1", 40000)))
     lab.access_units.put_nowait(VideoAccessUnit(b"old", 0, True, "VP8"))
     lab.session.remote_rtp_port = 42000
     lab.session.media_generation = 1
+    clock = lab.source.clock
+    clock.map_browser(100, clock.origin_time)
+    clock_identity = (clock.origin_time, clock.origin_timestamp, clock.clock_rate)
     sequence, ssrc = lab.source.sequence, lab.source.ssrc
     assert await updates.refresh(1)
     assert lab.state.applied_media_generation == 1
     assert lab.state.route.rtp_destination() == ("192.0.2.1", 42000)
     assert lab.state.route.latched_source is lab.state.route.latched_ssrc is None
+    assert lab.state.route.latched_rtcp_source is None
+    assert lab.state.route.remote_rtcp_host == "198.51.100.2"
+    assert lab.state.route.remote_rtcp_port == 45000
+    assert lab.state.depacketizer is not old_depacketizer
+    assert lab.state.reorder.next_deadline is lab.state.input_reorder.next_deadline is None
     assert lab.state.highest_sequence == 0 and lab.state.needs_key_frame
+    assert lab.state.extended_sequence.observe(1) == 1
+    assert lab.state.last_keyframe_feedback == 0.0
     assert all(target.empty() for target in (lab.queue, lab.media_queue, lab.access_units))
     assert (lab.source.sequence, lab.source.ssrc) == (sequence, ssrc)
+    assert (clock.origin_time, clock.origin_timestamp, clock.clock_rate) == clock_identity
+    assert clock.map_browser(10, clock.origin_time + 1) == clock.current(clock.origin_time + 1)
+    # Reobserving the same generation must retain newly accepted media and the
+    # browser timestamp epoch, rather than resetting processing twice.
+    current_frame = VideoAccessUnit(b"current", 1, True, "VP8")
+    lab.access_units.put_nowait(current_frame)
+    current_depacketizer = lab.state.depacketizer
+    assert await updates.refresh(1)
+    assert lab.access_units.get_nowait() is current_frame
+    assert lab.state.depacketizer is current_depacketizer
+    assert clock.map_browser(20, clock.origin_time + 2) == (
+        clock.current(clock.origin_time + 1) + 10
+    ) & 0xFFFFFFFF
     lab.session.local_video_format = sdp.RtpVideoFormat(payload_type=96, encoding="H263")
     lab.session.media_generation = 2
     assert not await updates.refresh(2)
@@ -113,6 +143,72 @@ async def test_generation_resets_processing_and_announces_pipeline_restart_once(
     assert lab.ws.messages[0]["restart_required"] is True
     assert lab.ws.messages[0]["restart_reason"] == "video_pipeline_changed"
     assert lab.state.counters["video_pipeline_restarts"] == 1
+
+
+@pytest.mark.parametrize("limit", ["items", "bytes"])
+@pytest.mark.parametrize("incoming_key_frame", [False, True], ids=["delta", "key-frame"])
+async def test_h264_backpressure_discards_stale_frames_and_recovers_on_key_frame(
+    processing, limit, incoming_key_frame,
+):
+    lab = processing
+    lab.session.video_format = sdp.RtpVideoFormat(payload_type=103, encoding="H264")
+    lab.state.browser_format = lab.session.browser_receive_format
+    lab.state.depacketizer = view._make_video_depacketizer(
+        lab.session.call_id, lab.state.browser_format, None, (),
+    )
+    lab.state.needs_key_frame = False
+    access_units = _ByteBudgetQueue(maxsize=2 if limit == "items" else 10,
+        max_bytes=4096 if limit == "items" else 12, item_size=lambda item: len(item.data))
+    for timestamp in (1, 2):
+        access_units.put_nowait(VideoAccessUnit(b"stale!", timestamp, False, "H264"))
+    requests = []
+    receiver = VideoReceiveWorkers(lab.session, lab.state, lab.queue, lab.media_queue,
+        access_units, lab.closed, None, None, generation(lab).refresh, requests.append,
+        lab.stored, VideoReceiveHooks(view.decode_browser_video_packet,
+            view._video_loss_requires_key_frame, view._sync_video_reorder_counters), 1024, 2)
+
+    def receive(sequence, key_frame):
+        receiver.consume_ordered(rtp.RtpPacket(payload_type=103, sequence=sequence,
+            timestamp=sequence * 3000, ssrc=55, marker=True,
+            payload=b"\x65\xaa" if key_frame else b"\x41\xbb"), float(sequence))
+
+    receive(1, incoming_key_frame)
+    assert lab.state.counters["video_access_unit_queue_drops"] == (2 if incoming_key_frame else 3)
+    assert lab.state.needs_key_frame is not incoming_key_frame
+    assert access_units.qsize() == int(incoming_key_frame)
+    assert requests == ([] if incoming_key_frame else [1.0])
+    receive(2, False)
+    assert lab.state.counters["video_drop_wait_keyframe"] == int(not incoming_key_frame)
+    assert access_units.qsize() == (2 if incoming_key_frame else 0)
+    receive(3, True)
+    recovered = access_units.get_nowait()
+    assert recovered.key_frame and recovered.timestamp == 9000
+    assert recovered.data == b"\x00\x00\x00\x01\x65\xaa"
+    assert access_units.empty() and not lab.state.needs_key_frame
+
+
+async def test_browser_key_frame_control_uses_the_existing_feedback_callback(processing):
+    from aiohttp import WSMsgType
+
+    lab = processing
+    request_key_frame = Mock()
+
+    class BrowserControls:
+        def __aiter__(self):
+            return self.messages()
+
+        async def messages(self):
+            for message in ('{"type":"unrelated"}', '{"type":"request_key_frame"}'):
+                yield SimpleNamespace(type=WSMsgType.TEXT, data=message)
+
+    sender = view.BrowserVideoSender(lab.source, DatagramBoundary(), lab.rtp_lock,
+        lab.state.route.rtp_destination, SimpleNamespace(time=lambda: 123.0))
+    await sender.run(BrowserControls(), lab.session, closed=lab.closed,
+        call_ended=asyncio.Event(), counters=lab.state.counters,
+        refresh_media_state=generation(lab).refresh, request_key_frame=request_key_frame,
+        store_counters=lab.stored, jpeg_normalizer=None)
+    request_key_frame.assert_called_once_with(123.0)
+    assert lab.state.counters["video_browser_keyframe_requests"] == 1
 
 
 @pytest.mark.parametrize("transcoding", [False, True])

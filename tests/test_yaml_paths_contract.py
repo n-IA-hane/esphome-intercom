@@ -80,7 +80,11 @@ def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
         source_root, yaml_paths.CAMERA_ROOT / "components"
     )
 
-    assert source == "../../../../esphome-esp-video-camera/components"
+    top_level_yaml_directory = ROOT / "yamls/voip-only/single-bus"
+    camera_components = ROOT.parent / "esphome-esp-video-camera/components"
+    assert source_root == top_level_yaml_directory
+    assert not Path(source).is_absolute()
+    assert (top_level_yaml_directory / source).resolve() == camera_components.resolve()
 
 
 @pytest.mark.parametrize("ref,expected", [

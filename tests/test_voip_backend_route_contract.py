@@ -649,18 +649,20 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.assertIn('call.data.get("send_video", False)', branch)
 
     def test_video_backpressure_recovers_at_a_keyframe(self) -> None:
-        video_ws = (
-            ROOT / "custom_components" / "voip_stack" / "video_ws_view.py"
-        ).read_text()
-        self.assertIn('control.get("type") == "request_key_frame"', video_ws)
-        self.assertIn("request_key_frame(loop.time())", video_ws)
-        self.assertIn('counters["video_browser_keyframe_requests"] += 1', video_ws)
-        self.assertIn(
-            "while True:\n                try:\n                    access_units.get_nowait()",
-            video_ws,
-        )
-        self.assertIn("if not access_unit.key_frame:", video_ws)
-        self.assertIn("needs_key_frame = True", video_ws)
+        owner = ROOT / "custom_components" / "voip_stack"
+        video_ws = (owner / "video_ws_view.py").read_text()
+        browser_sender = (owner / "video_ws_frames.py").read_text()
+        receive_worker = (owner / "video_receive.py").read_text()
+        self.assertIn('control.get("type") == "request_key_frame"', browser_sender)
+        self.assertIn("request_key_frame(self.loop.time())", browser_sender)
+        self.assertIn('counters["video_browser_keyframe_requests"] += 1', browser_sender)
+        self.assertIn("receiver = VideoReceiveWorkers(", video_ws)
+        self.assertIn("updates.refresh, feedback.request_key_frame", video_ws)
+        self.assertIn("asyncio.create_task(receiver.rtp_to_access_units())", video_ws)
+        self.assertIn("self.access_units.get_nowait()", receive_worker)
+        self.assertIn("if not access_unit.key_frame:", receive_worker)
+        self.assertIn("self.recover_from_video_loss(now)", receive_worker)
+        self.assertIn("self.hooks.loss_requires_key_frame(", receive_worker)
 
     def test_entryless_sip_uri_route_is_guarded_and_uses_fallback_uri(self) -> None:
         bridge_path = self.inbound_bridge
@@ -1818,9 +1820,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                       _owner_source(BROWSER_PHONE_PROJECTION, "_ha_softphone_state"))
 
     def test_video_reinvite_resets_generation_owned_media_state(self) -> None:
-        video_ws = (
-            ROOT / "custom_components" / "voip_stack" / "video_ws_view.py"
-        ).read_text()
+        owner = ROOT / "custom_components" / "voip_stack"
+        video_ws = (owner / "video_ws_view.py").read_text()
+        generation_worker = (owner / "video_receive_generation.py").read_text()
         media_update = MEDIA_RENEGOTIATION.read_text()
         start = media_update.index("async def _commit_softphone_update()")
         commit = media_update[
@@ -1832,8 +1834,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "[*parameter_sets, *_sdp_parameter_sets(browser_format)]",
             (ROOT / "custom_components" / "voip_stack" / "video_ws_frames.py").read_text()
         )
-        self.assertIn("outbound_clock.reset_browser()", video_ws)
-        self.assertIn("observed_generation = -1", video_ws)
+        self.assertIn("updates = VideoGenerationUpdates(", video_ws)
+        self.assertIn("asyncio.create_task(updates.run())", video_ws)
+        self.assertIn("self.outbound_clock.reset_browser()", generation_worker)
+        self.assertIn("self.state.applied_media_generation = generation", generation_worker)
+        self.assertIn("observed_generation = int(self.session.media_generation)", generation_worker)
 
     def test_declined_rtcp_mux_is_not_used_by_media_runtime(self) -> None:
         listener = (

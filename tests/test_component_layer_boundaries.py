@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,12 @@ SDP_DEPENDENCIES = {
     "sdp_document": set(),
     "sdp_types": set(),
     "sdp_parser": {"sdp_document", "sdp_types"},
-    "sdp_audio": {"sdp_document", "sdp_parser", "sdp_types"},
+    "sdp_audio_facts": {"sdp_parser", "sdp_types"},
+    "sdp_audio": {"sdp_document", "sdp_parser", "sdp_types", "sdp_audio_facts"},
     "sdp_video": {"sdp_parser", "sdp_types"},
     "sdp_composer": {
         "sdp_document", "sdp_parser", "sdp_types", "sdp_audio", "sdp_video",
+        "sdp_audio_facts",
     },
 }
 
@@ -35,6 +38,44 @@ def test_sdp_implementations_only_depend_on_lower_protocol_layers(module, allowe
             dependencies.add(node.module)
     assert dependencies <= allowed
     assert "sdp" not in dependencies
+
+
+def test_audio_facts_transitive_dependencies_remain_acyclic_protocol_leaves():
+    prefix = "custom_components.voip_stack.core."
+    allowed = {
+        "sdp_audio_facts", "sdp_parser", "sdp_document", "sdp_types",
+        "audio_format", "imageattr", "media.codecs",
+    }
+
+    def module_path(module):
+        path = ROOT / "core" / module.replace(".", "/")
+        return path.with_suffix(".py") if path.with_suffix(".py").is_file() else path / "__init__.py"
+
+    def check(module, chain=()):
+        assert module in allowed, f"audio facts depend on higher layer: {chain + (module,)}"
+        assert module not in chain, f"protocol dependency cycle: {chain + (module,)}"
+        package = (prefix + module).rpartition(".")[0]
+        for node in ast.walk(ast.parse(module_path(module).read_text())):
+            if isinstance(node, ast.Import):
+                imports = [item.name for item in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = resolve_name("." * node.level + (node.module or ""), package)
+                imports = [
+                    f"{base}.{item.name}"
+                    if (base == prefix[:-1] or base.startswith(prefix))
+                    and module_path(f"{base}.{item.name}"[len(prefix):]).is_file()
+                    else base
+                    for item in node.names
+                ]
+            else:
+                continue
+            for imported in imports:
+                if imported.startswith(prefix):
+                    check(imported[len(prefix):], chain + (module,))
+                else:
+                    assert not imported.startswith("custom_components.voip_stack"), imported
+
+    check("sdp_audio_facts")
 
 
 def test_shared_call_events_do_not_import_the_websocket_command_adapter():
