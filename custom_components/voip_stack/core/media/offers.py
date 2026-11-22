@@ -173,7 +173,7 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
         values.sort(key=lambda fmt: (
             policy.codec_order.index(fmt.encoding) if fmt.encoding in policy.codec_order else len(policy.codec_order),
             ranking.get(_key(fmt), len(ranking))))
-    send_keys, receive_keys = {_key(fmt) for fmt in sends}, {_key(fmt) for fmt in receives}
+    receive_keys = {_key(fmt) for fmt in receives}
     if direction == "sendrecv" and (not sends or not receives):
         raise ValueError("No enabled audio codec has the required local directions")
     if direction == "sendonly":

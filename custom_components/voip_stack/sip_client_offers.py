@@ -10,9 +10,10 @@ from .core.sip_auth import DigestChallengeTracker, build_digest_authorization
 from .core.sip_dialog import PreparedDialogIdentity, build_dialog_request
 import logging
 
-_LOGGER = logging.getLogger(__name__)
 from .sip_client_types import (SipDialog, _audio_payload_update, _video_payload_update)
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class SipLocalOffers:
     """Use the existing client reader, writer, locks and dialog state."""

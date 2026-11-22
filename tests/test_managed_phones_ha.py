@@ -1156,7 +1156,7 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     assert not lab.registrar.registered_contacts(legacy)
     assert len(lab.runtime.endpoints.endpoints) == 1
     assert [call.args[0].name for call in client.execute_service.await_args_list] == [
-        "set_ha_display_name", "set_account", action]
+        "set_ha_display_name", "set_account", "register_ha_account"]
     assert client.execute_service.await_args_list[1].args[1]["account_id"] == "ha"
     await bind_account(lab, phone)
     assert len(lab.registrar.registered_contacts(new.title)) == 1

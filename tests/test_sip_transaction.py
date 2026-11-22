@@ -75,6 +75,10 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
         transaction_type = sip_transaction.SipClientTransaction
 
         class FastTransaction(transaction_type):
+            @classmethod
+            def __class_getitem__(cls, item):
+                return cls
+
             def __init__(self, **kwargs):
                 super().__init__(**kwargs, t1=0.001, t2=0.005)
 

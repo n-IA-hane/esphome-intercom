@@ -14,9 +14,10 @@ from .core.sip_dialog import apply_remote_offer_media, notify_media_commit, buil
 from .core.sip_transaction import SIP_TIMER_B as _INVITE_2XX_TIMEOUT, async_run_dialog_request_transaction, matches_invite_error_ack
 import logging
 
-_LOGGER = logging.getLogger(__name__)
 from .sip_server_state import (SipInviteResult, _ActiveDialog, _CompletedRequest, _PendingDelayedOffer, _PendingInvite, _SipRequestNotSent, _same_audio_media, _same_dialog_ack, _same_dialog_request, _same_video_media, _uri_from_header, _uri_text_from_header)
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class SipServerDialogs:
     """Use the endpoint-owned flows, locks, transactions and dialog records."""

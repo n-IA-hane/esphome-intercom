@@ -16,6 +16,7 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.local_call_media import LocalAudioContract, LocalCallMedia
 from custom_components.voip_stack.media_ports import RtpPortReservation
 from custom_components.voip_stack.outbound_attempts import OutboundLeg
+from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 from custom_components.voip_stack.sip_client import SipCallClient
@@ -148,6 +149,7 @@ async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2
             out_converter=PcmFrameConverter(CONFERENCE_FORMAT, CONFERENCE_FORMAT))
         assert manager._own_membership(room.name, call_id, ha_softphone=False)
     owner = lab.calls.get_session("conference-owner")
+    owner.metadata["source_endpoint_id"] = "sip:bedroom0"
     resident = lab.calls.get_session("conference-resident")
     transport, peer = await asyncio.get_running_loop().create_datagram_endpoint(
         IndependentSipPeer, local_addr=("127.0.0.1", 0))
@@ -159,7 +161,9 @@ async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2
         supported_recv_formats=[fmt.audio_format], supported_send_rtp_formats=(fmt,),
         supported_recv_rtp_formats=(fmt,))
     uri = sip.parse_sip_uri(f"sip:member@127.0.0.1:{transport.get_extra_info('sockname')[1]}")
-    attempt = OutboundLeg("Pending member", uri, client, ports)
+    endpoint = lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:conference-member",
+        name="Pending member", kind=EndpointKind.SIP_ACCOUNT, username="member"))
+    attempt = OutboundLeg("Pending member", uri, client, ports, endpoint_id=endpoint.endpoint_id)
     runtime = ConferenceRingRuntime(lab.hass, {}, "127.0.0.1", lambda *_args: None,
                                     lambda **_kwargs: attempt)
     task = owner.create_task(async_ring_conference_members(runtime, room_name=room.name,
@@ -203,6 +207,7 @@ async def test_answered_conference_member_moves_to_its_own_session_lifetime(lab)
     room = ConferenceRoom(lab.hass, name="Answered room", local_ip="127.0.0.1")
     manager.rooms[room.name] = room
     owner = lab.calls.upsert("joined-owner", state="in_call", owner="bridge", caller="Owner", callee=room.name)
+    owner.metadata["source_endpoint_id"] = "sip:bedroom0"
     room.legs[owner.call_id] = _ConferenceLeg(call_id=owner.call_id, caller="Owner", role="owner",
         remote_host="127.0.0.1", remote_port=0, local_out=asyncio.Queue(),
         in_converter=PcmFrameConverter(CONFERENCE_FORMAT, CONFERENCE_FORMAT),
@@ -218,7 +223,9 @@ async def test_answered_conference_member_moves_to_its_own_session_lifetime(lab)
         supported_recv_formats=[fmt.audio_format], supported_send_rtp_formats=(fmt,),
         supported_recv_rtp_formats=(fmt,))
     uri = sip.parse_sip_uri(f"sip:member@127.0.0.1:{transport.get_extra_info('sockname')[1]}")
-    attempt = OutboundLeg("Answered member", uri, client, ports)
+    endpoint = lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:conference-member",
+        name="Answered member", kind=EndpointKind.SIP_ACCOUNT, username="member"))
+    attempt = OutboundLeg("Answered member", uri, client, ports, endpoint_id=endpoint.endpoint_id)
     runtime = ConferenceRingRuntime(lab.hass, {}, "127.0.0.1", lambda *_args: None,
                                     lambda **_kwargs: attempt)
     ringing = owner.create_task(async_ring_conference_members(runtime, room_name=room.name,

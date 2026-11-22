@@ -43,12 +43,9 @@ from .sip_server_offers import SipServerOffers
 
 import asyncio
 import contextlib
-import errno
-from dataclasses import dataclass, field, replace
-from functools import partial
 import logging
 import secrets
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable
 
 from .sip_capture import capture_io, send_sip_datagram
 from .sip_tcp_server import SipTcpServer as _OwnedSipTcpServer
@@ -58,98 +55,31 @@ from .sip_listener_request import (
     accepts_capability_sdp,
     dialog_extension_error,
     is_application_request,
-    matches_cancel,
     matches_retransmission as _same_request_transaction,
     request_sequence,
 )
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
-from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
-from .core.audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
+from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import sdp, sip, sip_transfer
 from .core.sip_stun import binding_keepalive_response
 from .core.codec_policy import CodecPolicy
-from .core.sip_auth import DigestChallengeTracker, SipDigestCredentials
-from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox, bind_flow_usage
+from .core.sip_transport import SipResponseMailbox, bind_flow_usage
 from .core.sip_dialog import (
-    PreparedDialogIdentity,
     SubscriptionDialog,
     DialogKey,
-    DialogSignalingState,
-    apply_remote_offer_media,
-    notify_media_commit,
-    build_dialog_request,
     uas_request_matches_dialog,
 )
 from .sip_tcp_server import _read_sip_stream_message as _read_sip_stream_message
 from .core.sip_transaction import (
-    SIP_T1 as _SIP_T1,
-    SIP_T2 as _SIP_T2,
     SIP_TIMER_B as _INVITE_2XX_TIMEOUT,
-    SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
-    SessionTimerDriver,
-    SipInvite2xxTransaction,
-    async_run_dialog_request_transaction,
-    async_run_server_transaction,
-    matches_invite_error_ack,
 )
 from .queue_utils import put_drop_oldest
 from .dtmf import build_sip_info_dtmf_body
-from .inbound_identity import identity_fields
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyncio.DatagramProtocol):
@@ -204,7 +134,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         self.on_invite = on_invite
         self.on_offerless_invite = on_offerless_invite
         self.codec_policy_resolver = codec_policy_resolver
-        from .core.codec_policy import CodecPolicy
         self.codec_policy = codec_policy or CodecPolicy()
         self.invite_identity_resolver = invite_identity_resolver
         self.invite_authorizer = invite_authorizer
@@ -648,8 +577,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
             await self.on_terminated(call_id, reason)
 
 
-
-
     def _dialog_request_current(self, call_id, dialog, method):
         return (self.active_dialogs.get(call_id) is dialog or
                 (method in {"REFER", "NOTIFY", "SUBSCRIBE"} and self._event_dialogs.get(call_id) is dialog))
@@ -680,13 +607,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         return await self._run_client_transaction(raw=sip.build_request(method, uri, request_headers),
             addr=addr, ids=ids, method=method, transport=self.signaling_transport,
             timeout=timeout, creating_dialog=True, response_addr=addr, active=active, on_sent=on_sent)
-
-
-
-
-
-
-
 
 
     def _event_credentials(self, call_id, dialog):
@@ -765,12 +685,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         dialog.refer_task = task
         self._maintenance_tasks.add(task)
         task.add_done_callback(self._maintenance_tasks.discard)
-
-
-
-
-
-
 
 
     async def _handle_datagram_guarded(self, data: bytes, addr, *, parsed=None) -> None:
@@ -1072,13 +986,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
             self._reject_dialog_request(request, addr)
 
 
-
-
-
-
-
-
-
     def _refresh_dialog(self, request, addr, request_cseq, call_id, dialog, refreshed_remote_target) -> None:
         # An offerless UPDATE is a session refresh and does not start
         # a new offer/answer exchange.
@@ -1115,9 +1022,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
             )
 
 
-
-
-
     def _send_pending_progress(self, call_id, pending, status, reason, *, answer_sdp="", decline_reason="") -> bool:
         """Publish one progress response through the pending INVITE owner."""
         rewritten = (sdp.rewrite_sdp_origin(answer_sdp, pending.local_sdp_session_id,
@@ -1143,7 +1047,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         return sent
 
 
-
     def _dialog_for_bye(self, call_id: str) -> tuple[str, _ActiveDialog] | None:
         if not call_id and len(self.active_dialogs) == 1:
             call_id = next(iter(self.active_dialogs))
@@ -1151,8 +1054,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         if dialog is None:
             return None
         return call_id, dialog
-
-
 
 
     async def acquire_replacement_dialog(self, replaces: sip_transfer.SipReplaces):
@@ -1358,8 +1259,6 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
             "last_sip_status_code": self.last_sip_status_code,
             "last_sip_reason": self.last_sip_reason,
         }
-
-
 
 
 class SipUdpServer:

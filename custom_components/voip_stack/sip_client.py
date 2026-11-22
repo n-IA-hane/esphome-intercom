@@ -24,23 +24,21 @@ from .sip_client_requests import SipDialogRequests
 import asyncio
 import contextlib
 from contextvars import ContextVar
-from dataclasses import dataclass, field, replace
-import errno
+from dataclasses import replace
 import ipaddress
 import logging
 import re
 import secrets
 import socket
 import ssl
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from .sip_capture import send_sip_datagram
-from .sip_invite_exchange import InviteExchange
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core.codec_capabilities import supports_dahua_pcm
-from .core.media.payload_map import PayloadConflict, PayloadMap, RtpMapping
+from .core.media.payload_map import PayloadConflict
 from .core.rtp_payload import (
     RtpPayloadDecoder as RtpPayloadDecoder,
     RtpPayloadEncoder as RtpPayloadEncoder,
@@ -50,18 +48,14 @@ from .core.rtp_payload import (
 from .session_cleanup import async_wait_for_cleanup
 from .core import sdp, sip, sip_transfer
 from .core.sip_transport import (
-    SIP_UDP_MAX_REQUEST_BYTES,
     default_tls_context,
     SipMessageDispatcher,
 )
 from .core.sip_auth import (
-    DigestChallengeTracker,
     build_digest_authorization,
 )
 from .core.sip_resolution import SipServerResolver
 from .core.sip_dialog import (
-    DialogSignalingState,
-    PreparedDialogIdentity,
     DialogKey,
     SubscriptionDialog,
     apply_remote_offer_media,
@@ -73,7 +67,6 @@ from .sip_tcp_io import (
     read_sip_stream_message as _read_sip_stream_message,
 )
 from .sip_udp_io import SipDatagramQueueProtocol
-from .dtmf import build_sip_info_dtmf_body
 from .core.sip_transaction import (
     SIP_T1,
     SIP_T2,
@@ -88,37 +81,6 @@ from .core.sip_transaction import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
@@ -1609,24 +1571,6 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         return apply_media_endpoints(body, self.media_endpoints if endpoints is None else endpoints)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     async def _handle_dialog_media_request(self, request, host, port):
         if not self._request_matches_dialog(request, host, request.method):
             self._send_response_to_request(request, host, port, 481, "Call/Transaction Does Not Exist")
@@ -2121,8 +2065,6 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             return response
         finally:
             dispatcher.unregister(mailbox)
-
-
 
 
     def _dialog_is_current(self, expected: SipDialog) -> bool:
@@ -2830,10 +2772,6 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             return False
 
 
-
-
-
-
     def _reject_confirmed_dialog(
         self,
         *,
@@ -2983,13 +2921,6 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 self.dialog_ids.call_id,
                 error,
             )
-
-
-
-
-
-
-
 
 
     def _schedule_deferred_close(self, _invite_task: asyncio.Task[str]) -> None:

@@ -90,23 +90,30 @@ async def test_audio_only_refresh_reuses_invite_offer_answer_ack_and_reader():
     dialog.session_timer.configure(sip.SipSessionExpires(90, "uac"), local_role="uac",
                                    now=asyncio.get_running_loop().time())
     answer = offer.replace("192.0.2.1", "192.0.2.2").replace("audio 42000", "audio 40000")
-    client._send_dialog_request = lambda raw, host, port: sent.append(sip.parse_message(raw)) or True
+    responses = asyncio.Queue()
+    released = []
 
-    async def exchange(request, host, port, **kwargs):
-        sent.append(sip.parse_message(request.raw))
-        assert kwargs["method"] == "INVITE"
-        parsed = sent[-1]
-        assert parsed.body.decode() == offer
-        return sip.parse_message(sip.build_response(200, "OK",
-            [("To", "<sip:peer@192.0.2.2>;tag=peer"), ("Contact", "<sip:peer@192.0.2.2>"),
-             ("Content-Type", "application/sdp"), ("Session-Expires", "90;refresher=uac")], answer.encode()))
+    def send(raw):
+        request = sip.parse_message(raw)
+        sent.append(request)
+        if request.method == "INVITE":
+            assert request.body.decode() == offer
+            responses.put_nowait((sip.build_uas_response(request, 200, "OK", to_tag="peer",
+                contact_uri="sip:peer@192.0.2.2", body=answer.encode()), ("192.0.2.2", 5060)))
+        return True
 
-
-    client._run_built_dialog_request = exchange
-    reply = await client._send_session_refresh("INVITE", extra_headers=(("Session-Expires", "90;refresher=uac"),))
-    assert reply is not None and reply.status_code == 200
-    assert [message.method for message in sent] == ["INVITE", "ACK"]
-    assert client._prepared_reinvite is None and client.dialog is not dialog
-    assert client.dialog.send_format == fmt and client.dialog.recv_format == fmt
-    assert "m=video" not in client.dialog.local_sdp_body
-    client.dialog = None
+    client.use_reused_signaling_flow(send=send, responses=responses,
+        close=lambda: released.append(True), udp_next_hop=("192.0.2.2", 5060))
+    try:
+        reply = await client._send_session_refresh("INVITE", extra_headers=(("Session-Expires", "90;refresher=uac"),))
+        assert reply is not None and reply.status_code == 200
+        assert [message.method for message in sent] == ["INVITE", "ACK"]
+        assert sent[0].header("CSeq").split()[0] == sent[1].header("CSeq").split()[0]
+        assert client._dialog_dispatcher is not None
+        assert client._prepared_reinvite is None and client.dialog is not dialog
+        assert client.dialog.send_format == fmt and client.dialog.recv_format == fmt
+        assert "m=video" not in client.dialog.local_sdp_body
+    finally:
+        client.dialog = None
+        await client.close()
+    assert released == [True]

@@ -1670,7 +1670,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         reader = asyncio.StreamReader()
         reader.feed_data(b"OPTIONS sip:ha SIP/2.0\r\nX-Fill: " + b"x" * sip.MAX_SIP_MESSAGE_BYTES + b"\r\n\r\n")
         reader.feed_eof()
-        self.assertIsNone(await sip_tcp_io.read_sip_stream_message(reader))
+        with self.assertRaises(sip.SipMessageTooLarge) as raised:
+            await sip_tcp_io.read_sip_stream_message(reader)
+        self.assertEqual(raised.exception.status, 513)
 
     async def test_sip_tcp_reader_expires_idle_and_partial_frames(self) -> None:
         idle = asyncio.StreamReader()
@@ -1702,7 +1704,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             + padding
             + b"\r\n\r\n"
         )
-        self.assertIsNone(await asyncio.wait_for(sip_tcp_io.read_sip_stream_message(reader), timeout=0.1))
+        with self.assertRaises(sip.SipMessageTooLarge) as raised:
+            await asyncio.wait_for(sip_tcp_io.read_sip_stream_message(reader), timeout=0.1)
+        self.assertEqual(raised.exception.status, 513)
 
     async def test_sip_tcp_reader_rejects_ambiguous_content_length(self) -> None:
         reader = asyncio.StreamReader()
@@ -2797,18 +2801,16 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_local_video_reinvite_preserves_full_audio_payload_space(self) -> None:
         client, current, sent, negotiated = self._confirmed_audio_client()
-        client.allow_directional_audio_payloads = True
         wideband = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
         narrowband = sdp.RtpPcmFormat(98, "L16", 16000, 1, 10)
         current.local_sdp_body = sdp.build_offer_directional(
             "127.0.0.1",
             "127.0.0.1",
             41000,
-            [wideband.audio_format],
-            [narrowband.audio_format],
-            send_rtp_formats=(wideband,),
-            recv_rtp_formats=(narrowband,),
-            allow_directional_payloads=True,
+            [wideband.audio_format, narrowband.audio_format],
+            [wideband.audio_format, narrowband.audio_format],
+            send_rtp_formats=(wideband, narrowband),
+            recv_rtp_formats=(wideband, narrowband),
         )
         current.send_format = wideband
         current.recv_format = wideband
@@ -2825,10 +2827,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             [(item.payload_type, item.sample_rate) for item in offered],
             [(96, 48000), (98, 16000)],
         )
-        self.assertEqual(
-            sdp.audio_flow_attributes(request.body),
-            {98: "recv", 96: "send"},
-        )
+        self.assertNotIn(b"a=x-voip-stack-", request.body)
         client.queue.put_nowait(
             (
                 self._response_to_request(request, 488, "Not Acceptable Here"),
@@ -3980,7 +3979,18 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 ("127.0.0.2", 5060),
             )
 
-        client._read_response = read_response  # type: ignore[method-assign]
+        active_reads = maximum_reads = 0
+
+        async def observed_read_response(timeout):
+            nonlocal active_reads, maximum_reads
+            active_reads += 1
+            maximum_reads = max(maximum_reads, active_reads)
+            try:
+                return await read_response(timeout)
+            finally:
+                active_reads -= 1
+
+        client._read_response = observed_read_response  # type: ignore[method-assign]
 
         self.assertEqual(
             await client.invite(
@@ -4006,7 +4016,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             "cancelled",
         )
         await release
-        self.assertEqual(read_count, 2)
+        self.assertGreaterEqual(read_count, 2)
+        self.assertEqual(maximum_reads, 1)
         self.assertEqual(
             [sip.parse_message(raw).method for raw, _addr in transport.sent],
             ["INVITE", "CANCEL", "ACK"],
@@ -5742,8 +5753,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertTrue(invites[0].header("Contact").startswith("<sip:17770000000@192.168.1.10:5060"))
-        self.assertEqual(invites[0].header("X-Voip-Stack-Caller-Name"), "17770000000")
-        self.assertEqual(invites[2].header("X-Voip-Stack-Caller-Name"), "17770000000")
+        self.assertEqual(sip.name_addr_display_name(invites[0].header("From")), "17770000000")
+        self.assertEqual(sip.name_addr_display_name(invites[2].header("From")), "17770000000")
+        self.assertFalse(any(key.lower().startswith("x-voip-stack-")
+                             for request in invites for key, _value in request.headers))
         self.assertEqual(invites[0].body, invites[2].body)
         video_payload = sdp.DEFAULT_H264_FORMAT.payload_type
         self.assertIn(

@@ -15,6 +15,7 @@ from .endpoint_session import TerminationIntent
 from .media_offer_answer import validate_bridged_video_reoffer
 from .media_ports import release_sip_rtp_port_pair, reserve_sip_video_relay_media
 from .runtime_data import sip_endpoint_manager
+from .session_cleanup import async_wait_for_cleanup
 from .core import sdp
 from .sip_bridge import (
     dialog_rtp_peer,

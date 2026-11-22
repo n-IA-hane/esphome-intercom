@@ -17,9 +17,10 @@ from .core.sip_transaction import SIP_T1 as _SIP_T1, SIP_T2 as _SIP_T2, SIP_TIME
 from .inbound_identity import identity_fields
 import logging
 
-_LOGGER = logging.getLogger(__name__)
 from .sip_server_state import (SipInitialInvite, SipInvite, SipInviteResult, UasDelayedOfferPlan, _ActiveDialog, _CompletedRequest, _DeferredInviteFinal, _PendingDelayedOffer, _PendingInvite, _ReliableProvisional, _cseq_number, _identity_header, _uri_from_header, _uri_text_from_header)
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class SipIncomingInvites:
     """Use the endpoint-owned flows, locks, transactions and dialog records."""

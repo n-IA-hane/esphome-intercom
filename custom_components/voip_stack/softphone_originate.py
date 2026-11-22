@@ -622,7 +622,7 @@ async def _async_prepare_browser_sip_call(
 
     hass = call.hass
     resolved = destination.resolution
-    cfg, dest_device = resolved.config, resolved.destination_device
+    cfg = resolved.config
     route, route_uri = destination.route, destination.route_uri
     target, dialed_target = resolved.target, resolved.dialed_target
     target_endpoint, local_ip = destination.endpoint, destination.local_ip

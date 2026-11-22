@@ -177,6 +177,7 @@ class SipInitialInvite:
     outbound_trunk_id: str = ""
     identified_source_endpoint_id: str = ""
     authenticated_username: str = ""
+    max_forwards: int | None = None
     replaces: sip_transfer.SipReplaces | None = None
     codec_policy: CodecPolicy = CodecPolicy()
 

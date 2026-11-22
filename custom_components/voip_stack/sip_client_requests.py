@@ -12,9 +12,10 @@ from .dtmf import build_sip_info_dtmf_body
 from .core.sip_transaction import SIP_TIMER_F
 import logging
 
-_LOGGER = logging.getLogger(__name__)
 from .sip_client_types import (SipDialog)
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class SipDialogRequests:
     """Use the existing client reader, writer, locks and dialog state."""

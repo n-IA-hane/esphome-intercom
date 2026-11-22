@@ -139,7 +139,7 @@ async def _async_originate_application_call(
     from .automation_routing import RouteRequest, has_native_route_window
 
     identity = RouteRequest("", source.display_name, destination,
-        source_account_username=(source.id if source.metadata.get("endpoint_kind") == "phone"
+        source_account_username=(source.id if source.metadata.get("endpoint_kind") in {"sip_account", "esphome", "browser", "ha_softphone"}
                                  and not source.metadata.get("virtual_endpoint") else ""),
         source_extension=source.extension,
         caller_number=source.extension or source.id, caller_name=source.display_name,

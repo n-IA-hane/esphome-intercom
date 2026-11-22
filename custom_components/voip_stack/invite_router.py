@@ -49,7 +49,6 @@ from .inbound_routing.targets import (
 )
 from .inbound_routing.trunk import prepare_trunk_preanswer
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
-from .router import RouteAction
 from .pbx_trace import trace_call
 from .sip_listener import SipInviteResult
 

@@ -76,7 +76,6 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
     endpoints.update(mailbox_id, name="Kitchen", extension="4",
                      policy=PhonePolicy.from_data({effective_policy: {"kind": "voicemail", "target": mailbox_id},
                                                    **({"ringing_timeout": 1} if policy == "no_answer" else {})}))
-    if policy == "no_answer":
     config = normalized_trunk_config({
         "trunk_enabled": True, "trunk_register": False, "trunk_server": PROVIDER_HOST,
         "trunk_allowed_ips": [f"{PROVIDER_HOST}/32"], "trunk_inbound_mode": "dtmf", "trunk_dtmf_enabled": True,

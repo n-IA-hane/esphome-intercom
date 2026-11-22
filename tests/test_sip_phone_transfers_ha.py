@@ -1389,7 +1389,6 @@ async def test_internal_transfer_anchors_peer_without_refer_and_preserves_its_bu
     monkeypatch.setattr(legacy, "datagram_received", dispatch)
     await asyncio.to_thread(caller.dial, "bedroom0")
     original_id = lab.runtime.endpoints.get("transfer_a").active_call_id
-    original = lab.calls.get_session(original_id)
     result = await _handle_sip_transfer_service(ServiceCall(
         lab.hass, "voip_stack", "transfer",
         {"device_id": "transfer_a", "call_id": original_id, "destination": "transfer_c"},

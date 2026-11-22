@@ -168,7 +168,6 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Optional("options", default=dict): dict,
         vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
     }, extra=vol.PREVENT_EXTRA)
-    from homeassistant.helpers.selector import MediaSelector
 
     play_media_schema = vol.Schema({
         **phone_selector_fields,

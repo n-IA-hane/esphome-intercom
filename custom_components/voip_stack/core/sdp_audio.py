@@ -23,8 +23,6 @@ from .sdp_types import (
     RtpDtmfDirection,
     RtpDtmfFormat,
     RtpPcmDirection,
-    RtpPcmFormat,
-    SdpError,
 )
 
 def negotiate_dtmf_answer_directional(

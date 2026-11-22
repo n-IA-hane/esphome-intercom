@@ -436,7 +436,7 @@ class SipRegistrar:
             for observer in tuple(self._account_observers):
                 try:
                     observer(frozenset(changed))
-                except Exception as error:
+                except Exception:
                     _LOGGER.exception("SIP account observer failed")
 
     def authentication_generation(self, username):
@@ -457,7 +457,7 @@ class SipRegistrar:
         for observer in tuple(self._contact_observers):
             try:
                 observer(usernames)
-            except Exception as error:  # Keep registrar transactions independent of HA observers.
+            except Exception:  # Keep registrar transactions independent of HA observers.
                 _LOGGER.exception("SIP Contact observer failed")
 
     def _registration(self, username: str) -> SipRegistration | None:

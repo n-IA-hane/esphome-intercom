@@ -17,7 +17,7 @@ from .core.sip import parse_sip_uri
 from .endpoint_lifecycle import call_registry, create_runtime_task
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import roster_from_peers
-from .endpoint_session import TerminationInitiator, TerminationIntent
+from .endpoint_session import TerminationInitiator
 from .endpoint_termination import EndpointTerminationHandler
 from .fsm import CallState, TerminalReason
 from .groups import GROUP_TYPE_RING

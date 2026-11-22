@@ -13,9 +13,10 @@ from .core.sip_dialog import apply_remote_offer_media, build_dialog_request
 from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_B, SIP_TIMER_F, SipClientTransaction, async_run_dialog_request_transaction, matches_response
 import logging
 
-_LOGGER = logging.getLogger(__name__)
 from .sip_client_types import (_is_invite_progress_response, _sip_decline_reason)
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class SipInviteTransactions:
     """Use the existing client reader, writer, locks and dialog state."""

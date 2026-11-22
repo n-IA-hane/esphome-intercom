@@ -12,9 +12,10 @@ from .core.sip_transaction import SessionTimerDriver
 from .inbound_identity import identity_fields
 import logging
 
-_LOGGER = logging.getLogger(__name__)
 from .sip_server_state import (SipInvite, SipInviteResult, _ActiveDialog, _PendingDelayedOffer)
 
+
+_LOGGER = logging.getLogger(__name__)
 
 class SipServerOffers:
     """Use the endpoint-owned flows, locks, transactions and dialog records."""

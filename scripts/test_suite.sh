@@ -144,6 +144,7 @@ ha_tests=(
   tests/test_registrar_storage_ha.py
   tests/test_session_refresh_consolidation_ha.py
   tests/test_sip_account_username_identity_ha.py
+  tests/test_sip_transaction_loss_ha.py
   tests/test_video_relay_role_handoff_ha.py
   tests/test_media_contract_expectations_ha.py
   tests/test_media_duplex_receive_budget_ha.py

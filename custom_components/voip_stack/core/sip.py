@@ -219,6 +219,8 @@ class SipMessage:
 
     def header(self, name: str, default: str = "") -> str:
         values = self.header_values(name)
+        if values and name.lower() in {"via", "v"}:
+            return values[0]
         return values[-1] if values else default
 
 
