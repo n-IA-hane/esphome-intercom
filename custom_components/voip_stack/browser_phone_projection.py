@@ -22,7 +22,6 @@ from .phone_endpoint import (
     EndpointAvailability,
     EndpointKind,
 )
-from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
 from .runtime_data import (
     require_runtime_data,
@@ -62,8 +61,15 @@ def _sip_runtime_snapshot(
     hass: HomeAssistant,
     *,
     detailed: bool = False,
+    call_ids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     registry = call_registry(hass)
+    identities = None if call_ids is None else call_ids | frozenset(
+        identity for call_id in call_ids if (session := registry.sessions.get(call_id)) is not None
+        for leg in session.legs.values() for identity in (leg.leg_id, leg.sip_call_id) if identity
+    )
+    def visible(identity):
+        return identities is None or identity in identities or registry.resolve_session_id(str(identity)) in call_ids
     endpoint = sip_endpoint_manager(hass)
     data: dict[str, Any] = {
         "sip_udp_ready": False,
@@ -112,7 +118,14 @@ def _sip_runtime_snapshot(
                 "last_sip_reason": str(getattr(snap, "last_sip_reason", "") or ""),
             }
         )
+        if call_ids is not None:
+            for key in ("pending_call_ids", "active_call_ids"):
+                data[key] = [identity for identity in data[key] if visible(identity)]
+            data["pending_transactions"] = len(data["pending_call_ids"])
+            data["active_dialogs"] = len(data["active_call_ids"])
     for call_id, relay in registry.relays_snapshot().items():
+        if not visible(call_id):
+            continue
         if detailed:
             snap = getattr(relay, "snapshot", None)
             if not callable(snap):
@@ -145,6 +158,8 @@ def _sip_runtime_snapshot(
         )
         data["rtp_dropped_packets"] += int(relay_data.get("dropped_packets", 0))
     for key, client in registry.sip_clients_snapshot().items():
+        if not visible(key):
+            continue
         snap = getattr(client, "snapshot", None)
         if not callable(snap):
             continue
@@ -174,11 +189,11 @@ def _sip_runtime_snapshot(
                 client_data.get("last_sip_reason") or data["last_sip_reason"]
             )
     trunk = sip_trunk(hass)
-    if detailed:
+    if detailed and call_ids is None:
         from .runtime_data import sip_trunks
         data["sip_trunks"] = {identity: dict(client.snapshot()) for identity, client in sip_trunks(hass).items()}
     trunk_snapshot = getattr(trunk, "snapshot", None)
-    if callable(trunk_snapshot):
+    if callable(trunk_snapshot) and call_ids is None:
         trunk_data = dict(trunk_snapshot())
         if detailed:
             data["sip_trunk"] = trunk_data
@@ -191,7 +206,7 @@ def _sip_runtime_snapshot(
             data["last_sip_reason"] = str(trunk_data.get("trunk_status_reason") or "")
     registrar = sip_registrar(hass)
     registrar_snapshot = getattr(registrar, "snapshot", None)
-    if detailed and callable(registrar_snapshot):
+    if detailed and callable(registrar_snapshot) and call_ids is None:
         data["sip_registrar"] = dict(registrar_snapshot())
         if data["sip_registrar"].get("registrar_last_sip_event"):
             data["last_sip_event"] = str(
@@ -205,7 +220,7 @@ def _sip_runtime_snapshot(
             data["last_sip_reason"] = str(
                 data["sip_registrar"].get("registrar_last_sip_reason") or ""
             )
-    elif registrar is not None:
+    elif registrar is not None and call_ids is None:
         if getattr(registrar, "last_sip_event", ""):
             data["last_sip_event"] = str(registrar.last_sip_event)
         if getattr(registrar, "last_sip_status_code", 0):
@@ -215,6 +230,9 @@ def _sip_runtime_snapshot(
             )
     data["pending_call_ids"] = sorted(set(data["pending_call_ids"]))
     data["active_call_ids"] = sorted(set(data["active_call_ids"]))
+    if call_ids is not None:
+        data["pending_transactions"] = len(data["pending_call_ids"])
+        data["active_dialogs"] = len(data["active_call_ids"])
     runtime = runtime_data(hass)
     data["runtime_resources"] = runtime_resource_snapshot(
         registry,
@@ -223,7 +241,7 @@ def _sip_runtime_snapshot(
         call_artifacts=runtime.sip if runtime is not None else None,
         browser_media=runtime.media if runtime is not None else None,
         runtime_tasks=runtime.tasks if runtime is not None else (),
-    )
+    ) if call_ids is None else {"resource_counts": registry.snapshot(call_ids=call_ids)["resource_counts"]}
     return data
 
 
@@ -302,7 +320,15 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         )
     )
     debug_mode = current_debug_mode(hass)
-    runtime = _sip_runtime_snapshot(hass, detailed=debug_mode)
+    from .call_scope import call_belongs_to_endpoint
+    registry = call_registry(hass)
+    visible_call_ids = frozenset(
+        identity for identity, session in registry.sessions.items()
+        if endpoint_id in session.endpoint_claims
+        or call_belongs_to_endpoint(registry, identity, endpoint_id)
+        or any(leg.endpoint_id == endpoint_id for leg in session.legs.values())
+    )
+    runtime = _sip_runtime_snapshot(hass, detailed=debug_mode, call_ids=visible_call_ids)
     transport_config = current_transport_config(hass)
     active_softphone = store.get("state") in {
         CallState.CALLING.value,
@@ -346,26 +372,23 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         )
         media_debug.update(
             {
-                "call_registry": registry.snapshot(),
+                "call_registry": registry.snapshot(call_ids=visible_call_ids),
                 "runtime_resources": runtime["runtime_resources"],
                 "audio_ws_owner_call_ids": sorted(
-                    entry_runtime.media.owners_for("audio")
+                    (identity for identity in entry_runtime.media.owners_for("audio")
+                     if registry.resolve_session_id(identity) in visible_call_ids)
                     if entry_runtime is not None
                     else ()
                 ),
                 "video_ws_owner_call_ids": sorted(
-                    entry_runtime.media.owners_for("video")
+                    (identity for identity in entry_runtime.media.owners_for("video")
+                     if registry.resolve_session_id(identity) in visible_call_ids)
                     if entry_runtime is not None
                     else ()
                 ),
                 "video_transcoder_call_id": str(
                     getattr(active_transcoder, "call_id", "") or ""
-                ),
-                "debug_capture_pending_writes": debug_capture_pending_writes(),
-                "debug_capture_dropped_writes": (
-                    entry_runtime.media.debug_capture_dropped_writes
-                    if entry_runtime is not None
-                    else 0
+                    if registry.resolve_session_id(str(getattr(active_transcoder, "call_id", "") or "")) in visible_call_ids else ""
                 ),
             }
         )

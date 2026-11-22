@@ -1236,32 +1236,45 @@ class CallRuntimeApi:
                 count += 1
         return count
 
-    def snapshot(self) -> dict[str, Any]:
-        pending_routes = dict(self.artifact_items("pending_route"))
-        pending_invites = dict(self.artifact_items("pending_invite"))
-        preanswered = self.resources_snapshot("preanswered")
-        media = self.resources_snapshot("softphone_media")
-        bridges = self.bridge_links_snapshot()
-        claims = self.endpoint_claims_snapshot()
+    def snapshot(self, *, call_ids: Iterable[str] | None = None) -> dict[str, Any]:
+        """Describe the registry, optionally limited to existing call owners."""
+        scope = None if call_ids is None else frozenset(call_ids)
+        identities = None if scope is None else scope | frozenset(
+            identity for call_id in scope if (session := self.sessions.get(call_id)) is not None
+            for leg in session.legs.values() for identity in (leg.leg_id, leg.sip_call_id)
+            if identity
+        )
+
+        def scoped(items):
+            return {key: value for key, value in dict(items).items()
+                    if identities is None or key in identities or self.resolve_session_id(key) in scope}
+
+        sessions = scoped(self.sessions)
+        pending_routes = scoped(self.artifact_items("pending_route"))
+        pending_invites = scoped(self.artifact_items("pending_invite"))
+        preanswered = scoped(self.resources_snapshot("preanswered"))
+        media = scoped(self.resources_snapshot("softphone_media"))
+        bridges = scoped(self.bridge_links_snapshot())
+        claims = scoped(self.endpoint_claims_snapshot())
         resource_counts = {
-            "sessions": len(self.sessions),
-            "legs": sum(len(session.legs) for session in self.sessions.values()),
+            "sessions": len(sessions),
+            "legs": sum(len(session.legs) for session in sessions.values()),
             "pending_routes": len(pending_routes),
             "pending_invites": len(pending_invites),
             "preanswered": len(preanswered),
             "softphone_media": len(media),
-            "sip_clients": len(self.sip_clients_snapshot()),
-            "client_watchers": len(self.client_watchers_snapshot()),
-            "relays": len(self.relays_snapshot()),
+            "sip_clients": len(scoped(self.sip_clients_snapshot())),
+            "client_watchers": len(scoped(self.client_watchers_snapshot())),
+            "relays": len(scoped(self.relays_snapshot())),
             "bridges": len(bridges),
             "endpoint_claims": sum(len(item) for item in claims.values()),
         }
         return {
-            "sessions": len(self.sessions),
-            "active_sessions": self.active_count(),
-            "terminated_calls": len(self.terminated_call_ids),
+            "sessions": len(sessions),
+            "active_sessions": sum(session.live for session in sessions.values()) if scope is not None else self.active_count(),
+            "terminated_calls": 0 if scope is not None else len(self.terminated_call_ids),
             "resource_counts": resource_counts,
-            "call_ids": sorted(self.sessions),
+            "call_ids": sorted(sessions),
             "pending_call_ids": sorted(pending_invites),
             "media_call_ids": sorted(media),
             "bridge_call_ids": sorted(bridges),

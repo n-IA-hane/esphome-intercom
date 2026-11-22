@@ -242,9 +242,23 @@ def websocket_subscribe_call_events(
 
 
 def _client_phone_state(hass, connection, endpoint_id, state=None):
-    """Project per-user controls without storing permissions in account state."""
-    return {**(_ha_softphone_state(hass, endpoint_id) if state is None else state),
-            "can_control": websocket_can_control_endpoint(hass, connection, _browser_endpoint(hass, endpoint_id))}
+    """Re-read the account owner at the authorized client boundary.
+
+    Queued event payloads may predate an ownership or permission change. Never
+    forward their diagnostics, even when the producer already built a snapshot.
+    Only retain an ended occurrence's ordering fields after checking its scope.
+    """
+    payload = _ha_softphone_state(hass, endpoint_id)
+    if state is not None and payload["state"] in {"idle", "unavailable"}:
+        identity = str(state.get("call_id") or "")
+        context = call_registry(hass).event_context(identity)
+        if (state.get("state") in {"idle", "unavailable"} and context is not None
+                and endpoint_id in context.terminal_endpoint_ids):
+            for key in ("call_id", "generation", "sequence", "revision"):
+                if key in state:
+                    payload[key] = state[key]
+    return {**payload, "can_control": websocket_can_control_endpoint(
+        hass, connection, _browser_endpoint(hass, endpoint_id))}
 
 
 @websocket_api.websocket_command(
