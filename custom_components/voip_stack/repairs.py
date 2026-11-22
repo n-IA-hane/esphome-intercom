@@ -67,6 +67,7 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
                   "username": row.data.get("username", ""), "extension": row.data.get("extension", "")}
         errors = {}
         if user_input is not None:
+            retrying_migration = entry.state is ConfigEntryState.MIGRATION_ERROR
             values.update(user_input)
             data = {**row.data, **values, 'username_source': 'user'}
             from homeassistant.helpers import entity_registry as er
@@ -88,7 +89,7 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
                     self.hass.config_entries.async_update_subentry(entry, row, data=data, title=values['name'])
                 else:
                     await async_migrate_account_identities(self.hass, entry, account_updates={row.subentry_id: data})
-                if entry.state is ConfigEntryState.MIGRATION_ERROR:
+                if retrying_migration:
                     await self.hass.config_entries.async_retry_migration(self.entry_id)
             except (HomeAssistantError, ValueError, TypeError):
                 errors["base"] = "migration_retry_failed"
@@ -96,7 +97,7 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
                 if entry.state is not ConfigEntryState.MIGRATION_ERROR:
                     async_sync_phone_identity_issue(self.hass, entry)
                     async_sync_account_route_issue(self.hass, entry)
-                    if entry.state is ConfigEntryState.LOADED:
+                    if entry.state is ConfigEntryState.LOADED and not retrying_migration:
                         self.hass.config_entries.async_schedule_reload(entry.entry_id)
                     return self.async_create_entry(data={})
                 errors["base"] = "migration_retry_failed"

@@ -50,6 +50,7 @@ from .inbound_routing.targets import (
 from .inbound_routing.trunk import prepare_trunk_preanswer
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .pbx_trace import trace_call
+from .router import RouteAction, RouteDecision
 from .sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -141,7 +142,6 @@ async def route_invite(
     if requested_trunk:
         invite = replace(invite, target_route=dial_target, target=dial_target,
                          outbound_trunk_id=requested_trunk)
-        from .router import RouteAction, RouteDecision
 
         decision = RouteDecision(RouteAction.TRUNK, target=dial_target,
                                  trunk_id=requested_trunk, source="trunk")

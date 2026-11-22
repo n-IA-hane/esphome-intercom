@@ -1,6 +1,7 @@
 """Native receive owners preserve source admission and conference call lifetimes."""
 
 import asyncio
+from dataclasses import replace
 import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -13,13 +14,13 @@ from custom_components.voip_stack.audio_ws_frames import BrowserAudioReceiver
 from custom_components.voip_stack.conference import ConferenceRoom, _ConferenceLeg, CONFERENCE_FORMAT, conference_manager
 from custom_components.voip_stack.conference_ringing import ConferenceRingRuntime, async_ring_conference_members
 from custom_components.voip_stack.endpoint_session import TerminationIntent
-from custom_components.voip_stack.local_call_media import LocalAudioContract, LocalCallMedia
+from custom_components.voip_stack.local_call_media import LocalAudioContract, LocalCallMedia, source_dtmf_formats
 from custom_components.voip_stack.media_ports import RtpPortReservation
 from custom_components.voip_stack.outbound_attempts import OutboundLeg
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
-from custom_components.voip_stack.sip_client import SipCallClient
+from custom_components.voip_stack.sip_client import SipCallClient, SipDialog
 from custom_components.voip_stack.sip_registrar import SipAccount
 from tests.test_automation_originate_ha import lab as lab
 from tests.test_sip_capabilities_ha import register_peer, wait_until
@@ -28,6 +29,21 @@ from tests.test_trunk_calls_ha import trunks as trunks
 pytestmark = pytest.mark.ha
 
 FORMAT = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20, max_frame_ms=20)
+
+
+def test_dialog_events_use_the_negotiated_contract_including_empty_and_legacy_primary():
+    dialog = SipDialog(target="member", remote_host="192.0.2.2", remote_sip_port=5060,
+        remote_rtp_host="192.0.2.2", remote_rtp_port=40000, local_rtp_port=42000,
+        call_id="event-contract", local_uri="sip:ha@192.0.2.1", remote_uri="sip:member@192.0.2.2",
+        send_format=FORMAT, recv_format=FORMAT)
+    assert not hasattr(dialog, "remote_sdp")
+    assert source_dtmf_formats(dialog) == ()
+    primary = sdp.RtpDtmfFormat(110, 16000)
+    legacy = replace(dialog, dtmf_payload_type=110, dtmf_clock_rate=16000)
+    assert source_dtmf_formats(legacy) == (primary,)
+    alternate = sdp.RtpDtmfFormat(111, 48000)
+    accepted = replace(legacy, recv_dtmf_formats=(alternate, primary))
+    assert source_dtmf_formats(accepted) == (primary, alternate)
 
 
 def packet(sequence, *, ssrc=7, value=100, payload_type=96):

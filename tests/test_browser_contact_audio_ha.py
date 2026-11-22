@@ -62,6 +62,7 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
     options = asyncio.Event()
     requests = []
     peer_errors = []
+    capability_profile = profile
 
     class Receiver(asyncio.DatagramProtocol):
         def connection_made(self, transport):
@@ -79,9 +80,9 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
                 body = b""
                 if message.method == "OPTIONS":
                     options.set()
-                    if profile == "unknown":
+                    if capability_profile == "unknown":
                         return  # No OPTIONS answer must not block an ordinary call.
-                    body = CAPS if profile in {"standard-pcm", "changed"} else (
+                    body = CAPS if capability_profile in {"standard-pcm", "changed"} else (
                         b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Generic phone\r\n"
                         b"c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 0 RTP/AVP 0\r\n"
                         b"a=rtpmap:0 PCMU/8000/1\r\na=ptime:20\r\na=sendrecv\r\n")
@@ -119,10 +120,10 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
     peer_port = transport.get_extra_info("sockname")[1]
     registration_uri = f"sip:127.0.0.1:{listener_port}"
 
-    async def register(sequence, authorization=None):
-        headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_port};branch=z9hG4bK-camera-{sequence};rport"),
+    async def register(sequence, authorization=None, *, call_id="camera-registration"):
+        headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_port};branch=z9hG4bK-{call_id}-{sequence};rport"),
             ("From", f"<sip:{receiver.username}@127.0.0.1>;tag=camera-registration"),
-            ("To", f"<sip:{receiver.username}@127.0.0.1>"), ("Call-ID", "camera-registration"),
+            ("To", f"<sip:{receiver.username}@127.0.0.1>"), ("Call-ID", call_id),
             ("CSeq", f"{sequence} REGISTER"),
             ("Contact", f"<sip:{receiver.username}@127.0.0.1:{peer_port}>"),
             ("Expires", "60"), ("User-Agent", "Ordinary receiving phone")]
@@ -149,6 +150,24 @@ async def test_generic_registered_phone_negotiates_declared_audio_and_answer(lab
             async with asyncio.timeout(2):
                 while registrar.registered_contacts(receiver.username)[0].capabilities is None:
                     await asyncio.sleep(.01)
+        if profile == "changed":
+            previous = registrar.registered_contacts(receiver.username)[0]
+            assert previous.capabilities["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
+            # A restarted peer changes its codec set through a new REGISTER
+            # generation and fresh OPTIONS before its next ordinary dialog.
+            capability_profile = "standard"
+            registration = "camera-registration-codec-change"
+            challenge = await register(1, call_id=registration)
+            assert challenge.status_code == 401
+            authorization = build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+                username=receiver.username, password="fixture-only", method="REGISTER", uri=registration_uri)
+            assert (await register(2, authorization, call_id=registration)).status_code == 200
+            async with asyncio.timeout(2):
+                while ((current := registrar.registered_contacts(receiver.username)[0]).capability_generation
+                        == previous.capability_generation or current.capabilities is None):
+                    await asyncio.sleep(.01)
+            assert current.call_id == registration
+            assert current.capabilities["sip_audio_tx_formats"] == ["PCMU/8000/1"]
         from custom_components.voip_stack.directory_runtime import async_refresh_directory
         from custom_components.voip_stack.roster import dump_roster_json
         directory = await async_refresh_directory(lab.hass)

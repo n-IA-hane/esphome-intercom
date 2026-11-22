@@ -173,7 +173,7 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
     from .bridge_media_updates import BridgeMediaUpdateBinder
     from .dtmf_events import attach_dtmf_event_bridge
     from .softphone_termination import async_terminate_sip_bridge_session
-    from .call_projection import publish_bridge_projection, publish_esp_media_route
+    from .call_projection import publish_bridge_projection
     from .endpoint_registry import EndpointBusyError
 
     runtime = require_runtime_data(hass)
@@ -340,7 +340,6 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
                                          callee=old.callee, client=client)
                 if not new.claim_answer(new.token, lambda: True):
                     raise RuntimeError("replacement answer ownership changed")
-                publish_esp_media_route(hass, new.call_id, relay.media_route)
         except BaseException:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)

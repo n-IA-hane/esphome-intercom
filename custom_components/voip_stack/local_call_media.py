@@ -17,7 +17,7 @@ from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .queue_utils import put_drop_oldest
 from .session_cleanup import async_wait_for_cleanup
-from .sip_client import RtpPayloadEncoder
+from .sip_client import RtpPayloadEncoder, SipDialog
 from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite
 
@@ -131,7 +131,7 @@ def source_dtmf_formats(source):
         primary = getattr(source, "recv_dtmf_format", None)
         payload = primary.payload_type if primary is not None else getattr(source, "dtmf_payload_type", None)
         return tuple(sorted(accepted, key=lambda fmt: fmt.payload_type != payload))
-    if isinstance(source, LocalAudioContract):
+    if isinstance(source, (LocalAudioContract, SipDialog)):
         return (RtpDtmfFormat(source.dtmf_payload_type, source.dtmf_clock_rate, source.dtmf_events),) if source.dtmf_payload_type is not None else ()
     if isinstance(source, SipInvite):
         return (source.recv_dtmf_format,) if source.recv_dtmf_format is not None else ()

@@ -5,6 +5,7 @@ import socket
 import struct
 import re
 from io import BytesIO
+from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
 
@@ -16,6 +17,7 @@ from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 from custom_components.voip_stack.sip_client import SipCallClient, SipDatagramQueueProtocol
 from custom_components.voip_stack.sip_registrar import SipAccount
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
+from .test_udp_outbound_flow_ha import register_phone, PASSWORD
 
 pytestmark = pytest.mark.ha
 
@@ -111,7 +113,7 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
     registry = lab.calls
     registrar = registry.component("registrar")
     registrar.enabled = True
-    account = SipAccount("Native source", "Native source", "isolated-test-only")
+    account = SipAccount("native-source", "Native source", PASSWORD)
     registrar.update_accounts([*registrar.accounts.values(), account])
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
@@ -131,6 +133,9 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
         lab.runtime.transport_config[CONF_SIP_VIDEO] = True
         lab.runtime.transport_config[CONF_VIDEO_TRANSCODING] = video_case == "transcoded"
+        for endpoint in lab.calls.component("udp_listener")._dialog_endpoints():
+            endpoint.enable_video = True
+            endpoint.enable_video_transcoding = video_case == "transcoded"
         for host in ("127.0.0.2", "127.0.0.1", "127.0.0.1"):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind((host, 0))
@@ -148,6 +153,21 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         caller.video_format = caller.video_formats[0]
         caller.video_direction = "sendonly" if video_case == "transcoded" else "sendrecv"
     try:
+        async def receive_registration(_method=None, *, status=None):
+            async with asyncio.timeout(2):
+                while True:
+                    raw, address = await caller.queue.get()
+                    message = sip.parse_message(raw)
+                    if message.method == "OPTIONS":
+                        caller._send_response_to_request(message, *address, 200, "OK")
+                    elif message.is_response and (status is None or message.status_code == status):
+                        return message, address
+        registering = SimpleNamespace(address=("127.0.0.2", caller.local_sip_port),
+            transport=caller.transport, receive=receive_registration)
+        binding = await register_phone(SimpleNamespace(a=registering, registrar=registrar, lab=lab,
+            listener=("127.0.0.1", lab.runtime.transport_config["sip_port"])),
+            username=account.username, outbound=False, discover=False)
+        assert binding.source_host == "127.0.0.2" and binding.source_port == caller.local_sip_port
         state = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if state == "ringing":

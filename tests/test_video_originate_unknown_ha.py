@@ -469,12 +469,17 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
                                               if known_jpeg else ['audio', 'dtmf'])
         if policy.startswith('options_native_'):
             assert row.metadata['sip_audio_tx_formats'] == [
-                'L16/16000/1/10', 'L16/16000/1/20', 'G722/8000/1/20', 'G722/8000/1/10']
+                'L16/48000/1', 'L16/16000/1', 'G722/8000/1']
             assert row.metadata['sip_audio_rx_formats'] == [
-                'L16/48000/1/10', 'L16/16000/1/20', 'L16/16000/1/10',
-                'G722/8000/1/20', 'G722/8000/1/10']
+                'L16/48000/1/10', 'L16/16000/1/10', 'G722/8000/1/10']
+            assert row.metadata['sip_audio_receiver_ptime'] == 10
         else:
-            assert row.metadata['sip_audio_tx_formats'] == row.metadata['sip_audio_rx_formats'] == []
+            assert row.metadata['sip_audio_tx_formats'] == row.metadata['sip_audio_rx_formats'] == [
+                'L16/48000/1', 'L16/16000/1']
+            assert row.metadata['sip_audio_receiver_ptime'] == 0
+        assert row.metadata['sip_audio_tx_geometry_complete'] and row.metadata['sip_audio_rx_geometry_complete']
+        assert row.metadata['sip_audio_receiver_maxptime'] == 10
+        assert 'sdp_features' not in row.metadata
         expected_contract = '' if policy == 'observed_audio_only' else ('jpeg' if known_jpeg else None)
         assert row.metadata['sip_video_codec'] == expected_contract
         assert peer_video_codec(None, row) == expected_contract

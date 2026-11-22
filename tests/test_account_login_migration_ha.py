@@ -222,7 +222,7 @@ async def test_fresh_browser_upgrade_keeps_an_explicit_generated_shaped_login(ha
 
 async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_succeeds(hass, monkeypatch):
     """Exercise HA's real migration-error state and Repairs flow manager."""
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, Mock
     from homeassistant.components.repairs import repairs_flow_manager
     from homeassistant.components.repairs.issue_handler import async_setup
     from homeassistant.config_entries import ConfigEntryState
@@ -238,6 +238,8 @@ async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_s
     before = [encoded(sub.as_dict()) for sub in (absent, other)]
     setup = AsyncMock(return_value=True)
     monkeypatch.setattr(voip_stack, "async_setup_entry", setup)
+    schedule_reload = Mock(wraps=hass.config_entries.async_schedule_reload)
+    monkeypatch.setattr(hass.config_entries, "async_schedule_reload", schedule_reload)
     hass.config.components.add("voip_stack")
     assert await hass.config_entries.async_setup(entry.entry_id) is False
     assert entry.state is ConfigEntryState.MIGRATION_ERROR
@@ -258,6 +260,7 @@ async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_s
     assert other.data["username"] == "casa" and other.data["username_source"] == "user"
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is not None
     setup.assert_not_awaited()
+    schedule_reload.assert_not_called()
     # Correction is editable in Repairs even while the integration cannot load.
     native_ids = absent.subentry_id, other.subentry_id
     passwords = absent.data["password"], other.data["password"]
@@ -269,6 +272,7 @@ async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_s
     assert (absent.data["password"], other.data["password"]) == passwords
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is None
     setup.assert_awaited_once_with(hass, entry)
+    schedule_reload.assert_not_called()
 
 
 async def test_absent_login_reaches_existing_provisioning_line_without_rebinding(phone_lab):

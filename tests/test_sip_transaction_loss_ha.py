@@ -116,15 +116,17 @@ async def test_lost_byes_outlive_ui_and_media_close_until_real_200(socket_enable
         lambda: LossPeer(answered=True), local_addr=("127.0.0.1", 0))
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.1", 0))
-    client = SipCallClient(local_ip="127.0.0.1", local_name="caller", local_sip_port=0,
-        local_rtp_port=media.getsockname()[1], audio_rtp_socket=media,
-        supported_formats=[AudioFormat(16000, frame_ms=20)], include_common_codecs=False)
+    client = None
     calls = SipEndpointRuntime()
     calls.activate()
     snapshots = []
     unsubscribe = calls.subscribe_state(snapshots.append)
     cleanup = None
     try:
+        client = SipCallClient(local_ip="127.0.0.1", local_name="caller", local_sip_port=0,
+            local_rtp_port=media.getsockname()[1],
+            supported_formats=[AudioFormat(16000, frame_ms=20)], include_common_codecs=False)
+        client.audio_rtp_socket = media
         assert await client.invite(target="peer", remote_host="127.0.0.1",
             remote_sip_port=peer.port, timeout=3) == "in_call"
         session = calls.upsert(client.dialog_ids.call_id, state="in_call", owner="ha_softphone")
@@ -157,14 +159,17 @@ async def test_lost_byes_outlive_ui_and_media_close_until_real_200(socket_enable
         assert not calls.sessions and not calls.sip_clients_snapshot()
     finally:
         peer.finish()
-        await client.close()
-        if cleanup is not None:
-            await asyncio.wait_for(asyncio.shield(cleanup), 5)
-        if client._close_task is not None:
-            await asyncio.wait_for(asyncio.shield(client._close_task), 5)
-        unsubscribe()
-        media.close()
-        transport.close()
+        try:
+            if client is not None:
+                await client.close()
+            if cleanup is not None:
+                await asyncio.wait_for(asyncio.shield(cleanup), 5)
+            if client is not None and client._close_task is not None:
+                await asyncio.wait_for(asyncio.shield(client._close_task), 5)
+        finally:
+            unsubscribe()
+            media.close()
+            transport.close()
 
 
 async def test_trunk_423_retry_uses_owned_contact_expiry_and_keeps_udp_owner(socket_enabled):
@@ -216,11 +221,13 @@ async def test_trunk_423_retry_uses_owned_contact_expiry_and_keeps_udp_owner(soc
 
     loop = asyncio.get_running_loop()
     transport, provider = await loop.create_datagram_endpoint(Registrar, local_addr=("127.0.0.1", 0))
-    trunk = SipTrunkClient(config=SipTrunkConfig(enabled=True, transport="udp", server="127.0.0.1",
-        port=provider.port, domain=realm, username="line", auth_username="line", password=password, expires=60),
-        local_ip="127.0.0.1", local_sip_port=0)
+    trunk = None
     try:
+        trunk = SipTrunkClient(config=SipTrunkConfig(enabled=True, transport="udp", server="127.0.0.1",
+            port=provider.port, domain=realm, username="line", auth_username="line", password=password, expires=60),
+            local_ip="127.0.0.1", local_sip_port=0)
         await trunk._connect_udp()
+        trunk.local_sip_port = trunk.transport.get_extra_info("sockname")[1]
         trunk._ensure_receive_task()
         original_transport, original_reader = trunk.transport, trunk._receive_task
         for attempt in range(2):
@@ -244,5 +251,8 @@ async def test_trunk_423_retry_uses_owned_contact_expiry_and_keeps_udp_owner(soc
         assert trunk.transport is None and trunk._receive_task is None and not trunk.ready
         assert not trunk._outbound_dialogs and trunk.expires_at == 0
     finally:
-        await asyncio.wait_for(trunk.stop(), 2)
-        transport.close()
+        try:
+            if trunk is not None:
+                await asyncio.wait_for(trunk.stop(), 2)
+        finally:
+            transport.close()

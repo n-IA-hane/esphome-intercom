@@ -552,7 +552,7 @@ async def test_browser_replaces_video_uses_standard_contract_and_owned_reservati
     lab = browser_replacement_owner
     lab.runtime.endpoints.update("kitchen", capabilities=frozenset({"audio", "video", "dtmf"}))
     lab.runtime.transport_config[CONF_VIDEO_CAMERA_SEND] = camera
-    video = sdp.RtpVideoFormat(103, "VP8", direction="sendrecv")
+    video = sdp.RtpVideoFormat(payload_type=103, encoding="VP8", direction="sendrecv")
     offer = lab.previous.remote_sdp + (
         "m=video 19002 RTP/AVP 103\r\na=rtpmap:103 VP8/90000\r\na=sendrecv\r\n").encode()
     previous = replace(lab.previous, remote_sdp=offer, video_format=video,
