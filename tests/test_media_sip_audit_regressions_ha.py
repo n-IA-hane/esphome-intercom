@@ -120,11 +120,14 @@ async def test_only_valid_same_ssrc_media_can_rebind_the_symmetric_port():
 
 async def test_valid_short_packet_establishes_source_before_emitting_a_pcm_frame():
     async with local_media() as media:
+        media._accepting_input = True
         media.handle_rtp(packet(samples=160), ("192.0.2.2", 40001))
         assert media.remote_ssrc == 100 and media.remote_rtp_port == 40001
-        assert media.counters["rtp_rx"] == 0 and media.counters["drop_decode"] == 0
+        assert media.counters["rtp_rx"] == 1 and media.counters["drop_decode"] == 0
+        assert media.rx_queue.empty()
         media.handle_rtp(packet(samples=160), ("192.0.2.2", 40001))
-        assert media.counters["rtp_rx"] == 1
+        assert media.counters["rtp_rx"] == 2
+        assert media.rx_queue.get_nowait() == struct.pack("<320h", *([1234] * 320))
 
 
 @pytest.mark.parametrize(("host", "pt", "counter"), [

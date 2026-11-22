@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import contextlib
 import logging
@@ -402,22 +402,31 @@ class LocalCallMedia:
                     if digit and telephone_event_code(digit) in self._dtmf_events:
                         self.on_dtmf("left", digit, "rtp_event")
                     return
-            if self.decoder.format_for(packet.payload_type) is None:
+            received_format = self.decoder.format_for(packet.payload_type)
+            if received_format is None:
                 self.counters["drop_payload_type"] += 1
                 return
             if self.remote_ssrc is not None and packet.ssrc != self.remote_ssrc:
                 self.counters["drop_ssrc"] += 1
                 return
-            # Resampling consumes the negotiated PCM quantum, independent of RTP packet time.
-            pcm_frames = self.decoder.decode(packet.payload_type, packet.payload, normalize_frames=True)
+            # Normalize before resampling. For duration-only conversion, the
+            # converter owns reassembly; two reframers would strand a valid
+            # pipeline quantum across their different input/output buffers.
+            variable_input = (not self.rx_converter.requires_fixed_input
+                and self.rx_converter.src != self.rx_converter.dst
+                and replace(received_format.audio_format, frame_ms=self.rx_converter.src.frame_ms)
+                == self.rx_converter.src)
+            pcm_frames = ([self.decoder.decode_packet(packet.payload_type, packet.payload)]
+                if variable_input else self.decoder.decode(packet.payload_type, packet.payload, normalize_frames=True))
             # A valid short packet may only fill the normalizer. Its source is
             # still valid; malformed payloads must never establish or rebind it.
             self.remote_ssrc = packet.ssrc
             self.remote_rtp_port = int(addr[1])
+            # Count accepted RTP packets even when their PCM is still buffered.
+            self.counters["rtp_rx"] += 1
             self.encoder.follow_received(self.decoder.format_for(packet.payload_type))
             if not pcm_frames:
                 return
-            self.counters["rtp_rx"] += 1
             if not self._accepting_input:
                 self.counters["rx_suppressed"] += 1
                 return

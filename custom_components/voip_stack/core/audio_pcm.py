@@ -148,11 +148,16 @@ class PcmFrameConverter:
         )
 
     @property
+    def requires_fixed_input(self) -> bool:
+        """Whether PCM conversion requires the negotiated input quantum."""
+        return not self._same_pcm_contract()
+
+    @property
     def has_pending_pcm(self) -> bool:
         return bool(self._pending.shape[1])
 
     def convert(self, data: bytes) -> list[bytes]:
-        variable_packet = self._same_pcm_contract()
+        variable_packet = not self.requires_fixed_input
         if variable_packet:
             stride = self.src.container_bytes_per_sample * self.src.channels
             valid_length = bool(data) and len(data) % stride == 0

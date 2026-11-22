@@ -105,7 +105,8 @@ class RtpAudioReceiver:
         observers[observer] = None
         return lambda: observers.pop(observer, None)
 
-    def decode(self, payload_type: int, payload: bytes, *, normalize_frames: bool = False) -> list[bytes]:
+    def decode_packet(self, payload_type: int, payload: bytes) -> bytes:
+        """Validate and decode one whole packet to its native PCM without reframing."""
         fmt = self.format_for(payload_type)
         if fmt is None:
             raise ValueError(f"unnegotiated RTP audio payload type {payload_type}")
@@ -116,7 +117,13 @@ class RtpAudioReceiver:
         pcm = decoder.decode(payload)
         if fmt.encoding == "CN":
             self._comfort_payload_type = payload_type
-        return self._accept_decoded(fmt, pcm, normalize_frames=normalize_frames)
+        self._observe_decoded(fmt, pcm)
+        return pcm
+
+    def decode(self, payload_type: int, payload: bytes, *, normalize_frames: bool = False) -> list[bytes]:
+        """Decode once, then convert to the stable receive PCM contract."""
+        pcm = self.decode_packet(payload_type, payload)
+        return self._reframe_decoded(self.format_for(payload_type), pcm, normalize_frames=normalize_frames)
 
     @property
     def comfort_noise_active(self) -> bool:
@@ -153,7 +160,7 @@ class RtpAudioReceiver:
         self._converter = None
         self._active_format = None
 
-    def _accept_decoded(self, fmt, pcm, *, normalize_frames):
+    def _observe_decoded(self, fmt, pcm):
         source = fmt.audio_format
         stride = source.container_bytes_per_sample * source.channels
         if not pcm or len(pcm) % stride:
@@ -166,6 +173,13 @@ class RtpAudioReceiver:
                     self._pcm_observers.pop(observer, None)
                     _LOGGER.debug("Decoded audio observer failed; call audio continues", exc_info=True)
         self.observe_payload(fmt.payload_type)
+
+    def _accept_decoded(self, fmt, pcm, *, normalize_frames):
+        self._observe_decoded(fmt, pcm)
+        return self._reframe_decoded(fmt, pcm, normalize_frames=normalize_frames)
+
+    def _reframe_decoded(self, fmt, pcm, *, normalize_frames):
+        source = fmt.audio_format
         if fmt != self._active_format:
             self._pending.clear()
             self._converter = (

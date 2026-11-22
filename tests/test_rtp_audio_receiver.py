@@ -18,6 +18,28 @@ def pcm(value, samples):
     return struct.pack('<h', value) * samples
 
 
+def test_packet_decode_preserves_native_samples_while_decode_keeps_its_frame_contract():
+    selected = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10, max_frame_ms=20)
+    receiver = RtpAudioReceiver(selected)
+    samples = tuple(range(-480, 480))
+    wire = struct.pack("!960h", *samples)
+    expected = struct.pack("<960h", *samples)
+    observed = []
+    receiver.add_pcm_observer(lambda data, _format: observed.append(data))
+    try:
+        assert receiver.decode_packet(96, wire) == expected
+        assert observed == [expected]
+        assert receiver.decode(96, wire) == [expected[:960], expected[960:]]
+        assert observed == [expected, expected]
+        with pytest.raises(ValueError):
+            receiver.decode_packet(96, b"\x00")
+        with pytest.raises(ValueError):
+            receiver.decode_packet(96, bytes(21 * 48 * 2))
+        assert observed == [expected, expected]
+    finally:
+        receiver.close()
+
+
 def test_selected_format_preserves_short_packet_and_decoder():
     selected = fmt(0, 'PCMU')
     receiver = RtpAudioReceiver(selected)
