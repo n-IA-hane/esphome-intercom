@@ -259,36 +259,20 @@ def _browser_account_username(data: Mapping[str, Any]) -> str:
     return normalize_username(username or data[CONF_PHONE_NAME])
 
 
-def _is_generated_browser_login(data: Mapping[str, Any]) -> bool:
-    """Recognize only historical generated logins of this migrated account."""
-    identity = str(data.get(CONF_PHONE_ENDPOINT_ID) or "")
-    bindings = data.get("ha_bindings")
-    if not identity or not isinstance(bindings, (list, tuple)) or not any(
-        isinstance(row, Mapping) and row.get("source") == "migration"
-        and row.get("reference") == "legacy_ha_phone:" + identity for row in bindings
-    ):
-        return False
-    username = data.get(CONF_PHONE_USERNAME)
-    if not isinstance(username, str):
-        return False
-    # These are the two retired generators, including their collision suffixes.
-    keys = (("ha_", identity), ("ha_phone_", re.sub(r"^(?:browser|sip):", "", identity)))
-    return any(re.fullmatch(re.escape(prefix + re.sub(r"[^A-Za-z0-9_.-]", "_", key)[:48])
-                           + r"(?:_(?:[2-9]|[1-9][0-9]+))?", username)
-               for prefix, key in keys)
+def missing_sip_account_login_updates(entry):
+    """Preflight missing logins without guessing the origin of a saved login.
 
-
-def generated_browser_login_updates(entry):
-    """Preflight the whole historical login repair before any migration write."""
+    Historical migration associations describe account conversion, not username
+    ownership. Users could save the same string as either retired generator.
+    """
     updates = []
     future = []
     for subentry in phone_subentries(entry):
         data = deepcopy(phone_subentry_data(subentry))
-        if data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value and _is_generated_browser_login(data):
-            username = normalize_username(data[CONF_PHONE_NAME])
-            if username != data[CONF_PHONE_USERNAME]:
-                data[CONF_PHONE_USERNAME] = username
-                updates.append((subentry, data))
+        if (data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value
+                and not str(data.get(CONF_PHONE_USERNAME) or "").strip()):
+            data[CONF_PHONE_USERNAME] = _browser_account_username(data)
+            updates.append((subentry, data))
         future.append(data)
     if not updates:
         return ()
@@ -296,9 +280,9 @@ def generated_browser_login_updates(entry):
     return tuple(updates)
 
 
-def migrate_generated_browser_logins(hass, entry):
-    """Repair a complete historical login batch without changing account identity."""
-    for subentry, data in generated_browser_login_updates(entry):
+def migrate_missing_sip_account_logins(hass, entry):
+    """Fill only absent logins, preserving saved credentials and account identity."""
+    for subentry, data in missing_sip_account_login_updates(entry):
         hass.config_entries.async_update_subentry(entry, subentry,
             data=phone_subentry_storage_data(subentry, data))
 

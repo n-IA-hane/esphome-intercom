@@ -67,7 +67,7 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     hass.config_entries.async_update_entry(entry, data={**entry.data, "preferred_phone_device_id": device.id})
     options_before, parent_before = dict(entry.options), dict(entry.data)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 2
+    assert entry.version == 7 and entry.minor_version == 3
     for original, sub in [(before, legacy), ({**before, "endpoint_id": "browser:opaque", "name": "Test", "extension": "222",
             "username": "existing-browser-user", "password": "fixture-existing-browser-password"}, opaque)]:
         assert sub.data["kind"] == "sip_account"

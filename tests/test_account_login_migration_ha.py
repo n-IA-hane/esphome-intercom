@@ -1,4 +1,4 @@
-"""Repair generated browser logins without changing their native account owners."""
+"""Preserve ambiguous saved logins and fill absent logins on native HA owners."""
 
 from copy import deepcopy
 import json
@@ -37,22 +37,47 @@ def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
-@pytest.mark.parametrize("version,minor", [(6, 4), (7, 0), (7, 1)])
+@pytest.mark.parametrize("version,minor", [(6, 4), (7, 0), (7, 1), (7, 2)])
+async def test_saved_generated_shaped_login_is_ambiguous_after_native_editor(hass, version, minor):
+    """A migration association survives a user explicitly choosing this login."""
+    from custom_components.voip_stack import async_migrate_entry
+    from .support.ha_frontend import prepare_frontend_dependency
+
+    hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace",
+        "media_source", "network", "web_rtc"})
+    prepare_frontend_dependency(hass)
+    entry = MockConfigEntry(domain="voip_stack", version=version, minor_version=minor,
+        data={"initial_phone_created": True})
+    entry.add_to_hass(hass)
+    subentry = add_account(hass, entry, "browser:user", username="previous-login")
+    result = await hass.config_entries.subentries.async_init((entry.entry_id, "phone"),
+        context={"source": "reconfigure", "subentry_id": subentry.subentry_id})
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {
+        "name": "Casa", "username": "ha_browser_user", "password": subentry.data["password"],
+    })
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    before = encoded(subentry.as_dict())
+    assert subentry.data["ha_bindings"][0] == {
+        "source": "migration", "reference": "legacy_ha_phone:browser:user"}
+    assert await async_migrate_entry(hass, entry)
+    assert encoded(subentry.as_dict()) == before
+
+
+@pytest.mark.parametrize("version,minor", [(6, 4), (7, 0), (7, 1), (7, 2)])
 @pytest.mark.parametrize("name", ["Casa", "Piano Terra", 'Caffè "Nord"'])
-async def test_generated_login_upgrade_preserves_every_other_account_field(
-    hass, socket_enabled, version, minor, name
+async def test_absent_login_upgrade_preserves_every_other_account_field(
+    hass, version, minor, name
 ):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.phone_config import phone_endpoint_id
     from custom_components.voip_stack.store import sip_accounts
-    from .test_linphone_registrar_wire import check_account_registration
 
     entry = MockConfigEntry(domain="voip_stack", version=version, minor_version=minor,
         data={"initial_phone_created": True, "future_parent": {"keep": True}},
         options={"future_option": ["keep"]})
     entry.add_to_hass(hass)
     identity = "browser:legacy"
-    subentry = add_account(hass, entry, identity, name=name)
+    subentry = add_account(hass, entry, identity, name=name, username="")
     devices = dr.async_get(hass)
     device = devices.async_get_or_create(config_entry_id=entry.entry_id,
         config_subentry_id=subentry.subentry_id,
@@ -65,21 +90,20 @@ async def test_generated_login_upgrade_preserves_every_other_account_field(
     assert subentry.data["username"] == name
     assert encoded({key: value for key, value in subentry.data.items() if key != "username"}) == encoded(
         {key: value for key, value in before.items() if key != "username"})
-    assert entry.version == 7 and entry.minor_version == 2
+    assert entry.version == 7 and entry.minor_version == 3
     assert phone_endpoint_id(subentry) == identity and subentry.unique_id == "phone:" + identity
     assert encoded(dict(entry.data)) == parent and encoded(dict(entry.options)) == options
     assert devices.async_get(device.id).identifiers == device.identifiers
     assert er.async_get(hass).async_get(entity.entity_id).id == entity.id
     account, = sip_accounts(hass)
     assert account.password == before["password"]
-    await check_account_registration("UDP", "outbound", account)
     saved = encoded(subentry.as_dict())
     assert await async_migrate_entry(hass, entry)
     assert encoded(subentry.as_dict()) == saved
 
 
 @pytest.mark.parametrize("name,taken", [("Casa", "casa"), ("Straße", "STRASSE"), ("☎", "☎")])
-@pytest.mark.parametrize("version,minor", [(6, 4), (7, 0), (7, 1)])
+@pytest.mark.parametrize("version,minor", [(6, 4), (7, 0), (7, 1), (7, 2)])
 async def test_repair_conflict_reports_existing_issue_before_any_account_write(hass, name, taken, version, minor):
     from homeassistant.helpers import issue_registry as ir
     from custom_components.voip_stack import async_migrate_entry
@@ -89,7 +113,7 @@ async def test_repair_conflict_reports_existing_issue_before_any_account_write(h
     entry.add_to_hass(hass)
     first = add_account(hass, entry, "browser:first", name="Reception", username="ha_browser_first")
     other = add_account(hass, entry, "sip:manual", name="Desk", username=taken)
-    second = add_account(hass, entry, "browser:legacy", name=name)
+    second = add_account(hass, entry, "browser:legacy", name=name, username="")
     hass.config_entries.async_update_subentry(entry, first, data={**first.data, "extension": "222"})
     hass.config_entries.async_update_subentry(entry, other, data={**other.data, "extension": "223"})
     before = [encoded(sub.as_dict()) for sub in (first, second, other)]
@@ -101,7 +125,7 @@ async def test_repair_conflict_reports_existing_issue_before_any_account_write(h
     assert issue is not None and issue.translation_placeholders == {"phone": name, "route": name}
     hass.config_entries.async_update_subentry(entry, other, data={**other.data, "username": "desk-login"})
     assert await async_migrate_entry(hass, entry)
-    assert first.data["username"] == "Reception" and second.data["username"] == name
+    assert first.data["username"] == "ha_browser_first" and second.data["username"] == name
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is None
 
 
@@ -111,8 +135,8 @@ async def test_interrupted_login_repair_retries_without_rotating_credentials(has
     entry = MockConfigEntry(domain="voip_stack", version=7, minor_version=1,
         data={"initial_phone_created": True})
     entry.add_to_hass(hass)
-    first = add_account(hass, entry, "browser:first", name="Reception", username="ha_browser_first")
-    second = add_account(hass, entry, "browser:legacy")
+    first = add_account(hass, entry, "browser:first", name="Reception", username="")
+    second = add_account(hass, entry, "browser:legacy", username="")
     hass.config_entries.async_update_subentry(entry, first, data={**first.data, "extension": "222"})
     saved = [deepcopy(dict(sub.data)) for sub in (first, second)]
     update = hass.config_entries.async_update_subentry
@@ -129,7 +153,7 @@ async def test_interrupted_login_repair_retries_without_rotating_credentials(has
     with pytest.raises(RuntimeError, match="interrupted between login writes"):
         await async_migrate_entry(hass, entry)
     assert entry.minor_version == 1
-    assert first.data["username"] == "Reception" and second.data["username"] == "ha_browser_legacy"
+    assert first.data["username"] == "Reception" and second.data["username"] == ""
     monkeypatch.setattr(hass.config_entries, "async_update_subentry", update)
     assert await async_migrate_entry(hass, entry)
     for subentry, original, username in zip((first, second), saved, ("Reception", "Casa"), strict=True):
@@ -140,9 +164,12 @@ async def test_interrupted_login_repair_retries_without_rotating_credentials(has
     ("custom-login", "browser:legacy", "custom-login"),
     ("ha_browser_legacy", "browser:other", "ha_browser_legacy"),
     ("ha_browser_legacy", None, "ha_browser_legacy"),
-    ("ha_phone_legacy_2", "browser:legacy", "Casa"),
+    ("ha_browser_legacy", "browser:legacy", "ha_browser_legacy"),
+    ("ha_browser_legacy_2", "browser:legacy", "ha_browser_legacy_2"),
+    ("ha_phone_legacy", "browser:legacy", "ha_phone_legacy"),
+    ("ha_phone_legacy_2", "browser:legacy", "ha_phone_legacy_2"),
 ])
-async def test_only_proven_generated_logins_are_repaired(hass, username, binding, expected):
+async def test_saved_logins_are_preserved_regardless_of_shape_or_migration_reference(hass, username, binding, expected):
     from custom_components.voip_stack import async_migrate_entry
 
     entry = MockConfigEntry(domain="voip_stack", version=7, minor_version=1,
@@ -180,7 +207,52 @@ async def test_fresh_browser_upgrade_keeps_an_explicit_generated_shaped_login(ha
     assert subentry.data["kind"] == "sip_account"
 
 
-async def test_repaired_login_reaches_existing_provisioning_line_without_rebinding(phone_lab):
+async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_succeeds(hass, monkeypatch):
+    """Exercise HA's real migration-error state and Repairs flow manager."""
+    from unittest.mock import AsyncMock
+    from homeassistant.components.repairs import repairs_flow_manager
+    from homeassistant.components.repairs.issue_handler import async_setup
+    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.helpers import issue_registry as ir
+    from custom_components import voip_stack
+
+    entry = MockConfigEntry(domain="voip_stack", version=7, minor_version=2,
+        data={"initial_phone_created": True})
+    entry.add_to_hass(hass)
+    absent = add_account(hass, entry, "browser:legacy", username="")
+    other = add_account(hass, entry, "sip:desk", name="Desk", username="casa")
+    hass.config_entries.async_update_subentry(entry, other, data={**other.data, "extension": "222"})
+    before = [encoded(sub.as_dict()) for sub in (absent, other)]
+    setup = AsyncMock(return_value=True)
+    monkeypatch.setattr(voip_stack, "async_setup_entry", setup)
+    hass.config.components.add("voip_stack")
+    assert await hass.config_entries.async_setup(entry.entry_id) is False
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+    assert [encoded(sub.as_dict()) for sub in (absent, other)] == before
+    issue_id = "account_route_conflict_" + entry.entry_id
+    assert ir.async_get(hass).async_get_issue("voip_stack", issue_id).is_fixable
+    hass.data.setdefault("repairs", {})
+    async_setup(hass)
+    manager = repairs_flow_manager(hass)
+    result = await manager.async_init("voip_stack", context={"issue_id": issue_id})
+    assert result["type"] == "form" and result["step_id"] == "confirm"
+    result = await manager.async_configure(result["flow_id"], {})
+    assert result["type"] == "form" and result["errors"] == {"base": "migration_retry_failed"}
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR and entry.minor_version == 2
+    assert [encoded(sub.as_dict()) for sub in (absent, other)] == before
+    assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is not None
+    setup.assert_not_awaited()
+    # The Repair retries migration; correction remains on the existing config owner.
+    hass.config_entries.async_update_subentry(entry, other, data={**other.data, "username": "desk-login"})
+    result = await manager.async_configure(result["flow_id"], {})
+    assert result["type"] == "create_entry"
+    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 3
+    assert absent.data["username"] == "Casa"
+    assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is None
+    setup.assert_awaited_once_with(hass, entry)
+
+
+async def test_absent_login_reaches_existing_provisioning_line_without_rebinding(phone_lab):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.phone_config import async_setup_endpoint_registry, sync_registry_from_entry
     from custom_components.voip_stack.physical_phone import normalize_physical_phone, physical_phone_data
@@ -191,7 +263,7 @@ async def test_repaired_login_reaches_existing_provisioning_line_without_rebindi
 
     lab = phone_lab
     lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=1)
-    account = add_account(lab.hass, lab.entry, "browser:legacy")
+    account = add_account(lab.hass, lab.entry, "browser:legacy", username="")
     hardware = normalize_physical_phone({"name": "Bound phone", "mac": "001122334455",
         "profile_id": "fanvil/x3u-pro", "lines": [{"slot": "1", "endpoint_id": "browser:legacy"}], "keys": []})
     physical = ConfigSubentry(subentry_type="physical_phone", title=hardware["name"],

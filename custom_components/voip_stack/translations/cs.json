@@ -1088,7 +1088,18 @@
   "issues": {
     "account_route_conflict": {
       "title": "Vyřešte konflikt směrování účtu SIP",
-      "description": "Účet SIP {phone} používá cíl {route}, který je již obsazen názvem, uživatelským jménem SIP, klapkou, skupinou nebo kódem funkce. V předchozí konfiguraci přiřaďte kolidujícím cílům různé hodnoty a opakujte aktualizaci."
+      "description": "Účet SIP {phone} používá cíl {route}, který je již obsazen názvem, uživatelským jménem SIP, klapkou, skupinou nebo kódem funkce. V předchozí konfiguraci přiřaďte kolidujícím cílům různé hodnoty a opakujte aktualizaci.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Zkusit znovu aktualizaci účtů SIP",
+            "description": "Opravte kolidující trasu {route} pro {phone} v předchozí konfiguraci a potvrďte opakování aktualizace. Tato akce opakuje migraci bez úpravy nastavení účtů."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Migrace je stále blokována. Opravte konflikt nebo povolte integraci a zkuste to znovu."
+        }
+      }
     },
     "phone_identity_conflict": {
       "title": "Identitu telefonu je nutné obnovit",

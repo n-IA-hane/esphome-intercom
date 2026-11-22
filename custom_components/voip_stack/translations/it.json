@@ -1088,7 +1088,18 @@
   "issues": {
     "account_route_conflict": {
       "title": "Risolvi il conflitto di instradamento dell'Account SIP",
-      "description": "L'Account SIP {phone} usa la destinazione {route}, già impegnata da un nome, un nome utente SIP, un interno, un gruppo o un codice di servizio. Assegna valori distinti alle destinazioni in conflitto nella configurazione precedente, poi riprova l'aggiornamento."
+      "description": "L'Account SIP {phone} usa la destinazione {route}, già impegnata da un nome, un nome utente SIP, un interno, un gruppo o un codice di servizio. Assegna valori distinti alle destinazioni in conflitto nella configurazione precedente, poi riprova l'aggiornamento.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Riprova l'aggiornamento degli Account SIP",
+            "description": "Correggi la destinazione {route} in conflitto per {phone} nella configurazione precedente, poi conferma per riprovare l'aggiornamento. Questa azione riprova la migrazione senza modificare le impostazioni degli account."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "La migrazione è ancora bloccata. Correggi il conflitto o abilita l'integrazione, poi riprova."
+        }
+      }
     },
     "phone_identity_conflict": {
       "title": "L'identità del telefono richiede un recupero",

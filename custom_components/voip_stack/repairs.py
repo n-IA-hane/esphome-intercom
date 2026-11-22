@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from inspect import signature
 
+from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN
@@ -15,6 +18,38 @@ MEDIA_CAPTURE_ISSUE_ID = "media_capture_enabled"
 ESPHOME_ACTION_ISSUE_PREFIX = "esphome_actions_"
 ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX = "esphome_endpoint_collision_"
 _PHONE_ACTIONS = ("start_call", "answer_call", "decline_call", "hangup_call")
+
+
+class AccountMigrationRepairFlow(ConfirmRepairFlow):
+    """Retry a blocked upgrade through Home Assistant's migration owner."""
+
+    def __init__(self, entry_id: str) -> None:
+        self.entry_id = entry_id
+
+    async def async_step_confirm(self, user_input=None):
+        """Keep the issue open until the native migration succeeds."""
+        if user_input is None:
+            return await super().async_step_confirm()
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        try:
+            await self.hass.config_entries.async_retry_migration(self.entry_id)
+        except HomeAssistantError:
+            pass
+        else:
+            if entry.state is not ConfigEntryState.MIGRATION_ERROR:
+                return self.async_create_entry(data={})
+        result = await super().async_step_confirm()
+        result["errors"] = {"base": "migration_retry_failed"}
+        return result
+
+
+async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
+    """Create the native retry flow only for an account migration conflict."""
+    if issue_id.startswith("account_route_conflict_") and data is not None:
+        return AccountMigrationRepairFlow(str(data["entry_id"]))
+    return ConfirmRepairFlow()
 
 
 def async_sync_esphome_account_name_issue(hass, device_id, *, name="", error=None) -> None:
@@ -70,9 +105,10 @@ def async_sync_account_route_issue(hass, entry, error=None) -> None:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
     ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id,
-        is_fixable=False, is_persistent=False, severity=ir.IssueSeverity.ERROR,
+        is_fixable=True, is_persistent=False, severity=ir.IssueSeverity.ERROR,
         translation_key="account_route_conflict",
-        translation_placeholders={"phone": error.phone, "route": error.route})
+        translation_placeholders={"phone": error.phone, "route": error.route},
+        data={"entry_id": entry.entry_id})
 
 
 def async_sync_runtime_issues(hass: HomeAssistant) -> None:

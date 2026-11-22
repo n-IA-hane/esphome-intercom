@@ -1088,7 +1088,18 @@
   "issues": {
     "account_route_conflict": {
       "title": "Resolve the conflicting SIP account route",
-      "description": "The SIP account {phone} needs the route {route}, which overlaps another name, SIP username, extension, group or feature code. Give the conflicting routes distinct values in the previous configuration, then retry the upgrade."
+      "description": "The SIP account {phone} needs the route {route}, which overlaps another name, SIP username, extension, group or feature code. Give the conflicting routes distinct values in the previous configuration, then retry the upgrade.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Retry the SIP account upgrade",
+            "description": "Correct the conflicting route {route} for {phone} in the previous configuration, then confirm to retry the upgrade. This action retries migration without editing account settings."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Migration is still blocked. Correct the conflict or enable the integration, then retry."
+        }
+      }
     },
     "phone_identity_conflict": {
       "title": "Phone identity needs recovery",

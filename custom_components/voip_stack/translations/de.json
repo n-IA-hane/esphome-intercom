@@ -1088,7 +1088,18 @@
   "issues": {
     "account_route_conflict": {
       "title": "Routingkonflikt des SIP-Kontos beheben",
-      "description": "Das SIP-Konto {phone} verwendet das Ziel {route}, das bereits als Name, SIP-Benutzername, Durchwahl, Gruppe oder Funktionscode vergeben ist. Weise den betroffenen Zielen in der bisherigen Konfiguration unterschiedliche Werte zu und wiederhole das Upgrade."
+      "description": "Das SIP-Konto {phone} verwendet das Ziel {route}, das bereits als Name, SIP-Benutzername, Durchwahl, Gruppe oder Funktionscode vergeben ist. Weise den betroffenen Zielen in der bisherigen Konfiguration unterschiedliche Werte zu und wiederhole das Upgrade.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "SIP-Konto-Upgrade erneut versuchen",
+            "description": "Korrigiere die widersprüchliche Route {route} für {phone} in der vorherigen Konfiguration und bestätige dann, um das Upgrade erneut zu versuchen. Diese Aktion wiederholt die Migration, ohne Kontoeinstellungen zu ändern."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Die Migration ist weiterhin blockiert. Behebe den Konflikt oder aktiviere die Integration und versuche es erneut."
+        }
+      }
     },
     "phone_identity_conflict": {
       "title": "Telefonidentität muss wiederhergestellt werden",

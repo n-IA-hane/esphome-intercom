@@ -166,9 +166,9 @@ async def async_migrate_entry(
         data.pop("voicemail_enabled", None)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=4)
     if config_entry.version < 7:
-        from .phone_config import generated_browser_login_updates, migrate_browser_accounts
+        from .phone_config import missing_sip_account_login_updates, migrate_browser_accounts
         try:
-            generated_browser_login_updates(config_entry)
+            missing_sip_account_login_updates(config_entry)
             migrate_browser_accounts(hass, config_entry)
         except PhoneRouteConflict as error:
             async_sync_account_route_issue(hass, config_entry, error)
@@ -183,9 +183,9 @@ async def async_migrate_entry(
         async_sync_account_route_issue(hass, config_entry)
         hass.config_entries.async_update_entry(config_entry, version=7, minor_version=0)
     if config_entry.version == 7 and config_entry.minor_version < 1:
-        from .phone_config import generated_browser_login_updates, migrate_phone_identity_storage
+        from .phone_config import missing_sip_account_login_updates, migrate_phone_identity_storage
         try:
-            generated_browser_login_updates(config_entry)
+            missing_sip_account_login_updates(config_entry)
             migrate_phone_identity_storage(hass, config_entry)
         except PhoneRouteConflict as error:
             async_sync_account_route_issue(hass, config_entry, error)
@@ -198,10 +198,12 @@ async def async_migrate_entry(
             _LOGGER.error("Cannot migrate VoIP phone identities; resolve the reported identity or route conflict")
             return False
         hass.config_entries.async_update_entry(config_entry, minor_version=1)
-    if config_entry.version == 7 and config_entry.minor_version < 2:
-        from .phone_config import migrate_generated_browser_logins
+    if config_entry.version == 7 and config_entry.minor_version < 3:
+        from .phone_config import migrate_missing_sip_account_logins
+        # Supersede the 7.2 provenance guess for earlier entrants as well. A saved
+        # login cannot reveal whether it was generated or explicitly chosen.
         try:
-            migrate_generated_browser_logins(hass, config_entry)
+            migrate_missing_sip_account_logins(hass, config_entry)
         except PhoneRouteConflict as error:
             async_sync_account_route_issue(hass, config_entry, error)
             _LOGGER.error("Cannot migrate VoIP account logins: %s", error)
@@ -213,7 +215,7 @@ async def async_migrate_entry(
             _LOGGER.error("Cannot migrate VoIP account logins: account configuration or route namespace is invalid")
             return False
         async_sync_account_route_issue(hass, config_entry)
-        hass.config_entries.async_update_entry(config_entry, minor_version=2)
+        hass.config_entries.async_update_entry(config_entry, minor_version=3)
     return True
 
 

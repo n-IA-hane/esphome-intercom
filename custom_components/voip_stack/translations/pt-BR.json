@@ -1088,7 +1088,18 @@
   "issues": {
     "account_route_conflict": {
       "title": "Resolva o conflito de rota da conta SIP",
-      "description": "A conta SIP {phone} usa o destino {route}, que já está em uso como nome, usuário SIP, ramal, grupo ou código de serviço. Atribua valores diferentes aos destinos em conflito na configuração anterior e tente a atualização novamente."
+      "description": "A conta SIP {phone} usa o destino {route}, que já está em uso como nome, usuário SIP, ramal, grupo ou código de serviço. Atribua valores diferentes aos destinos em conflito na configuração anterior e tente a atualização novamente.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Tentar novamente a atualização das contas SIP",
+            "description": "Corrija a rota conflitante {route} de {phone} na configuração anterior e confirme para tentar novamente a atualização. Esta ação repete a migração sem editar as configurações das contas."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "A migração continua bloqueada. Corrija o conflito ou habilite a integração e tente novamente."
+        }
+      }
     },
     "phone_identity_conflict": {
       "title": "A identidade do telefone precisa ser recuperada",
