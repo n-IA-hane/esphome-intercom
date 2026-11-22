@@ -1,9 +1,11 @@
-"""A standard peer's20ms L16 packet is reframed into HA's preferred10ms."""
+"""A standard peer's 20 ms L16 packet is reframed by an explicit 10 ms receiver policy."""
+from dataclasses import replace
 import struct
 
 import pytest
 
 from .voip_phase1_support import _load_intercom_module, audio_format, rtp, sdp
+from custom_components.voip_stack.core.media import leg, negotiator
 
 Receiver = _load_intercom_module('rtp_audio_receiver').RtpAudioReceiver
 
@@ -17,9 +19,17 @@ AST_OFFER = ('v=0\r\no=- 1725022972 1725022972 IN IP4 192.0.2.231\r\ns=Asterisk\
     'a=ptime:10\r\na=maxptime:60\r\na=sendrecv\r\n')
 
 
+def _negotiate_with_ten_ms_receiver():
+    # R1 uses the leg's explicit default, not the order of its capability list.
+    policy = replace(negotiator.policy_for_leg(list(audio_format.HA_SIP_PCM_TX_FORMATS),
+        list(audio_format.HA_SIP_PCM_RX_FORMATS)), default_packet_ms=10)
+    selected = negotiator.as_direction(leg.answer_offer(AST_OFFER, policy), AST_OFFER)
+    assert selected is not None
+    return selected
+
+
 def test_standard48k20_packet_uses_local_rx_budget_and_preserves_every_sample():
-    selected = sdp.negotiate_directional(AST_OFFER, list(audio_format.HA_SIP_PCM_TX_FORMATS),
-                                         list(audio_format.HA_SIP_PCM_RX_FORMATS))
+    selected = _negotiate_with_ten_ms_receiver()
     assert selected.recv.sample_rate == 48000 and selected.recv.frame_ms == 10
     samples = tuple(range(-480, 480))
     frames = Receiver(selected.recv).decode(126, struct.pack('!960h', *samples))
@@ -32,6 +42,20 @@ def test_standard48k20_packet_uses_local_rx_budget_and_preserves_every_sample():
     assert sdp.parse_sdp(answer)['payload_order'].count(126) == 1
     with pytest.raises(rtp.RtpError):
         Receiver(selected.recv).decode(126, bytes(21 * 48 * 2))
+
+
+@pytest.mark.parametrize("remote_ptime", [10, 20])
+def test_sdp_default_receiver_quantum_stays_independent_of_remote_packet_time(remote_ptime):
+    offer = AST_OFFER.replace('a=ptime:10\r\n', f'a=ptime:{remote_ptime}\r\n')
+    selected = sdp.negotiate_directional(offer, list(audio_format.HA_SIP_PCM_TX_FORMATS),
+                                       list(audio_format.HA_SIP_PCM_RX_FORMATS))
+    assert selected is not None
+    assert (selected.send.frame_ms, selected.recv.frame_ms, selected.recv.max_frame_ms) == (10, 20, 20)
+    samples = tuple(range(-480, 480))
+    assert Receiver(selected.recv).decode(126, struct.pack('!960h', *samples)) == [struct.pack('<960h', *samples)]
+    answer = sdp.build_answer_directional('192.0.2.230', '192.0.2.230', 44010,
+        selected.send, selected.recv, remote_sdp=offer)
+    assert sdp.parse_sdp(answer)['ptime'] == 20 and sdp.parse_sdp(answer)['maxptime'] == 20
 
 
 def test_local10_only_receiver_does_not_inherit_remote60_capacity():
@@ -63,8 +87,7 @@ async def test_real_udp48k20_becomes_two48k10_with_exact_pcm_and_clock():
     from .voip_phase1_support import _reserved_udp_ports
 
     relay_module = _load_intercom_module('sip_rtp_bridge')
-    selected = sdp.negotiate_directional(AST_OFFER, list(audio_format.HA_SIP_PCM_TX_FORMATS),
-                                         list(audio_format.HA_SIP_PCM_RX_FORMATS))
+    selected = _negotiate_with_ten_ms_receiver()
     out_format = sdp.RtpPcmFormat(96, 'L16', 48000, 1, 10, max_frame_ms=10)
     s3_send = sdp.RtpPcmFormat(100, 'L16', 16000, 1, 10)
     with _reserved_udp_ports(4) as ports:
