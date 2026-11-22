@@ -48,6 +48,7 @@ const [
     softphoneSnapshotSupersedes,
     targetFromRosterEntry,
     publicDialTarget,
+    publicDisplayName,
     terminalPeerLabel,
   },
   { buildMainCardSkeleton, buildUnconfiguredCardSkeleton },
@@ -1392,7 +1393,7 @@ class VoipStackCard extends HTMLElement {
     for (const entry of this._rosterEntries || []) {
       if (!entry || entry.enabled === false) continue;
       if (String(entry.metadata?.group_type || "") !== groupType) continue;
-      const name = publicDialTarget(entry);
+      const name = publicDisplayName(entry);
       if (name) groups.push(name);
     }
     return groups;
@@ -1402,7 +1403,12 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     if (targets.length === 0) return null;
     const wanted = this._transferDraft?.destination || this._softphoneDestination;
-    if (wanted) return targets.find(target => target.name === wanted) || null;
+    if (wanted) {
+      const addressed = targets.filter(target => publicDialTarget(target) === wanted);
+      if (addressed.length === 1) return addressed[0];
+      const legacy = targets.filter(target => target.name === wanted);
+      return legacy.length === 1 ? legacy[0] : null;
+    }
     return this._legacySoftphoneTargetId ? null : targets[0];
   }
 
@@ -1576,7 +1582,7 @@ class VoipStackCard extends HTMLElement {
     this._rosterEntries = rosterEntries;
     this._migrateSoftphoneTargetPreference();
     if (this._isHaSoftphoneMode() && !this._softphoneDestination && !this._legacySoftphoneTargetId) {
-      this._softphoneDestination = this._softphoneTargets()[0]?.name || "";
+      this._softphoneDestination = publicDialTarget(this._softphoneTargets()[0]);
     }
     return true;
   }
@@ -2537,8 +2543,8 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     const current = this._getSoftphoneTargetDevice();
     const optionsKey = JSON.stringify({
-      selected: current?.name || "",
-      targets: targets.map(target => target.name),
+      selected: publicDialTarget(current),
+      targets: targets.map(target => [publicDialTarget(target), target.name]),
     });
     select.disabled = this._starting || this._stopping || targets.length === 0;
     // Active SIP state transitions may render several times in a fraction of
@@ -2563,9 +2569,9 @@ class VoipStackCard extends HTMLElement {
       }
       for (const target of targets) {
         const opt = document.createElement("option");
-        opt.value = target.name;
+        opt.value = publicDialTarget(target);
         opt.textContent = target.name;
-        if (target.name === current?.name) opt.selected = true;
+        if (publicDialTarget(target) === publicDialTarget(current)) opt.selected = true;
         options.push(opt);
       }
     }
@@ -2730,7 +2736,7 @@ class VoipStackCard extends HTMLElement {
     const manualTarget = String(destination || (this._softphoneKeypadOpen ? this._softphoneManualTarget : "")).trim();
     if (this._softphoneKeypadOpen && !manualTarget) throw new Error("No destination entered");
     const target = manualTarget ? {name: manualTarget, manual: true} : this._getSoftphoneTargetDevice();
-    const callee = target?.name;
+    const callee = publicDialTarget(target);
     if (!callee) throw new Error("No endpoint available");
     this._softphoneKeypadOpen = false;
     this._render();
@@ -3892,7 +3898,7 @@ class VoipStackCard extends HTMLElement {
       !this._hass?.services?.voip_stack?.set_phone_memberships;
     if (row.hidden) return;
     const choices = (this._rosterEntries || []).filter(entry => entry.metadata?.virtual_endpoint === "paging" && entry.metadata?.paging_group_id)
-      .map(entry => ({ id: String(entry.metadata.paging_group_id), name: publicDialTarget(entry), enabled: entry.enabled !== false }))
+      .map(entry => ({ id: String(entry.metadata.paging_group_id), name: publicDisplayName(entry), enabled: entry.enabled !== false }))
       .sort((a, b) => a.name.localeCompare(b.name));
     const signature = JSON.stringify(choices);
     if (select.dataset.options !== signature) {
@@ -4101,9 +4107,9 @@ class VoipStackCard extends HTMLElement {
     const targets = this._softphoneTargets();
     if (targets.length === 0) return;
     const current = this._getSoftphoneTargetDevice();
-    const idx = targets.findIndex(target => target.name === current?.name);
+    const idx = targets.findIndex(target => publicDialTarget(target) === publicDialTarget(current));
     const next = targets[(idx + delta + targets.length) % targets.length];
-    this._setSoftphoneTarget(next.name);
+    this._setSoftphoneTarget(publicDialTarget(next));
   }
 
   async _getDeviceInfo() {

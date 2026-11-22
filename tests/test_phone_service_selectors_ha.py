@@ -1,6 +1,10 @@
 """HA controls select devices and dial destinations accept public strings."""
 
 from copy import deepcopy
+from dataclasses import asdict
+import json
+from pathlib import Path
+import subprocess
 
 import pytest
 from homeassistant.helpers.selector import SelectSelector
@@ -50,7 +54,12 @@ async def test_action_selectors_save_public_strings_and_allow_manual_number(phon
     source = actions['call']['fields']['device_id']['selector']
     destination = actions['call']['fields']['destination']['selector']['select']
     assert 'device' in source
-    assert destination['options'] == ['Assistenza', 'Casa', 'Citofono', 'Ws3']
+    assert destination['options'] == [
+        {'value': 'Assistenza', 'label': 'Assistenza'},
+        {'value': '101', 'label': 'Casa'},
+        {'value': '7998', 'label': 'Citofono'},
+        {'value': '102', 'label': 'Ws3'},
+    ]
     assert SelectSelector(destination)('Casa') == 'Casa'
     assert SelectSelector(destination)('101') == '101'
     assert SelectSelector(destination)('Reception@Hotel') == 'Reception@Hotel'
@@ -73,7 +82,7 @@ async def test_directory_changes_refresh_current_service_choices(phone_lab):
     lab.runtime.directory.replace([RosterEntry('Studio', name='Studio', metadata={'endpoint_kind': 'sip_account'})])
     current = await descriptions(lab)
     assert old['call']['fields']['destination']['selector']['select']['options'] != ['Studio']
-    assert current['call']['fields']['destination']['selector']['select']['options'] == ['Studio']
+    assert current['call']['fields']['destination']['selector']['select']['options'] == [{'value': 'Studio', 'label': 'Studio'}]
     assert current['call']['fields']['device_id']['selector'] == old['call']['fields']['device_id']['selector']
     await lab.hass.async_block_till_done()
     assert updates == [{'domain': 'voip_stack', 'service': 'call'}]
@@ -82,6 +91,50 @@ async def test_directory_changes_refresh_current_service_choices(phone_lab):
     await lab.hass.async_block_till_done()
     assert not updates
     unsubscribe()
+
+
+async def test_selected_addresses_keep_duplicate_labels_distinct_and_use_known_routes(phone_lab):
+    from custom_components.voip_stack.router import resolve_ha_router, RouteAction, RouteReason
+
+    lab = phone_lab
+    await register_actions(lab.hass)
+    rows = [
+        RosterEntry('alice', name='Kitchen', extension='201', metadata={'endpoint_kind': 'sip_account', 'local_ha': True}),
+        RosterEntry('bob', name='Kitchen', extension='202', metadata={'endpoint_kind': 'sip_account', 'local_ha': True}),
+        RosterEntry('charlie', name='Kitchen', metadata={'endpoint_kind': 'sip_account', 'local_ha': True}),
+        RosterEntry('external-a', name='Supplier', number='+12025550123'),
+        RosterEntry('external-b', name='Supplier', number='+12025550124'),
+        RosterEntry('group:ring:private', name='Ring', extension='601', metadata={'group_type': 'ring'}),
+        RosterEntry('queue:private', name='Reception', metadata={'virtual_endpoint': 'queue'}),
+        RosterEntry('group:conference:private', name='Conference', metadata={'group_type': 'conference'}),
+    ]
+    lab.runtime.directory = PhoneDirectory(rows)
+    actions = await descriptions(lab)
+    selector = actions['call']['fields']['destination']['selector']['select']
+    options = selector['options']
+    assert sorted(option['value'] for option in options if option['label'] == 'Kitchen') == ['201', '202', 'charlie']
+    assert sorted(option['value'] for option in options if option['label'] == 'Supplier') == ['+12025550123', '+12025550124']
+    assert 'device' in actions['call']['fields']['device_id']['selector']
+    assert 'device' in actions['pickup']['fields']['target_device_id']['selector']
+    model = Path(__file__).parents[1] / 'custom_components/voip_stack/frontend/voip-stack-card-model.js'
+    script = (
+        f'import {{publicDialTarget, targetFromRosterEntry}} from {json.dumps(model.as_uri())};'
+        f'const rows={json.dumps([asdict(row) for row in rows])};'
+        'console.log(JSON.stringify(rows.map(row=>publicDialTarget(targetFromRosterEntry(row)))));'
+    )
+    result = subprocess.run(['node', '--input-type=module', '-e', script], check=True, capture_output=True, text=True)
+    addresses = json.loads(result.stdout)
+    assert addresses == ['201', '202', 'charlie', '+12025550123', '+12025550124', '601', 'Reception', 'Conference']
+    assert set(addresses) == {option['value'] for option in options}
+    for row, destination in zip(rows, addresses, strict=True):
+        assert SelectSelector(selector)(destination) == destination
+        route = resolve_ha_router(destination, rows, trunk_ready=True)
+        assert route.entry is row
+        assert route.action is not RouteAction.REJECT
+        assert route.reason is not RouteReason.DIRECT_URI
+    assert resolve_ha_router('Kitchen', rows).status == 485
+    for value in ['Kitchen', 'alice', '*42#', 'sip:MiXeD%20User@pbx.example;transport=tcp']:
+        assert SelectSelector(selector)(value) == value
 
 
 async def test_normal_phonebook_refresh_publishes_native_action_choices(managed):
@@ -95,7 +148,7 @@ async def test_normal_phonebook_refresh_publishes_native_action_choices(managed)
         await owner.async_start()
         current = (await async_get_all_descriptions(lab.hass))['voip_stack']
         assert 'device' in current['call']['fields']['device_id']['selector']
-        assert 'Ingresso' in current['call']['fields']['destination']['selector']['select']['options']
+        assert any(option['label'] == 'Ingresso' for option in current['call']['fields']['destination']['selector']['select']['options'])
     finally:
         await owner.async_close()
 

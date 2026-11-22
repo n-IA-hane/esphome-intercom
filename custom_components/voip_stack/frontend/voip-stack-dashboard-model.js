@@ -1,6 +1,6 @@
 /** Pure projections for the operator dashboard. Call state stays in HA. */
 const VERSION = new URL(import.meta.url).searchParams.get("v") || "dev";
-const { phoneCallPresentation, publicDialTarget } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
+const { phoneCallPresentation, publicDialTarget, publicDisplayName } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VERSION)}`);
 
 const ACTIVE_STATES = new Set(["ringing", "calling", "connecting", "answering", "in_call", "held", "terminating"]);
 const INTERNAL_KINDS = new Set(["browser", "ha_softphone", "esphome", "sip_account"]);
@@ -72,7 +72,7 @@ export function dashboardSections(phones, roster, ownerId) {
   }
   const internals = [...phones.values()].map((phone) => {
     const entry = rosterByIdentity.get(phone.endpoint_id) || rosterByIdentity.get(phone.device_id);
-    return { ...phone, name: publicDialTarget(phone) || publicDialTarget(entry), icon: phone.icon || entry?.icon,
+    return { ...phone, id: entry?.id || "", name: publicDisplayName(phone) || publicDisplayName(entry), icon: phone.icon || entry?.icon,
       metadata: { ...entry?.metadata, ...phone.metadata },
       tile_key: `endpoint:${phone.endpoint_id}`, owner: !!ownerId && phone.device_id === ownerId };
   });
@@ -91,7 +91,7 @@ export function dashboardSections(phones, roster, ownerId) {
   }).map((entry) => ({
     ...entry,
     tile_key: `contact:${entry.id || publicDialTarget(entry)}`,
-    name: publicDialTarget(entry),
+    name: publicDisplayName(entry),
     kind: "contact", state: "unknown", availability: "unknown", calls: [],
   }));
   const sort = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base", numeric: true });

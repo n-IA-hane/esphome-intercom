@@ -14,11 +14,19 @@ export function formatListFromMetadata(value) {
 }
 
 export function publicDialTarget(entry) {
-  for (const value of [entry?.name, entry?.extension, entry?.number, entry?.sip_uri]) {
+  if (typeof entry === "string") return entry.trim();
+  const kind = String(entry?.metadata?.endpoint_kind || entry?.endpoint_kind || entry?.kind || "").trim().toLowerCase();
+  const phone = ["esphome", "sip_account", "browser", "ha_softphone"].includes(kind);
+  for (const value of [entry?.extension, entry?.number, entry?.username, entry?.sip_uri_user,
+    phone ? entry?.id : "", entry?.sip_uri, entry?.name]) {
     const address = String(value ?? "").trim();
     if (address) return address;
   }
   return "";
+}
+
+export function publicDisplayName(entry) {
+  return String(entry?.name || "").trim() || publicDialTarget(entry);
 }
 
 export function targetFromRosterEntry(entry) {
@@ -26,9 +34,10 @@ export function targetFromRosterEntry(entry) {
   const id = entry?.id || entry?.name;
   const signaling = metadata.sip_transport || metadata.signaling_transport || "";
   return {
+    id: entry?.id || "",
     endpoint_id: metadata.endpoint_id || "",
     device_id: metadata.device_id || "",
-    name: publicDialTarget(entry),
+    name: publicDisplayName(entry),
     route_id: id,
     host: entry?.address || "",
     sip_transport: signaling,

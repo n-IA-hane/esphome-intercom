@@ -4,7 +4,7 @@ const PHONEBOOK_MODULE_VERSION = (() => {
 })();
 const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(PHONEBOOK_MODULE_VERSION)}`);
 
-const { publicDialTarget } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(PHONEBOOK_MODULE_VERSION)}`);
+const { publicDisplayName } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(PHONEBOOK_MODULE_VERSION)}`);
 const { VoipEntityIds } = await import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(PHONEBOOK_MODULE_VERSION)}`);
 
 function installWheelScrollHandoff(scroller) {
@@ -104,7 +104,7 @@ class VoipPhonebookView extends HTMLElement {
   }
 
   _name(contact) {
-    return publicDialTarget(contact) || voipStackTranslate(this._hass, "Unnamed");
+    return publicDisplayName(contact) || voipStackTranslate(this._hass, "Unnamed");
   }
 
   _appendContact(list, contact) {

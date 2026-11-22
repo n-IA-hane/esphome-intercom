@@ -1893,15 +1893,23 @@ immediate.startHaSoftphone=async()=>{{
 await immediate.dashboardStartCall(immediateOwner,{{extension:"101"}});
 assert.equal(immediateResumes,1,"A committed answer must attach media after the command gate releases");
 
-// ShadowNameVsExtension: named tiles always reach the central PBX resolver by name.
+// Selected rows send public addresses independently of their display labels.
 // Exercise the real dashboard and originate methods, including their wire payload.
 const namedSessionBackup=new Map(session);
 for (const browser of [false,true]) {{
   for (const [target,expected] of [
-    [{{name:" Shadow destination ",extension:"101",number:"202"}},"Shadow destination"],
-    [{{name:"Casa", device_id:"54da57478a40e69420df7586730f6706", endpoint_id:"account:home", extension:"101"}},"Casa"],
-    [{{name:"Saved contact",number:"+12025550123"}},"Saved contact"],
-    [{{name:"101",extension:"202"}},"101"],
+    [{{name:" Shadow destination ",extension:"101",number:"202"}},"101"],
+    [{{name:"Casa", device_id:"54da57478a40e69420df7586730f6706", endpoint_id:"account:home", extension:"101"}},"101"],
+    [{{id:"alice",name:"Kitchen",extension:"201",metadata:{{endpoint_kind:"sip_account"}}}},"201"],
+    [{{id:"bob",name:"Kitchen",extension:"202",metadata:{{endpoint_kind:"sip_account"}}}},"202"],
+    [{{id:"alice",name:"Kitchen",metadata:{{endpoint_kind:"sip_account",endpoint_id:"account:opaque"}}}},"alice"],
+    [{{name:"Saved contact",number:"+12025550123"}},"+12025550123"],
+    [{{name:"Saved contact",number:"+12025550124"}},"+12025550124"],
+    [{{name:"SIP contact",sip_uri:"sip:external@pbx.example"}},"sip:external@pbx.example"],
+    [{{id:"queue:opaque",name:"Reception",metadata:{{virtual_endpoint:"queue"}}}},"Reception"],
+    [{{id:"group:opaque",name:"Ring",extension:"601",metadata:{{group_type:"ring"}}}},"601"],
+    [{{id:"conference:opaque",name:"Conference",metadata:{{group_type:"conference"}}}},"Conference"],
+    [{{name:"101",extension:"202"}},"202"],
     [{{name:"  ",extension:"101"}},"101"],
     [{{extension:" ",number:"202"}},"202"],
   ]) {{
@@ -1916,7 +1924,7 @@ for (const browser of [false,true]) {{
     }},callService:async(domain,service,data)=>{{sent.push(data);return {{}};}}}};
     await named.dashboardStartCall(who,target);
     assert.equal(sent.length,1);
-    assert.equal(sent[0].destination,expected,`ShadowNameVsExtension browser=${{browser}}`);
+    assert.equal(sent[0].destination,expected,`Public address browser=${{browser}}`);
     assert.equal(sent[0].device_id,"named-device");
   }}
 }}
@@ -1925,6 +1933,10 @@ const manualDial=new Engine();let manualRequest;
 manualDial._hass={{callWS:async request=>{{manualRequest=request;return {{state:"idle",device_id:"manual-device",endpoint_id:"manual"}};}}}};
 await manualDial.startHaSoftphone({{name:"101",manual:true}},{{device_id:"manual-device",endpoint_id:"manual"}},{{callee:"101"}});
 assert.equal(manualRequest.service_data.destination,"101","Explicit keypad numbers retain their own meaning");
+for (const destination of ["Kitchen", "alice", "sip:MiXeD%20User@pbx.example;transport=tcp", "*42#"]) {{
+  await manualDial.startHaSoftphone(destination,{{device_id:"manual-device",endpoint_id:"manual"}});
+  assert.equal(manualRequest.service_data.destination,destination,"Manual strings retain their spelling and alias meaning");
+}}
 session.clear();for(const [key,value] of namedSessionBackup)session.set(key,value);
 
 // A retained backend scope must also consume an answer after the last view

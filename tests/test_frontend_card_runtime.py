@@ -1294,10 +1294,30 @@ engine.startHaSoftphone = async (target, session, options) => {{
 }};
 const cameraChecksBeforeAudioOnly = cameraPermissionChecks;
 await audioOnly._startCall();
-assert.equal(audioOnlyStart.target, "Waveshare S3 Audio");
+assert.equal(audioOnlyStart.target, "waveshare-s3");
 assert.equal(audioOnlyStart.options.sendVideo, false);
 assert.equal(cameraPermissionChecks, cameraChecksBeforeAudioOnly);
 engine.releaseSoftphoneSession("audio-only", "default");
+
+// Labels stay readable while selection and calls retain a public account address.
+const duplicateNames = makeCard();
+duplicateNames._rosterEntries = [
+  {{id:"alice",name:"Kitchen",extension:"201",enabled:true,metadata:{{endpoint_kind:"sip_account",local_ha:true}}}},
+  {{id:"bob",name:"Kitchen",extension:"202",enabled:true,metadata:{{endpoint_kind:"sip_account",local_ha:true}}}},
+];
+duplicateNames._softphoneDestination = "202";
+const duplicateSelect = new FakeElement();
+Card.prototype._renderSoftphoneDestinationSelect.call(duplicateNames,duplicateSelect);
+assert.equal(duplicateSelect.children.map(option=>option.value).join(","),"201,202");
+assert.equal(duplicateSelect.children.map(option=>option.textContent).join(","),"Kitchen,Kitchen");
+assert.equal(duplicateNames._getSoftphoneTargetDevice().id,"bob");
+await duplicateNames._startCall();
+assert.equal(audioOnlyStart.target,"202");
+assert.equal(audioOnlyStart.options.callee,"202");
+duplicateNames._softphoneDestination = "Kitchen";
+assert.equal(duplicateNames._getSoftphoneTargetDevice(),null,"An ambiguous saved label cannot choose the first account");
+duplicateNames._rosterEntries.pop();
+assert.equal(duplicateNames._getSoftphoneTargetDevice().id,"alice","Unique saved display aliases remain compatible");
 
 // The local Call action may publish only the backend's provisional result.
 // It must not optimistically promote the card to in_call.
@@ -1975,6 +1995,9 @@ const model = await import(pathToFileURL({json.dumps(str(CARD_MODEL))}));
 assert.deepEqual(model.formatListFromMetadata("audio; video ;"), ["audio", "video"]);
 assert.deepEqual(model.formatListFromMetadata(["audio", 8, ""]), ["audio", "8"]);
 assert.deepEqual(model.formatListFromMetadata(null), []);
+assert.equal(model.publicDialTarget({{device_id:"opaque-device",endpoint_id:"esphome:opaque"}}),"");
+assert.equal(model.publicDialTarget({{id:"queue:opaque",metadata:{{virtual_endpoint:"queue"}}}}),"");
+assert.equal(model.publicDisplayName({{name:"Kitchen",extension:"201"}}),"Kitchen");
 
 const esp = model.targetFromRosterEntry({{
   id: "ws3",

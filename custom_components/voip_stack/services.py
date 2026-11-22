@@ -47,9 +47,16 @@ async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -
     if (runtime is None or runtime.directory is not directory or directory.closed
             or directory.generation != generation):
         return
-    destinations = {row.name or row.extension or row.number or row.sip_uri
-                    for row in rows if row.enabled and (row.name or row.extension or row.number or row.sip_uri)}
-    destination_options = sorted(destinations, key=str.casefold)
+    destinations = {}
+    for row in rows:
+        if not row.enabled:
+            continue
+        phone = row.metadata.get("endpoint_kind") in {"esphome", "sip_account", "browser", "ha_softphone"}
+        target = row.extension or row.number or (row.id if phone else "") or row.sip_uri or row.name
+        if target:
+            destinations.setdefault(target, row.display_name)
+    destination_options = [{"value": target, "label": label}
+                           for target, label in sorted(destinations.items(), key=lambda item: (item[1].casefold(), item[0].casefold()))]
 
     def populate(fields):
         for key, field in fields.items():
