@@ -129,7 +129,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
     from .core.sdp import build_answer_directional, first_offered_dtmf_format
     from .session_cleanup import async_wait_for_cleanup
     from .core.rtp import AudioRtpSenderState
-    from .call_projection import publish_bridge_projection
+    from .call_projection import publish_bridge_projection, publish_esp_media_route
     from .dtmf_events import attach_dtmf_event_bridge
     from .inbound_answer import async_commit_runtime_answer
     from .local_softphone_runtime import PendingLocalSource, local_softphone_bridge
@@ -576,6 +576,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 f"{application.owner}:{session.call_id}",
                 value=application,
             )
+        publish_esp_media_route(hass, session.call_id, relay.media_route)
         publish_bridge_projection(hass, session, event_type="answered", route_kind="pickup")
         publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
 
