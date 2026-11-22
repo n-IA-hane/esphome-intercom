@@ -43,9 +43,7 @@ from .core.sip_dialog import (
     build_dialog_request,
     uas_request_matches_dialog,
 )
-from .sip_tcp_io import (
-    read_sip_stream_message as _read_sip_stream_message,
-)
+from .sip_tcp_server import _read_sip_stream_message as _read_sip_stream_message
 from .core.sip_transaction import (
     SIP_T1 as _SIP_T1,
     SIP_T2 as _SIP_T2,

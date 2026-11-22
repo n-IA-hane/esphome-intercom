@@ -117,7 +117,7 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                + "a=ptime:20\r\na=sendrecv\r\n").encode()
 
         for attempt in range(2):
-            peer_offset = len(registered_phones[1].read())
+            len(registered_phones[1].read())
             log_offset = len(caplog.records)
             recording.clear()
             call_id = f"mailbox-trunk-{attempt}"

@@ -21,7 +21,9 @@ def udp_pair():
     result=[]
     for _ in range(2):
         sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-        sock.bind(("127.0.0.1",0));sock.setblocking(False);result.append(sock)
+        sock.bind(("127.0.0.1", 0))
+        sock.setblocking(False)
+        result.append(sock)
     return result
 
 
@@ -73,10 +75,13 @@ async def test_cc2_own_receiver_policy_and_g722_wire_clocks_are_independent(sock
         assert all(packet.payload_type==96 and len(packet.payload)==640 and any(packet.payload) for packet in received)
         assert (received[1].timestamp-received[0].timestamp)&0xffffffff==320
     finally:
-        if encoder: encoder.close()
-        if decoder: decoder.close()
+        if encoder:
+            encoder.close()
+        if decoder:
+            decoder.close()
         await relay.stop()
-        pcm_socket.close();phone_socket.close()
+        pcm_socket.close()
+        phone_socket.close()
 
 
 async def test_cc4_negotiated_event_mapping_clock_and_identity_reach_real_udp(socket_enabled):
@@ -129,4 +134,5 @@ async def test_cc4_negotiated_event_mapping_clock_and_identity_reach_real_udp(so
         assert not relay._dtmf_tasks
     finally:
         await relay.stop()
-        source.close();destination.close()
+        source.close()
+        destination.close()

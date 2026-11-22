@@ -104,7 +104,8 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
     monkeypatch.setattr(trunk_dtmf, '_FIRST_DIGIT_TIMEOUT', .1)
     clients, readers = [], []
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    media.bind(('127.0.0.42', 0)); media.setblocking(False)
+    media.bind(("127.0.0.42", 0))
+    media.setblocking(False)
     try:
         for cycle in range(2):
             target.invited.clear()

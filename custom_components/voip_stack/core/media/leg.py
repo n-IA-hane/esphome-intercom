@@ -18,7 +18,7 @@ from ..sdp_parser import parse_audio_flow_attributes, parse_sdp, supports_indepe
 from ..sdp_types import RtpDtmfFormat, RtpPcmFormat
 from .codecs import CODECS
 from .packet_time import PacketTimes, ReceiverBounds, choose_transmit_packet_ms
-from .payload_map import TELEPHONE_EVENT, PayloadMap, RtpMapping
+from .payload_map import TELEPHONE_EVENT, RtpMapping
 
 # Decoded PCM geometry: (sample rate, channels).
 Geometry = tuple[int, int]

@@ -1411,7 +1411,8 @@ class SdpPcmProfileTest(unittest.TestCase):
         receiver=_load_intercom_module("rtp_audio_receiver").RtpAudioReceiver(selected.recv,selected.recv_formats)
         try:
             self.assertEqual(receiver.decode(baseline.payload_type,bytes(320)),[bytes(320)])
-        finally: receiver.close()
+        finally:
+            receiver.close()
 
     def test_ha_sip_profile_rejects_browser_only_sample_rates(self) -> None:
         offer = sdp.build_offer_directional(

@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
-from ..routing_automation import SIP_ROUTE_DECISION_TIMEOUT, request_route_window
+from ..routing_automation import request_route_window
+from ..routing_automation import SIP_ROUTE_DECISION_TIMEOUT as SIP_ROUTE_DECISION_TIMEOUT
 from ..endpoint_lifecycle import call_registry
 from ..fsm import CallState, TerminalReason
 from ..pbx_trace import trace_call

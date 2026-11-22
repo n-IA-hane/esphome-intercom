@@ -15,8 +15,9 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .runtime_data import endpoint_directory
+from .esphome_phone_inventory import device_is_phonebook_available as device_is_phonebook_available
 from .esphome_phone_inventory import (
-    _get_voip_devices, device_is_phonebook_available, device_transport,
+    _get_voip_devices, device_transport,
 )
 
 _LOGGER = logging.getLogger(__name__)

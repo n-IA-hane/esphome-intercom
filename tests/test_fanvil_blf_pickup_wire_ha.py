@@ -79,7 +79,8 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
 
     account = sip_test_account(lab, p4.endpoint_id)
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    audio.bind(('127.0.0.2', 0)); audio.setblocking(False)
+    audio.bind(("127.0.0.2", 0))
+    audio.setblocking(False)
     caller = SipCallClient(local_ip='127.0.0.2', local_name=p4.name, local_uri_user=p4.username,
         username=account.username, password=account.password, local_sip_port=0,
         local_rtp_port=audio.getsockname()[1], supported_send_formats=[AudioFormat(16000, frame_ms=20)],
@@ -118,7 +119,8 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
                 packet = rtp.build_packet(rtp.RtpPacket(caller.dialog.send_format.payload_type,
                     sequence, timestamp, 0x50440001, struct.pack('!320h', *samples)))
                 await lab.hass.loop.sock_sendto(audio, packet, (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port))
-                sequence = (sequence + 1) & 65535; timestamp += 320
+                sequence = (sequence + 1) & 65535
+                timestamp += 320
                 await asyncio.sleep(.02)
         media_task = asyncio.create_task(send_p4_voice())
         received = []
@@ -132,7 +134,8 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
         async with asyncio.timeout(4):
             while relay.left_tx_packets < 50 or relay.right_tx_packets < 50:
                 await asyncio.sleep(.02)
-        media_task.cancel(); await asyncio.gather(media_task, return_exceptions=True)
+        media_task.cancel()
+        await asyncio.gather(media_task, return_exceptions=True)
         if hangup_side == 'p4':
             await caller.terminate(timeout=1)
         else:

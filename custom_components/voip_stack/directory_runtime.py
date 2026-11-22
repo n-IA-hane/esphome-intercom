@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 from .phone_directory import PhoneDirectory, public_metadata, service_directory_reference
-from .phone_endpoint import EndpointKind, EndpointAvailability, PhoneEndpoint
+from .phone_endpoint import EndpointAvailability, PhoneEndpoint
 from .roster import RosterEntry
 from .runtime_data import require_runtime_data, runtime_data
 

@@ -1,7 +1,6 @@
 """Explicit local offer contracts survive planning, wire serialization and RTP."""
 
 import asyncio
-from dataclasses import replace
 import math
 import re
 import socket
@@ -60,9 +59,13 @@ class IndependentPeer(asyncio.DatagramProtocol):
     def connection_made(self,transport): self.transport=transport
     def datagram_received(self,raw,address):
         request=sip.parse_message(raw)
-        if request.method=="ACK": return
-        if request.method not in {"INVITE","BYE"}: return
-        headers=[(name,request.header(name)) for name in ["Via","From","Call-ID","CSeq"]]
+        if request.method == "ACK":
+            return
+        if request.method not in {"INVITE", "BYE"}:
+            return
+        headers = [
+            (name, request.header(name)) for name in ["Via", "From", "Call-ID", "CSeq"]
+        ]
         to=request.header("To")
         headers.append(("To",to if ";tag=" in to else to+";tag=independent-offer-peer"))
         if request.method=="INVITE":
@@ -92,8 +95,13 @@ async def test_actual_client_preserves_explicit_opus_on_sip_and_two_real_rtp_cal
     loop=asyncio.get_running_loop()
     source=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     destination=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-    for sock in [source,destination]: sock.bind(("127.0.0.1",0));sock.setblocking(False)
-    transport,peer=await loop.create_datagram_endpoint(lambda:IndependentPeer(destination.getsockname()[1]),local_addr=("127.0.0.1",0))
+    for sock in [source, destination]:
+        sock.bind(("127.0.0.1", 0))
+        sock.setblocking(False)
+    transport, peer = await loop.create_datagram_endpoint(
+        lambda: IndependentPeer(destination.getsockname()[1]),
+        local_addr=("127.0.0.1", 0),
+    )
     fmt=sdp.RtpPcmFormat(110,"OPUS",48000,2,20,fmtp="stereo=0;maxaveragebitrate=24000;useinbandfec=1")
     try:
         for call in range(2):
@@ -106,8 +114,9 @@ async def test_actual_client_preserves_explicit_opus_on_sip_and_two_real_rtp_cal
             encoder=decoder=None
             try:
                 result=await client.invite(target="peer",remote_host="127.0.0.1",remote_sip_port=transport.get_extra_info("sockname")[1],timeout=2)
-                if result=="ringing": result=await client.wait_for_final(timeout=2)
-                assert result=="in_call",peer.invites[-1]
+                if result == "ringing":
+                    result = await client.wait_for_final(timeout=2)
+                assert result == "in_call", peer.invites[-1]
                 assert re.search(rb"^a=fmtp:110 stereo=0;maxaveragebitrate=24000;useinbandfec=1\r?$",peer.invites[-1],re.MULTILINE)
                 assert b"m=video" not in peer.invites[-1]
                 dialog=client.dialog
@@ -124,12 +133,16 @@ async def test_actual_client_preserves_explicit_opus_on_sip_and_two_real_rtp_cal
                 assert all(len(pcm)==1920 and any(pcm) for pcm in decoded)
                 assert client.bye()
             finally:
-                if encoder: encoder.close()
-                if decoder: decoder.close()
+                if encoder:
+                    encoder.close()
+                if decoder:
+                    decoder.close()
                 await client.close()
         assert len(peer.invites)==2
     finally:
-        transport.close();source.close();destination.close()
+        transport.close()
+        source.close()
+        destination.close()
 
 
 def test_common_offer_uses_actual_directional_backend_probes(monkeypatch):
@@ -185,7 +198,8 @@ def test_legacy_directional_ptime_fits_every_advertised_sender_not_only_the_firs
     try:
         payload=encoder.encode(bytes(wide.audio_format.nominal_frame_bytes))
         assert len(payload)==960 and len(payload)<=UDP_SAFE_PAYLOAD_BYTES
-    finally: encoder.close()
+    finally:
+        encoder.close()
 
 
 async def test_actual_legacy_d1_offer_has_10_ms_wideband_sip_and_rtp(hass,socket_enabled):
@@ -193,8 +207,13 @@ async def test_actual_legacy_d1_offer_has_10_ms_wideband_sip_and_rtp(hass,socket
     loop=asyncio.get_running_loop()
     source=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     destination=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-    for sock in [source,destination]: sock.bind(("127.0.0.1",0));sock.setblocking(False)
-    transport,peer=await loop.create_datagram_endpoint(lambda:IndependentPeer(destination.getsockname()[1],legacy_wide=True),local_addr=("127.0.0.1",0))
+    for sock in [source, destination]:
+        sock.bind(("127.0.0.1", 0))
+        sock.setblocking(False)
+    transport, peer = await loop.create_datagram_endpoint(
+        lambda: IndependentPeer(destination.getsockname()[1], legacy_wide=True),
+        local_addr=("127.0.0.1", 0),
+    )
     client=SipCallClient(local_ip="127.0.0.1",local_name="Legacy D1",local_sip_port=0,
         local_rtp_port=source.getsockname()[1],supported_send_formats=list(HA_SIP_PCM_TX_FORMATS),
         supported_recv_formats=list(HA_SIP_PCM_RX_FORMATS),
@@ -204,8 +223,9 @@ async def test_actual_legacy_d1_offer_has_10_ms_wideband_sip_and_rtp(hass,socket
     encoder=None
     try:
         result=await client.invite(target="legacy",remote_host="127.0.0.1",remote_sip_port=transport.get_extra_info("sockname")[1],timeout=2)
-        if result=="ringing": result=await client.wait_for_final(timeout=2)
-        assert result=="in_call",peer.invites[-1]
+        if result == "ringing":
+            result = await client.wait_for_final(timeout=2)
+        assert result == "in_call", peer.invites[-1]
         assert b"a=ptime:10\r\n" in peer.invites[-1]
         dialog=client.dialog
         assert (dialog.send_format.frame_ms,dialog.recv_format.frame_ms)==(10,10)
@@ -219,9 +239,12 @@ async def test_actual_legacy_d1_offer_has_10_ms_wideband_sip_and_rtp(hass,socket
         assert struct.unpack("!480h",packet.payload)==(2345,)*480
         assert client.bye()
     finally:
-        if encoder: encoder.close()
+        if encoder:
+            encoder.close()
         await client.close()
-        transport.close();source.close();destination.close()
+        transport.close()
+        source.close()
+        destination.close()
 
 
 def test_unconfigured_codec_policy_preserves_input_order_and_explicit_order_is_honored():
@@ -274,4 +297,5 @@ def test_explicit_independent_receiver_maxptime_is_visible_and_enforced(quantum)
         assert receiver.decode(97,bytes(16000*quantum*2//1000))
         with pytest.raises(rtp.RtpError,match="payload too large"):
             receiver.decode(97,bytes(16000*(quantum+1)*2//1000))
-    finally: receiver.close()
+    finally:
+        receiver.close()

@@ -5,7 +5,7 @@ import importlib
 
 import pytest
 
-from .voip_phase1_support import _load_intercom_module, audio_format, sdp, sip_client
+from .voip_phase1_support import audio_format, sdp, sip_client
 
 negotiator = importlib.import_module("custom_components.voip_stack.core.media.negotiator")
 policy = importlib.import_module("custom_components.voip_stack.core.codec_policy")

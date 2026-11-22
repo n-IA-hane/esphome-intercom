@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .trunk_policy import external_call_denied, is_trunk_uri, trunk_available
-from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
 from .automation_routing import has_native_route_window

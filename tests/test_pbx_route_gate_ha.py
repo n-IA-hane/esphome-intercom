@@ -48,8 +48,9 @@ async def attach_route(lab, source, *, matching_weekday=True, destination="Exter
     weekdays = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
     today = dt_util.now().weekday()
     chosen = weekdays[today if matching_weekday else (today + 1) % 7]
-    action = lambda line: {"action": "voip_stack.select_inbound_destination",
-                           "data": {"destination": destination, "trunk_id": line}}
+    def action(line):
+        return {"action": "voip_stack.select_inbound_destination",
+                "data": {"destination": destination, "trunk_id": line}}
     actions = [{"choose": [{"conditions": [
         {"condition": "template", "value_template": "{{ trigger.call.caller_number.startswith('351') }}"},
         {"condition": "time", "weekday": [chosen]},
