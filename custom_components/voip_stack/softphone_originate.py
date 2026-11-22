@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
+from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
@@ -91,6 +92,17 @@ from .softphone_commands import (
     bind_service_call_controller as _bind_service_call_controller,
 )
 from .browser_phone_data import _ha_softphone_store
+
+
+if TYPE_CHECKING:
+    from .core.sip import SipUri
+    from .endpoint_session import EndpointCallSession
+    from .pbx_runtime import SipEndpointRuntime
+    from .phone_endpoint import PhoneEndpoint
+    from .roster import RosterEntry
+    from .router import RouteDecision
+    from .sip_client import SipCallClient
+    from .trunk_selection import TrunkSelection
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -183,18 +195,57 @@ def _logical_endpoint_for_route(hass: HomeAssistant, route):
     return endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
 
 
-async def _async_originate_browser_call(
-    call: ServiceCall,
-    *,
-    endpoint_id: str,
-    browser_endpoint,
-    force_ha_bridge: bool = False,
-    routing_scope: dict,
-) -> None:
-    """Originate a standards SIP call from one Home Assistant browser phone."""
-    from .core.sip import SipUri, parse_sip_uri, sip_default_port
-    from .sip_client import SIP_TIMER_B, SipCallClient
+@dataclass(frozen=True, slots=True)
+class _BrowserCallResolution:
+    """Resolved routing facts; the existing registry retains any pre-call owner."""
 
+    target: str
+    dialed_target: str
+    local_name: str
+    source_device_id: str
+    config: dict
+    contacts: list[RosterEntry]
+    destination_device: dict | None
+    trunk_selection: TrunkSelection
+    trunk_ready: bool
+    route: RouteDecision
+    browser_destination: PhoneEndpoint | None
+    routing_call_id: str | None
+    policy_endpoint_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _BrowserSipTarget:
+    """A SIP destination after local bridges, groups and pickup have been dispatched."""
+
+    resolution: _BrowserCallResolution
+    route: RouteDecision
+    endpoint: PhoneEndpoint | None
+    local_ip: str
+    route_uri: str
+    use_trunk: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedBrowserSipCall:
+    """References to the one client and session registered by SIP preparation."""
+
+    target: _BrowserSipTarget
+    client: SipCallClient
+    registry: SipEndpointRuntime
+    session: EndpointCallSession
+    uri: SipUri
+    local_rtp_port: int
+    target_device_id: str
+    video_enabled: bool
+    video_failure_reason: str
+
+
+async def _async_resolve_browser_call_route(
+    call: ServiceCall, *, endpoint_id: str, browser_endpoint,
+    routing_scope: dict,
+) -> _BrowserCallResolution:
+    """Authorize the caller and resolve native automation, forwarding and policy."""
     hass: HomeAssistant = call.hass
     dest_device = await _resolve_target_device(hass, call)
     target = str(call.data.get("destination") or "").strip()
@@ -320,6 +371,30 @@ async def _async_originate_browser_call(
         or is_any_trunk_uri(require_runtime_data(hass), route.sip_uri)
     ):
         raise _service_error("External calls are disabled for this phone", "external_calls_disabled")
+    return _BrowserCallResolution(
+        target=target, dialed_target=dialed_target, local_name=local_name,
+        source_device_id=source_device_id, config=cfg, contacts=contacts,
+        destination_device=dest_device, trunk_selection=trunk_selection,
+        trunk_ready=trunk_ready, route=route, browser_destination=browser_destination,
+        routing_call_id=routing_call_id, policy_endpoint_ids=policy_endpoint_ids,
+    )
+
+
+async def _async_dispatch_browser_call_route(
+    call: ServiceCall, resolved: _BrowserCallResolution, *, endpoint_id: str,
+    browser_endpoint, force_ha_bridge: bool,
+) -> _BrowserSipTarget | None:
+    """Start local destinations, or return the exact selected SIP route."""
+    from .core.sip import SipUri
+
+    hass = call.hass
+    cfg, contacts = resolved.config, resolved.contacts
+    route, target = resolved.route, resolved.target
+    local_name, source_device_id = resolved.local_name, resolved.source_device_id
+    trunk_selection, trunk_ready = resolved.trunk_selection, resolved.trunk_ready
+    trunk_cfg = trunk_selection.config
+    routing_call_id, policy_endpoint_ids = resolved.routing_call_id, resolved.policy_endpoint_ids
+    browser_destination = resolved.browser_destination
     if browser_destination is not None:
         from .local_softphone_bridge import LocalBridgeError
         from .local_softphone_runtime import start_local_softphone_call
@@ -538,6 +613,28 @@ async def _async_originate_browser_call(
             "sip_target_unresolved",
             destination=target,
         )
+    return _BrowserSipTarget(resolution=resolved, route=route, endpoint=target_endpoint,
+        local_ip=local_ip, route_uri=route_uri, use_trunk=use_trunk)
+
+
+async def _async_prepare_browser_sip_call(
+    call: ServiceCall, destination: _BrowserSipTarget, *, endpoint_id: str,
+    browser_endpoint,
+) -> _PreparedBrowserSipCall:
+    """Prepare media and register the existing SIP client, session and endpoint claims."""
+    from .core.sip import parse_sip_uri
+    from .sip_client import SipCallClient
+
+    hass = call.hass
+    resolved = destination.resolution
+    cfg, dest_device = resolved.config, resolved.destination_device
+    route, route_uri = destination.route, destination.route_uri
+    target, dialed_target = resolved.target, resolved.dialed_target
+    target_endpoint, local_ip = destination.endpoint, destination.local_ip
+    local_name, source_device_id = resolved.local_name, resolved.source_device_id
+    trunk_selection, use_trunk = resolved.trunk_selection, destination.use_trunk
+    trunk_cfg, trunk = trunk_selection.config, trunk_selection.client
+    routing_call_id, policy_endpoint_ids = resolved.routing_call_id, resolved.policy_endpoint_ids
     await _async_prepare_ha_outbound_call(hass, endpoint_id)
     uri = parse_sip_uri(route_uri)
     entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
@@ -852,6 +949,30 @@ async def _async_originate_browser_call(
         state=CallState.CALLING.value,
         trunk_id=trunk_selection.identity if use_trunk else "",
     )
+    return _PreparedBrowserSipCall(target=destination, client=client, registry=registry,
+        session=session, uri=uri, local_rtp_port=local_rtp_port,
+        target_device_id=target_device_id, video_enabled=video_enabled,
+        video_failure_reason=video_failure_reason)
+
+
+async def _async_run_browser_sip_call(
+    call: ServiceCall, prepared: _PreparedBrowserSipCall, *, endpoint_id: str,
+) -> None:
+    """Start signaling, publish its first result and then attach the final-response watcher."""
+    from .core.sip import sip_default_port
+    from .sip_client import SIP_TIMER_B
+
+    hass = call.hass
+    destination = prepared.target
+    resolved = destination.resolution
+    route, route_uri = destination.route, destination.route_uri
+    target, dialed_target = resolved.target, resolved.dialed_target
+    target_endpoint, use_trunk = destination.endpoint, destination.use_trunk
+    local_name, source_device_id = resolved.local_name, resolved.source_device_id
+    client, session, uri = prepared.client, prepared.session, prepared.uri
+    local_rtp_port, target_device_id = prepared.local_rtp_port, prepared.target_device_id
+    video_enabled, video_failure_reason = prepared.video_enabled, prepared.video_failure_reason
+    registry = prepared.registry
     try:
         client.audio_rtp_socket = bind_sip_rtp_socket(local_rtp_port)
         result = await client.invite(
@@ -982,6 +1103,22 @@ async def _async_originate_browser_call(
         video_failure_reason=video_failure_reason,
     )
     _LOGGER.info("SIP call target=%s uri=%s result=%s", target, route_uri, result)
+
+
+async def _async_originate_browser_call(
+    call: ServiceCall, *, endpoint_id: str, browser_endpoint,
+    force_ha_bridge: bool = False, routing_scope: dict,
+) -> None:
+    """Originate one browser call through the existing routing and session owners."""
+    resolved = await _async_resolve_browser_call_route(call, endpoint_id=endpoint_id,
+        browser_endpoint=browser_endpoint, routing_scope=routing_scope)
+    destination = await _async_dispatch_browser_call_route(call, resolved,
+        endpoint_id=endpoint_id, browser_endpoint=browser_endpoint, force_ha_bridge=force_ha_bridge)
+    if destination is None:
+        return
+    prepared = await _async_prepare_browser_sip_call(call, destination,
+        endpoint_id=endpoint_id, browser_endpoint=browser_endpoint)
+    await _async_run_browser_sip_call(call, prepared, endpoint_id=endpoint_id)
 
 
 async def async_originate_browser_call(call, *, endpoint_id, browser_endpoint, force_ha_bridge=False):
