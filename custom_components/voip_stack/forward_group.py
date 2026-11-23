@@ -411,6 +411,19 @@ class ForwardGroup:
             TerminalReason.CANCELLED.value,
             keep_endpoint_id=winner.endpoint_id,
         )
+        if self.operation.owned_sip_source is not None:
+            from .browser_application_handoff import forward_application_to_browser
+
+            endpoint = self.endpoints.get(winner.endpoint_id)
+            if endpoint is None:
+                raise RuntimeError("The selected browser disappeared")
+            await forward_application_to_browser(self.operation.runtime, registry,
+                self.operation.source.session, invite, endpoint, None,
+                timeout=self.operation.plan.ring_timeout, accepted_decision=browser_decision,
+                owned_source=self.operation.owned_sip_source)
+            if not self.operation.borrowed_reservation:
+                self.operation.reservation.release()
+            return TransferResult("connected", destination)
         if (
             application is not None
             and application.media is not None
@@ -508,6 +521,8 @@ class ForwardGroup:
         self.operation.client = winner.client
         self.operation.claimed_endpoint_id = winner.endpoint_id
         self.operation.destination_call_id = self.operation.client.dialog_ids.call_id
+        if self.operation.owned_sip_source is not None:
+            await self.operation._prepare_destination_media(winner)
         dest_relay_port = winner.ports.ports[1]
         source_ports = self.operation.reservation.ports
         winner_ports = winner.ports.ports
@@ -531,7 +546,8 @@ class ForwardGroup:
             BridgeCommitData(
                 invite=invite,
                 winner=winner,
-                source_relay_port=self.operation.reservation.ports[0],
+                source_relay_port=self.operation.owned_sip_source.local_port
+                if self.operation.owned_sip_source is not None else self.operation.reservation.ports[0],
                 dest_relay_port=dest_relay_port,
                 local_ip=self.operation.runtime.local_ip,
                 release_port_pairs=(
@@ -552,7 +568,9 @@ class ForwardGroup:
                 else "",
                 source_client=application.source_client
                 if application is not None
-                else None,
+                else self.operation.owned_sip_source.client
+                if self.operation.owned_sip_source is not None else None,
+                prepared_media=self.operation.prepared_media,
                 retained_media=self.operation.retained_media,
             ),
             BridgeCommitPolicy(
@@ -561,7 +579,7 @@ class ForwardGroup:
                 callee=self.entry.display_name,
                 connected_party=connected_party,
                 source_role=(
-                    "trunk" if self.operation.preanswered is not None else "caller"
+                    "trunk" if invite.received_via_trunk else "caller"
                 ),
                 source_state=(
                     CallState.IN_CALL.value
@@ -575,6 +593,8 @@ class ForwardGroup:
                 else "",
                 source_endpoint_id=local_source.call.caller_endpoint_id
                 if local_source is not None
+                else self.operation.owned_sip_source.peer_endpoint_id
+                if self.operation.owned_sip_source is not None
                 else str(self.session.metadata.get("source_endpoint_id") or ""),
                 dest_endpoint_id=winner.endpoint_id,
                 media_client_id=local_source.call.caller_media_owner_id

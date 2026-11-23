@@ -292,6 +292,12 @@ class _ForwardAdmission:
         local_source = registry.resource_for(call_id, "browser_source")
         application = self.current_application()
         invite = registry.artifact_for(call_id, "pending_invite")
+        from .owned_sip_source import OwnedSipSource
+
+        owned_sip_source = OwnedSipSource.capture(hass, registry.get_session(call_id),
+                                                 self.request.control_endpoint_id)
+        if owned_sip_source is not None:
+            invite = owned_sip_source.invite
         if invite is None and application is not None:
             application.require_current()
             invite = application.invite
@@ -433,6 +439,7 @@ class _ForwardAdmission:
             local=local_source,
             native_destination=native_destination,
             native_caller=native_caller,
+            owned_sip_source=owned_sip_source,
         )
         return source, None
 
@@ -852,6 +859,9 @@ class _ForwardAdmission:
             route_already_claimed = False
 
     async def retire_receiver(self, source, plan, receiver_id):
+        if source.owned_sip_source is not None:
+            source.owned_sip_source.validate()
+            return
         local_source = source.local
         if source.native_destination is not None:
             await source.native_destination.retire()
@@ -943,6 +953,10 @@ class _ForwardAdmission:
                 destination=original_callee,
                 trunk_id=original_trunk_id,
             )
+        if source.owned_sip_source is not None:
+            forward_abort.resume_owner = "ha_softphone"
+            forward_abort.resume_state = "in_call"
+            forward_abort.publish_resume = None
         return forward_abort
 
     async def prepare(self):

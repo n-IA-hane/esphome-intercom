@@ -161,6 +161,7 @@ async def async_commit_outbound_bridge(
     relay_adopted = False
     ports_transferred = False
     failure_reason = TerminalReason.MEDIA_INCOMPATIBLE.value
+    release_port_pairs = data.release_port_pairs
 
     def _require_current() -> None:
         if not registry.is_generation_current(invite.call_id, generation):
@@ -168,7 +169,7 @@ async def async_commit_outbound_bridge(
 
     def _release_ports(_ports: Any) -> None:
         if ports_transferred:
-            for ports in data.release_port_pairs:
+            for ports in release_port_pairs:
                 release_sip_rtp_port_pair(hass, ports)
 
     async def _cleanup_failure(barrier: asyncio.Future | None) -> None:
@@ -235,7 +236,15 @@ async def async_commit_outbound_bridge(
                 relay.prepare_peer_reconfiguration("right", dialog_rtp_peer(client.dialog))()
             relay._on_release = _release_ports
         elif data.prepared_media is not None:
+            await data.prepared_media.acquire_source()
+            _require_current()
             relay = data.prepared_media.commit()
+            if data.prepared_media.owned_source is not None:
+                adopted_reservation = data.prepared_media.reservation
+                release_port_pairs = (adopted_reservation.ports,)
+                for previous in data.detach_reservations:
+                    if previous is not adopted_reservation and not previous.released:
+                        previous.release()
             relay._on_release = _release_ports
         elif data.source_client is not None:
             from .sip_bridge import dialog_rtp_peer
@@ -268,7 +277,9 @@ async def async_commit_outbound_bridge(
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )
-        reservations = (winner.ports, *(item for item in data.detach_reservations if item is not winner.ports))
+        reservations = ((data.prepared_media.reservation,)
+            if data.prepared_media is not None and data.prepared_media.owned_source is not None
+            else (winner.ports, *(item for item in data.detach_reservations if item is not winner.ports)))
         for reservation in reservations:
             transfer_audio = getattr(reservation, "transfer_audio_sockets", None)
             if transfer_audio is not None:
@@ -284,16 +295,18 @@ async def async_commit_outbound_bridge(
             winner.video_relay = None
         # No await between transfer of reservations and adoption. If adoption
         # raises, the local cleanup still owns this complete relay inventory.
-        for reservation in data.detach_reservations:
+        for reservation in reservations:
             reservation.detach()
         ports_transferred = True
-        if data.prepared_media is not None:
+        if data.prepared_media is not None and data.prepared_media.media is not None:
             old_media = data.prepared_media.media
             session.add_resource(f"retired_local_media:{id(old_media):x}", old_media,
                 lambda _reason: old_media.stop(), stage=CleanupStage.MEDIA)
             registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=old_media)
         if data.retained_media is None:
             registry.attach_relay(invite.call_id, relay)
+            if data.prepared_media is not None and data.prepared_media.owned_source is not None:
+                data.prepared_media.owned_source.release_to_session(relay)
         relay_adopted = True
         if data.prepared_media is not None and data.prepared_media.video_update is not None:
             await data.prepared_media.video_update.commit()

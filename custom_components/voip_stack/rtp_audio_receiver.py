@@ -94,6 +94,39 @@ class RtpAudioReceiver:
     def requires_fixed_input(self, received_format):
         return not PcmFrameConverter.same_pcm_format(received_format.audio_format, self.output_pcm)
 
+    def retarget_output(self, output_pcm, *, pending_output=()):
+        """Change the consumer PCM once, preserving codecs and RTP continuity.
+
+        Retire partial samples with their original types before changing the
+        converter. Only this transition converts the old consumer's PCM; future
+        native frames go directly to the new consumer's PCM contract.
+        """
+        if self.output_pcm == output_pcm:
+            return list(pending_output)
+        retired, fragment = list(pending_output), b""
+        if self._converter is not None:
+            if self._pending:
+                retired.extend(self._converter.convert(bytes(self._pending), final_fragment=True))
+            fragment = self._converter.drain_pending_pcm()
+        elif self._pending:
+            fragment = bytes(self._pending)
+        converter = PcmFrameConverter(self.output_pcm, output_pcm)
+        ready = []
+        for pcm in (*retired, fragment):
+            if pcm:
+                ready.extend(converter.convert(pcm, final_fragment=True))
+        carry = converter.drain_pending_pcm()
+        native = self._active_format.audio_format if self._active_format is not None else None
+        successor = PcmFrameConverter(native, output_pcm) if native is not None else None
+        if carry:
+            if successor is None:
+                raise RuntimeError("Partial RTP PCM has no native format")
+            successor.prepend_pending_pcm(carry)
+        self._pending.clear()
+        self.output_pcm = output_pcm
+        self._converter = successor
+        return ready
+
     def reset_source(self):
         """Retire decode and partial PCM state on an admitted source transition."""
         callback, on_error = self._on_reorder_ready, self._on_reorder_error

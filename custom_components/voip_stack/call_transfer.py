@@ -269,19 +269,36 @@ async def _transfer_local_source(
             registry.release_resource(session.call_id, f"browser_source:{session.call_id}", value=source)
 
 
-async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wire_id):
+async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wire_id, *, endpoint_id=""):
     """Keep an internal target in this PBX, independent of provider REFER support."""
     from .endpoint_routing import is_local_listener_uri
     from .pending_sip_destination import EstablishedSipDestination
     from .session_cleanup import async_wait_for_cleanup
 
-    if session is None or session.owner != "bridge" or runtime.sip.forward_call is None:
+    if session is None or session.owner not in {"bridge", "ha_softphone"} or runtime.sip.forward_call is None:
         return None
     uri = sip.parse_sip_uri(target.uri)
     listener = runtime.sip.component("udp_listener")
     if not is_local_listener_uri(uri, local_ip=str(getattr(listener, "local_ip", "")),
                                  sip_port=int(runtime.transport_config["sip_port"])):
         return None
+    if session.owner == "ha_softphone":
+        task = None
+        try:
+            task = await runtime.sip.forward_call(call_id=session.call_id, destination=uri.user,
+                on_failure="resume", expected_state=session.state, control_endpoint_id=endpoint_id)
+            outcome = await await_forward_result(task) if task is not None else None
+            success = outcome is not None and outcome.committed_for(session)
+            reason = str(getattr(outcome, "reason", "") or "transfer_failed")
+            from .fsm import sip_failure_response
+
+            return SipTransferResult(success, 200 if success else sip_failure_response(reason)[0],
+                "completed" if success else reason, retained_call=success and session.live)
+        except BaseException:
+            if task is not None and not task.done():
+                task.cancel()
+                await async_wait_for_cleanup(asyncio.gather(task, return_exceptions=True))
+            raise
     operation = await EstablishedSipDestination.prepare(hass, runtime, session, referrer, wire_id)
     if operation is None:
         return SipTransferResult(False, 488, "local_transfer_unavailable")
@@ -375,7 +392,8 @@ async def async_transfer_call(
     if hass is not None and not request.replaces_call_id and session is not None:
         transferor = _client_for_call(runtime, request.call_id) if from_callee else runtime.sip.source_sip_client_for(session.call_id)
         local = await _try_local_blind_transfer(hass, runtime, session, target, transferor,
-            transferor.dialog_ids.call_id if transferor is not None else session.call_id)
+            transferor.dialog_ids.call_id if transferor is not None else session.call_id,
+            endpoint_id=request.endpoint_id)
         if local is not None:
             return local
     if _external_transfer_denied(runtime, request.call_id, target, remote_uri, local_uri, entries=entries):

@@ -27,6 +27,7 @@ from .const import (
 from .core.sdp import build_answer_directional
 from .core.sip import sip_default_port
 from .endpoint_dialing import OutboundLegPolicy
+from .endpoint_session import TerminationIntent
 from .forward_group import ForwardGroup
 from .forward_plan import (
     ForwardPlan,
@@ -135,6 +136,7 @@ class ForwardOperation:
         self.retained_video_update = None
         self.retained_video_answer = None
         self.preanswered = None
+        self.owned_sip_source = source.owned_sip_source
 
     async def commit_source_answer(
         self,
@@ -203,6 +205,8 @@ class ForwardOperation:
         registry = self.registry
         session = self.source.session
         call_id = self.source.call_id
+        if self.owned_sip_source is not None and not self.owned_sip_source.adopted:
+            await self.owned_sip_source.rollback_video()
         if self.retained_video_update is not None:
             if self.retained_video_update.rollback is not None:
                 await self.retained_video_update.rollback()
@@ -212,17 +216,21 @@ class ForwardOperation:
             self.parked_audio_socket = None
         if self.prepared_media is not None:
             await self.prepared_media.rollback()
-            if self.prepared_media.committed:
+            if self.prepared_media.committed and self.parked_media is not None:
                 await self.parked_media.stop()
         attached_client = False
         if self.destination_call_id:
+            leg = session.legs.get(self.destination_call_id) if session is not None else None
+            owns_client = bool(leg is not None and leg.dialog is self.client and leg.closer is not None)
             if registry.bridge_link_for(call_id) == self.destination_call_id:
                 registry.forget_bridge_link(call_id)
-            attached_client = await registry.close_leg(
+            closed_leg = await registry.close_leg(
                 call_id,
                 self.destination_call_id,
                 reason=reason,
             )
+            # A projected fork leg may observe the client without owning it.
+            attached_client = owns_client and closed_leg
         if self.claimed_endpoint_id and session is not None and session.live:
             registry.release_endpoint_claim(call_id, self.claimed_endpoint_id)
             if session.metadata.get("dest_endpoint_id") == self.claimed_endpoint_id:
@@ -261,6 +269,12 @@ class ForwardOperation:
             raise RuntimeError("target Home Assistant phone is busy")
         if endpoint.availability is EndpointAvailability.UNAVAILABLE:
             raise RuntimeError("target Home Assistant phone is disabled")
+        if self.owned_sip_source is not None:
+            from .browser_application_handoff import forward_application_to_browser
+
+            await forward_application_to_browser(self.runtime, registry, session, self.invite,
+                endpoint, None, timeout=self.plan.ring_timeout, owned_source=self.owned_sip_source)
+            return TransferResult("connected", destination)
         if local_source is not None and local_source.outgoing and local_source.established:
             await local_source.forward_to_browser(self.runtime, endpoint, timeout=self.plan.ring_timeout)
             return TransferResult("connected", destination)
@@ -362,7 +376,7 @@ class ForwardOperation:
                 raise RuntimeError(
                     "Forward calls to a parking destination, not a pickup slot"
                 )
-            await start_parking_application(
+            next_application = await start_parking_application(
                 hass,
                 session,
                 invite,
@@ -371,6 +385,8 @@ class ForwardOperation:
                 parker=self.source.receiver_endpoint_id,
                 previous=application,
             )
+            if self.owned_sip_source is not None:
+                await next_application.answer()
             return
 
         if decision.action is RouteAction.VOICEMAIL:
@@ -442,6 +458,8 @@ class ForwardOperation:
                 application.contact = decision.entry
                 application.controller = ""
                 next_application = application
+            if self.owned_sip_source is not None:
+                await next_application.answer()
             queue_automation_request(next_application)
             return
 
@@ -468,7 +486,7 @@ class ForwardOperation:
                 if decision.action is RouteAction.QUEUE
                 else start_paging_application
             )
-            factory(
+            next_application = factory(
                 hass,
                 session,
                 invite,
@@ -477,6 +495,8 @@ class ForwardOperation:
                 previous=application,
                 local_source=local_source,
             )
+            if self.owned_sip_source is not None:
+                await next_application.answer()
             if application is not None:
                 await application.close("forwarded")
                 name = (
@@ -514,6 +534,13 @@ class ForwardOperation:
             if claimed_assist is None:
                 raise RuntimeError("Assist route ownership changed")
         assist_invite = invite
+        existing_media = application.media if application and application.media else None
+        if self.owned_sip_source is not None:
+            async def complete(reason):
+                registry.request_termination(call_id, TerminationIntent(reason), generation=current.generation)
+            existing_media = await self.owned_sip_source.adopt_application(complete, staged=self.reservation)
+            self.reservation = existing_media.reservation
+            assist_invite = existing_media.invite
         if local_source is not None:
             assist_invite = local_source.stage_application_media(
                 invite, self.reservation.ports[0], self.reservation.ports[1]
@@ -534,8 +561,8 @@ class ForwardOperation:
             ),
             release_reservation_on_failure=self.preanswered is None,
             **(
-                {"existing_media": application.media}
-                if application and application.media
+                {"existing_media": existing_media}
+                if existing_media is not None
                 else {}
             ),
         )
@@ -617,7 +644,8 @@ class ForwardOperation:
             else ""
         )
         forward_video_enabled = bool(
-            (self.preanswered is None or self.parked_media is not None or self.retained_media is not None)
+            (self.preanswered is None or self.parked_media is not None or self.retained_media is not None
+             or self.owned_sip_source is not None)
             and self.runtime.config.get(CONF_SIP_VIDEO, False)
             and invite.video_format is not None
         )
@@ -834,6 +862,14 @@ class ForwardOperation:
             self.retained_video_update = await prepare_retained_video_handoff(
                 self.runtime.hass, self.source.session, self.retained_media.video_relay,
                 source_peer, destination_peer, source_client=self.retained_media.source_client)
+        elif self.owned_sip_source is not None:
+            from .local_call_media import ApplicationCallSource
+            from .local_media_bridge import LocalMediaBridge
+
+            destination = ApplicationCallSource.from_client(self.client,
+                call_id=self.destination_call_id, caller=self.plan.destination, allow_video=True)
+            self.prepared_media = await LocalMediaBridge.prepare_owned_source(
+                self.owned_sip_source, destination, direct_winner.ports)
         elif self.parked_media is not None:
             from .local_call_media import ApplicationCallSource
             from .local_media_bridge import LocalMediaBridge
@@ -881,7 +917,8 @@ class ForwardOperation:
             BridgeCommitData(
                 invite=invite,
                 winner=direct_winner,
-                source_relay_port=self.reservation.ports[0],
+                source_relay_port=self.owned_sip_source.local_port if self.owned_sip_source is not None
+                else self.reservation.ports[0],
                 dest_relay_port=self.reservation.ports[1],
                 local_ip=self.runtime.local_ip,
                 release_port_pairs=(self.reservation.ports,),
@@ -891,6 +928,7 @@ class ForwardOperation:
                 if local_source is not None
                 else "",
                 source_client=application.source_client if application is not None
+                else self.owned_sip_source.client if self.owned_sip_source is not None
                 else self.retained_media.source_client if self.retained_media is not None else None,
                 prepared_media=self.prepared_media,
                 retained_media=self.retained_media,
@@ -921,6 +959,7 @@ class ForwardOperation:
                 else "",
                 source_endpoint_id=local_source.call.caller_endpoint_id
                 if local_source is not None
+                else self.owned_sip_source.peer_endpoint_id if self.owned_sip_source is not None
                 else source_route_endpoint_id,
                 dest_endpoint_id=self.claimed_endpoint_id,
                 media_client_id=local_source.call.caller_media_owner_id
@@ -989,6 +1028,10 @@ class ForwardOperation:
             else None
         )
         self.preanswered = registry.resource_for(self.source.call_id, "preanswered")
+        if self.owned_sip_source is not None:
+            self.owned_sip_source.validate()
+            self.preanswered = {"final_response_sent": True,
+                "rtp_reservation": self.owned_sip_source.reservation}
         self.retained_media = (self.preanswered or {}).get("retained_source_media")
         if self.retained_media is not None:
             self.retained_media.validate(registry)
@@ -1003,7 +1046,8 @@ class ForwardOperation:
             RouteAction.PAGING,
         }:
             return await self._route_application()
-        self.reservation = (self.preanswered or {}).get("rtp_reservation")
+        self.reservation = (None if self.owned_sip_source is not None
+                            else (self.preanswered or {}).get("rtp_reservation"))
         self.borrowed_reservation = self.reservation is not None
         if self.reservation is None:
             self.reservation = RtpPortReservation.allocate(self.runtime.hass)
@@ -1032,6 +1076,9 @@ class ForwardOperation:
                                   owner=session.owner, generation=session.generation, call_id=session.call_id)
         except asyncio.CancelledError:
             await self.cleanup_failed_route(TerminalReason.CANCELLED.value)
+            if self.owned_sip_source is not None and not self.owned_sip_source.adopted and session.live:
+                if await async_abort_route(self.abort, RouteAbortIntent(TerminalReason.CANCELLED.value, "resume")):
+                    return TransferResult("failed_resumed", destination, "cancelled")
             resumable_media = self.parked_media or (
                 application.media if application is not None else None
             )
@@ -1107,9 +1154,10 @@ class ForwardOperation:
                 RouteAbortIntent(
                     reason,
                     "terminate"
-                    if self.source.local is not None
+                    if (self.owned_sip_source is not None and self.owned_sip_source.adopted)
+                    or (self.source.local is not None
                     and self.source.local.committed
-                    and application is None
+                    and application is None)
                     else self.plan.on_failure,
                     sip_status=sip_status,
                 ),

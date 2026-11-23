@@ -114,11 +114,13 @@ class LocalCallApplication:
             return
         if self.outgoing:
             raise ServiceValidationError("The outgoing automation call is not ready")
-        if self.source_client is not None:
+        registry = call_registry(self.hass)
+        owned_source = registry.resource_for(self.session.call_id, "owned_sip_source")
+        owned_source = owned_source if owned_source is not None and not owned_source.adopted else None
+        if self.source_client is not None and owned_source is None:
             self.invite = ApplicationCallSource.from_client(self.source_client,
                 call_id=self.session.call_id, caller=self.session.caller, target=self.contact.id,
                 trunk_id=str(self.session.metadata.get("inbound_trunk_id") or ""))
-        registry = call_registry(self.hass)
         preanswered = registry.resource_for(self.session.call_id, "preanswered")
         reservation = (
             (preanswered or {}).get("rtp_reservation")
@@ -137,7 +139,14 @@ class LocalCallApplication:
             )
 
         retained = (preanswered or {}).get("retained_source_media")
-        if retained is not None:
+        if owned_source is not None:
+            self.invite = owned_source.invite
+            self.source_client = owned_source.client
+            media = await owned_source.adopt_application(complete, staged=reservation)
+            reservation = media.reservation
+            preanswered = registry.resource_for(self.session.call_id, "preanswered")
+            self.answered = True
+        elif retained is not None:
             media = await retained.adopt_for_application(self.hass, registry, complete)
         else:
             media = LocalCallMedia(
@@ -153,7 +162,7 @@ class LocalCallApplication:
         try:
             await media.start()
             self.require_current()
-            if retained is None:
+            if retained is None and owned_source is None:
                 registry.attach_relay(self.session.call_id, media)
             self.media = media
             if self.source_client is not None:

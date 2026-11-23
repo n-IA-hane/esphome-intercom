@@ -71,6 +71,44 @@ class LocalMediaBridge:
     video_relay: object | None = None
     video_update: object | None = None
     video_peers: tuple | None = None
+    owned_source: object | None = None
+    reservation: object | None = None
+    preserve_destination_ports: bool = False
+
+    @classmethod
+    async def prepare_owned_source(cls, source, remote_invite, reservation, *, preserve_destination_ports=False):
+        """Bind the spare destination while the card still owns its SIP source."""
+        source.validate()
+        relay = SipRtpRelay(left=application_rtp_peer(source.invite), right=application_rtp_peer(remote_invite),
+            left_port=source.local_port, right_port=reservation.ports[1])
+        result = cls(None, source.invite, relay, None, owned_source=source, reservation=reservation,
+                     preserve_destination_ports=preserve_destination_ports)
+        sock = reservation.take_audio_socket(relay.right_port)
+        try:
+            sock = sock if sock is not None else relay._rtp_socket(relay.right_port)
+            relay.right_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+                lambda: _RelayProtocol(relay, "right", paused=True), sock=sock)
+            sock = None
+            result.validate()
+            return result
+        except BaseException:
+            if sock is not None:
+                sock.close()
+            await relay.stop()
+            raise
+
+    async def acquire_source(self):
+        """Commit the one source capability only after destination preparation."""
+        if self.owned_source is None:
+            return
+        self.validate()
+        try:
+            await self.owned_source.adopt_relay(self.relay, self.reservation,
+                                               preserve_staged=self.preserve_destination_ports)
+        finally:
+            self.committed = self.owned_source.adopted
+            self.reservation = self.owned_source.reservation
+        self.transport = self.relay.left_transport
 
     @classmethod
     async def prepare(cls, media, remote_invite, *, video_update=None, right_socket=None, right_port=None):
@@ -112,6 +150,11 @@ class LocalMediaBridge:
             raise
 
     def validate(self):
+        if self.owned_source is not None:
+            if self.committed or self.relay._stop_requested:
+                raise RuntimeError("The prepared SIP source already changed owner")
+            self.owned_source.validate()
+            return
         if (self.committed or self.media.closed.is_set()
                 or self.media.invite is not self.invite
                 or self.media.transport is not self.transport
@@ -125,6 +168,11 @@ class LocalMediaBridge:
 
     def commit(self):
         """Switch the protocol and ownership together, without an await window."""
+        if self.owned_source is not None:
+            if not self.committed or self.relay.left_transport is None:
+                raise RuntimeError("The retained SIP source has not been acquired")
+            self.relay.right_transport.resume_reading()
+            return self.relay
         self.validate()
         old_protocol = self.transport.get_protocol()
         protocol = _RelayProtocol(self.relay, "left")
@@ -150,7 +198,7 @@ class LocalMediaBridge:
         return self.relay
 
     async def rollback(self):
-        if not self.committed:
+        if not self.committed or self.owned_source is not None:
             await self.relay.stop()
             if self.video_update is not None and self.video_update.rollback is not None:
                 await self.video_update.rollback()

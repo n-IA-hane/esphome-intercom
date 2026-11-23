@@ -274,13 +274,8 @@ async def park_local_browser_call(hass, session, endpoint_id, *, slot=""):
 
 
 async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
-    """Retain the real SIP dialog and RTP socket when its browser parks it."""
-    from .bridge_manager import async_watch_owned_sip_dialog
-    from .call_transfer import _inbound_server
-    from .local_call_media import ApplicationCallSource, LocalCallMedia
-    from .media_ports import RtpPortReservation
-    from .media_reservation import release_video_media_reservation
-    from .browser_phone_runtime import _release_ha_softphone_claim
+    """Retain a card's real SIP source through the common acquisition capability."""
+    from .owned_sip_source import OwnedSipSource
 
     runtime = require_runtime_data(hass)
     registry = runtime.sip
@@ -288,151 +283,34 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
     if (session is None or not session.live or session.state != "in_call"
             or endpoint_id not in session.endpoint_claims):
         raise ParkingError("Select an established call owned by this phone")
-    active = runtime.media.sessions_for("audio").get((session.call_id, endpoint_id))
-    descriptor = registry.resource_for(session.call_id, "softphone_media") or {}
-    client = registry.source_sip_client_for(session.call_id) or registry.sip_client_for(session.call_id)
-    video = runtime.media.sessions_for("video").get((session.call_id, endpoint_id))
-    if active is None or active.handoff_transport is None:
-        raise ParkingError("The phone audio connection is not ready")
-    video_owner = runtime.media.owners_for("video").get(f"{endpoint_id}|{session.call_id}")
-    if video is not None and video_owner is None:
-        raise ParkingError("The phone video connection is not ready")
-    server, _ = _inbound_server(runtime, session.call_id)
-    source = server.invite_for_call(session.call_id) if server is not None else None
-    retained = next((item for item in session.endpoint_claims if item != endpoint_id), "")
-    peer = runtime.endpoints.get(retained) if retained else None
-    caller = peer.name if peer is not None else session.caller
-    if client is not None:
-        source = ApplicationCallSource.from_client(client, call_id=session.call_id, caller=caller,
-            trunk_id=str(session.metadata.get("inbound_trunk_id") or ""), allow_video=True)
+    source = OwnedSipSource.capture(hass, session, endpoint_id)
     if source is None:
         raise ParkingError("The remote SIP dialog is no longer available")
-    if (client is None and descriptor.get("local_video_rtp_port") == 0
-            and video is None and video_owner is None):
-        # The UAS invite retains the remote offer. The committed answer can
-        # reject its video stream (RFC 3264 section 6); keep that decision
-        # in the application's contract without changing the received offer.
-        source = replace(source, video_format=None, local_video_format=None, video_answer_format=None,
-            remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
-    local_ip = str(client.local_ip if client is not None else server.local_ip)
+    caller = session.caller
+    peer = runtime.endpoints.get(source.peer_endpoint_id) if source.peer_endpoint_id else None
+    if peer is not None:
+        caller = peer.name
+    local_ip = str(source.client.local_ip if source.client is not None else source.server.local_ip)
     lot = get_parking_lot(hass)
     settings = parking_settings(hass)
     parked = lot.reserve(session, slot=slot, parker=endpoint_id,
         return_destination=str(settings.get("return_destination") or endpoint_id))
-    # Direct outgoing calls keep their reservation on the SIP client rather
-    # than an inbound media descriptor. Transfer that ownership with the RTP
-    # transport; unpooled audio sockets use the existing adoption primitive.
-    client_reservation = getattr(client, "media_reservation", None)
-    reservation = descriptor.get("rtp_reservation") or client_reservation
-    acquired = reservation is None
-    video_relay = video_source = video_update = None
-    original_video_port = int(video.local_rtp_port if video is not None else
-        client.dialog.local_video_rtp_port if client is not None else descriptor.get("local_video_rtp_port") or 0)
     try:
-        if acquired:
-            reservation = RtpPortReservation.adopt_bound_source(hass, active.local_rtp_port)
-        if source.video_format is not None:
-            from .bridge_media_updates import prepare_source_video_update
-            from .config import transport_config
-            from .const import CONF_VIDEO_TRANSCODING
-            from .media_ports import reserve_sip_video_relay_media
-            from .sip_bridge import invite_video_rtp_peer, dialog_video_rtp_peer
-            from .sip_video_relay import SipVideoRtpRelay
-
-            if not original_video_port:
-                raise ParkingError("The existing video contract has no owned RTP port")
-            video_source = invite_video_rtp_peer(source)
-            if client is None:
-                from .core.sdp import local_direction_for_remote
-                video_source = _video_peer_direction(video_source,
-                    local_direction_for_remote(str(descriptor.get("video_direction") or "inactive")))
-            video_ports, sockets = reserve_sip_video_relay_media(hass)
-            inactive = _video_peer_direction(video_source, "inactive")
-            video_relay = SipVideoRtpRelay(left=inactive, right=replace(inactive, port=0, rtcp_port=0),
-                left_port=video_ports.ports[0], right_port=video_ports.ports[1],
-                left_socket=sockets[0], left_rtcp_socket=sockets[1], right_socket=sockets[2], right_rtcp_socket=sockets[3],
-                on_release=lambda _ports: video_ports.release())
-            if transport_config(hass).get(CONF_VIDEO_TRANSCODING, False):
-                video_relay.configure_transcoding(hass, session.call_id)
-            await video_relay.start()
-            video_update = await prepare_source_video_update(hass, session.call_id, source_client=client,
-                local_video_rtp_port=video_relay.left_port,
-                video_formats=tuple(dict.fromkeys((video_source.recv_format, video_source.send_format))),
-                video_direction="inactive")
-            if video_update is None:
-                raise ParkingError("The retained caller rejected video parking")
-            if (not session.live or runtime.media.sessions_for("audio").get((session.call_id, endpoint_id)) is not active
-                    or not video_update.commit()):
-                raise ParkingError("The browser call changed before video parking")
-            video_relay.left = (dialog_video_rtp_peer(video_update.candidate) if client is not None
-                                else invite_video_rtp_peer(video_update.candidate))
-            if video_owner is not None:
-                video_owner.revoke()
-                async with asyncio.timeout(5):
-                    await video_owner.released.wait()
-            if not session.live or runtime.media.sessions_for("audio").get((session.call_id, endpoint_id)) is not active:
-                raise ParkingError("The browser call ended during video retirement")
         async def complete(reason):
             registry.request_termination(session.call_id, TerminationIntent(reason), generation=session.generation)
-        media = LocalCallMedia(hass, invite=source, local_rtp_port=active.local_rtp_port,
-            reservation=reservation, on_complete=complete, rtp_source=active.rtp_source)
-        def adopt(transport, host, port, clock):
-            media.remote_rtp_host, media.remote_rtp_port = host, port
-            media.rtp_source = clock
-            media.adopt_transport(transport)
-        active.handoff_transport(adopt)
-        media.video_relay = video_relay
+        media = await source.adopt_application(complete)
+        session.update_metadata(source_endpoint_id=source.peer_endpoint_id, endpoint_id=source.peer_endpoint_id,
+            dest_endpoint_id="", target_endpoint_id="", ring_endpoint_ids=(), media_client_id="")
+        session.caller = caller
+        return await start_parking_application(hass, session, source.invite, local_ip,
+            slot=parked.slot, parker=endpoint_id, media=media, source_client=source.client,
+            video_source=source.held_video.source if source.held_video is not None else None)
     except BaseException:
-        async def restore_browser():
-            try:
-                if video_update is not None and session.live:
-                    if not await video_update.restore(local_video_rtp_port=original_video_port,
-                            video_formats=tuple(dict.fromkeys((video_source.recv_format, video_source.send_format)))):
-                        registry.request_termination(session.call_id, TerminationIntent("parking_video_restore_failed"),
-                                                     generation=session.generation)
-            finally:
-                try:
-                    if video_relay is not None:
-                        await video_relay.stop()
-                finally:
-                    lot.release(parked)
-                    if acquired and reservation is not None:
-                        reservation.release()
-        await async_wait_for_cleanup(asyncio.create_task(restore_browser(), name="voip-parking-browser-restore"))
+        lot.release(parked)
+        await source.rollback_video()
+        if source.adopted:
+            registry.request_termination(session.call_id, TerminationIntent("parking_failed"), generation=session.generation)
         raise
-    if client_reservation is not None and reservation is client_reservation:
-        client.media_reservation = None
-        for name in ("video_rtp_socket", "video_rtcp_socket"):
-            sock = getattr(client, name, None)
-            setattr(client, name, None)
-            if sock is not None:
-                sock.close()
-    registry.take_media(session.call_id)
-    release_video_media_reservation(descriptor)
-    media.release_reservation_on_stop = False
-    registry.attach_relay(session.call_id, media)
-    registry.attach_media(session.call_id, {"rtp_reservation": reservation,
-        "local_rtp_port": active.local_rtp_port, "final_response_sent": True,
-        "audio_rtp_source": media.rtp_source}, provisional=True)
-    registry.set_pending_invite(session.call_id, source)
-    _release_ha_softphone_claim(hass, session.call_id, endpoint_id=endpoint_id,
-        destination="Parking " + parked.slot)
-    session.update_metadata(source_endpoint_id=retained, endpoint_id=retained,
-        dest_endpoint_id="", target_endpoint_id="", ring_endpoint_ids=(), media_client_id="")
-    session.caller = caller
-    if client is not None:
-        wire_id = client.dialog_ids.call_id
-        old_watcher = registry.cancel_task(session.call_id, f"client_watcher:{wire_id}")
-        registry.add_leg(session.call_id, wire_id, role="caller", state="in_call")
-        watcher = hass.async_create_task(async_watch_owned_sip_dialog(registry, session.call_id, client, session.generation))
-        registry.attach_client_watcher(wire_id, watcher)
-    else:
-        old_watcher = None
-    application = await start_parking_application(hass, session, source, local_ip,
-        slot=parked.slot, parker=endpoint_id, media=media, source_client=client, video_source=video_source)
-    if old_watcher is not None:
-        await asyncio.gather(old_watcher, return_exceptions=True)
-    return application
 
 
 async def park_established_sip_call(hass, call_id, parker, *, slot="", referrer=None, refer_transaction=None):

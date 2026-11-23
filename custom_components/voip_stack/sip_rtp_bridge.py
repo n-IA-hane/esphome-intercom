@@ -615,6 +615,59 @@ class SipRtpRelay:
                     lambda frames, side=side, receiver=receiver: self._receive_deferred_pcm(side, receiver, frames),
                     lambda error, side=side, receiver=receiver: self._receive_deferred_error(side, receiver, error))
 
+    def adopt_audio_state(self, side, state):
+        """Move one live source's codecs, admission and clocks into this relay."""
+        if side not in {"left", "right"} or self._stop_requested:
+            raise RuntimeError("The RTP source cannot be adopted by this relay")
+        opposite = "right" if side == "left" else "left"
+        peer = getattr(self, side)
+        for suffix, replacement in (("decoder", state.receiver), ("encoder", state.encoder)):
+            old = getattr(self, f"{side}_{suffix}")
+            setattr(self, f"{side}_{suffix}", replacement)
+            if old is not None:
+                old.close()
+        other_receiver = getattr(self, f"{opposite}_decoder")
+        if other_receiver is None:
+            other_peer = getattr(self, opposite)
+            other_receiver = RtpAudioReceiver(other_peer.inbound_rtp_format,
+                other_peer.inbound_rtp_formats, receive_state=self._receive_states[opposite])
+        other_encoder = getattr(self, f"{opposite}_encoder")
+        if other_encoder is None:
+            other_peer = getattr(self, opposite)
+            other_encoder = RtpPayloadEncoder(other_peer.outbound_rtp_format,
+                send_formats=other_peer.outbound_rtp_formats,
+                match_received_codec=other_peer.match_received_codec)
+        pending_rx = state.retarget_receiver(other_encoder.input_format)
+        incoming = PcmFrameConverter(state.receiver.output_pcm, other_encoder.input_format)
+        pending_return = other_receiver.retarget_output(state.encoder.fmt.audio_format)
+        outgoing = state.converter_for(other_receiver.output_pcm)
+        setattr(self, f"{opposite}_decoder", other_receiver)
+        setattr(self, f"{opposite}_encoder", other_encoder)
+        self._receive_states[side] = state.receiver.receive_state
+        self._dtmf_decoders[side] = state.dtmf_decoder
+        setattr(self, "left_to_right" if side == "left" else "right_to_left", incoming)
+        setattr(self, "right_to_left" if side == "left" else "left_to_right", outgoing)
+        self.left_to_right_passthrough = self.right_to_left_passthrough = False
+        self._adopted_audio_state = True
+        peer.sequence, peer.timestamp, peer.ssrc = (state.sender.sequence,
+            state.sender.timestamp, state.sender.ssrc)
+        peer.clock_rate = state.sender.clock_rate or state.encoder.fmt.rtp_clock_rate
+        peer.host, peer.port, peer.rx_ssrc = state.remote_host, state.remote_port, state.receiver.source_ssrc
+        self._bind_receive_callbacks()
+        for frame in state.ready_tx:
+            fmt = state.encoder.fmt
+            rtp.use_audio_clock(peer, fmt.rtp_clock_rate)
+            self._send_audio_packet(side, rtp.build_packet(rtp.RtpPacket(payload_type=fmt.payload_type,
+                sequence=peer.sequence, timestamp=peer.timestamp, ssrc=peer.ssrc,
+                payload=state.encoder.encode(frame))))
+            peer.sequence = rtp.next_sequence(peer.sequence)
+            peer.timestamp = rtp.next_timestamp(peer.timestamp, fmt.rtp_timestamp_step)
+        state.sender.sequence, state.sender.timestamp, state.sender.ssrc, state.sender.clock_rate = (
+            peer.sequence, peer.timestamp, peer.ssrc, peer.clock_rate)
+        if pending_return:
+            self._receive_deferred_pcm(opposite, other_receiver, pending_return)
+        return pending_rx
+
     def _receive_deferred_error(self, side, receiver, error):
         if getattr(self, f"{side}_decoder") is receiver and not self._stop_requested:
             self.dropped += 1
@@ -1432,7 +1485,7 @@ class SipRtpRelay:
             pending_pcm = ((decoder is not None and decoder.has_pending_pcm)
                            or (converter is not None and converter.has_pending_pcm))
             packet_size = len(packet.payload) if not pending_pcm else None
-            passthrough = not self.debug_capture and payload_relay_compatible(
+            passthrough = not self.debug_capture and not getattr(self, "_adopted_audio_state", False) and payload_relay_compatible(
                 received_format, wire_format, payload_size=packet_size
             )
             if pending_pcm or (decoder is not None and decoder.has_pending_media):

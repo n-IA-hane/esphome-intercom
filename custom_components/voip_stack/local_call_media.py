@@ -246,6 +246,10 @@ class LocalCallMedia:
         if not frames:
             return
         if not self._accepting_input:
+            if hasattr(self, "_handoff_input"):
+                self._handoff_input.extend(frames)
+                del self._handoff_input[:-_RX_QUEUE_FRAMES]
+                return
             self.counters["rx_suppressed"] += 1
             return
         for frame in (frame for pcm in frames for frame in self.rx_converter.convert(pcm)):
@@ -375,6 +379,27 @@ class LocalCallMedia:
                 self._tx_task.cancel()
             raise
 
+    def adopt_audio_state(self, state):
+        """Take the live codec objects before the bound transport changes owner."""
+        if self.transport is not None or self.closed.is_set():
+            raise RuntimeError("Local audio ownership has already been acquired")
+        self.decoder.close()
+        self.encoder.close()
+        self.decoder, self.encoder = state.receiver, state.encoder
+        pending_rx = state.retarget_receiver(self.invite.recv_format.audio_format)
+        rx_converter = PcmFrameConverter(state.receiver.output_pcm, LOCAL_PCM_FORMAT)
+        tx_converter = state.converter_for(LOCAL_PCM_FORMAT)
+        self.rx_converter, self.tx_converter = rx_converter, tx_converter
+        self._dtmf_decoder = state.dtmf_decoder
+        self._dtmf_sdp = self.invite.remote_sdp
+        self.rtp_source = state.sender
+        self.remote_ssrc = state.receiver.source_ssrc
+        self.remote_rtp_host, self.remote_rtp_port = state.remote_host, state.remote_port
+        self._bind_receive_callback(self.decoder)
+        self._handoff_input = pending_rx
+        for frame in state.ready_tx:
+            self.tx_queue.put_nowait(frame)
+
     async def stop(self) -> None:
         """Stop pipeline and RTP exactly once."""
         async with self._stop_lock:
@@ -494,7 +519,7 @@ class LocalCallMedia:
                 invite = self.invite
                 encoder = self.encoder
                 remote_rtp_port = self.remote_rtp_port
-                frame_format = invite.send_format.audio_format
+                frame_format = encoder.input_format
                 if frame_format != active_format:
                     active_format = frame_format
                     silence = bytes(frame_format.nominal_frame_bytes)
@@ -577,6 +602,10 @@ class LocalCallMedia:
         self._drain_rx()
         self._accepting_input = True
         try:
+            pending = getattr(self, "_handoff_input", ())
+            if hasattr(self, "_handoff_input"):
+                del self._handoff_input
+            self._receive_pcm(self.decoder, pending)
             while not self.closed.is_set():
                 yield await self.rx_queue.get()
         finally:
@@ -601,9 +630,14 @@ class LocalCallMedia:
 
         def convert(frame):
             nonlocal converter
-            destination = self.invite.send_format.audio_format
+            destination = self.encoder.input_format
             if converter is None or converter.dst != destination:
-                converter = PcmFrameConverter(source_format, destination)
+                if self.tx_converter.src == source_format and self.tx_converter.dst == destination:
+                    converter = self.tx_converter
+                else:
+                    converter = PcmFrameConverter(source_format, destination)
+                    if self.tx_converter.dst == destination:
+                        converter.prepend_pending_pcm(self.tx_converter.drain_pending_pcm())
             return converter.convert(frame)
 
         async for chunk in chunks:

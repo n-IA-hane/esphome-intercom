@@ -110,6 +110,8 @@ class _SoftphoneMediaSession:
     media_generation: int = 0
     update_event: asyncio.Event = field(default_factory=asyncio.Event)
     handoff_transport: Callable[[Callable], Any] | None = None
+    audio_state: Any = None
+    validate_handoff: Callable | None = None
     observe_audio: Callable | None = None
     application_playback: Any = None
 
@@ -980,6 +982,12 @@ async def _run_audio_session(
         receiver.set_reorder_callback(lambda frames: deferred_audio(receiver, frames),
             lambda error: deferred_audio_error(receiver, error))
 
+    def publish_audio_state():
+        from .rtp_audio_handoff import RtpAudioHandoff
+
+        session.audio_state = RtpAudioHandoff(rtp_decoder, rtp_encoder, dtmf_decoder, rtp_source,
+            tx_converter, incoming.remote_host, incoming.remote_port, queue)
+
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, applied_dtmf_contract
         nonlocal rtp_decoder, rtp_encoder, browser_plan, tx_converter
@@ -1024,6 +1032,7 @@ async def _run_audio_session(
             browser_plan = next_plan
             tx_converter = PcmFrameConverter(browser_plan.microphone, next_encoder.input_format)
             bind_reorder_callback(rtp_decoder)
+            publish_audio_state()
             if debug_capture is not None:
                 _schedule_debug_capture_write(hass, debug_capture, counters)
                 debug_capture = _DebugAudioCapture(
@@ -1052,6 +1061,7 @@ async def _run_audio_session(
             match_received_codec=session.match_received_codec, input_format=browser_plan.encoder_input)
         tx_converter = PcmFrameConverter(browser_plan.microphone, rtp_encoder.input_format)
         bind_reorder_callback(rtp_decoder)
+        publish_audio_state()
     except asyncio.CancelledError:
         transport.close()
         raise
@@ -1129,19 +1139,33 @@ async def _run_audio_session(
     active_sessions[active_key] = session
     transport_detached = False
 
-    def handoff_transport(adopt):
-        nonlocal transport_detached
+    def validate_handoff():
         if closed.is_set() or transport_detached or active_sessions.get(active_key) is not session:
             raise RuntimeError("The browser media owner changed before handoff")
-        result = adopt(transport, incoming.remote_host, incoming.remote_port, rtp_source)
+        if (media_state_lock.locked() or rtp_send_lock.locked() or dtmf_send_lock.locked()
+                or any(not task.done() for task in dtmf_tasks)
+                or applied_media_generation != session.media_generation):
+            raise RuntimeError("Browser media has a pending negotiated update or telephone event")
+
+    def handoff_transport(adopt):
+        nonlocal transport_detached
+        validate_handoff()
+        state = session.audio_state
+        state.remote_host, state.remote_port = incoming.remote_host, incoming.remote_port
+        # This callback is the ownership commit. A failure after entry belongs
+        # to the successor; this WS must never close the transferred codecs.
         transport_detached = True
         closed.set()
         if handoff_requested is not None:
             handoff_requested.set()
         call_ended.set()
-        return result
+        session.audio_state = state
+        state.transferred = True
+        state.transport = transport
+        return adopt(transport, state)
 
     session.handoff_transport = handoff_transport
+    session.validate_handoff = validate_handoff
     audio_observers = {}
     def observe_audio(callback, on_end=None):
         detach_rx = rtp_decoder.add_pcm_observer(lambda pcm, fmt: callback("right", pcm, fmt))
@@ -1413,10 +1437,13 @@ async def _run_audio_session(
             browser_task.result()
     finally:
         closed.set()
-        rtp_decoder.close()
-        rtp_encoder.close()
+        if not transport_detached:
+            rtp_decoder.close()
+            rtp_encoder.close()
         remove_call_listener()
         session.handoff_transport = None
+        session.validate_handoff = None
+        session.audio_state = None
         session.observe_audio = None
         for on_end in tuple(audio_observers.values()):
             if on_end is not None:

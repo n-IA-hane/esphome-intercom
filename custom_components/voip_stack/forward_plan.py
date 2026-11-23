@@ -103,6 +103,7 @@ class ForwardSource:
     native_caller: bool
     session: EndpointCallSession | None = None
     receiver_endpoint_id: str = ""
+    owned_sip_source: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
