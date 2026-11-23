@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-from .core.sip import SipUri
+from .core.sip import SipUri, parse_sip_uri
 
 
 @dataclass(frozen=True)
@@ -22,14 +22,10 @@ class Peer:
     rtp_port: int | None = None
     extension: str = ""
     sip_uri_user: str = ""
+    contact_uri: str = ""
     conference_group: str = ""
     conference_ring: bool = False
     ring_group: str = ""
-    audio_mode: Literal["full_duplex", "mic_only", "speaker_only"] | None = "full_duplex"
-    tx_formats: list[str] | None = None
-    rx_formats: list[str] | None = None
-    sip_audio_tx_formats: tuple[str, ...] = ()
-    sip_audio_rx_formats: tuple[str, ...] = ()
     device: dict[str, Any] | None = None
 
     @property
@@ -45,8 +41,6 @@ class Peer:
     @property
     def request_uri_user(self) -> str:
         """Return the stable SIP user used to address this peer."""
-        if self.endpoint_kind == "esphome":
-            return self.extension or self.sip_uri_user or self.name
         return self.sip_uri_user or self.extension or self.name
 
 
@@ -56,7 +50,10 @@ def sip_uri_for_peer(
     default_port: int,
     fallback_user: str = "",
 ) -> SipUri:
-    """Build the canonical Request-URI for one resolved peer."""
+    """Preserve a registered Contact as the transport destination."""
+
+    if peer.contact_uri:
+        return parse_sip_uri(peer.contact_uri)
 
     transport = str((peer.device or {}).get("sip_transport") or "tcp").lower()
     if transport not in {"tcp", "udp", "tls"}:

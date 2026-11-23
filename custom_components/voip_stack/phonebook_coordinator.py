@@ -8,7 +8,6 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_state_change_event
 
 from .device_resolver import entity_role
 from .directory_runtime import async_refresh_directory
@@ -18,21 +17,10 @@ from .runtime_data import runtime_data
 
 _LOGGER = logging.getLogger(__name__)
 PHONEBOOK_UPDATED = "voip_stack_phonebook_updated"
-UNAVAILABLE_STATES = {"", "unknown", "unavailable"}
 
 
-def _state_is_available(state) -> bool:
-    return (
-        state is not None
-        and str(state.state or "").strip().lower() not in UNAVAILABLE_STATES
-    )
-
-
-def _is_voip_roster_entity(entity: object) -> bool:
-    return getattr(entity, "platform", None) == "esphome" and entity_role(entity) in {
-        "voip_state", "voip_endpoint", "voip_ring_groups",
-        "voip_conference_groups", "voip_conference_ring",
-    }
+def _is_camera_projection_entity(entity: object) -> bool:
+    return getattr(entity, "platform", None) == "esphome" and entity_role(entity) == "camera"
 
 
 def entry_phonebook(hass, runtime):
@@ -53,7 +41,6 @@ class PhonebookCoordinator:
         self.count = 0
         self._name_conflicts: tuple[str, ...] | None = None
         self._tracked_entities: set[str] = set()
-        self._unsub_state = None
         self._unsub_registry = None
         self._recompute_task: asyncio.Task | None = None
         self._recompute_requested = False
@@ -68,7 +55,7 @@ class PhonebookCoordinator:
             return
         self._unsub_registry = self.hass.bus.async_listen("entity_registry_updated", self._registry_changed)
         try:
-            self._refresh_tracked_entities(initial=True)
+            self._refresh_camera_entities(initial=True)
             await self.async_refresh()
         except BaseException:
             await self.async_close()
@@ -80,16 +67,10 @@ class PhonebookCoordinator:
             return
         entity_id = event.data.get("entity_id") or ""
         entity = er.async_get(self.hass).async_get(entity_id)
-        if (_is_voip_roster_entity(entity) or entity_id in self._tracked_entities
+        if (_is_camera_projection_entity(entity) or entity_id in self._tracked_entities
                 or event.data.get("old_entity_id") in self._tracked_entities):
-            if self._refresh_tracked_entities():
-                self._schedule_recompute()
-
-    @callback
-    def _stop_state_tracking(self) -> None:
-        if self._unsub_state is not None:
-            self._unsub_state()
-            self._unsub_state = None
+            self._refresh_camera_entities()
+            self._schedule_recompute()
 
     @callback
     def close(self) -> None:
@@ -98,7 +79,6 @@ class PhonebookCoordinator:
         self.closed = True
         if self._recompute_task is not None and self.runtime.phonebook is self and self.runtime.directory is not None:
             self.runtime.directory.begin_refresh()
-        self._stop_state_tracking()
         if self._unsub_registry is not None:
             self._unsub_registry()
             self._unsub_registry = None
@@ -144,58 +124,17 @@ class PhonebookCoordinator:
             self.runtime.phone_provisioning.schedule()
 
     @callback
-    def _refresh_tracked_entities(self, initial=False) -> bool:
+    def _refresh_camera_entities(self, initial=False) -> bool:
         entity_registry = er.async_get(self.hass)
         new_set = {
             e.entity_id
             for e in entity_registry.entities.values()
-            if _is_voip_roster_entity(e)
+            if _is_camera_projection_entity(e)
         }
         if new_set == self._tracked_entities and not initial:
             return False
         self._tracked_entities = new_set
 
-        @callback
-        def _on_state_change(event) -> None:
-            entity_id = event.data.get("entity_id") or ""
-            new_state = event.data.get("new_state")
-            old_state = event.data.get("old_state")
-            role = entity_role(er.async_get(self.hass).async_get(entity_id))
-            if role == "voip_endpoint":
-                old_value = old_state.state if old_state is not None else None
-                new_value = new_state.state if new_state is not None else None
-                old_endpoint = (
-                    (old_state.attributes or {}).get("endpoint")
-                    if old_state is not None
-                    else None
-                )
-                new_endpoint = (
-                    (new_state.attributes or {}).get("endpoint")
-                    if new_state is not None
-                    else None
-                )
-                if old_value != new_value or old_endpoint != new_endpoint:
-                    self._schedule_recompute()
-                return
-            if (
-                role in {"voip_ring_groups", "voip_conference_groups", "voip_conference_ring"}
-            ):
-                old_value = old_state.state if old_state is not None else None
-                new_value = new_state.state if new_state is not None else None
-                if old_value != new_value:
-                    self._schedule_recompute()
-                return
-            old_avail = _state_is_available(old_state)
-            new_avail = _state_is_available(new_state)
-            if old_avail == new_avail:
-                return
-            self._schedule_recompute()
-
-        self._stop_state_tracking()
-        if new_set:
-            self._unsub_state = async_track_state_change_event(
-                self.hass, list(new_set), _on_state_change
-            )
         return True
 
     async def _recompute(self) -> None:

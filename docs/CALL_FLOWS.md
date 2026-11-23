@@ -60,8 +60,8 @@ session, HA returns `486 Busy Here`.
 ## HA/Card to ESP
 
 1. The card sends `voip_stack.call` with the selected target.
-2. HA resolves the target from `sensor.voip_phonebook`.
-3. If the target is an ESP, HA creates a SIP client leg to the ESP.
+2. HA resolves the target from the canonical directory. The phonebook sensor is a diagnostic projection.
+3. For a SIP account, HA uses its current registered Contact bindings and configured call policy.
 4. The HA softphone state moves to `calling`.
 5. If the ESP rings, HA state becomes `remote_ringing`.
 6. If the ESP answers, HA state becomes `in_call`.

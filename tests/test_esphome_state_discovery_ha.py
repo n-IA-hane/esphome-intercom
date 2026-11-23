@@ -26,10 +26,7 @@ async def test_state_presence_discovers_unknown_route_without_inventing_formats(
     assert device["route_id"] == "phone_node"
     assert device["entities"]["voip_state"]
     assert "voip_endpoint" not in device["entities"]
-    assert device["sip_port"] is None and device["sip_transport"] == ""
-    assert device["audio_mode"] is None
-    assert device["sip_video_codec"] is None
-    assert device["tx_formats"] == device["rx_formats"] == []
+    assert not {"host", "sip_port", "sip_transport", "audio_mode", "sip_video_codec", "tx_formats", "rx_formats"} & device.keys()
     assert not device_is_phonebook_available(lab.hass, device)
     profile = sip_target_rtp_audio_profile(None)
     assert {fmt.encoding for fmt in profile.send_rtp_formats} >= {"L16", "PCMA", "PCMU"}
@@ -75,8 +72,8 @@ async def test_direct_sip_uses_explicit_existing_contact_and_survives_entity_ren
         metadata={identity_key: identity})
     store_manual_roster_entries(lab.hass, [contact])
     device, = await VoipDeviceResolver(lab.hass).list_devices()
-    assert (device["host"], device["sip_port"], device["sip_transport"]) == ("127.0.0.2", 5077, transport)
-    assert device["audio_mode"] is None and "sip_audio_tx_formats" not in device
+    assert device["api_host"] == "127.0.0.2"
+    assert not {"host", "sip_port", "sip_transport", "audio_mode", "sip_audio_tx_formats"} & device.keys()
     assert not device_is_phonebook_available(lab.hass, device)
     assert await _get_voip_devices(lab.hass) == []
     assert not lab.runtime.endpoints.endpoints
@@ -94,7 +91,7 @@ async def test_direct_sip_uses_explicit_existing_contact_and_survives_entity_ren
 
 async def test_authenticated_contact_and_options_are_authoritative_without_endpoint(managed):
     from custom_components.voip_stack.core import sdp
-    from custom_components.voip_stack.device_resolver import VoipDeviceResolver
+    from custom_components.voip_stack.esphome_phone_inventory import _get_voip_devices
 
     lab = managed
     await lab.controller.async_sync()
@@ -106,15 +103,17 @@ async def test_authenticated_contact_and_options_are_authoritative_without_endpo
         "a=ptime:10\r\na=maxptime:20\r\n"
         "m=video 0 RTP/AVP 26\r\na=rtcp:0 IN IP4 127.0.0.2\r\na=sendrecv\r\n")
     binding.capabilities = sdp.options_capabilities(body)
-    device, = await VoipDeviceResolver(lab.hass).list_devices()
+    device, = await _get_voip_devices(lab.hass)
     assert device["endpoint_id"] == phone.endpoint_id
     assert device["registered"] and device["sip_capabilities_known"]
     assert (device["host"], device["sip_port"], device["sip_transport"]) == ("127.0.0.2", 41000, "udp")
     assert device["audio_mode"] == "full_duplex"
-    assert "sip_audio_tx_formats" not in device and "sip_audio_rx_formats" not in device
+    assert device["sip_audio_tx_formats"] == binding.capabilities["sip_audio_tx_formats"]
+    assert device["sip_audio_rx_formats"] == binding.capabilities["sip_audio_rx_formats"]
     assert binding.capabilities["sip_audio_tx_formats"] == ["L16/16000/1", "L16/48000/1"]
     assert binding.capabilities["sip_audio_rx_formats"] == ["L16/16000/1/10", "L16/48000/1/10"]
-    assert device["sip_video_codec"] == "jpeg" and "video" in device["capabilities"]
+    assert device["sip_video_codec"] == "jpeg"
+    assert device["capabilities"] == sorted(lab.runtime.endpoints.require(phone.endpoint_id).capabilities)
     with pytest.raises(sdp.SdpError):
         sdp.offered_video_formats(body)  # RTCP zero is not an ordinary media endpoint.
     assert "voip_endpoint" not in device["entities"]

@@ -1,0 +1,21 @@
+[
+  "Waveshare S3 Audio | 192.168.1.47 | 5060 | 40000 | full_duplex | 16000:s16le:1:16 | 48000:s16le:1:10;16000:s16le:1:16;16000:s16le:1:32 | sip_tcp",
+  "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101",
+  "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp",
+  "P4 | 192.168.1.31 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_tcp | 104",
+  "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101 | audio_tx=opus/48000/2/20 | audio_rx=OPUS/48000/2/20;G722/8000/1/20",
+  "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex |  |  | sip_udp | 101 | at=o/48/2/10,l/16/1/10 | ar=o/48/2/10,l/48/1/10 | sf=d1",
+  "Phone | 192.0.2.2 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101",
+  "Spotpear Ball v2 | 192.168.1.31 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 1000 | at=o/48/2/20,o/48/2/10,l/16/1/10 | ar=o/48/2/20,o/48/2/10,l/48/1/10 | sf=d1",
+  "Plain SIP Phone | 192.0.2.40 | 5060 | 40000 | full_duplex |  |  | sip_udp | 1040",
+  "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101 | CG Casa | RG Casa | 1",
+  "Waveshare S3 Audio | 192.168.1.47 | 5060 | 40000 | full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp",
+  "Kitchen|192.168.1.4|5060|40000|sip_udp",
+  " | 101 | Conference | Casa",
+  " | 101 | Conference | Casa | future",
+  " | future=value | video=h264",
+  "Kitchen|sip|192.168.1.4|5060",
+  "Kitchen|192.168.1.4|x|40000|sip_udp",
+  "Kitchen|192.168.1.4|5060|40000|udp",
+  "Panel|192.168.1.8|5060|40000|control_only|16000:s16le:1:20|16000:s16le:1:20|sip_udp"
+]

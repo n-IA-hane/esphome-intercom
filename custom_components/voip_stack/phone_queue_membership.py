@@ -88,7 +88,7 @@ def observe_native_membership(record, field, value, *, allow_change=False):
 
 def _legacy_iter_phone_memberships(hass, entry, kind):
     """Read upgrade input until ordered group membership has been migrated."""
-    from .managed_phones import managed_records
+    from .managed_phones import ManagedPhone, managed_records
     from .phone_config import phone_endpoint_id, phone_subentries
 
     field = MEMBERSHIP_FIELDS[kind]
@@ -105,6 +105,20 @@ def _legacy_iter_phone_memberships(hass, entry, kind):
         seen.add(phone.endpoint_id)
         if phone.active:
             yield phone.endpoint_id, membership_names(field, getattr(phone, field))
+    # Only the migration reader consumes pre-subentry account records. Native
+    # account ownership wins even if a retained raw record still names this ESP.
+    native_hardware = {phone.data.get("device_id") for phone in phone_subentries(entry)}
+    for hardware, raw in entry.data.get("managed_esphome_phones", {}).items():
+        if hardware in native_hardware or not isinstance(raw, dict):
+            continue
+        try:
+            phone = ManagedPhone(**{key: value for key, value in raw.items() if key in ManagedPhone.__dataclass_fields__})
+            if phone.device_id != hardware or phone.endpoint_id in seen:
+                continue
+            seen.add(phone.endpoint_id)
+            yield phone.endpoint_id, membership_names(field, getattr(phone, field))
+        except (ValueError, TypeError):
+            continue
     for endpoint_id, record in entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}).items():
         if endpoint_id not in seen:
             seen.add(endpoint_id)

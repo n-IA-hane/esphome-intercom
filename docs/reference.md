@@ -353,8 +353,8 @@ originate a new call.
 
 `add_contact` requires only `name`. Optional fields are `id`,
 `address`, `sip_uri`, `extension`, `number`, `ha_bridge`, `transport`, `port`,
-`rtp_port`, `tx_rate`, `rx_rate`, `tx_formats`, `rx_formats`, and
-`max_payload_bytes`, `ring_group`, `conference_group` and `conference_ring`.
+`rtp_port`, `ring_group`, `conference_group` and `conference_ring`.
+Current SIP/SDP supplies negotiated media capabilities.
 HA updates `sensor.voip_phonebook` and the shared directory. Compatible managed
 ESPs refresh LDAP by generation. The public HA sensor and administrator JSON
 export are diagnostic projections, not firmware delivery channels.

@@ -28,7 +28,7 @@ from .managed_phones import (CONF_ESPHOME_ENROLLMENTS, MANAGED_ACCOUNT_ID,
     managed_account_subentries, managed_phone_mode, managed_records,
     normalize_mac, save_managed_account)
 from .phone_endpoint import EndpointKind
-from .esphome_phone_inventory import managed_phone_endpoint, sync_managed_phone_endpoint
+from .phone_config import endpoint_from_data, phone_subentry_data, sync_registry_from_entry
 from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
     normalize_membership_tracking, normalize_phone_queues, observe_native_membership)
 from .runtime_data import runtime_data, sip_registrar
@@ -534,14 +534,18 @@ class EspHomeProvisioner:
                         if old is not None and (old.username != phone.username or old.device_id != phone.device_id):
                             raise EndpointCollisionError(field='endpoint_id', value=phone.endpoint_id,
                                 endpoint_id=phone.endpoint_id, conflicting_endpoint_id=old.endpoint_id)
-                        registry.validate(managed_phone_endpoint(registry, phone), replacing_endpoint_id=phone.endpoint_id)
+                        owner = rows.get(device.id)
+                        proposed = {**(phone_subentry_data(owner) if owner is not None else {}),
+                            **phone.record(), "kind": EndpointKind.SIP_ACCOUNT.value,
+                            "name": owner.data.get("name") if owner is not None else phone.display_name}
+                        registry.validate(endpoint_from_data(self.entry, proposed), replacing_endpoint_id=phone.endpoint_id)
                         changed |= previous != phone or old is None
                         records[device.id] = phone
                         if phone != previous:
                             rows[device.id] = save_managed_account(self.hass, self.entry, phone,
                                 username_source='esphome' if previous is None else None)
                         registry.subentry_ids[phone.endpoint_id] = rows[device.id].subentry_id
-                        sync_managed_phone_endpoint(registry, phone)
+                        sync_registry_from_entry(self.hass, self.entry)
                         if phone != previous or old is None:
                             self._sync_account_device(phone, rows[device.id])
                         async_sync_esphome_endpoint_collision_issue(self.hass, device.id)

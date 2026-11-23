@@ -274,6 +274,7 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
             RosterEntry(
                 id=peer.sip_uri_user or peer.name,
                 name=peer.name,
+                sip_uri=peer.contact_uri,
                 address=peer.host,
                 extension=peer.extension,
                 port=int(peer.sip_port or 0),
@@ -293,7 +294,8 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
                     ),
                     "sip_port": peer.sip_port,
                     "rtp_port": peer.rtp_port,
-                    "audio_mode": peer.audio_mode,
+                    "registered": bool((peer.device or {}).get("registered")),
+                    "sip_contacts": list((peer.device or {}).get("sip_contacts") or ()),
 
                     "conference_group": peer.conference_group,
                     "conference_ring": bool(peer.conference_ring),

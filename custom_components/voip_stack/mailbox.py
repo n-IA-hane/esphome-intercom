@@ -12,7 +12,6 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .core.media_archive import ArchiveError, MediaArchive
 from .phone_config import phone_subentry_by_endpoint_id, update_phone_subentry
-from .phone_endpoint import EndpointKind
 from .runtime_data import require_runtime_data
 from .service_endpoints import async_require_phone_service_control, resolve_service_phone
 from .store import config_entry
@@ -40,7 +39,7 @@ def mailbox_settings(hass, endpoint_id: str) -> dict:
     record = phone_subentry_by_endpoint_id(entry, endpoint_id)
     if record is not None:
         return dict(record.data.get("voicemail", {}))
-    return dict(entry.data.get(CONF_ESPHOME_MAILBOXES, {}).get(endpoint_id, {}))
+    return {}
 
 
 def _pin_hash(pin: str) -> str:
@@ -143,11 +142,7 @@ async def async_set_voicemail_settings(call: ServiceCall) -> None:
         if route_namespace_conflicts(candidate_mailbox_routes=mailbox_route_aliases(candidate),
                                      existing=(*existing, *contact_dicts(entry))):
             raise ServiceValidationError("A mailbox address conflicts with an existing phone, contact or group")
-    if endpoint.kind is EndpointKind.ESPHOME:
-        mailboxes = dict(entry.data.get(CONF_ESPHOME_MAILBOXES, {}))
-        mailboxes[endpoint.endpoint_id] = settings
-        call.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_ESPHOME_MAILBOXES: mailboxes})
-    elif not update_phone_subentry(call.hass, entry, endpoint.endpoint_id, {"voicemail": settings}):
+    if not update_phone_subentry(call.hass, entry, endpoint.endpoint_id, {"voicemail": settings}):
         if phone_subentry_by_endpoint_id(entry, endpoint.endpoint_id) is None:
             raise ServiceValidationError("Phone configuration is unavailable")
     if settings.get("enabled"):
@@ -241,10 +236,6 @@ async def _remove_mailbox(hass, endpoint_id):
     if archive is not None:
         await archive.remove_mailbox(endpoint_id)
     entry = config_entry(hass)
-    if entry is not None and endpoint_id in entry.data.get(CONF_ESPHOME_MAILBOXES, {}):
-        settings = dict(entry.data[CONF_ESPHOME_MAILBOXES])
-        settings.pop(endpoint_id)
-        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_ESPHOME_MAILBOXES: settings})
     if entry is not None and phone_subentry_by_endpoint_id(entry, endpoint_id) is not None:
         update_phone_subentry(hass, entry, endpoint_id, {"voicemail": {}})
     hass.bus.async_fire(EVENT_VOICEMAIL_CHANGED, {"endpoint_id": endpoint_id, "removed": True})
@@ -309,8 +300,7 @@ async def async_refresh_mailbox_state(hass):
     if runtime.sip is None:
         return
     entry = config_entry(hass)
-    if entry is not None and (any(item.get("enabled") for item in entry.data.get(CONF_ESPHOME_MAILBOXES, {}).values())
-            or any(child.data.get("voicemail", {}).get("enabled") for child in phone_subentries(entry))):
+    if entry is not None and any(child.data.get("voicemail", {}).get("enabled") for child in phone_subentries(entry)):
         await get_archive(hass)
     for endpoint in runtime.endpoints.endpoints:
         if endpoint.supports_ha_client:

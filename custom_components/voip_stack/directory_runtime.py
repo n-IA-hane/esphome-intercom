@@ -156,9 +156,6 @@ async def async_refresh_directory(hass, *, peers=None, registered=None, prepare_
     if directory.closed:
         return None
     generation = directory.begin_refresh()
-    from .esphome_phone_inventory import restore_esp_identities
-
-    restore_esp_identities(hass, runtime)
     if peers is None:
         peers = await async_build_peer_snapshot(hass)
     if (runtime_data(hass) is not runtime or runtime.directory is not directory

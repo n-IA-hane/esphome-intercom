@@ -231,7 +231,7 @@ async def test_phone_event_device_fields_keep_hardware_and_name_the_account_asso
 
 
 async def test_legacy_native_phone_waits_for_verified_info_then_migrates_without_a_direct_route(phone_lab):
-    from custom_components.voip_stack.esphome_phone_inventory import restore_esp_identities
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
     from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
     lab = phone_lab
     old = 'esphome:' + lab.device.id
@@ -242,7 +242,7 @@ async def test_legacy_native_phone_waits_for_verified_info_then_migrates_without
     original_info = lab.native.runtime_data.device_info
     lab.native.runtime_data.device_info = None
     await async_migrate_account_identities(lab.hass, lab.entry)
-    restore_esp_identities(lab.hass, lab.runtime)
+    sync_registry_from_entry(lab.hass, lab.entry)
     assert not lab.runtime.endpoints.endpoints and not lab.entry.subentries
     assert lab.entry.data['esphome_mailboxes'][old]['enabled']
     issue_id = 'esphome_account_setup_' + lab.entry.entry_id + '_' + lab.device.id
@@ -251,7 +251,7 @@ async def test_legacy_native_phone_waits_for_verified_info_then_migrates_without
     lab.native.runtime_data.device_info = original_info
     lab.native.runtime_data.services = {}
     await async_migrate_account_identities(lab.hass, lab.entry)
-    restore_esp_identities(lab.hass, lab.runtime)
+    sync_registry_from_entry(lab.hass, lab.entry)
     account = next(row for row in lab.entry.subentries.values() if row.subentry_type == 'phone')
     assert account.data['username'] == account.data['name'] == 'Ingresso'
     assert account.data['voicemail']['enabled']
@@ -270,12 +270,13 @@ async def test_legacy_native_phone_waits_for_verified_info_then_migrates_without
 
 
 async def test_external_native_phone_without_ha_account_provenance_creates_no_pbx_route(phone_lab):
-    from custom_components.voip_stack.esphome_phone_inventory import restore_esp_identities, _get_voip_devices
+    from custom_components.voip_stack.esphome_phone_inventory import _get_voip_devices
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
     from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
     lab = phone_lab
     lab.native.runtime_data.services = {}
     await async_migrate_account_identities(lab.hass, lab.entry)
-    restore_esp_identities(lab.hass, lab.runtime)
+    sync_registry_from_entry(lab.hass, lab.entry)
     assert not lab.entry.subentries and not lab.runtime.endpoints.endpoints
     assert await _get_voip_devices(lab.hass) == []
     assert dr.async_get(lab.hass).async_get(lab.device.id) is not None

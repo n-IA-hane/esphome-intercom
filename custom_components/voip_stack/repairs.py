@@ -409,8 +409,25 @@ async def async_sync_archive_record_issues(hass, entry, faults):
         # A repaired but still present record needs explicit confirmation. Only
         # an actual missing file closes its stale issue and quarantine entry.
         def missing_files():
-            return {filename for filename in filenames
-                    if Path(filename).name == filename and not (root / filename).exists()}
+            try:
+                if not root.is_dir():
+                    return set()
+            except OSError:
+                return set()
+            missing = set()
+            for filename in filenames:
+                if Path(filename).name != filename:
+                    continue
+                try:
+                    (root / filename).lstat()
+                except FileNotFoundError:
+                    missing.add(filename)
+                except OSError:
+                    continue
+            try:
+                return missing if root.is_dir() else set()
+            except OSError:
+                return set()
         missing = await hass.async_add_executor_job(missing_files)
         for filename in missing:
             ir.async_delete_issue(hass, DOMAIN, prefix + filename)

@@ -144,6 +144,15 @@ async def test_deleted_invalid_record_closes_native_repair_without_touching_wave
     await async_sync_archive_record_issues(hass, entry, {invalid.name: "invalid_recording_metadata"})
     issue_id = "archive_record_" + entry.entry_id + "_" + invalid.name
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is not None
+    unavailable = tmp_path / "temporarily-unavailable-archive"
+    root.rename(unavailable)
+    await async_sync_archive_record_issues(hass, entry, {})
+    assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is not None
+    unavailable.rename(root)
+    invalid.unlink()
+    invalid.symlink_to(root / "missing-metadata-target")
+    await async_sync_archive_record_issues(hass, entry, {})
+    assert ir.async_get(hass).async_get_issue("voip_stack", issue_id) is not None
     invalid.unlink()
     hass.config.components.add("voip_stack")
     hass.data.setdefault("repairs", {})
@@ -348,3 +357,59 @@ async def test_corrupt_legacy_memberships_are_isolated_and_repaired_on_the_origi
     assert recovered.data["origin_entry_id"] == lab.native.entry_id
     assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
     assert healthy.as_dict() == before
+
+
+async def test_rename_rechecks_live_call_claim_after_storage_prepare_before_native_writes(phone_lab, tmp_path, monkeypatch):
+    import asyncio
+    from custom_components.voip_stack import sip_account_identity
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.core.media_archive import MediaArchive
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry, PhoneIdentityConflict
+
+    lab = phone_lab
+    account = native_account(lab.hass, lab.entry, "Desk")
+    sync_registry_from_entry(lab.hass, lab.entry)
+    lab.runtime.sip.bind_endpoint_registry(lab.runtime.endpoints)
+    device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=lab.entry.entry_id,
+        config_subentry_id=account.subentry_id, identifiers={("voip_stack", "phone_endpoint:Desk")})
+    entity = er.async_get(lab.hass).async_get_or_create("sensor", "voip_stack", "phone_endpoint_Desk_call_state",
+        config_entry=lab.entry, config_subentry_id=account.subentry_id, device_id=device.id)
+    lab.hass.config.media_dirs = {"local": str(tmp_path)}
+    archive = MediaArchive(tmp_path / "voip_stack", lab.hass.async_add_executor_job)
+    await archive.load()
+    writer = await archive.begin("Desk")
+    assert writer.offer(b"\x12\x34" * 320, AudioFormat(16000, "s16le", 1, 20), offset=0)
+    await writer.finish()
+    await archive.close()
+    files = {p.name: p.read_bytes() for p in archive.root.iterdir()}
+    before = deepcopy(account.as_dict()), deepcopy(dict(lab.entry.data)), deepcopy(dict(lab.entry.options))
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = sip_account_identity._async_prepare_account_queue_migration
+    async def prepare(*args):
+        result = await original(*args)
+        entered.set()
+        await release.wait()
+        return result
+    monkeypatch.setattr(sip_account_identity, "_async_prepare_account_queue_migration", prepare)
+    task = lab.hass.async_create_task(sip_account_identity.async_migrate_account_identities(lab.hass, lab.entry,
+        account_updates={account.subentry_id: {**account.data, "username": "Renamed"}}))
+    try:
+        await entered.wait()
+        session = lab.runtime.sip.create_session("call-started-during-prepare")
+        assert lab.runtime.sip.claim_endpoint(session.call_id, "Desk", role="source")
+        runtime_before = lab.runtime.endpoints.endpoints
+        release.set()
+        with pytest.raises(PhoneIdentityConflict):
+            await task
+        assert session.live and session.endpoint_claims
+        assert lab.runtime.endpoints.require("Desk").active_call_id == session.call_id
+        assert lab.runtime.endpoints.get("Renamed") is None
+        assert lab.runtime.endpoints.endpoints == runtime_before
+        assert (account.as_dict(), dict(lab.entry.data), dict(lab.entry.options)) == before
+        assert dr.async_get(lab.hass).async_get(device.id).identifiers == {("voip_stack", "phone_endpoint:Desk")}
+        assert er.async_get(lab.hass).async_get(entity.entity_id).unique_id == "phone_endpoint_Desk_call_state"
+        assert {p.name: p.read_bytes() for p in archive.root.iterdir()} == files
+    finally:
+        release.set()
+        if not task.done():
+            await task

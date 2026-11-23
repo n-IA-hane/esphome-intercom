@@ -13,22 +13,16 @@ endpoints send normal SIP INVITEs to HA. Home Assistant resolves the target.
 
 The central roster is rebuilt from these sources:
 
-- ESPHome `voip_stack` identities and endpoint sensors, plus optional sibling
-  group entities on the same ESPHome device. The preview directory retains
-  managed identities while those devices are offline.
-- Home Assistant logical phones, including the phone created during setup.
-- Manual contacts created with `voip_stack.add_contact` or
-  `voip_stack.set_contacts`.
-- Configured local SIP endpoint accounts, with active registration bindings
-  providing their current reachable SIP Contact.
+- Native SIP account subentries, including accounts associated with ESPHome hardware or HA clients.
+- Current registrar Contact bindings and standard SIP/SDP capability evidence.
+- Manual contacts created with `voip_stack.add_contact` or `voip_stack.set_contacts`.
 - Callable Assist and Automation destinations from their configured owners.
-- Dynamic ring group and conference group entries derived from endpoint
-  declarations.
+- Native ring and queue groups with one ordered `members` list, plus configured conference destinations.
 
-ESP endpoint state is intentionally short: it carries identity, SIP/RTP ports,
-audio formats, transport and extension. ESP group membership is read from
-dedicated sibling entities, typically `text.*_voip_ring_groups`,
-`text.*_voip_conference_groups` and `switch.*_voip_conference_ring`.
+ESPHome DeviceInfo and native entities identify hardware, API controls and camera
+previews. They do not supply SIP routes, extensions or media capabilities. An
+API connection does not make an unregistered SIP account reachable. Routing reads
+the canonical directory; it never parses `sensor.voip_phonebook`.
 
 In **2026.11.1-dev**, losing connectivity or a REGISTER binding does not
 remove a saved phone identity. Routing still checks availability, DND and the

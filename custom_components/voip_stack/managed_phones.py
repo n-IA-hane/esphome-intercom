@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 
 from .esphome_native import device_info, normalize_mac, verified_action_names
-from .sip_registrar import SipAccount, validate_managed_username
+from .sip_registrar import validate_managed_username
 from .phone_queue_membership import normalize_membership_tracking, normalize_phone_queues
 
 CONF_MANAGED_PHONES = "managed_esphome_phones"
@@ -78,11 +78,6 @@ class ManagedPhone:
         object.__setattr__(self, "username", username)
         object.__setattr__(self, "endpoint_id", endpoint_id)
 
-    def account(self) -> SipAccount:
-        return SipAccount(username=self.username, display_name=self.display_name,
-            password=self.password, extension=self.extension, ring_group=self.ring_group,
-            conference_group=self.conference_group, conference_ring=self.conference_ring)
-
     def record(self) -> dict:
         record = asdict(self)
         record["queues"] = list(self.queues)
@@ -97,8 +92,8 @@ def managed_account_subentries(entry):
 
 
 def managed_records(entry) -> dict[str, ManagedPhone]:
-    """Read canonical native accounts and unmigrated records from older releases."""
-    candidates = dict(getattr(entry, "data", {}).get(CONF_MANAGED_PHONES, {}))
+    """Read configured native account associations without admitting upgrade input."""
+    candidates = {}
     for device_id, row in managed_account_subentries(entry).items():
         identity = getattr(row, "unique_id", None)
         if isinstance(identity, str) and identity.startswith("phone:") and identity[6:]:
@@ -175,31 +170,16 @@ def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:
     return MANAGED_ACTIONS <= actions if actions is not None else None
 
 
-def active_managed_accounts(hass, entry) -> list[SipAccount]:
-    """Read retained upgrade input until canonical account subentries replace it."""
-    records = managed_records(entry)
-    if not records:
-        return []
-    from homeassistant.helpers import device_registry as dr
-
-    accounts = []
-    for phone in records.values():
-        origin = hass.config_entries.async_get_entry(phone.origin_entry_id)
-        device = dr.async_get(hass).async_get(phone.device_id)
-        if (phone.active and origin is not None and origin.domain == "esphome"
-                and device is not None and origin.entry_id == device.config_entry_id
-                and any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(mac) == phone.mac
-                        for kind, mac in device.connections)
-                and managed_phone_mode(hass, origin, phone.device_id, phone.mac) is not False):
-            accounts.append(phone.account())
-    return accounts
-
-
 def managed_route_mappings(entry) -> list[dict]:
-    """Reserve physical identities even offline, without exposing credentials."""
-    return [{"id": phone.endpoint_id, "name": phone.display_name, "username": phone.username,
-             "extension": phone.extension, "ring_group": phone.ring_group,
-             "conference_group": phone.conference_group,
-             "voicemail": {"enabled": bool(entry.data.get("esphome_mailboxes", {})
-                 .get(phone.endpoint_id, {}).get("enabled"))}}
-            for phone in managed_records(entry).values()]
+    """Project native account routes without reading hardware-owned policy copies."""
+    from .phone_config import phone_endpoint_id
+    from .phone_queue_membership import project_phone_memberships
+
+    result = []
+    for row in managed_account_subentries(entry).values():
+        data = project_phone_memberships(entry, phone_endpoint_id(row), row.data)
+        result.append({"id": phone_endpoint_id(row), "name": data.get("name") or row.title,
+            "username": data["username"], "extension": data.get("extension", ""),
+            "ring_group": data.get("ring_group", ""), "conference_group": data.get("conference_group", ""),
+            "voicemail": {"enabled": bool(data.get("voicemail", {}).get("enabled"))}})
+    return result

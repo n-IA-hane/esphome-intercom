@@ -261,7 +261,7 @@ def test_endpoint_kind_uses_the_same_engine_media_plan(monkeypatch, endpoint_kin
     dialer, created, _reused = _dialer(monkeypatch)
     reservation = SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock())
     peer = Peer(name="Phone", host="192.0.2.20", endpoint_kind=endpoint_kind,
-        sip_uri_user="phone", tx_formats=["16000:s16le:1:20"], rx_formats=["48000:s16le:1:10"])
+        sip_uri_user="phone", device={"tx_formats": ["16000:s16le:1:20"], "rx_formats": ["48000:s16le:1:10"]})
     leg = dialer.prepare_outbound_leg(member="Phone", peers=[peer], roster_entries=[],
         local_name="Caller", local_rtp_port_index=0, port_reservation=reservation)
     assert leg is not None

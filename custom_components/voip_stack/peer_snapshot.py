@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components import network
 from homeassistant.core import HomeAssistant
 
-from .core.audio_format import HA_SIP_PCM_FORMATS
 from .config import transport_config
 from .peer import Peer
 from .phone_endpoint import (
@@ -19,8 +16,6 @@ from .esphome_phone_inventory import device_is_phonebook_available as device_is_
 from .esphome_phone_inventory import (
     _get_voip_devices, device_transport,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_advertise_host(hass: HomeAssistant) -> str:
@@ -44,90 +39,45 @@ def device_entity_state(hass: HomeAssistant, device: dict, key: str) -> str:
 
 
 async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
-    """Snapshot online ESPHome phones with an explicitly resolved SIP route."""
-    devices = await _get_voip_devices(hass)
+    """Project existing accounts over current Contact bindings or their HA client."""
+    from .account_runtime import account_has_ha_binding
+    from .core import sip
+    from .phonebook_runtime import registered_roster_entries
+
+    physical = {row["endpoint_id"]: row for row in await _get_voip_devices(hass)}
+    registry = endpoint_directory(hass)
     cfg = transport_config(hass)
-    out: list[Peer] = []
-    for device in devices:
-        name = device.get("name") or ""
-        host = device.get("host") or ""
-        if not name or not host:
+    result, registered = [], set()
+    for row in registered_roster_entries(hass):
+        endpoint = registry.by_username(row.id)
+        if endpoint is None or endpoint.kind is not EndpointKind.SIP_ACCOUNT:
             continue
-        if device.get("availability") != EndpointAvailability.AVAILABLE.value:
-            _LOGGER.debug("Skipping offline VoIP peer from phonebook: %s", name or host)
+        uri = sip.parse_sip_uri(row.sip_uri)
+        device = {**physical.get(endpoint.endpoint_id, {}), **row.metadata,
+                  "device_id": endpoint.device_id, "endpoint_id": endpoint.endpoint_id,
+                  "endpoint_type": EndpointKind.SIP_ACCOUNT.value}
+        transport = device_transport(device)
+        if not transport:
             continue
-        sip_transport = device_transport(device)
-        if not sip_transport:
-            _LOGGER.warning(
-                "Skipping SIP peer %s from phonebook: endpoint did not publish sip_transport",
-                name or host,
-            )
-            continue
-        out.append(
-            Peer(
-                device=device,
-                name=name,
-                host=host,
-                endpoint_id=str(device.get("endpoint_id") or ""),
-                endpoint_kind=EndpointKind.ESPHOME.value,
-                capabilities=tuple(device.get("capabilities") or ("audio", "dtmf")),
-                sip_port=int(device["sip_port"]),
-                rtp_port=device.get("rtp_port"),
-                extension=str(device.get("extension") or ""),
-                sip_uri_user=str(device.get("sip_uri_user") or ""),
-                conference_group=str(device.get("conference_group") or ""),
-                conference_ring=bool(device.get("conference_ring", False)),
-                ring_group=str(device.get("ring_group") or ""),
-                audio_mode=device.get("audio_mode"),
-                tx_formats=list(device.get("tx_formats") or []),
-                rx_formats=list(device.get("rx_formats") or []),
-                sip_audio_tx_formats=tuple(
-                    device.get("sip_audio_tx_formats") or ()
-                ),
-                sip_audio_rx_formats=tuple(
-                    device.get("sip_audio_rx_formats") or ()
-                ),
-
-            )
-        )
-        device["sip_transport"] = sip_transport
-
-    endpoint_registry = endpoint_directory(hass)
+        result.append(Peer(device=device, name=endpoint.name, host=uri.host,
+            endpoint_id=endpoint.endpoint_id, endpoint_kind=EndpointKind.SIP_ACCOUNT.value,
+            capabilities=tuple(sorted(endpoint.capabilities)), sip_port=uri.port or 5060,
+            rtp_port=device.get("rtp_port"), sip_uri_user=endpoint.username, contact_uri=row.sip_uri,
+            extension=endpoint.extension, conference_group=endpoint.conference_group,
+            conference_ring=endpoint.conference_ring, ring_group=endpoint.ring_group))
+        registered.add(endpoint.endpoint_id)
     local_ip = await async_advertise_host(hass)
-    browser_endpoints = [
-        endpoint
-        for endpoint in endpoint_registry.endpoints
-        if endpoint.kind.is_softphone
-        and endpoint.availability is not EndpointAvailability.UNAVAILABLE
-    ]
-    for endpoint in browser_endpoints:
-        formats = [fmt.wire_token() for fmt in HA_SIP_PCM_FORMATS[:8]]
-        out.append(
-            Peer(
-                device={
-                    "device_id": endpoint.device_id,
-                    "endpoint_id": endpoint.endpoint_id,
-                    "endpoint_type": endpoint.kind.value,
-                    "sip_transport": "tcp",
-                    "capabilities": sorted(endpoint.capabilities),
-                },
-                name=endpoint.name,
-                host=local_ip or "",
-                endpoint_id=endpoint.endpoint_id,
-                endpoint_kind=endpoint.kind.value,
-                capabilities=tuple(sorted(endpoint.capabilities)),
-                local_ha=True,
-                sip_port=int(cfg["sip_port"]),
-                rtp_port=int(cfg["rtp_port"]),
-                extension=endpoint.extension,
-                conference_group=endpoint.conference_group,
-                conference_ring=endpoint.conference_ring,
-                ring_group=endpoint.ring_group,
-                audio_mode="full_duplex",
-                tx_formats=formats,
-                rx_formats=formats,
-
-            )
-        )
-
-    return out
+    for endpoint in registry.endpoints:
+        if (endpoint.kind is not EndpointKind.SIP_ACCOUNT or endpoint.endpoint_id in registered
+                or endpoint.availability is EndpointAvailability.UNAVAILABLE
+                or not account_has_ha_binding(hass, endpoint.endpoint_id)):
+            continue
+        result.append(Peer(device={"device_id": endpoint.device_id, "endpoint_id": endpoint.endpoint_id,
+                "endpoint_type": EndpointKind.SIP_ACCOUNT.value, "sip_transport": "tcp"},
+            name=endpoint.name, host=local_ip, endpoint_id=endpoint.endpoint_id,
+            endpoint_kind=EndpointKind.SIP_ACCOUNT.value, sip_uri_user=endpoint.username,
+            capabilities=tuple(sorted(endpoint.capabilities)), local_ha=True,
+            sip_port=int(cfg["sip_port"]), rtp_port=int(cfg["rtp_port"]),
+            extension=endpoint.extension, conference_group=endpoint.conference_group,
+            conference_ring=endpoint.conference_ring, ring_group=endpoint.ring_group))
+    return result

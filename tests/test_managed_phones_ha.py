@@ -496,11 +496,15 @@ async def test_manual_account_collision_is_rejected_without_partial_owner(manage
     from homeassistant.helpers import issue_registry as ir
 
     lab = managed
-    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "sip_accounts": [
-        {"username": "ingresso", "password": "manual-fixture-only", "name": "Manual QA"}]})
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry
+    manual = _add_phone_subentry(lab.hass, lab.entry, title="Manual QA", data=sip_account_phone_data({
+        "username": "ingresso", "password": "manual-fixture-only", "display_name": "Manual QA"}))
+    sync_registry_from_entry(lab.hass, lab.entry)
+    before = dict(manual.data)
     await lab.controller.async_sync()
-    assert not lab.entry.subentries and not lab.sent
-    assert not lab.runtime.endpoints.endpoints
+    assert list(lab.entry.subentries) == [manual.subentry_id] and not lab.sent
+    assert [endpoint.username for endpoint in lab.runtime.endpoints.endpoints] == ["ingresso"]
+    assert dict(manual.data) == before
     assert "manual-fixture-only" not in caplog.text
     issues = ir.async_get(lab.hass)
     issue_id = f"esphome_account_name_{lab.device.id}"
@@ -514,17 +518,20 @@ async def test_manual_account_collision_is_rejected_without_partial_owner(manage
     assert issues.async_get_issue("voip_stack", issue_id) is None
 
 
-async def test_manual_account_cannot_take_a_persisted_managed_username(managed):
+async def test_account_admin_edit_preserves_the_managed_hardware_owner(managed):
     from custom_components.voip_stack.store import update_sip_accounts
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
-    previous = dict(lab.entry.subentries)
-    with pytest.raises(ValueError):
-        update_sip_accounts(lab.hass, [{"username": phone.username, "display_name": "Takeover",
-                                      "password": "manual-fixture-only"}])
-    assert dict(lab.entry.subentries) == previous
-    assert lab.registrar.accounts[phone.username.casefold()].password == phone.password
+    account = phone_subentry(lab)
+    native_id = account.subentry_id
+    associations = {key: account.data[key] for key in ("device_id", "origin_entry_id", "mac", "managed_esphome")}
+    update_sip_accounts(lab.hass, [{"username": phone.username, "display_name": "Edited account",
+                                  "password": "manual-fixture-only"}])
+    assert account.subentry_id == native_id
+    assert {key: account.data[key] for key in associations} == associations
+    assert account.data["name"] == "Edited account"
+    assert lab.registrar.accounts[phone.username.casefold()].password == "manual-fixture-only"
 
 
 async def test_live_settings_owner_retains_unknown_but_clears_explicit_empty(managed):

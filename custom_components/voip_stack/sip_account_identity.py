@@ -399,6 +399,17 @@ class AccountIdentityMigrationPlan:
                    {key: row.as_dict() for key, row in self.entry.subentries.items()})
         if self.original_state and current != self.original_state:
             raise PhoneIdentityConflict(self.entry.title, 'unchanged native configuration', 'concurrent account change')
+        runtime = getattr(self.entry, 'runtime_data', None)
+        registry = getattr(runtime, 'endpoints', None)
+        if runtime is not None and runtime.sip is not None and any(session.live for session in runtime.sip.sessions.values()):
+            raise PhoneIdentityConflict(self.entry.title, 'inactive account ownership', 'active calls')
+        if registry is not None:
+            # Storage preparation yielded. Revalidate the live owner immediately
+            # before the first native write; no call can start between these
+            # checks and the synchronous native/runtime commit below.
+            registry.rekey_accounts(self.mapping, apply=False)
+            runtime_before = (registry.endpoints, dict(registry.subentry_ids), set(registry.pending_removals),
+                              deepcopy(runtime.softphones), dict(runtime.softphone_presence))
         snapshots = [(row, dict(row.data), row.unique_id, row.title) for row, _data, _identity in self.subentries]
         old_devices = [(identity, devices.async_get(identity).identifiers, devices.async_get(identity).config_subentry_id)
                        for identity, _values in self.devices]
@@ -426,6 +437,16 @@ class AccountIdentityMigrationPlan:
                              and device.config_subentry_id and record.config_subentry_id is None else {})
                 entities.async_update_entity(identity, new_unique_id=unique_id, **ownership)
             self.hass.config_entries.async_update_entry(self.entry, data=self.data, options=self.options)
+            if registry is not None:
+                registry.subentry_ids = {phone_endpoint_id(row): row.subentry_id
+                    for row in self.entry.subentries.values() if row.subentry_type == 'phone'}
+                runtime.softphones = {self.mapping.get(key, key): {**value, 'endpoint_id': self.mapping.get(key, key)}
+                                      for key, value in runtime.softphones.items()}
+                runtime.softphone_presence = {self.mapping.get(key, key): value
+                                             for key, value in runtime.softphone_presence.items()}
+                registry.rekey_accounts(self.mapping)
+                from .phone_queue_membership import sync_group_membership_projection
+                sync_group_membership_projection(self.hass, self.entry)
         except BaseException as error:
             failures = []
             def restore(callback):
@@ -457,23 +478,25 @@ class AccountIdentityMigrationPlan:
                 if row.subentry_id in self.entry.subentries:
                     restore(lambda: self.hass.config_entries.async_remove_subentry(self.entry, row.subentry_id))
             restore(lambda: self.hass.config_entries.async_update_entry(self.entry, data=current[0], options=current[1]))
+            if registry is not None:
+                def restore_runtime():
+                    endpoints, subentries, pending, softphones, presence = runtime_before
+                    reverse = {self.mapping.get(endpoint.endpoint_id, endpoint.endpoint_id): endpoint.endpoint_id
+                               for endpoint in endpoints}
+                    registry.rekey_accounts(reverse)
+                    for endpoint in endpoints:
+                        registry.upsert(endpoint)
+                    registry.subentry_ids = subentries
+                    registry.pending_removals.clear()
+                    registry.pending_removals.update(pending)
+                    runtime.softphones, runtime.softphone_presence = softphones, presence
+                restore(restore_runtime)
             if failures:
                 raise BaseExceptionGroup('Account identity rollback could not restore every native record', [error, *failures])
             raise
-        runtime = getattr(self.entry, 'runtime_data', None)
         if self.activate_registrar:
             from .phone_config import async_enable_registrar_for_new_account
             async_enable_registrar_for_new_account(self.hass, self.entry)
-        if runtime is not None and getattr(runtime, 'endpoints', None) is not None:
-            runtime.endpoints.subentry_ids = {phone_endpoint_id(row): row.subentry_id
-                for row in self.entry.subentries.values() if row.subentry_type == 'phone'}
-            runtime.softphones = {self.mapping.get(key, key): {**value, 'endpoint_id': self.mapping.get(key, key)}
-                                  for key, value in runtime.softphones.items()}
-            runtime.softphone_presence = {self.mapping.get(key, key): value
-                                         for key, value in runtime.softphone_presence.items()}
-            runtime.endpoints.rekey_accounts(self.mapping)
-            from .phone_queue_membership import sync_group_membership_projection
-            sync_group_membership_projection(self.hass, self.entry)
         from .repairs import async_sync_managed_record_issues
         async_sync_managed_record_issues(self.hass, self.entry, dict(self.invalid_managed))
         from .repairs import async_sync_esphome_account_setup_issue

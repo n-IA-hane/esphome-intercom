@@ -1035,29 +1035,10 @@ def update_phone_subentry(
     return changed
 
 
-def esphome_phone_policy(entry: ConfigEntry | None, endpoint_id: str) -> PhonePolicy:
-    """Load settings without claiming an ESPHome-owned HA device."""
-    data = entry.data if entry is not None else {}
-    return PhonePolicy.from_data(data.get(CONF_ESPHOME_PHONE_POLICIES, {}).get(endpoint_id))
-
-
 def update_phone_policy(
     hass: HomeAssistant, entry: ConfigEntry, endpoint: PhoneEndpoint, policy: PhonePolicy,
 ) -> None:
     """Persist one validated policy and update its existing endpoint snapshot."""
-    if endpoint.kind is not EndpointKind.ESPHOME:
-        if phone_subentry_by_endpoint_id(entry, endpoint.endpoint_id) is None:
-            raise ValueError("phone configuration is unavailable")
-        update_phone_subentry(hass, entry, endpoint.endpoint_id, {
-            CONF_PHONE_POLICY: policy.as_data(),
-        })
-        return
-    data = dict(entry.data)
-    policies = dict(data.get(CONF_ESPHOME_PHONE_POLICIES, {}))
-    if policy.as_data():
-        policies[endpoint.endpoint_id] = policy.as_data()
-    else:
-        policies.pop(endpoint.endpoint_id, None)
-    data[CONF_ESPHOME_PHONE_POLICIES] = policies
-    hass.config_entries.async_update_entry(entry, data=data)
-    entry.runtime_data.endpoints.update(endpoint.endpoint_id, policy=policy)
+    if phone_subentry_by_endpoint_id(entry, endpoint.endpoint_id) is None:
+        raise ValueError("phone configuration is unavailable")
+    update_phone_subentry(hass, entry, endpoint.endpoint_id, {CONF_PHONE_POLICY: policy.as_data()})

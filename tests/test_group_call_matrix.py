@@ -768,8 +768,6 @@ class GroupCallMatrixTest(unittest.TestCase):
                 conference_group="CG Casa",
                 conference_ring=False,
                 ring_group="RG Casa",
-                tx_formats=["16000:s16le:1:20"],
-                rx_formats=["16000:s16le:1:20"],
             ),
             peer.Peer(
                 name="WS3",
@@ -779,8 +777,6 @@ class GroupCallMatrixTest(unittest.TestCase):
                 conference_group="CG Casa",
                 conference_ring=False,
                 ring_group="RG Casa",
-                tx_formats=["48000:s16le:1:10", "16000:s16le:1:20"],
-                rx_formats=["48000:s16le:1:10", "16000:s16le:1:20"],
             ),
             peer.Peer(
                 name="Casa",
@@ -791,8 +787,6 @@ class GroupCallMatrixTest(unittest.TestCase):
                 conference_group="CG Casa",
                 conference_ring=ha_conference_ring,
                 ring_group=ha_ring_group,
-                tx_formats=["48000:s16le:1:10", "16000:s16le:1:20"],
-                rx_formats=["48000:s16le:1:10", "16000:s16le:1:20"],
             ),
         ]
 

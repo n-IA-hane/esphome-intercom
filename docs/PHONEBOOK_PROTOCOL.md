@@ -27,7 +27,8 @@ Home Assistant owns one persistent directory. The phonebook sensor, JSON
 export and LDAP service are projections of the same contacts,
 not separate contact databases. Managed phone identities remain listed while
 offline; availability describes current reachability without deleting identity.
-Names and extensions can change while a phone keeps its stable identifier.
+Native HA device and entity IDs survive explicit account edits. Hardware renaming
+does not rename the associated SIP account.
 
 Open **VoIP Stack > Reconfigure > LDAP directory** to configure the listener,
 base DN, anonymous-search policy and certificate/key paths. The TLS option
@@ -103,8 +104,8 @@ Rules:
 
 The ESP-local schema is intentionally smaller than the HA central-contact
 schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
-membership, and media capabilities are authored on HA or discovered from
-endpoint entities, then projected through the LDAP directory.
+membership are authored on HA. Standard SIP/SDP supplies current media evidence.
+The canonical directory projects public routes through LDAP.
 
 The contact `name` is the only user-facing identity field required by an ESP
 static contact. Users do not need to provide a second underscore-safe version
@@ -131,16 +132,17 @@ accounts, manual contacts, callable services, groups and configured external
 targets. A saved identity does not require an active Contact binding. Routing
 still checks the destination's actual availability and call policy.
 
-ESP discovery starts from `text_sensor platform: voip_stack type: endpoint`.
-That endpoint state is deliberately short and does not contain group lists. If
-an ESP participates in PBX groups, HA reads `text platform: voip_stack
-type: ring_groups`, `text platform: voip_stack type: conference_groups` and
-`switch platform: voip_stack conference_ring` from the same ESPHome device.
+Native SIP account subentries own usernames, credentials, labels, extensions and
+call policy. Current registrar Contacts and standard SIP/SDP own signaling routes
+and media capabilities. ESPHome DeviceInfo identifies associated hardware and API
+controls; native camera entities remain available for previews. Hardware API
+availability alone does not make an account callable.
 
-From 2026.10.0 the component creates this HA interface when API is configured.
-Enable `api: custom_services: true`; no HA phone package is required. Disable
-it with `voip_stack.ha_integration: false` for an autonomous SIP endpoint.
-See [the entity and migration guide](ESP_ENTITY_SURFACE.md).
+The sensor keeps its existing entity ID, unique ID, count state and `roster_json`
+attribute. Its diagnostic `phonebook` attribute uses six fields per entry:
+`name|SIP username|host|SIP port|RTP port|transport`. RTP port `0` means that no
+media endpoint has been negotiated. This attribute is never parsed for routing
+or sent to ESP phones.
 
 Roster entries use JSON fields:
 
@@ -161,9 +163,8 @@ Routing is data-driven:
 - `extension` is a local/internal alias used by HA routing and inbound DTMF;
 - `number` is an external/public number used through the optional trunk;
 - registered SIP accounts become callable contacts while registered;
-- HA and discovered ESP entries are generated automatically.
-- group entries are generated automatically from endpoint or manual-contact
-  membership declarations.
+- Configured accounts remain represented when offline; current Contacts determine SIP reachability.
+- Ring and queue entries project native group records and their ordered membership.
 
 Manual contacts and service calls use the same minimum contract:
 
@@ -177,21 +178,17 @@ data:
 `name` is the only required field. `extension` is an optional internal alias.
 `number` is an optional external/public number.
 `address`, `sip_uri`, `transport`, `port`, and `rtp_port` are optional
-and are filled by ESP endpoint publication, manual entries or SIP account
-registration when available.
+and come from configured contacts or current SIP account registrations.
 
 Group membership uses the same roster metadata for every endpoint type:
 
-- ESP peers publish a short endpoint identity plus optional sibling entities:
-  `text.voip_conference_groups`, `text.voip_ring_groups` and
-  `switch.voip_conference_ring`. HA re-reads the device whenever those entities
-  change and rebuilds the central roster.
-- Manual contacts and registered SIP endpoints can declare
-  `conference_group`, `conference_ring` and `ring_group` through
-  `voip_stack.add_contact` or account services.
-- The HA softphone publishes a virtual endpoint using the same identity
-  contract. Its entity state stays short (`online` / `unavailable`) and the
-  full endpoint string is stored in the sensor `endpoint` attribute.
+- Native ring and queue subentries own one ordered `members` list. Phone settings
+  and firmware membership controls project those records; they do not create a
+  second authoritative member list.
+- Conference membership remains account configuration. Manual contacts use their
+  public route, and account services preserve existing membership on unrelated edits.
+- HA clients use their associated SIP account identity. Their state entities are
+  presentation and call-state projections, not a directory source.
 - HA creates one name-only `ha_bridge` roster entry per group with
   `metadata.group_type` set to `conference` or `ring` and
   `metadata.members` containing the member names. Conference entries may also

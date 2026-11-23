@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
 
-from .const import CONF_SIP_ACCOUNTS, DOMAIN
+from .const import DOMAIN
 from .runtime_data import sip_registrar
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,15 +25,7 @@ def sip_account_dicts(hass: HomeAssistant) -> list[dict]:
         return []
     from .phone_config import sip_account_dicts_from_subentries
 
-    configured = sip_account_dicts_from_subentries(entry)
-    if configured:
-        return configured
-    # Read compatibility for entries which have not reached migration setup.
-    return [
-        dict(item)
-        for item in entry.data.get(CONF_SIP_ACCOUNTS, [])
-        if isinstance(item, dict)
-    ]
+    return sip_account_dicts_from_subentries(entry)
 
 
 def sip_accounts(hass: HomeAssistant):
@@ -45,13 +37,6 @@ def sip_accounts(hass: HomeAssistant):
             accounts.append(account_from_mapping(raw))
         except ValueError as err:
             _LOGGER.warning("Ignoring invalid SIP account in config entry: %s", err)
-    entry = config_entry(hass)
-    if entry is not None:
-        from .managed_phones import active_managed_accounts
-
-        configured = {account.username.casefold() for account in accounts}
-        accounts.extend(account for account in active_managed_accounts(hass, entry)
-                        if account.username.casefold() not in configured)
     return accounts
 
 
