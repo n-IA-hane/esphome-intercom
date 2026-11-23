@@ -11,11 +11,11 @@ font:
       else []) }
 defaults:
   _contacts_order_presence: |-
-    const auto state = id(phone).get_contact_blf(contact->stable_id());
+    const auto state = id(phone).get_contact_blf(contact->stable_id(), id(phone).get_contact_account_view(*contact));
     if (state.presence == PresenceState::CLOSED &&
         (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) return 4;
   _contacts_blf_render: |-
-    const auto state = id(phone).get_contact_blf(contact->stable_id());
+    const auto state = id(phone).get_contact_blf(contact->stable_id(), id(phone).get_contact_account_view(*contact));
     if (!state.available && !contact->auto_blf &&
         (contact->kind == ContactKind::GROUP || contact->kind == ContactKind::AUTOMATION)) return;
     if (!state.available && !contact->auto_blf &&
@@ -24,7 +24,7 @@ defaults:
         (!state.available || state.state == BlfState::IDLE || state.state == BlfState::UNKNOWN)) {
       row.set_detail("Unavailable"); row.set_trailing("\U000F0DEF"); row.color = 0xA3A3A3; return;
     }
-    if (!state.available || (state.state == BlfState::IDLE && state.presence != PresenceState::OPEN)) {
+    if (!state.available) {
       row.set_detail("Unknown"); row.set_trailing("\U000F0625"); row.color = 0xA3A3A3; return;
     }
     switch (state.state) {
@@ -71,7 +71,8 @@ phone_list_view:
     row_key: !lambda |-
       const auto *contact = id(phone).get_contact(index);
       if (contact == nullptr) return {};
-      return {std::string_view(contact->name.data(), contact->name.size()), contact->stable_id()};
+      return {std::string_view(contact->name.data(), contact->name.size()), contact->stable_id(),
+        id(phone).get_contact_account_view(*contact)};
     row_group: !lambda |-
       using namespace esphome::voip_stack;
       const auto *contact = id(phone).get_contact(index);
@@ -86,6 +87,7 @@ phone_list_view:
       const auto *contact = id(phone).get_contact(index);
       if (contact == nullptr) return;
       row.set_id(contact->stable_id()); row.set_name(contact->name);
+      row.set_scope(id(phone).get_contact_account_view(*contact));
       const char *icon = "\U000F0625";
       switch (contact->kind) {
         case ContactKind::ESP: icon = "\U000F061A"; break;
@@ -104,7 +106,7 @@ phone_list_view:
     on_select:
       - lambda: !lambda |
           if (!id(phone).is_idle()) return;
-          ${ 'if (action == 1) id(phone).pickup_contact(row_id); else ' if 'blf' in firmware_features else '' }id(phone).call_contact(row_id);
+          ${ 'if (action == 1) id(phone).pickup_contact(row_id, row_scope); else ' if 'blf' in firmware_features else '' }id(phone).call_contact(row_id, row_scope);
 voip_stack:
   on_phonebook_update:
     - lambda: id(contacts_list_view).request_refresh();

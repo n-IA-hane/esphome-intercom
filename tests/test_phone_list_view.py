@@ -388,3 +388,112 @@ def test_non_scrolling_drag_then_cancelled_call_allows_fresh_tap(tmp_path):
     (tmp_path / "run.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "DRAG_CANCEL_REDIAL" in result.stdout
+
+
+def test_scoped_rows_keep_order_anchor_and_owned_click_payload(tmp_path):
+    """The actual pooled view keeps identical IDs distinct through one action chain."""
+    build = Path(os.environ.get("PHONE_LIST_HOST_BUILD", str(tmp_path / "host"))).resolve()
+    build.mkdir(parents=True, exist_ok=True)
+    probe = ROOT / "tests/fixtures/lvgl_host"
+    inputs = build / "scope_inputs.h"
+    inputs.write_text(r'''
+#include "esphome/components/phone_list_view/phone_list_view.h"
+#include <cassert>
+namespace ui_scope_inputs {
+constexpr char A[]="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+constexpr char B[]="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+constexpr char C[]="cccccccccccccccccccccccccccccccc";
+struct Item { const char *id; const char *scope; };
+inline std::array<Item,12> entries{{{"101",B},{"101",A},{"200",""},{"201",""},
+ {"202",""},{"203",""},{"204",""},{"205",""},{"206",""},{"207",""},{"208",""},{"209",""}}};
+struct Budget : esphome::phone_list_view::PhoneListView {
+ static_assert(sizeof(Projection)==128);
+};
+static_assert(sizeof(esphome::phone_list_view::RowData)==480);
+}
+''')
+    config = list_config(240, build, tmp_path)
+    config["esphome"]["includes"].extend([
+        str(inputs), str(probe / "allocation_probe.h"), str(probe / "allocation_probe.cpp"),
+    ])
+    config["esphome"]["build_flags"] = ["-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free"]
+    config["globals"].extend([
+        {"id": "scoped_count", "type": "unsigned", "initial_value": "0"},
+        {"id": "selected_scope", "type": "std::string", "initial_value": '""'},
+    ])
+    config["lvgl"]["pages"][0]["widgets"][1]["obj"].update(height=120)
+    view = config["phone_list_view"][0]
+    view.update(row_height=40, row_count=Lambda("return ui_scope_inputs::entries.size();"),
+        row_group=Lambda("return 0;"),
+        row_key=Lambda('const auto &entry=ui_scope_inputs::entries[index];return {"Contact",entry.id,entry.scope};'),
+        render_row=Lambda(r'''
+            const auto &entry=ui_scope_inputs::entries[index];
+            row.set_id(entry.id);row.set_scope(entry.scope);row.set_name("Contact");
+            row.set_detail(entry.scope);row.action=7;
+        '''),
+        on_select={"then": [
+            {"lambda": Lambda(r'''
+                // Existing persisted YAML may consume only row_id and action.
+                assert(row_id=="101"&&action==7);++id(selected_count);
+                ui_scope_inputs::entries[0].scope=ui_scope_inputs::A;
+                id(list_view).refresh();
+            ''')},
+            {"lambda": Lambda(r'''
+                // A prior action repainted the same slot. These are owned event arguments.
+                assert(row_id=="101"&&action==7&&row_scope==ui_scope_inputs::B);
+                ++id(scoped_count);id(selected_id)=row_id;id(selected_scope)=row_scope;
+            ''')},
+        ]})
+    check = r'''
+        using namespace ui_scope_inputs;
+        using esphome::phone_list_view::RowData;
+        RowData exact;exact.set_scope(A);assert(exact.enabled&&strlen(exact.scope.data())==32);
+        RowData invalid;invalid.set_scope("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");assert(!invalid.enabled);
+        lv_screen_load(id(list_page)->obj);id(list_view).refresh();lv_refr_now(nullptr);
+        auto object_at=[&](unsigned index){
+          for(unsigned i=1;i<=8;++i){auto *object=lv_obj_get_child(id(rows),i);
+            if(!lv_obj_has_flag(object,LV_OBJ_FLAG_HIDDEN)&&lv_obj_get_style_y(object,LV_PART_MAIN)==int(index*40))return object;}
+          return static_cast<lv_obj_t*>(nullptr);
+        };
+        assert(object_at(0)&&object_at(1));
+        assert(!strcmp(lv_label_get_text(lv_obj_get_child(object_at(0),2)),A));
+        assert(!strcmp(lv_label_get_text(lv_obj_get_child(object_at(1),2)),B));
+        allocation_probe::begin();
+        for(unsigned i=0;i<100;++i)id(list_view).refresh();
+        const auto allocations=allocation_probe::end();
+        assert(allocations.calls==0&&allocations.frees==0);
+        esphome::ui_fixture::PointerProbe input(lv_display_get_default());
+        lv_area_t bounds;lv_obj_get_coords(object_at(0),&bounds);
+        const int x=(bounds.x1+bounds.x2)/2,y=(bounds.y1+bounds.y2)/2;
+        input.press(x,y);
+        entries[1].scope=C;id(list_view).refresh();input.release();
+        // Same public ID and action, but a different scope cannot inherit this press.
+        assert(id(selected_count)==0&&id(scoped_count)==0);
+        assert(!strcmp(lv_label_get_text(lv_obj_get_child(object_at(0),2)),B));
+        input.tap(x,y);
+        assert(id(selected_count)==1&&id(scoped_count)==1);
+        assert(id(selected_id)=="101"&&id(selected_scope)==B);
+        assert(!strcmp(lv_label_get_text(lv_obj_get_child(object_at(0),2)),A));
+        // Preserve the second 101, rather than jumping to the first identical ID.
+        lv_obj_scroll_to_y(id(rows),47,LV_ANIM_OFF);id(list_view).refresh();lv_refr_now(nullptr);
+        assert(lv_obj_get_scroll_y(id(rows))==47);
+        std::swap(entries[0],entries[1]);id(list_view).refresh();lv_refr_now(nullptr);
+        assert(lv_obj_get_scroll_y(id(rows))==47);
+        assert(!strcmp(lv_label_get_text(lv_obj_get_child(object_at(1),2)),C));
+        assert(entries[0].scope==C&&entries[1].scope==A);
+        printf("ROW_SCOPE same_id=distinct stale_press=ignored owned_payload=pass one_chain=pass "
+               "anchor=pass warm_allocations=0 row_bytes=%u\n",unsigned(sizeof(RowData)));
+        ::exit(0);
+    '''
+    config["esphome"]["on_boot"][0]["then"] = [{"lambda": Lambda(check)}]
+    source = build / "host.yaml"
+    source.write_text(yaml_util.dump(config))
+    compiled = subprocess.run([sys.executable, "-m", "esphome", "compile", str(source)],
+                              capture_output=True, text=True, timeout=360)
+    (tmp_path / "compile.log").write_text(compiled.stdout + compiled.stderr)
+    assert compiled.returncode == 0, (compiled.stdout + compiled.stderr)[-7000:]
+    result = subprocess.run([str(build / "build/.pioenvs/phone-list-proof/program")],
+                            capture_output=True, text=True, timeout=25, cwd=tmp_path)
+    (tmp_path / "run.log").write_text(result.stdout + result.stderr)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ROW_SCOPE same_id=distinct stale_press=ignored owned_payload=pass one_chain=pass anchor=pass warm_allocations=0 row_bytes=480" in result.stdout

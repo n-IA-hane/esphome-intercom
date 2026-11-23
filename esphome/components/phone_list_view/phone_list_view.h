@@ -22,6 +22,7 @@ namespace esphome::phone_list_view {
 
 struct RowData {
   std::array<char, 161> id{};
+  std::array<char, 33> scope{};
   std::array<char, 129> name{};
   std::array<char, 129> detail{};
   std::array<char, 9> leading{};
@@ -44,6 +45,10 @@ struct RowData {
     if (value.size() >= this->id.size()) { this->enabled = false; return; }
     text(this->id, value);
   }
+  void set_scope(std::string_view value) {
+    if (value.size() >= this->scope.size()) { this->enabled = false; return; }
+    text(this->scope, value);
+  }
   void set_name(std::string_view value) { text(this->name, value); }
   void set_detail(std::string_view value) { text(this->detail, value); }
   void set_leading(std::string_view value) { text(this->leading, value); }
@@ -54,6 +59,7 @@ struct RowData {
 struct RowKey {
   std::string_view name;
   std::string_view id;
+  std::string_view scope{};
 };
 
 class PhoneListView : public Component {
@@ -74,7 +80,7 @@ class PhoneListView : public Component {
   void set_text_font(const font::Font *font) { this->text_font_ = font->get_lv_font(); }
   void set_icon_font(const font::Font *font) { this->icon_font_ = font->get_lv_font(); }
 #endif
-  Trigger<std::string, uint8_t> *get_select_trigger() { return &this->selected_; }
+  Trigger<std::string, uint8_t, std::string> *get_select_trigger() { return &this->selected_; }
   void setup() override;
   void refresh() { this->order_dirty_ = true; this->refresh_(); }
   void request_refresh() { if (!this->is_failed()) this->enable_loop_soon_any_context(); }
@@ -132,7 +138,7 @@ class PhoneListView : public Component {
   std::function<void(uint32_t, RowData &)> render_;
   std::function<uint8_t(uint32_t)> group_;
   std::function<RowKey(uint32_t)> key_;
-  Trigger<std::string, uint8_t> selected_;
+  Trigger<std::string, uint8_t, std::string> selected_;
 };
 
 template<typename... Ts> class RefreshAction : public Action<Ts...>, public Parented<PhoneListView> {

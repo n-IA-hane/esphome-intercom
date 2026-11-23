@@ -64,7 +64,8 @@ async def to_code(config):
         cg.add(var.set_group_callback(group))
         cg.add(var.set_key_callback(key))
     if "on_select" in config:
-        await automation.build_automation(var.get_select_trigger(), [(cg.std_string, "row_id"), (cg.uint8, "action")], config["on_select"])
+        await automation.build_automation(var.get_select_trigger(), [
+            (cg.std_string, "row_id"), (cg.uint8, "action"), (cg.std_string, "row_scope")], config["on_select"])
 
 
 @automation.register_action("phone_list_view.refresh", RefreshAction, cv.maybe_simple_value(

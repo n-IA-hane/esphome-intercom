@@ -45,7 +45,8 @@ def palette_config(build, output, body, icon_font):
         struct Phone {
           Contact contact; BlfStatus status;
           const Contact *get_contact(unsigned)const{return &contact;}
-          BlfStatus get_contact_blf(std::string_view)const{return status;}
+          std::string_view get_contact_account_view(const Contact&)const{return {};}
+          BlfStatus get_contact_blf(std::string_view,std::string_view)const{return status;}
         };
         static constexpr const char *NAMES[]={"Unknown phone","Ringing phone","Idle phone",
           "Active phone","Held phone","Calling phone","Unavailable phone"};
@@ -55,7 +56,7 @@ def palette_config(build, output, body, icon_font):
           ContactKind::ESP,ContactKind::CONTACT,ContactKind::GROUP,ContactKind::AUTOMATION,ContactKind::UNKNOWN};
         Phone phone{{NAMES[index],KINDS[index]},{}};
         phone.status.state=STATES[index];phone.status.available=index!=0;
-        phone.status.presence=index==6?PresenceState::CLOSED:PresenceState::OPEN;
+        phone.status.presence=index==6?PresenceState::CLOSED:(index==2?PresenceState::UNKNOWN:PresenceState::OPEN);
         phone.status.ringing_dialogs=index==1?1:0;
         if(index==0 && id(epoch)==1){
           phone.contact.name="Updated caller";phone.status.state=BlfState::ACTIVE;phone.status.available=true;

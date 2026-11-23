@@ -99,12 +99,14 @@ int32_t PhoneListView::rebuild_order_(uint32_t count, int32_t scroll) {
   // The visible pool retains the old identity even when the source replaced its
   // vector. Resolve this borrowed anchor before painting overwrites any slot.
   std::string_view anchor;
+  std::string_view anchor_scope;
   const int32_t top = scroll / this->row_height_ * this->row_height_;
   for (size_t i = 0; i < this->capacity_; ++i) {
     const auto &slot = this->slots_[i];
     if (slot.generation != 0 && !lv_obj_has_flag(slot.button, LV_OBJ_FLAG_HIDDEN) &&
         lv_obj_get_style_y(slot.button, LV_PART_MAIN) == top) {
       anchor = slot.row.id.data();
+      anchor_scope = slot.row.scope.data();
       break;
     }
   }
@@ -120,12 +122,13 @@ int32_t PhoneListView::rebuild_order_(uint32_t count, int32_t scroll) {
       return this->projection_->groups[a] < this->projection_->groups[b];
     const auto left = this->key_(a), right = this->key_(b);
     const int names = compare_names_(left.name, right.name);
-    return names != 0 ? names < 0 : left.id < right.id;
+    if (names != 0) return names < 0;
+    return left.id != right.id ? left.id < right.id : left.scope < right.scope;
   });
   this->ordered_count_ = count;
   if (!anchor.empty())
     for (uint32_t i = 0; i < count; ++i)
-      if (this->key_(this->projection_->indices[i]).id == anchor)
+      if (const auto key = this->key_(this->projection_->indices[i]); key.id == anchor && key.scope == anchor_scope)
         return i * this->row_height_ + scroll % this->row_height_;
   return scroll;
 }
@@ -177,8 +180,8 @@ void PhoneListView::paint_(Slot &slot, uint32_t index) {
   this->render_(this->ordered_count_ != 0 ? this->projection_->indices[index] : index, next);
   if (next.id[0] == '\0') next.enabled = false;
   const bool first_paint = slot.generation == 0;
-  if (slot.row.id != next.id || slot.row.action != next.action) ++slot.generation;
-  const bool changed = first_paint || slot.row.id != next.id || slot.row.name != next.name || slot.row.detail != next.detail ||
+  if (slot.row.id != next.id || slot.row.scope != next.scope || slot.row.action != next.action) ++slot.generation;
+  const bool changed = first_paint || slot.row.id != next.id || slot.row.scope != next.scope || slot.row.name != next.name || slot.row.detail != next.detail ||
                        slot.row.leading != next.leading || slot.row.trailing != next.trailing;
   const bool color_changed = first_paint || slot.row.color != next.color;
   const bool highlight_changed = first_paint || slot.row.highlighted != next.highlighted;
@@ -271,7 +274,8 @@ void PhoneListView::row_event_(lv_event_t *event) {
     const bool select = slot.press_armed && slot.row.enabled && slot.row.id[0] &&
                         slot.pressed_generation == slot.generation;
     slot.press_armed = false;
-    if (select) slot.owner->selected_.trigger(slot.row.id.data(), slot.row.action);
+    // Trigger arguments own the validated row before any action can repaint it.
+    if (select) slot.owner->selected_.trigger(slot.row.id.data(), slot.row.action, slot.row.scope.data());
   }
 }
 

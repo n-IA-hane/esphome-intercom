@@ -38,7 +38,8 @@ struct Phone {
  unsigned reads=0;
  const ContactEntry *get_contact(unsigned i)const{return book.at(i);}
  unsigned get_contact_count()const{return book.size();}
- BlfStatus get_contact_blf(std::string_view id){++reads;return status[(id[3]-'0')*10+id[4]-'0'];}
+ std::string_view get_contact_account_view(const ContactEntry&)const{return {};}
+ BlfStatus get_contact_blf(std::string_view id,std::string_view={}){++reads;return status[(id[3]-'0')*10+id[4]-'0'];}
  void initialize(){
   std::vector<ContactEntry> entries(64);
   const char *names[]={"Zulu external","Zeta HA","beta","Alpha HA","Zulu offline","Ring team",
