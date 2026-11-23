@@ -164,10 +164,15 @@ class ForwardGroup:
                 ),
             )
             if self.operation.retained_media is not None:
+                retained_video = self.operation.retained_media.video_relay
+                if retained_video is not None:
+                    self.operation.retained_media.validate(registry)
                 for attempt in self.candidates.attempts:
                     attempt.client.local_rtp_port = (
                         self.operation.retained_media.reservation.ports[1]
                     )
+                    if retained_video is not None and attempt.video_relay is not None:
+                        attempt.client.local_video_rtp_port = retained_video.right_port
         except Exception:
             await self.abort(
                 TerminalReason.PROTOCOL_ERROR.value,
@@ -521,7 +526,9 @@ class ForwardGroup:
         self.operation.client = winner.client
         self.operation.claimed_endpoint_id = winner.endpoint_id
         self.operation.destination_call_id = self.operation.client.dialog_ids.call_id
-        if self.operation.owned_sip_source is not None:
+        if (self.operation.owned_sip_source is not None
+                or self.operation.retained_media is not None
+                and self.operation.retained_media.video_relay is not None):
             await self.operation._prepare_destination_media(winner)
         dest_relay_port = winner.ports.ports[1]
         source_ports = self.operation.reservation.ports
@@ -569,9 +576,13 @@ class ForwardGroup:
                 source_client=application.source_client
                 if application is not None
                 else self.operation.owned_sip_source.client
-                if self.operation.owned_sip_source is not None else None,
+                if self.operation.owned_sip_source is not None
+                else self.operation.retained_media.source_client
+                if self.operation.retained_media is not None else None,
                 prepared_media=self.operation.prepared_media,
                 retained_media=self.operation.retained_media,
+                retained_video_update=self.operation.retained_video_update,
+                retained_video_answer=self.operation.retained_video_answer,
             ),
             BridgeCommitPolicy(
                 route_kind=self.route_kind,
@@ -605,6 +616,7 @@ class ForwardGroup:
         )
         if committed is None:
             raise RuntimeError(TerminalReason.CANCELLED.value)
+        self.operation.retained_video_update = None
         session.update_metadata(connected_party=connected_party,
                                 connected_display_name=connected_display_name(winner.client))
         await self.operation.retire_application()

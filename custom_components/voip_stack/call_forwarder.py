@@ -294,8 +294,10 @@ class _ForwardAdmission:
         invite = registry.artifact_for(call_id, "pending_invite")
         from .owned_sip_source import OwnedSipSource
 
-        owned_sip_source = OwnedSipSource.capture(hass, registry.get_session(call_id),
-                                                 self.request.control_endpoint_id)
+        owned_sip_source = None
+        if local_source is None and application is None and native_destination is None:
+            owned_sip_source = OwnedSipSource.capture(hass, registry.get_session(call_id),
+                                                     self.request.control_endpoint_id)
         if owned_sip_source is not None:
             invite = owned_sip_source.invite
         if invite is None and application is not None:
@@ -542,7 +544,9 @@ class _ForwardAdmission:
         application = source.application
         destination = self.request.destination
         target_browser_endpoint = None
-        if registry.artifact_for(call_id, "pending_invite") is not source.invite:
+        if source.owned_sip_source is not None:
+            source.owned_sip_source.validate()
+        elif registry.artifact_for(call_id, "pending_invite") is not source.invite:
             raise _service_error(
                 f"call_id {call_id} changed while the route was being resolved",
                 "call_changed_during_operation",
