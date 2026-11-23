@@ -618,7 +618,8 @@ async def test_ready_route_control_precedes_answer_after_failed_pickup(
         await ready.wait()
         return "in_call"
     client = SimpleNamespace(invite=AsyncMock(side_effect=invite), dialog=object(),
-        dialog_ids=SimpleNamespace(call_id="ordinary"), terminate=AsyncMock(), close=AsyncMock())
+        last_sip_status_code=200, dialog_ids=SimpleNamespace(call_id="ordinary"),
+        terminate=AsyncMock(), close=AsyncMock())
     from custom_components.voip_stack import media_ports
     release_pair = Mock(wraps=media_ports.release_sip_rtp_port_pair)
     monkeypatch.setattr(media_ports, "release_sip_rtp_port_pair", release_pair)

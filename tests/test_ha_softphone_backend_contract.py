@@ -170,10 +170,21 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
                            if isinstance(handler, ast.ExceptHandler)
                            and isinstance(handler.type, ast.Name) and handler.type.id == "TimeoutError")
             self.assertTrue(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                                and node.func.attr == "sync_reorder" for node in ast.walk(timeout)))
+                                and node.func.attr == "sync_reorder_counters" for node in ast.walk(timeout)))
         owner = _function_body(VIDEO_WS.read_text(), "_run_video_session")
-        final_store = owner.index("store_counters(force=True)")
-        self.assertIn("_sync_video_reorder_counters(", owner[final_store - 300:final_store])
+        final_blocks = [node.finalbody for node in ast.walk(ast.parse(textwrap.dedent(owner)))
+                        if isinstance(node, ast.Try)]
+        def call_name(statement):
+            value = statement.value if isinstance(statement, ast.Expr) else None
+            return value.func.id if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) else ""
+        self.assertTrue(any(
+            any(call_name(statement) == "_sync_video_reorder_counters"
+                for statement in block[:index])
+            for block in final_blocks for index, statement in enumerate(block)
+            if call_name(statement) == "store_counters"
+            and any(keyword.arg == "force" and isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is True for keyword in statement.value.keywords)
+        ))
 
     def test_nonfatal_video_rtcp_and_keepalive_failures_are_observable(self) -> None:
         rtcp = VIDEO_WS.with_name("video_rtcp_worker.py").read_text()

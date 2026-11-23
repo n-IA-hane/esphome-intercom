@@ -613,8 +613,8 @@ def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     assert 'row.set_name(contact->name)' in values_text(contacts['render_row'])
     selection = contacts['on_select']
     assert 'if (!id(phone).is_idle()) return;' in values_text(selection)
-    assert 'id(phone).call_contact(row_id);' in values_text(selection)
-    assert 'id(phone).pickup_contact(row_id);' in values_text(selection)
+    assert 'id(phone).call_contact(row_id, row_scope);' in values_text(selection)
+    assert 'id(phone).pickup_contact(row_id, row_scope);' in values_text(selection)
     assert 'get_current_destination()' not in values_text(selection)
     assert not any(action_id(node, 'script.execute') == 'update_status' for node in nodes(selection))
     callback = config['voip_stack']['on_destination_changed']

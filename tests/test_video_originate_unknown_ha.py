@@ -399,7 +399,7 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     sink_video = media_socket('127.0.0.3')
     jpeg = sdp.RtpVideoFormat(payload_type=26, encoding='JPEG')
     lab.runtime.endpoints.register(PhoneEndpoint(
-        endpoint_id='sip:caller', username='caller', name='Caller', kind=EndpointKind.SIP_ACCOUNT,
+        endpoint_id='caller', username='caller', name='Caller', kind=EndpointKind.SIP_ACCOUNT,
         capabilities=frozenset({'audio', 'dtmf'}),
     ))
     caller = SipCallClient(local_ip='127.0.0.2', local_name='caller', local_sip_port=0,
@@ -419,6 +419,12 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
             super().datagram_received(raw, address)
 
     class SinkWire(RegisteredPeer):
+        def answer(self, request, address, status=200, body=b"", content_type="application/sdp"):
+            if request.method == 'OPTIONS':
+                observed.update(options_request=request, options_body=body,
+                                options_status=status, options_content_type=content_type)
+            return super().answer(request, address, status, body, content_type)
+
         def datagram_received(self, raw, address):
             request = sip.parse_message(raw)
             if request.method == 'OPTIONS' and policy.startswith('options_native_'):
@@ -493,9 +499,15 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         rows = roster_from_peers(lab.hass, peers, registrar.registered_roster_entries())
         row = next(row for row in rows if row.id == restored.username)
         assert row.metadata['sip_capabilities_known'] is True
-        known_jpeg = policy in {'observed_jpeg', 'options_native_jpeg'}
-        assert row.metadata['capabilities'] == (['audio', 'dtmf', 'video']
-                                              if known_jpeg else ['audio', 'dtmf'])
+        binding = registrar.registered_contacts(restored.username)[0]
+        assert row.sip_uri == binding.contact_uri
+        assert observed['options_request'].method == 'OPTIONS'
+        assert sip.parse_sip_uri(observed['options_request'].uri) == sip.parse_sip_uri(binding.contact_uri)
+        assert observed['options_status'] == 200
+        assert observed['options_content_type'] == 'application/sdp'
+        assert observed['options_body'].startswith(b'v=0\r\n')
+        # Hardware sensor diagnostics cannot replace standard SIP evidence.
+        assert 'capabilities' not in row.metadata
         if policy.startswith('options_native_'):
             assert row.metadata['sip_audio_tx_formats'] == [
                 'L16/48000/1', 'L16/16000/1', 'G722/8000/1']
@@ -511,7 +523,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         assert row.metadata['sip_audio_receiver_maxptime'] == 10
         assert 'sdp_features' not in row.metadata
         expected_contract = 'jpeg' if policy == 'options_native_jpeg' else None
-        assert row.metadata['sip_video_codec'] == expected_contract
+        assert binding.capabilities.get('sip_video_codec') == expected_contract
+        assert row.metadata.get('sip_video_codec') == expected_contract
         assert peer_video_codec(None, row) == expected_contract
         while not caller.queue.empty():
             caller.queue.get_nowait()

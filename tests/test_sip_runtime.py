@@ -60,6 +60,24 @@ sip_servers = sip_runtime.sip_servers
 uri_transport = sip_runtime.uri_transport
 
 
+class _CallRegistry:
+    """Explicit session and signaling-owner facts supplied by each unit fixture."""
+
+    def __init__(self, *, sessions):
+        self.sessions = sessions
+        self.bridge_links = {}
+        self.clients = {}
+
+    def resolve_session_id(self, call_id):
+        return call_id
+
+    def bridge_link_for(self, call_id):
+        return self.bridge_links.get(call_id, "")
+
+    def sip_client_for(self, call_id):
+        return self.clients.get(call_id)
+
+
 class _Server:
     def __init__(self, *, owns: str = "") -> None:
         self.owns = owns
@@ -144,8 +162,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
     def test_final_response_and_bye_stop_at_dialog_owner(self) -> None:
         owner = _Server(owns="call-1")
-        registry = SimpleNamespace(
-            resolve_session_id=lambda call_id: call_id,
+        registry = _CallRegistry(
             sessions={
                 "call-1": SimpleNamespace(
                     generation=1,
@@ -175,8 +192,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
     def test_success_response_requires_current_answer_commit(self) -> None:
         owner = _Server(owns="call-1")
-        registry = SimpleNamespace(
-            resolve_session_id=lambda call_id: call_id,
+        registry = _CallRegistry(
             sessions={
                 "call-1": SimpleNamespace(
                     generation=2,
@@ -207,8 +223,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
             generation=2,
             answer_committed=True,
         )
-        call_registry = SimpleNamespace(
-            resolve_session_id=lambda call_id: call_id,
+        call_registry = _CallRegistry(
             sessions={"call-identity": session},
         )
         endpoint = SimpleNamespace(name="Cucina", sip_uri_user="428")
@@ -245,8 +260,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
             data={
                 DOMAIN: {
                     "sip_endpoint": owner,
-                    "call_registry": SimpleNamespace(
-                        resolve_session_id=lambda call_id: call_id,
+                    "call_registry": _CallRegistry(
                         sessions={
                             "call-failure": SimpleNamespace(
                                 metadata={"connected_party": "Cucina"},
@@ -288,8 +302,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 caller = SimpleNamespace(name="Calling phone", sip_uri_user="2600")
                 hass = SimpleNamespace(data={DOMAIN: {
                     "sip_endpoint": owner,
-                    "call_registry": SimpleNamespace(
-                        resolve_session_id=lambda call_id: call_id,
+                    "call_registry": _CallRegistry(
                         sessions={"application-call": session},
                     ),
                     "endpoint_registry": SimpleNamespace(
@@ -316,8 +329,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 )
                 kitchen = SimpleNamespace(name="Cucina", sip_uri_user="428")
                 hass = SimpleNamespace(data={DOMAIN: {
-                    "call_registry": SimpleNamespace(
-                        resolve_session_id=lambda call_id: call_id,
+                    "call_registry": _CallRegistry(
                         sessions={"rearranged-call": session},
                     ),
                     "endpoint_registry": SimpleNamespace(

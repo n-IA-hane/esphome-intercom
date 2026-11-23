@@ -1403,7 +1403,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([message.uri for message in messages], ["sip:dialog@127.0.0.2:5090;transport=udp"] * 2)
         self.assertEqual(
             [message.header("To") for message in messages],
-            ["<sip:ESP@127.0.0.2:5060>;tag=remote"] * 2,
+            [response.header("To")] * 2,
         )
         bye_tasks = tuple(client._exceptional_bye_tasks)
         for task in bye_tasks:

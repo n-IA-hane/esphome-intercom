@@ -113,7 +113,8 @@ def production_answer_offer(step: Step) -> dict:
     try:
         answer = sdp.build_answer_directional(
             "192.0.2.1", "192.0.2.1", 40000, invite.send_format, invite.recv_format,
-            dtmf=dtmf, remote_sdp=invite.remote_sdp,
+            recv_formats=invite.recv_formats, dtmf=dtmf,
+            dtmf_direction=invite.dtmf_direction, remote_sdp=invite.remote_sdp,
             video_port=40002 if video is not None else 0, video_format=video)
     except Exception as error:  # noqa: BLE001
         return {"outcome": "error", "error": f"answer {type(error).__name__}"}
@@ -183,6 +184,9 @@ def mismatches(expect: dict, actual: dict, path: str = "") -> list[str]:
             continue
         where = f"{path}{key}"
         got = actual.get(key) if isinstance(actual, dict) else None
+        if key == "answer_payloads":
+            where = f"{path}answer.payloads"
+            got = _value(actual, "answer.payloads")
         if isinstance(wanted, dict):
             found += mismatches(wanted, got or {}, where + ".")
         elif got != wanted:
@@ -211,11 +215,97 @@ CC_FIELDS = {
     "CC-11": ("send.ptime",),
     "CC-12": ("outcome",),
     "RFC3556": ("answer.rtcp_bandwidth",),
+    "RFC3264_ACCEPTED_G711_ALIASES": ("answer.payloads",),
     "LOCAL_CAPABILITIES": ("send.codec", "send.ptime", "send.payload", "recv.codec", "recv.payload"),
 }
 
 
+
+def audio_wire_facts(description):
+    """Read audio payload numbers and rtpmap facts independently of negotiation."""
+    text = description.decode() if isinstance(description, bytes) else description
+    order, mappings, inside = None, {}, False
+    for line in text.splitlines():
+        if line.startswith("m="):
+            inside = line.startswith("m=audio ")
+            if inside:
+                assert order is None, "Ambiguous audio section"
+                order = [int(value) for value in line.split()[3:]]
+                assert len(order) == len(set(order)), "Duplicate audio payload"
+            continue
+        if inside and line.startswith("a=rtpmap:"):
+            payload, mapping = line.removeprefix("a=rtpmap:").split(None, 1)
+            fields = mapping.split("/")
+            assert int(payload) not in mappings, "Duplicate rtpmap"
+            mappings[int(payload)] = (fields[0].upper(), int(fields[1]),
+                                      int(fields[2]) if len(fields) == 3 else 1)
+    return order, mappings
+
+
+def declared_answer_bytes(step, frozen, rows):
+    """Apply only declared audio bandwidth and accepted G.711 alias insertions."""
+    fields = [row["field"] for row in rows]
+    assert len(fields) == len(set(fields)), "Duplicate byte delta"
+    assert set(fields) <= {"answer.rtcp_bandwidth", "answer.payloads"}
+    expected = frozen
+    bandwidth = next((row for row in rows if row["field"] == "answer.rtcp_bandwidth"), None)
+    if bandwidth is not None:
+        assert bandwidth["cc"] == "RFC3556" and bandwidth["prior"] is None
+        assert bandwidth["intended"] == {"RS": 0, "RR": 0}
+        assert _value({"answer_bytes": frozen}, "answer.rtcp_bandwidth") is None
+        media = next(line for line in expected.split("\r\n") if line.startswith("m=audio "))
+        expected = expected.replace(media + "\r\n", media + "\r\nb=RS:0\r\nb=RR:0\r\n", 1)
+    aliases = next((row for row in rows if row["field"] == "answer.payloads"), None)
+    if aliases is not None:
+        assert aliases["cc"] == "RFC3264_ACCEPTED_G711_ALIASES"
+        prior, _ = audio_wire_facts(frozen)
+        intended = aliases["intended"]
+        assert aliases["prior"] == prior
+        assert intended == step.expect["answer_payloads"]
+        assert intended[0] == prior[0] and len(intended) == len(set(intended))
+        assert [number for number in intended if number in prior] == prior
+        added = [number for number in intended if number not in prior]
+        assert added, "An alias declaration must add a payload"
+        offered, mappings = audio_wire_facts(step.sdp)
+        static = {0: ("PCMU", 8000, 1), 8: ("PCMA", 8000, 1)}
+        attributes = []
+        for number in added:
+            assert number in offered and number in static
+            assert mappings[number] == static[number]
+            encoding, rate, channels = mappings[number]
+            attributes.append(f"a=rtpmap:{number} {encoding}/{rate}/{channels}")
+        lines = expected.split("\r\n")
+        index = next(index for index, line in enumerate(lines) if line.startswith("m=audio "))
+        suffix = " ".join(map(str, prior))
+        assert lines[index].endswith(" " + suffix)
+        lines[index] = lines[index][:-len(suffix)] + " ".join(map(str, intended))
+        event = next(index for index, line in enumerate(lines)
+                     if line.startswith("a=rtpmap:") and " telephone-event/" in line)
+        lines[event:event] = attributes
+        expected = "\r\n".join(lines)
+    return expected
+
+
+def assert_declared_answer_bytes(step, actual, frozen, rows):
+    """Validate the exact declared fields and every remaining byte together."""
+    expected = declared_answer_bytes(step, frozen, rows)
+    for row in rows:
+        if row["field"] == "answer.rtcp_bandwidth":
+            assert _value({"answer_bytes": actual}, row["field"]) == {"RS": 0, "RR": 0}
+        elif row["field"] == "answer.payloads":
+            written, written_maps = audio_wire_facts(actual)
+            offered, source_maps = audio_wire_facts(step.sdp)
+            assert written == row["intended"]
+            for number in set(row["intended"]) - set(row["prior"]):
+                assert number in offered and written_maps[number] == source_maps[number]
+    assert actual == expected
+
+
 def _value(data, field: str):
+    if field == "answer.payloads":
+        if data.get("answer_bytes"):
+            return audio_wire_facts(data["answer_bytes"])[0]
+        return data.get("answer_payloads")
     if field == "answer.rtcp_bandwidth":
         bandwidth, inside = {}, False
         for line in str(data.get("answer_bytes") or "").split("\r\n"):

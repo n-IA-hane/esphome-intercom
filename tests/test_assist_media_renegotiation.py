@@ -306,18 +306,18 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     module.remote_can_send = lambda *_args: True
     module.remote_can_receive = lambda *_args, **_kwargs: True
     module.constrained_video_direction = lambda *_args, **_kwargs: "recvonly"
-    established_peers: list[object] = []
+    materialized_invites: list[object] = []
     answered_formats: list[tuple[object, object]] = []
 
-    def retained_peer(invite, *, established=None):
-        established_peers.append(established)
+    def materialized_peer(invite):
+        materialized_invites.append(invite)
         return updated_audio_peer
 
     def answer(*args, **_kwargs):
         answered_formats.append((args[3], args[4]))
         return SDP.build_answer_directional(*args, **_kwargs)
 
-    module.invite_rtp_peer = retained_peer
+    module.invite_rtp_peer = materialized_peer
     module.build_answer_directional = answer
     module.invite_video_rtp_peer = lambda invite: updated_video_peer
 
@@ -358,8 +358,8 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     updated_video_peer = object()
     updated = _invite(
         call_id="call",
-        send_format=DEFAULT_SEND,
-        recv_format=DEFAULT_RECEIVE,
+        send_format=ESTABLISHED_SEND,
+        recv_format=ESTABLISHED_RECEIVE,
         recv_formats=(),
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
@@ -379,9 +379,9 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     assert validation["caller_to_peer_transcoding"] is True
     assert validation["peer_to_caller_transcoding"] is True
     old_audio, old_video = relay.left, video_relay.left
-    # The refresh resolves audio against the leg's current peer and answers with
-    # the retained formats, not with the freshly parsed defaults.
-    assert established_peers == [old_audio]
+    # Negotiation supplied the retained audio contract before this consumer.
+    # The update materializes it once while preserving the owned video edge.
+    assert materialized_invites == [updated]
     assert answered_formats == [(ESTABLISHED_SEND, ESTABLISHED_RECEIVE)]
     if replace_owner:
         registry.relays["call"] = object()

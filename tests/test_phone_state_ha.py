@@ -211,6 +211,8 @@ async def test_one_observer_fans_out_and_retains_identity_after_rename(
             dest_endpoint_id="kitchen",
         )
         phones.calls.claim_endpoint(session.call_id, "kitchen", role="destination")
+        phones.calls.observe_leg(session.call_id, "recipient-kitchen", role="callee",
+                                  endpoint_id="kitchen", state="ringing")
         publish_bridge_projection(hass, session)
         await hass.async_block_till_done()
         scans.clear()
@@ -501,6 +503,8 @@ async def test_batched_independent_calls_keep_each_phone_trigger_context(hass, p
                 session = phones.calls.upsert('call-' + name, state='ringing', owner='router',
                                                callee=name, dest_endpoint_id=name)
                 phones.calls.claim_endpoint(session.call_id, name, role='destination')
+                phones.calls.observe_leg(session.call_id, 'recipient-' + name, role='callee',
+                                          endpoint_id=name, state='ringing')
         assert {p['endpoint_id']: p['call']['call_id'] for p in changes} == {
             'kitchen': 'call-kitchen', 'office': 'call-office',
         }

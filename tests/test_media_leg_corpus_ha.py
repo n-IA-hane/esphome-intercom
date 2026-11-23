@@ -5,6 +5,8 @@ Two guarantees for every step of every case:
 - where it differs from the historical reference, the ledger declares that field.
 """
 
+import copy
+from dataclasses import replace
 import json
 
 import pytest
@@ -12,7 +14,7 @@ import pytest
 from custom_components.voip_stack.core import sdp
 from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.media import leg, negotiator
-from tests.media_corpus_support import CORPUS, GOLDEN, POLICIES, _describe, _value, load_steps, mismatches
+from tests.media_corpus_support import CORPUS, GOLDEN, POLICIES, _describe, _value, assert_declared_answer_bytes, declared_answer_bytes, load_steps, mismatches
 
 pytestmark = pytest.mark.ha
 
@@ -91,7 +93,8 @@ def test_leg_engine_differs_from_frozen_reference_only_as_declared(step):
     if "outcome" in declared:
         return  # A declared change of outcome: the contract test above judges the new result.
     undeclared = [f"{field}: {_value(old, field)!r} -> {_value(new, field)!r}"
-                  for field in COMPARED
+                  for field in (*COMPARED, *(
+                      ("answer.payloads",) if "answer.payloads" in declared else ()))
                   if _value(old, field) != _value(new, field) and field not in declared]
     assert not undeclared, "; ".join(undeclared)
 
@@ -108,16 +111,48 @@ def test_every_decision_is_explained():
 
 @pytest.mark.parametrize("step", [step for step in STEPS if step.op == "answer_offer"], ids=lambda step: step.name)
 def test_written_answer_is_byte_identical_where_nothing_was_declared(step):
-    """Audio only offers with no ledger row must produce the same bytes as production."""
+    """Only declared serialization insertions may change frozen audio bytes."""
     changes = [row for row in LEDGER if row["step"] == step.name]
-    if any(row["field"] != "answer.rtcp_bandwidth" for row in changes) or b"m=video" in step.sdp:
+    if any(row["field"] not in {"answer.rtcp_bandwidth", "answer.payloads"} for row in changes) or b"m=video" in step.sdp:
         return
-    actual, expected = negotiate(step), LEGACY[step.name]["answer_bytes"]
-    if changes:
-        assert len(changes) == 1 and changes[0]["cc"] == "RFC3556"
-        assert _value(actual, "answer.rtcp_bandwidth") == {"RS": 0, "RR": 0}
+    actual = negotiate(step)
+    assert_declared_answer_bytes(step, actual["answer_bytes"],
+        LEGACY[step.name]["answer_bytes"], changes)
+
+
+ALIAS_STEPS = [step for step in STEPS if "answer_payloads" in step.expect]
+
+
+@pytest.mark.parametrize("step", ALIAS_STEPS, ids=lambda step: step.name)
+@pytest.mark.parametrize("mutation", ["extra payload", "alias clock", "DTMF", "ptime", "origin", "line endings"])
+def test_declared_alias_byte_oracle_rejects_every_unlisted_change(step, mutation):
+    rows = [row for row in LEDGER if row["step"] == step.name]
+    expected = declared_answer_bytes(step, LEGACY[step.name]["answer_bytes"], rows)
+    altered = expected
+    if mutation == "extra payload":
         media = next(line for line in expected.split("\r\n") if line.startswith("m=audio "))
-        # RFC 3556: advertise the existing lack of audio RTCP. Every other
-        # byte, including payloads, clocks, timing and fmtp, remains frozen.
-        expected = expected.replace(media + "\r\n", media + "\r\nb=RS:0\r\nb=RR:0\r\n", 1)
-    assert actual["answer_bytes"] == expected
+        altered = expected.replace(media, media + " 120", 1)
+    elif mutation == "alias clock":
+        altered = expected.replace("a=rtpmap:8 PCMA/8000/1", "a=rtpmap:8 PCMA/16000/1", 1)
+    elif mutation == "DTMF":
+        altered = expected.replace("telephone-event/8000", "telephone-event/16000", 1)
+    elif mutation == "ptime":
+        altered = expected.replace("a=ptime:20", "a=ptime:10", 1)
+    elif mutation == "origin":
+        altered = expected.replace("o=- 0 0", "o=- 0 1", 1)
+    else:
+        altered = expected.replace("\r\n", "\n")
+    assert altered != expected
+    with pytest.raises(AssertionError):
+        assert_declared_answer_bytes(step, altered, LEGACY[step.name]["answer_bytes"], rows)
+
+
+@pytest.mark.parametrize("step", ALIAS_STEPS, ids=lambda step: step.name)
+def test_alias_declaration_cannot_change_the_primary_or_admit_unoffered_mapping(step):
+    rows = [row for row in LEDGER if row["step"] == step.name]
+    for intended in ([101, *step.expect["answer_payloads"][:-1]], [*step.expect["answer_payloads"], 120]):
+        changed = copy.deepcopy(rows)
+        next(row for row in changed if row["field"] == "answer.payloads")["intended"] = intended
+        altered_step = replace(step, expect={**step.expect, "answer_payloads": intended})
+        with pytest.raises(AssertionError):
+            declared_answer_bytes(altered_step, LEGACY[step.name]["answer_bytes"], changed)

@@ -55,16 +55,6 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             remote_rtp_host="192.0.2.10",
             remote_rtp_port=40000,
         )
-        established = sip_rtp_bridge.RtpPeer(
-            host="192.0.2.10",
-            port=40000,
-            payload_type=97,
-            audio_format=pcm_16k.audio_format,
-            rtp_format=pcm_16k,
-            send_payload_type=97,
-            send_audio_format=pcm_16k.audio_format,
-            send_rtp_format=pcm_16k,
-        )
 
         selected = sdp.negotiate_directional(invite.remote_sdp,
             [pcm_48k.audio_format, pcm_16k.audio_format],
@@ -78,7 +68,7 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
         invite = dataclasses.replace(invite, send_format=selected.send, recv_format=selected.recv,
             send_formats=selected.send_formats, recv_formats=selected.recv_formats)
 
-        updated = sip_bridge.invite_rtp_peer(invite, established=established)
+        updated = sip_bridge.invite_rtp_peer(invite)
 
         self.assertEqual(updated.inbound_rtp_format, selected.recv)
         self.assertEqual(updated.outbound_rtp_format, selected.send)
@@ -96,17 +86,26 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             send_format=pcm_48k,
             recv_format=pcm_48k,
         )
-        established = sip_rtp_bridge.RtpPeer(
-            host="192.0.2.10",
-            port=40000,
-            payload_type=97,
-            audio_format=sdp.RtpPcmFormat(97, "L16", 16000, 1, 20).audio_format,
-            rtp_format=sdp.RtpPcmFormat(97, "L16", 16000, 1, 20),
+
+        pcm_16k = sdp.RtpPcmFormat(97, "L16", 16000, 1, 20)
+        pcm_48k_tx = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        selected = sdp.negotiate_directional(
+            invite.remote_sdp,
+            [pcm_48k_tx.audio_format, pcm_16k.audio_format],
+            [pcm_48k.audio_format, pcm_16k.audio_format],
+            established=sdp.RtpPcmDirection(pcm_16k, pcm_16k),
         )
+        self.assertIsNotNone(selected)
+        self.assertEqual((selected.send.payload_type, selected.send.sample_rate, selected.send.frame_ms),
+                         (96, 48000, 10))
+        self.assertEqual((selected.recv.payload_type, selected.recv.sample_rate, selected.recv.frame_ms),
+                         (96, 48000, 20))
+        invite = dataclasses.replace(invite, send_format=selected.send, recv_format=selected.recv,
+            send_formats=selected.send_formats, recv_formats=selected.recv_formats)
+        updated = sip_bridge.invite_rtp_peer(invite)
 
-        updated = sip_bridge.invite_rtp_peer(invite, established=established)
-
-        self.assertEqual(updated.inbound_rtp_format, pcm_48k)
+        self.assertEqual(updated.inbound_rtp_format, selected.recv)
+        self.assertEqual(updated.outbound_rtp_format, selected.send)
 
     @staticmethod
     def _cross_codec_video_fixture():

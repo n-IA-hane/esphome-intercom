@@ -98,3 +98,32 @@ def test_an_error_is_not_accepted_where_a_refusal_was_declared():
 def test_frozen_reference_covers_every_case_and_recorded_offer():
     golden = json.loads(GOLDEN.read_text())
     assert set(golden) == {step.name for step in STEPS} | {"offer:" + name for name in OFFER_PRESETS}
+
+
+ALIAS_CONTROL = next(index for index, row in enumerate(LEDGER) if row["field"] == "answer.payloads")
+
+
+@pytest.mark.parametrize("change,expected", [
+    ({"prior": [0, 8, 101]}, "prior is"),
+    ({"intended": [0, 8, 101, 120]}, "intended is"),
+    ({"cc": "RFC3556"}, "does not cover this field"),
+    ({"entry_point": "answer to a local offer"}, "entry point is"),
+])
+def test_alias_ledger_rejects_wrong_frozen_prior_intended_or_authority(change, expected):
+    rows = copy.deepcopy(LEDGER)
+    rows[ALIAS_CONTROL].update(change)
+    assert any(expected in problem for problem in ledger_problems(rows, STEPS, OBSERVED))
+
+
+def test_alias_ledger_requires_one_exact_row_and_detects_stale_declaration():
+    row = LEDGER[ALIAS_CONTROL]
+    assert any("not in the ledger" in problem for problem in ledger_problems(
+        [item for index, item in enumerate(LEDGER) if index != ALIAS_CONTROL], STEPS, OBSERVED))
+    assert any("duplicate row" in problem for problem in ledger_problems(
+        [*LEDGER, copy.deepcopy(row)], STEPS, OBSERVED))
+    observed = copy.deepcopy(OBSERVED)
+    media = next(line for line in observed[row["step"]]["answer_bytes"].split("\r\n") if line.startswith("m=audio "))
+    suffix = " ".join(map(str, row["prior"]))
+    changed = media[:-len(suffix)] + " ".join(map(str, row["intended"]))
+    observed[row["step"]]["answer_bytes"] = observed[row["step"]]["answer_bytes"].replace(media, changed, 1)
+    assert any("stale row" in problem and "answer.payloads" in problem for problem in ledger_problems(LEDGER, STEPS, observed))

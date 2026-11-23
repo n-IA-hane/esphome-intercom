@@ -18,9 +18,11 @@ def test_p4_uses_shared_typed_contacts_without_a_separate_mailbox_page(path):
     assert contact['parent_id'] == 'phone_contacts_container'
     assert contact['row_height'] == 72
     assert 'get_contact(index)' in text(contact['render_row'])
-    assert 'get_contact_blf(contact->stable_id())' in text(contact['render_row'])
-    assert 'pickup_contact(row_id)' in text(contact['on_select'])
-    assert 'call_contact(row_id)' in text(contact['on_select'])
+    assert 'get_contact_account_view(*contact)' in text(contact['row_key'])
+    assert 'row.set_scope(' in text(contact['render_row'])
+    assert 'get_contact_blf(contact->stable_id(), id(phone).get_contact_account_view(*contact))' in text(contact['render_row'])
+    assert 'pickup_contact(row_id, row_scope)' in text(contact['on_select'])
+    assert 'call_contact(row_id, row_scope)' in text(contact['on_select'])
     assert 'phone_voicemail_page' not in text(config)
     assert 'imap_voicemail' not in config
     assert by_id(config['lvgl'], 'phone_contacts_container')

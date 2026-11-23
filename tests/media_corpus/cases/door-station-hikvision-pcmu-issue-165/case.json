@@ -34,7 +34,12 @@
       "dtmf": {
         "clock": 8000,
         "payload": 101
-      }
+      },
+      "answer_payloads": [
+        0,
+        8,
+        101
+      ]
     }
   ],
   "rules": [

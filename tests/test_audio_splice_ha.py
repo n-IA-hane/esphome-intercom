@@ -253,7 +253,7 @@ class AudioSpliceTest(unittest.IsolatedAsyncioTestCase):
                     calls.add_leg(session.call_id, wire, role="callee", state="in_call")
                     session.legs[wire].dialog = SimpleNamespace(dialog=object(), close=AsyncMock(), terminate=AsyncMock(),
                         dialog_ids=SimpleNamespace(call_id=wire), on_refer=None, on_media_update=None,
-                        on_info_dtmf=None, on_info_dtmf_event=None, on_info_video=None)
+                        on_connected_identity=None, on_info_dtmf=None, on_info_dtmf_event=None, on_info_video=None)
                     calls.set_bridge_link(session.call_id, wire)
                     calls.attach_relay(session.call_id, relay)
                 runtime = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},
