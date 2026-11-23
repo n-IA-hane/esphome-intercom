@@ -42,7 +42,8 @@ class SipIncomingInvites:
                     raise sdp.SdpError("changed video requires an explicit media contract")
             validate_answer_contract(sdp.RtpPcmDirection(chosen.send_format, chosen.recv_format,
                 chosen.recv_formats, chosen.send_formats), answer_sdp,
-                events=chosen.dtmf_direction, dahua=chosen.peer_profile == "dahua")
+                events=chosen.dtmf_direction, dahua=chosen.peer_profile == "dahua",
+                remote_sdp=pending.request.body)
         except (ValueError, sdp.SdpError) as error:
             _LOGGER.error("SIP answer media contract rejected call_id=%s: %s", chosen.call_id, error)
             return False

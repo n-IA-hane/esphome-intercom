@@ -539,7 +539,8 @@ class ForwardOperation:
         if self.owned_sip_source is not None:
             async def complete(reason):
                 registry.request_termination(call_id, TerminationIntent(reason), generation=current.generation)
-            existing_media = await self.owned_sip_source.adopt_application(complete, staged=self.reservation)
+            existing_media = await self.owned_sip_source.adopt_application(complete, staged=self.reservation,
+                                                                          connected_party=current.callee)
             self.reservation = existing_media.reservation
             assist_invite = existing_media.invite
         if local_source is not None:
@@ -578,7 +579,7 @@ class ForwardOperation:
                 self.reservation.ports[0],
                 invite.send_format,
                 invite.recv_format,
-                recv_formats=invite.recv_formats,
+                recv_formats=invite.recv_formats, send_formats=invite.send_formats,
                 remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             )
         registry.take_pending_invite(call_id)

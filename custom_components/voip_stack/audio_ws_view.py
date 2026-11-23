@@ -23,7 +23,7 @@ from .core import rtp
 from .core.sip_stun import is_stun_message
 from .audio_ws import decode_audio_frame, encode_audio_frame
 from .audio_ws_frames import BrowserAudioReceiver, BrowserPcmPlayout, DeferredAudioFrames
-from .browser_playback import BrowserPlayback
+from .browser_playback import BROWSER_MEDIA_START_TIMEOUT, BrowserPlayback
 from .call_projection import publish_media_route
 from .config import debug_mode, media_capture_enabled
 from .core.audio_format import HA_SIP_PCM_FORMATS, MAX_PCM_FRAME_BYTES
@@ -71,7 +71,6 @@ from .websocket_owner import (
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 15
 _DEBUG_TIMING_MAX_SAMPLES = 4096
-_AUDIO_OWNER_HANDOFF_TIMEOUT = 5.0
 # Keep control/conference small. SIP reserves the bounded PCM encoder envelope
 # before prepare, so a claim handoff or re-INVITE cannot outgrow its reader.
 _MAX_BROWSER_AUDIO_MESSAGE_BYTES = 4096
@@ -398,7 +397,7 @@ class VoipAudioWebSocketView(HomeAssistantView):
                 prepared.registry,
                 channel="audio",
                 max_msg_size=max_msg_size,
-                timeout=_AUDIO_OWNER_HANDOFF_TIMEOUT,
+                timeout=BROWSER_MEDIA_START_TIMEOUT,
                 local_call=prepared.local_call,
                 publish_state=lambda: _publish_ha_softphone_state(
                     hass, endpoint_id=endpoint_id

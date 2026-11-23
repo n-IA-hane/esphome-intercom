@@ -270,7 +270,7 @@ def answer_inbound_ha_softphone(
         local_rtp_port,
         invite.send_format,
         invite.recv_format,
-        recv_formats=invite.recv_formats,
+        recv_formats=invite.recv_formats, send_formats=invite.send_formats,
         dtmf=dtmf_format,
         remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
         video_port=local_video_rtp_port,

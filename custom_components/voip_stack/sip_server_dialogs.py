@@ -974,7 +974,7 @@ class SipServerDialogs:
                 validate_answer_contract(sdp.RtpPcmDirection(updated_invite.send_format,
                     updated_invite.recv_format, updated_invite.recv_formats, updated_invite.send_formats),
                     answer_sdp, events=updated_invite.dtmf_direction,
-                    dahua=updated_invite.peer_profile == "dahua")
+                    dahua=updated_invite.peer_profile == "dahua", remote_sdp=request.body)
             except (ValueError, sdp.SdpError):
                 status, reason = 488, "Not Acceptable Here"
         next_sdp_version = int(dialog.local_sdp_session_version)

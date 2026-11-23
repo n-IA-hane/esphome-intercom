@@ -460,7 +460,7 @@ class ForwardGroup:
                 invite,
                 endpoint,
                 application,
-                timeout=self.operation.plan.ring_timeout or 30,
+                timeout=self.operation.plan.ring_timeout,
                 accepted_decision=browser_decision,
             )
             if not self.operation.borrowed_reservation:

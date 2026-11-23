@@ -402,7 +402,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.dtmf_events,
         )
         self.assertIn(
-            'client.on_info_dtmf_event = lambda digit, duration_ms=160: _emit("right", digit, "sip_info", duration_ms=duration_ms)',
+            'client.on_info_dtmf = lambda digit, duration_ms: _emit("right", digit, "sip_info", duration_ms=duration_ms)',
             self.dtmf_events,
         )
         # The behavioral INFO tests validate both native dialog roles. A

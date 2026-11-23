@@ -353,7 +353,8 @@ class SipRtpRelay:
         capture_name: str = "",
         on_release: Callable[[tuple[int, int]], None] | None = None,
         on_dtmf: Callable[[str, str, str], None] | None = None,
-        on_dtmf_fallback: Callable[[str, str], Awaitable[bool]] | None = None,
+        on_dtmf_fallback: Callable[[str, str, int], Awaitable[bool]] | None = None,
+        on_info_dtmf: Callable[[str, str, int], None] | None = None,
         on_media_route_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.left = left
@@ -368,6 +369,7 @@ class SipRtpRelay:
         self._on_release = on_release
         self.on_dtmf = on_dtmf
         self.on_dtmf_fallback = on_dtmf_fallback
+        self.on_info_dtmf = on_info_dtmf
         self.on_media_route_changed = on_media_route_changed
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
@@ -648,7 +650,6 @@ class SipRtpRelay:
         setattr(self, "left_to_right" if side == "left" else "right_to_left", incoming)
         setattr(self, "right_to_left" if side == "left" else "left_to_right", outgoing)
         self.left_to_right_passthrough = self.right_to_left_passthrough = False
-        self._adopted_audio_state = True
         peer.sequence, peer.timestamp, peer.ssrc = (state.sender.sequence,
             state.sender.timestamp, state.sender.ssrc)
         peer.clock_rate = state.sender.clock_rate or state.encoder.fmt.rtp_clock_rate
@@ -1269,14 +1270,12 @@ class SipRtpRelay:
         """Run one dialog-level fallback under the relay lifecycle owner."""
 
         callback = self.on_dtmf_fallback
-        event_callback = getattr(self, "on_dtmf_fallback_event", None)
-        if (callback is None and event_callback is None) or self._stop_requested:
+        if callback is None or self._stop_requested:
             return
 
         async def _run() -> None:
             try:
-                result = (await event_callback(source_side, digit, duration_ms)
-                          if event_callback is not None else await callback(source_side, digit))
+                result = await callback(source_side, digit, duration_ms)
                 if not result:
                     _LOGGER.info(
                         "SIP INFO DTMF fallback not accepted source=%s digit=%s",
@@ -1468,7 +1467,7 @@ class SipRtpRelay:
             receive_state = self._receive_states[side]
             if receive_state.ssrc is None and source.rx_ssrc is not None:
                 receive_state.ssrc = source.rx_ssrc
-            if not receive_state.admit(packet):
+            if not receive_state.admit(packet, clock_rate=received_format.rtp_clock_rate):
                 self.dropped += 1
                 return
             if receive_state.changed:
@@ -1483,9 +1482,10 @@ class SipRtpRelay:
                 (self.left_to_right_clock if side == "left" else self.right_to_left_clock).reset()
             converter = self.left_to_right if side == "left" else self.right_to_left
             pending_pcm = ((decoder is not None and decoder.has_pending_pcm)
-                           or (converter is not None and converter.has_pending_pcm))
+                           or (converter is not None and converter.has_pending_pcm)
+                           or (output_encoder is not None and output_encoder.has_pending_pcm))
             packet_size = len(packet.payload) if not pending_pcm else None
-            passthrough = not self.debug_capture and not getattr(self, "_adopted_audio_state", False) and payload_relay_compatible(
+            passthrough = not self.debug_capture and payload_relay_compatible(
                 received_format, wire_format, payload_size=packet_size
             )
             if pending_pcm or (decoder is not None and decoder.has_pending_media):

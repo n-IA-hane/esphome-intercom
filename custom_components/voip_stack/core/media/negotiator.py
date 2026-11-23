@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ..sdp_parser import local_direction_for_offer, parse_sdp, fmtp_parameters
+from ..sdp_parser import (
+    local_direction_for_offer, parse_sdp, fmtp_parameters,
+    format_direction_for_remote, normalize_direction,
+)
 from ..sdp_types import RtpPcmDirection
 from ..sdp_types import SdpError
 from ..sdp_audio_facts import offered_pcm_formats, offered_dtmf_formats
@@ -17,7 +20,7 @@ from ..audio_format import PcmFormat
 from . import leg
 from .capability import PeerEvidence, resolve_peer_media_profile
 from .payload_map import PayloadMap, PayloadConflict, TELEPHONE_EVENT
-from .codecs import DEFAULT_OPUS_RECEIVE_FMTP
+from .codecs import CODECS, DEFAULT_OPUS_RECEIVE_FMTP
 
 LegContract = leg.LegContract
 Refusal = leg.Refusal
@@ -25,34 +28,87 @@ OfferPlan = leg.OfferPlan
 negotiate_dtmf = leg.negotiate_dtmf
 
 
-def validate_answer_contract(audio, answer_sdp, *, events=None, dahua=False):
+def answer_audio_projection(audio, *, direction, remote_sdp=None):
+    """Serialize the chosen mappings and local receiver envelope without negotiating.
+
+    RFC 3264 section 6.1 constructs an inactive answer's format list from the
+    offer direction. Peer receiver bounds belong to local TX, never to the
+    local receiver's advertised maxptime.
+    """
+    remote_direction = parse_sdp(remote_sdp)['direction'] if remote_sdp else 'sendrecv'
+    format_direction = format_direction_for_remote(remote_direction, normalize_direction(direction))
+    send, recv = audio.send, audio.recv
+    def key(fmt):
+        return fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels
+    if format_direction == 'sendonly':
+        selected = [send]
+        alternatives = audio.send_formats
+    elif format_direction == 'recvonly':
+        selected = [recv]
+        alternatives = audio.recv_formats
+    else:
+        selected = [recv] if key(send) == key(recv) else [recv, send]
+        alternatives = audio.recv_formats
+    for fmt in alternatives:
+        if fmt.encoding != 'CN' and all(fmt.payload_type != item.payload_type for item in selected):
+            selected.append(fmt)
+    if format_direction in {'recvonly', 'sendrecv'}:
+        if (recv.sample_rate, recv.channels) == (CODECS['CN'].static_clock_rate, 1):
+            offered = {key(fmt) for fmt in offered_pcm_formats(remote_sdp, include_auxiliary=True)} if remote_sdp else None
+            for fmt in audio.recv_formats:
+                if (fmt.encoding == 'CN' and (fmt.sample_rate, fmt.channels) == (recv.sample_rate, 1)
+                        and (offered is None or key(fmt) in offered)
+                        and all(fmt.payload_type != item.payload_type for item in selected)):
+                    selected.append(fmt)
+        receivers = {fmt.payload_type: fmt for fmt in audio.recv_formats}
+        receivers[recv.payload_type] = recv
+        selected = [receivers.get(fmt.payload_type,
+            replace(fmt, fmtp=DEFAULT_OPUS_RECEIVE_FMTP) if fmt.encoding == 'OPUS' else fmt)
+            for fmt in selected]
+        bounds = [fmt.max_frame_ms for fmt in (audio.recv_formats or (recv,)) if fmt.max_frame_ms]
+        maximum = min(bounds) if bounds else max(recv.frame_ms, recv.max_frame_ms)
+        packet_ms = recv.frame_ms
+    else:
+        # No peer media is received on a sendonly stream. Retain the existing
+        # harmless timing attributes, without treating them as a TX promise.
+        packet_ms = maximum = send.frame_ms
+    return tuple(selected), packet_ms, maximum
+
+
+def validate_answer_contract(audio, answer_sdp, *, events=None, dahua=False, remote_sdp=None):
     """Validate serialization of an already chosen answer without selecting again."""
     section = parse_sdp(answer_sdp)
-    expected = (audio.send_formats or (audio.send,)) if section["direction"] == "sendonly" else (
+    remote_direction = parse_sdp(remote_sdp)['direction'] if remote_sdp else 'sendrecv'
+    format_direction = format_direction_for_remote(remote_direction, section['direction'])
+    expected = (audio.send_formats or (audio.send,)) if format_direction == "sendonly" else (
         audio.recv_formats or (audio.recv,))
-    if section["direction"] == "inactive":
+    if section["direction"] == "inactive" and format_direction == 'sendrecv':
         expected = tuple(dict.fromkeys((*expected, *(audio.send_formats or (audio.send,)))))
     def key(fmt):
         return fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels
     actual = offered_pcm_formats(answer_sdp, allow_dahua_pcm=dahua, include_auxiliary=True)
+    projected, packet_ms, maximum = answer_audio_projection(audio,
+        direction=section['direction'], remote_sdp=remote_sdp)
+    if {key(fmt) for fmt in projected} != {key(fmt) for fmt in expected}:
+        raise SdpError('answer projection differs from the chosen directional media contract')
     advertised_events = offered_dtmf_formats(answer_sdp)
     if set(section["payload_order"]) != {fmt.payload_type for fmt in (*actual, *advertised_events)}:
         raise SdpError("answer advertised a mapping absent from the media backend")
     if {key(fmt) for fmt in actual} != {key(fmt) for fmt in expected}:
         raise SdpError("answer changed accepted mappings without the matching media contract")
-    receivers = {key(fmt): fmt for fmt in expected}
+    receivers = {key(fmt): fmt for fmt in projected}
     for fmt in actual:
         if fmt.encoding == "OPUS" and fmtp_parameters(fmt.fmtp) != fmtp_parameters(
                 receivers[key(fmt)].fmtp or DEFAULT_OPUS_RECEIVE_FMTP):
             raise SdpError("answer changed the chosen Opus receiver parameters")
-    if section["direction"] != "sendonly" and section["ptime"] and section["ptime"] != audio.recv.frame_ms:
+    if format_direction != "sendonly" and section["ptime"] and section["ptime"] != packet_ms:
         raise SdpError("answer changed receive packet time without the matching media contract")
     expected_events = ((events.recv_formats or ((events.recv,) if events.recv is not None else ()))
                        if events is not None else ())
     if set(advertised_events) != set(expected_events):
         raise SdpError("answer changed telephone-event mappings without the matching media contract")
-    bounds = [fmt.max_frame_ms for fmt in expected if fmt.max_frame_ms]
-    if section["direction"] != "sendonly" and bounds and section["maxptime"] != min(bounds):
+    bounds = [fmt.max_frame_ms for fmt in (audio.recv_formats or (audio.recv,)) if fmt.max_frame_ms]
+    if format_direction != "sendonly" and bounds and section["maxptime"] != maximum:
         raise SdpError("answer changed the chosen receiver envelope")
 
 

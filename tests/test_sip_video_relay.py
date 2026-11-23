@@ -305,6 +305,25 @@ class SipVideoRelayTests(unittest.TestCase):
 
         self.assertFalse(self.relay.arm_keyframe_request("right"))
 
+    def test_owned_transcoder_output_ends_startup_recovery_and_allows_explicit_rearm(self) -> None:
+        self.right.local_video_format = replace(self.right.recv_format,
+            rtcp_feedback=("ccm fir",))
+        self.relay._transcode.directions = {"right"}  # The existing consumer owns decoding.
+        self.right.rx_ssrc = 0x11223344
+        self.assertTrue(self.relay.arm_keyframe_request("right"))
+        with mock.patch.object(sip_video_relay, "monotonic", return_value=10.0):
+            self.relay._send_armed_keyframe_request("right", self.right)
+        self.assertEqual(len(self.right_rtcp.sent), 1)
+        output = rtp.build_packet(rtp.RtpPacket(self.left.send_format.payload_type,
+            1, 90000, 0xAA55, b"\x65\x88\x84", marker=True))
+        self.relay.handle_transcoded_rtp("right", output)
+        self.assertNotIn("right", self.relay._keyframe_requests)
+        with mock.patch.object(sip_video_relay, "monotonic", return_value=11.0):
+            self.relay._send_armed_keyframe_request("right", self.right)
+            self.assertEqual(len(self.right_rtcp.sent), 1)
+            self.assertTrue(self.relay.request_keyframe("right"))
+        self.assertEqual(len(self.right_rtcp.sent), 2)
+
     def test_connection_hold_blocks_only_traffic_toward_held_leg(self) -> None:
         self.left.connection_held = True
         packet = rtp.build_packet(rtp.RtpPacket(110, 1, 1, 1, b"x"))

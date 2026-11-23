@@ -665,7 +665,7 @@ class PendingLocalSource:
                 invite, remote_rtp_port=source_port,
                 remote_sdp=build_answer_directional(
                     local_ip, local_ip, source_port, invite.send_format, invite.recv_format,
-                    recv_formats=invite.recv_formats,
+                    recv_formats=invite.recv_formats, send_formats=invite.send_formats,
                 ).encode(),
             ),
             "local_rtp_port": browser_port,
@@ -676,7 +676,7 @@ class PendingLocalSource:
             invite, remote_rtp_port=browser_port,
             remote_sdp=build_answer_directional(
                 local_ip, local_ip, browser_port, invite.send_format, invite.recv_format,
-                recv_formats=invite.recv_formats,
+                recv_formats=invite.recv_formats, send_formats=invite.send_formats,
             ).encode(),
         )
 

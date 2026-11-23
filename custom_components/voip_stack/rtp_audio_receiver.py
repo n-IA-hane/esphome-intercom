@@ -84,7 +84,7 @@ class RtpAudioReceiver:
 
     @property
     def receive_state(self):
-        """Share source admission with negotiated same-clock telephone events."""
+        """Share RTP sequence admission with same-SSRC telephone events."""
         return self._receive_state
 
     @property
@@ -209,7 +209,7 @@ class RtpAudioReceiver:
         rtp.validate_audio_payload_size(packet.payload, fmt)
         self.last_gap_ms = 0.0
         if not admitted:
-            if not self._receive_state.admit(packet):
+            if not self._receive_state.admit(packet, clock_rate=fmt.rtp_clock_rate):
                 return []
             if self._receive_state.changed:
                 self.reset_source()

@@ -142,7 +142,8 @@ class LocalCallApplication:
         if owned_source is not None:
             self.invite = owned_source.invite
             self.source_client = owned_source.client
-            media = await owned_source.adopt_application(complete, staged=reservation)
+            media = await owned_source.adopt_application(complete, staged=reservation,
+                                                        connected_party=self.contact.display_name)
             reservation = media.reservation
             preanswered = registry.resource_for(self.session.call_id, "preanswered")
             self.answered = True
@@ -177,7 +178,7 @@ class LocalCallApplication:
                 reservation.ports[0],
                 self.invite.send_format,
                 self.invite.recv_format,
-                recv_formats=self.invite.recv_formats,
+                recv_formats=self.invite.recv_formats, send_formats=self.invite.send_formats,
                 dtmf=dtmf,
                 remote_sdp=self.invite.remote_sdp, dtmf_direction=getattr(self.invite, "dtmf_direction", None),
             )
@@ -379,8 +380,7 @@ def bind_application_source_dialog(application):
                 answer_video_rtp_port=video_update.answer_video_rtp_port)
         return commit
     client.on_media_update = prepare
-    def on_info(digit, _duration_ms=160):
+    def on_info(digit, _duration_ms):
         if registry.resource_for(session.call_id, "relay") is media and media.on_dtmf is not None:
             media.on_dtmf("left", digit, "sip_info")
     client.on_info_dtmf = on_info
-    client.on_info_dtmf_event = None

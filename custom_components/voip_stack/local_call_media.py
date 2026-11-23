@@ -174,6 +174,7 @@ class LocalCallMedia:
         self.release_reservation_on_stop = True
         self.on_complete = on_complete
         self.on_dtmf = None
+        self._handoff_input: list[bytes] | None = None
         self._dtmf_sdp = None
         self._dtmf_decoder = None
 
@@ -246,7 +247,7 @@ class LocalCallMedia:
         if not frames:
             return
         if not self._accepting_input:
-            if hasattr(self, "_handoff_input"):
+            if self._handoff_input is not None:
                 self._handoff_input.extend(frames)
                 del self._handoff_input[:-_RX_QUEUE_FRAMES]
                 return
@@ -602,9 +603,7 @@ class LocalCallMedia:
         self._drain_rx()
         self._accepting_input = True
         try:
-            pending = getattr(self, "_handoff_input", ())
-            if hasattr(self, "_handoff_input"):
-                del self._handoff_input
+            pending, self._handoff_input = self._handoff_input or (), None
             self._receive_pcm(self.decoder, pending)
             while not self.closed.is_set():
                 yield await self.rx_queue.get()

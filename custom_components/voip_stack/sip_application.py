@@ -230,7 +230,7 @@ class SipApplicationMethods:
         if enabled is not None:
             await async_set_endpoint_dnd(self.hass, endpoint.endpoint_id, enabled)
             subscription = self.subscriptions[_subscription_key(request)]
-            result = self._notification_result(subscription, expires=max(0, int(subscription.expires_at - time.time())))
+            result = self._notification_result(subscription, expires=max(0, int(subscription.expires_at - asyncio.get_running_loop().time())))
             result = replace(result, follow_up_scheduler=lambda: self._schedule_notification(subscription, result))
         if self.feature_unsubscribe is None and any(item.event == "as-feature-event" for item in self.subscriptions.values()):
             self.feature_unsubscribe = directory.subscribe(self._feature_changed)
@@ -348,7 +348,7 @@ class SipApplicationMethods:
             if key in self.subscriptions:
                 return SipRequestResult(491, "Request Pending")
             subscription = SipEventSubscription(key=key, dialog=state, event="refer", target=target.uri,
-                subscriber=subscriber, to_tag=tag, request=request, addr=addr, expires_at=time.time() + 60,
+                subscriber=subscriber, to_tag=tag, request=request, addr=addr, _expires_at=None,
                 sender=sender, notify_lock=asyncio.Lock())
         except (ValueError, sip.SipError):
             return SipRequestResult(400, "Bad Request")
@@ -364,12 +364,16 @@ class SipApplicationMethods:
                     headers=headers, body=body, content_type="message/sipfrag"))
             return await sender(request, addr, result)
 
-        notifier = sip_transfer.ReferNotifier(state, sequence.number, send)
+        def observation_ended():
+            if self.subscriptions.get(key) is subscription:
+                self.subscriptions.pop(key, None)
+        notifier = sip_transfer.ReferNotifier(state, sequence.number, send,
+                                            on_end=observation_ended)
         subscription.refer_notifier = notifier
 
         async def run():
             try:
-                await sip_transfer.run_refer_action(action, notifier.report)
+                await sip_transfer.run_refer_action(action, notifier)
             finally:
                 await notifier.close()
                 if self.subscriptions.get(key) is subscription:
@@ -558,7 +562,7 @@ class SipApplicationMethods:
             to_tag=to_tag,
             request=request,
             addr=addr,
-            expires_at=time.time() + expires,
+            _expires_at=asyncio.get_running_loop().time() + expires,
             sender=follow_up_sender,
             transport=transport.upper(),
             authentication_generation=self.registrar.authentication_generation(subscriber),
@@ -738,6 +742,13 @@ class SipApplicationMethods:
             return
         self.subscriptions.pop(subscription.key)
         self._cancel_timer(self.subscription_timers, subscription.key)
+        if subscription.refer_notifier is not None:
+            if notify:
+                subscription.refer_notifier.terminate(reason)
+            else:
+                subscription.refer_notifier.cancel()
+            self._release_dialog_observers_if_unused()
+            return
         if notify:
             self._schedule_notification(subscription, self._notification_result(
                 subscription, expires=0, terminated=True, termination_reason=reason))
@@ -801,7 +812,7 @@ class SipApplicationMethods:
                 self.subscriptions.pop(subscription.key, None)
                 self._cancel_timer(self.subscription_timers, subscription.key)
             result = self._notification_result(
-                subscription, expires=0 if removed else max(0, int(subscription.expires_at - time.time())),
+                subscription, expires=0 if removed else max(0, int(subscription.expires_at - asyncio.get_running_loop().time())),
                 terminated=removed, termination_reason="noresource", dialog_states=states,
             )
             self._schedule_notification(subscription, result)
@@ -863,7 +874,7 @@ class SipApplicationMethods:
                 self._end_subscription(subscription, reason="noresource")
             else:
                 self._schedule_notification(subscription, self._notification_result(
-                    subscription, expires=max(0, int(subscription.expires_at - time.time()))))
+                    subscription, expires=max(0, int(subscription.expires_at - asyncio.get_running_loop().time()))))
 
     @callback
     def _mailbox_changed(self, event) -> None:
@@ -885,12 +896,14 @@ class SipApplicationMethods:
     def _notify_subscribers(self, target: str, *, event="presence") -> None:
         subscriptions = self.subscriptions
         assert subscriptions is not None
-        now = time.time()
+        now = asyncio.get_running_loop().time()
         for key, subscription in tuple(subscriptions.items()):
+            # REFER has its own notifier/lease and never enters generic
+            # presence/dialog expiry or notification generation.
+            if subscription.event != event or subscription.refer_notifier is not None:
+                continue
             if subscription.expires_at <= now:
                 self._end_subscription(subscription)
-                continue
-            if subscription.event != event:
                 continue
             # The accepted feature dialog owns an account, independently of
             # which of its public SIP aliases addressed the subscription.
@@ -932,7 +945,7 @@ class SipApplicationMethods:
         current = subscriptions.get(key)
         if current is None or current.to_tag != to_tag:
             return
-        if current.expires_at > time.time():
+        if current.expires_at > asyncio.get_running_loop().time():
             return
         self._end_subscription(current)
         if current.notify_task is not None:
@@ -1298,7 +1311,7 @@ class SipEventSubscription:
     to_tag: str
     request: sip.SipMessage
     addr: tuple[str, int]
-    expires_at: float
+    _expires_at: float | None
     sender: SipFollowUpSender
     notify_lock: asyncio.Lock
     transport: str = ""
@@ -1317,6 +1330,18 @@ class SipEventSubscription:
     notify_terminated: bool = False
     refer_notifier: sip_transfer.ReferNotifier | None = None
 
+    @property
+    def expires_at(self):
+        if self.refer_notifier is not None:
+            return self.refer_notifier.expires_at
+        return self._expires_at
+
+    @expires_at.setter
+    def expires_at(self, value):
+        if self.refer_notifier is not None:
+            raise RuntimeError("REFER expiry belongs to its notifier")
+        self._expires_at = value
+
 
 def _subscription_key(request: sip.SipMessage) -> str:
     package, parameters = sip._split_semicolon_params(request.header("Event"))
@@ -1325,10 +1350,10 @@ def _subscription_key(request: sip.SipMessage) -> str:
 
 
 def _publication_expires(value: str) -> int:
-    expires = 3600 if not value.strip() else int(value)
+    expires = sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES if not value.strip() else int(value)
     if expires < 0:
         raise ValueError("invalid presence expiry")
-    return min(expires, 3600)
+    return min(expires, sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES)
 
 
 def _valid_pidf(body: bytes, target: str) -> bool:

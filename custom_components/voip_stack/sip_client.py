@@ -230,8 +230,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self.dialog = None
         self.early_dialogs: dict[str, SipDialog | None] = {}
         self._terminated_invite_branches: set[str] = set()
-        self.on_info_dtmf: Callable[[str], None] | None = None
-        self.on_info_dtmf_event: Callable[[str, int], None] | None = None
+        self.on_info_dtmf: Callable[[str, int], None] | None = None
         self.on_info_video: Callable[[], Awaitable[None]] | None = None
         self.on_media_update: DialogMediaUpdateHandler | None = None
         self.on_provisional_media: Callable[[SipDialog], Awaitable[PreparedDialogMediaUpdate | None]] | None = None
@@ -1394,7 +1393,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 self.local_rtp_port,
                 selected.send,
                 selected.recv,
-                recv_formats=receive_formats,
+                recv_formats=receive_formats, send_formats=send_formats,
                 dtmf=dtmf_formats[0] if dtmf_formats else None,
                 audio_rtcp=False,
                 remote_sdp=request.body,
@@ -1746,7 +1745,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                         updated.local_rtp_port,
                                         updated.send_format,
                                         updated.recv_format,
-                                        recv_formats=updated.recv_formats,
+                                        recv_formats=updated.recv_formats, send_formats=updated.send_formats,
                                         audio_rtcp=False,
                                         dtmf=(
                                             sdp.offered_dtmf_formats(request.body)[0]
@@ -1778,7 +1777,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                     updated.local_rtp_port,
                                     updated.send_format,
                                     updated.recv_format,
-                                    recv_formats=updated.recv_formats,
+                                    recv_formats=updated.recv_formats, send_formats=updated.send_formats,
                                     audio_rtcp=False,
                                     dtmf=(
                                         sdp.offered_dtmf_formats(request.body)[0]
@@ -2418,12 +2417,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 if sip.is_picture_fast_update(msg.header("Content-Type"), msg.body) and self.on_info_video is not None:
                     await self.on_info_video()
                 digit = parse_sip_info_digit(msg.header("Content-Type"), msg.body)
-                if digit and (self.on_info_dtmf_event is not None or self.on_info_dtmf is not None):
+                if digit and self.on_info_dtmf is not None:
                     try:
-                        if self.on_info_dtmf_event is not None:
-                            self.on_info_dtmf_event(digit, parse_sip_info_duration(msg.body))
-                        else:
-                            self.on_info_dtmf(digit)
+                        self.on_info_dtmf(digit, parse_sip_info_duration(msg.body))
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.warning("SIP INFO DTMF callback failed: %s", err)
             self._send_response_to_request(msg, addr[0], addr[1], 200, "OK")
@@ -2590,12 +2586,16 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             return await self.on_refer(target) if self.on_refer else 603
 
         self._incoming_refer_count += 1
+        def observation_ended():
+            if self._refer_notifiers.get(usage.key.call_id) is notifier:
+                self._refer_notifiers.pop(usage.key.call_id, None)
         notifier = sip_transfer.ReferNotifier(usage, refer_cseq, send,
-            allow_missing_id=usage.key.call_id != self.dialog_ids.call_id or self._incoming_refer_count == 1)
+            allow_missing_id=usage.key.call_id != self.dialog_ids.call_id or self._incoming_refer_count == 1,
+            on_end=observation_ended)
         self._refer_notifiers[usage.key.call_id] = notifier
         async def run():
             try:
-                await sip_transfer.run_refer_action(action, notifier.report)
+                await sip_transfer.run_refer_action(action, notifier)
             finally:
                 await notifier.close()
                 self._refer_notifiers.pop(usage.key.call_id, None)

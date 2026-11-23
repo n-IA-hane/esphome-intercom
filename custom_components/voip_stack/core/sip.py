@@ -33,6 +33,7 @@ def is_picture_fast_update(content_type: str, body: bytes) -> bool:
 SIP_VERSION = "SIP/2.0"
 MAX_SIP_MESSAGE_BYTES = 8192
 MAX_SIP_BODY_BYTES = 4096
+DEFAULT_EVENT_SUBSCRIPTION_EXPIRES = 3600
 RFC5168_PICTURE_FAST_UPDATE_BODY = (
     b'<?xml version="1.0" encoding="utf-8"?>\r\n'
     b"<media_control><vc_primitive><to_encoder>"

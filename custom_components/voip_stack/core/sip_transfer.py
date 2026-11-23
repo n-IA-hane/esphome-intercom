@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass, replace
+from collections.abc import Callable
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from urllib.parse import quote, urlencode
@@ -303,15 +305,18 @@ def request_target_dialog(request: sip.SipMessage) -> SipTargetDialog | None:
 
 def refer_event_headers(cseq: int, *, terminal: bool) -> tuple[tuple[str, str], ...]:
     return (("Event", f"refer;id={cseq}"),
-            ("Subscription-State", "terminated;reason=noresource" if terminal else "active;expires=60"))
+            ("Subscription-State", "terminated;reason=noresource" if terminal else
+             f"active;expires={sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES}"))
 
 
-async def run_refer_action(action, report, *, timeout: float | None = None) -> int:
+async def run_refer_action(action, notifier: ReferNotifier, *, timeout: float | None = None) -> int:
     """Let the owned route supply its deadline independently of progress reporting."""
-    progress = asyncio.create_task(report(100, False), name="voip-refer-progress")
+    deadline = asyncio.get_running_loop().time() + timeout if timeout is not None else None
+    notifier.bind_operation(deadline)
+    progress = asyncio.create_task(notifier.report(100, False), name="voip-refer-progress")
     try:
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout_at(deadline):
                 status = int(await action())
         except TimeoutError:
             status = 408
@@ -325,7 +330,7 @@ async def run_refer_action(action, report, *, timeout: float | None = None) -> i
         try:
             response = await progress
             if response is not None and 200 <= int(response.status_code or 0) < 300:
-                await report(status, True)
+                await notifier.report(status, True)
         except (ConnectionError, OSError, TimeoutError):
             pass
         return status
@@ -338,22 +343,51 @@ async def run_refer_action(action, report, *, timeout: float | None = None) -> i
 class ReferNotifier:
     """One implicit REFER usage; unsubscribing never cancels its operation."""
 
-    def __init__(self, dialog, refer_cseq, send, *, allow_missing_id=True):
+    def __init__(self, dialog, refer_cseq, send, *, allow_missing_id=True,
+                 on_end: Callable[[], None] | None = None):
         self.dialog = dialog
         self.refer_cseq = refer_cseq
         self.send = send
         self.allow_missing_id = allow_missing_id
         self.active = True
         self.status = 100
-        self.expires_at = asyncio.get_running_loop().time() + 60
+        self._loop = asyncio.get_running_loop()
+        self._lease_limit = sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES
+        self.expires_at = self._loop.time() + self._lease_limit
         self.lock = asyncio.Lock()
-        self.timer = asyncio.get_running_loop().call_later(60, self._expire)
+        self.timer = self._loop.call_later(self._lease_limit, self._expire)
+        self._reported = False
+        self._on_end = on_end
         self.pending = None
         self.task = None
 
+    def _finish_observation(self):
+        callback, self._on_end = self._on_end, None
+        if callback is not None:
+            callback()
+
+    def bind_operation(self, deadline):
+        """Choose the initial lease before NOTIFY, without timing out routing."""
+        if self._reported:
+            raise RuntimeError("REFER operation must bind before its first report")
+        from .sip_transaction import SIP_TIMER_F
+
+        lease = (max(1, math.ceil(deadline - self._loop.time() + SIP_TIMER_F))
+                 if deadline is not None else sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES)
+        self._lease_limit = max(lease, sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES)
+        self.timer.cancel()
+        self.expires_at = self._loop.time() + lease
+        self.timer = self._loop.call_at(self.expires_at, self._expire)
+
     def _expire(self):
-        self.active = False
-        self._schedule(True, "timeout")
+        self.terminate("timeout")
+
+    def terminate(self, reason="noresource"):
+        """End only the observing usage, never the referred operation."""
+        if self.active:
+            self.active = False
+            self.timer.cancel()
+            self._schedule(True, reason)
 
     def _schedule(self, terminal=False, reason="noresource"):
         if self.pending is not None and self.pending[0]:
@@ -372,10 +406,14 @@ class ReferNotifier:
                 async with self.lock:
                     if self.active or terminal:
                         await self._send(self.status, terminal, reason)
+                        if terminal:
+                            self._finish_observation()
         except Exception:
             import logging
 
             self.active = False
+            self.timer.cancel()
+            self._finish_observation()
             logging.getLogger(__name__).exception(
                 "REFER subscription notification failed"
             )
@@ -383,7 +421,7 @@ class ReferNotifier:
             self.task = None
 
     async def _send(self, status, terminal, reason="noresource"):
-        remaining = max(0, int(self.expires_at - asyncio.get_running_loop().time()))
+        remaining = max(0, math.ceil(self.expires_at - self._loop.time()))
         state = (
             f"terminated;reason={reason}" if terminal else f"active;expires={remaining}"
         )
@@ -397,17 +435,23 @@ class ReferNotifier:
         response = await self.send(headers, f"SIP/2.0 {status} {phrase}\r\n".encode())
         if response is None or not 200 <= int(response.status_code or 0) < 300:
             self.active = False
+            self.timer.cancel()
+            self._finish_observation()
         return response
 
     async def report(self, status, terminal):
         async with self.lock:
+            self._reported = True
             self.status = status
             if not self.active:
                 return sip.SipMessage(status_code=200, reason="OK")
             if terminal:
                 self.active = False
                 self.timer.cancel()
-            return await self._send(status, terminal)
+            response = await self._send(status, terminal)
+            if terminal:
+                self._finish_observation()
+            return response
 
     def refresh(self, request):
         from .sip_dialog import DialogKey
@@ -427,7 +471,7 @@ class ReferNotifier:
             not ids and not self.allow_missing_id
         ):
             return 481, "Subscription Does Not Exist", ()
-        value = request.header("Expires").strip() or "60"
+        value = request.header("Expires").strip() or str(sip.DEFAULT_EVENT_SUBSCRIPTION_EXPIRES)
         if (
             not value.isascii()
             or not value.isdigit()
@@ -441,7 +485,7 @@ class ReferNotifier:
             return 400, "Bad Request", ()
         except ValueError:
             return 500, "Server Internal Error", (("Retry-After", "1"),)
-        expires = min(int(value), 60)
+        expires = min(int(value), self._lease_limit)
         self.timer.cancel()
         self.expires_at = asyncio.get_running_loop().time() + expires
         if expires:
@@ -454,6 +498,7 @@ class ReferNotifier:
     def cancel(self):
         self.active = False
         self.timer.cancel()
+        self._finish_observation()
         if self.task is not None:
             self.task.cancel()
 

@@ -396,8 +396,10 @@ class SipVideoRtpRelay:
         return directions
 
     def arm_keyframe_request(self, side: str) -> bool:
-        """Arm negotiated RTCP feedback for the first RTP source SSRC."""
+        """Arm recovery only for the decoder this relay actually owns."""
 
+        if side not in self._transcode.directions:
+            return False
         source, _destination = self._peers(side)
         feedback = set(source.recv_format.rtcp_feedback)
         if (
@@ -419,7 +421,7 @@ class SipVideoRtpRelay:
         if not set(source.recv_format.rtcp_feedback).intersection({"ccm fir", "nack pli"}):
             return False
         previous = self._keyframe_attempts.get(side)
-        if previous is not None and previous[1] >= 3 and monotonic() - previous[2] >= 0.5:
+        if previous is not None and (side not in self._keyframe_requests or previous[1] >= 3):
             self._keyframe_attempts[side] = (previous[0], 0, previous[2])
         self._keyframe_requests[side] = None
         self._send_armed_keyframe_request(side, source)
@@ -1159,8 +1161,13 @@ class SipVideoRtpRelay:
             if not source.receive_state.admit(packet):
                 raise ValueError("duplicate RTP or unconfirmed source transition")
             if source.receive_state.changed:
-                self._keyframe_requests[side] = None
+                waiting = side in self._keyframe_requests
+                self._keyframe_requests.pop(side, None)
                 self._keyframe_attempts.pop(side, None)
+                if not self.arm_keyframe_request(side) and waiting:
+                    # Retain an explicit receiver request across a validated
+                    # SSRC change; this does not arm an idle pure relay.
+                    self._keyframe_requests[side] = None
             source.rx_ssrc = packet.ssrc
             self._send_armed_keyframe_request(side, source)
             source.host = str(addr[0])
@@ -1236,6 +1243,11 @@ class SipVideoRtpRelay:
                 err,
             )
             return
+        if packet.marker:
+            # A complete output frame from the existing FFmpeg consumer proves
+            # its upstream decoder has recovered. A relay-only leg has no
+            # decoder, buffer or implicit recovery train of its own.
+            self._keyframe_requests.pop(source_side, None)
         self._account_sent(destination_side, len(data))
         self.transcoded_output_packets += 1
         self.forwarded += 1

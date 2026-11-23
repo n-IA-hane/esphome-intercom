@@ -107,7 +107,7 @@ def test_bridge_publishes_canonical_dtmf_and_translates_info(monkeypatch) -> Non
     )
 
     relay.on_dtmf("left", "6", "rfc4733")
-    client.on_info_dtmf_event("7", 160)
+    client.on_info_dtmf("7", 160)
 
     assert relayed == [("right", "7")]
     assert [event[0] for event in bus.events] == [
@@ -167,7 +167,7 @@ def test_bridge_falls_back_to_client_info_when_rtp_dtmf_is_unavailable(
         client=_Client(),
     )
 
-    assert asyncio.run(relay.on_dtmf_fallback("left", "9"))
+    assert asyncio.run(relay.on_dtmf_fallback("left", "9", 160))
     assert sent == ["9"]
 
 
@@ -200,7 +200,7 @@ def test_direct_outbound_client_projects_info_from_callee(monkeypatch) -> None:
         caller="Casa",
         callee="Codex",
     )
-    client.on_info_dtmf_event("8", 160)
+    client.on_info_dtmf("8", 160)
 
     payload = bus.events[0][1]
     assert payload["digit"] == "8"

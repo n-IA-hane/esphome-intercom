@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import replace
 
 from .audio_format import AudioFormat
 from .media.codecs import DEFAULT_OPUS_RECEIVE_FMTP
 from .imageattr import serialize_imageattr
 from .sdp_audio_facts import (
     _format_dtmf_events,
-    _rtp_contract_key,
     offered_pcm_formats,
     parse_rtp_audio_capability,
 )
 from .sdp_document import SdpDocument
 from .sdp_parser import (
-    format_direction_for_remote,
     local_direction_for_offer,
     local_direction_for_remote,
     normalize_direction,
@@ -30,6 +27,7 @@ from .sdp_types import (
     RtpDtmfFormat,
     RtpH264Format,
     RtpPcmFormat,
+    RtpPcmDirection,
     RtpVideoFormat,
     SdpError,
 )
@@ -449,6 +447,7 @@ def build_answer_directional(
     recv: RtpPcmFormat,
     *,
     recv_formats: tuple[RtpPcmFormat, ...] = (),
+    send_formats: tuple[RtpPcmFormat, ...] = (),
     dtmf: RtpDtmfFormat | None = None,
     dtmf_direction=None,
     audio_rtcp: bool = False,
@@ -458,8 +457,7 @@ def build_answer_directional(
     audio_direction: str | None = None,
     video_direction: str | None = None,
 ) -> str:
-    from .media.negotiator import negotiate_dtmf
-    from .media.codecs import CODECS
+    from .media.negotiator import negotiate_dtmf, answer_audio_projection
 
     event_formats = (dtmf,) if dtmf is not None and dtmf.events else ()
     if dtmf_direction is not None:
@@ -483,41 +481,9 @@ def build_answer_directional(
         # about the zero-address connection hold.
         audio_direction = suppress_local_send(audio_direction)
     audio_direction = normalize_direction(audio_direction)
-    format_direction = format_direction_for_remote(
-        remote_audio["direction"] if remote_audio is not None else "sendrecv",
-        audio_direction,
-    )
-    if format_direction == "sendonly":
-        selected = [send]
-    elif format_direction == "recvonly":
-        selected = [recv]
-    else:
-        selected = (
-            [recv]
-            if _rtp_contract_key(send)[:4] == _rtp_contract_key(recv)[:4]
-            else [recv, send]
-        )
-    # Every accepted primary is serialized, so the peer may choose its native
-    # transmitter independently. The engine admitted these mappings both ways.
-    if format_direction in {"recvonly", "sendrecv"}:
-        for fmt in recv_formats:
-            if fmt.encoding != "CN" and all(fmt.payload_type != item.payload_type for item in selected):
-                selected.append(fmt)
-    if (format_direction in {"recvonly", "sendrecv"}
-            and (recv.sample_rate, recv.channels) == (CODECS["CN"].static_clock_rate, 1)):
-        offered = {_rtp_contract_key(fmt)[:4] for fmt in offered_pcm_formats(
-            remote_sdp, include_auxiliary=True)} if remote_sdp else None
-        for fmt in recv_formats:
-            if (fmt.encoding == "CN" and (fmt.sample_rate, fmt.channels) == (recv.sample_rate, 1)
-                    and (offered is None or _rtp_contract_key(fmt)[:4] in offered)
-                    and all(fmt.payload_type != item.payload_type for item in selected)):
-                selected.append(fmt)
-    if format_direction in {"recvonly", "sendrecv"}:
-        local_receivers = {fmt.payload_type: fmt for fmt in recv_formats}
-        local_receivers[recv.payload_type] = recv
-        selected = [local_receivers.get(fmt.payload_type,
-            replace(fmt, fmtp=DEFAULT_OPUS_RECEIVE_FMTP) if fmt.encoding == "OPUS" else fmt)
-            for fmt in selected]
+    selected, packet_ms, receive_maxptime = answer_audio_projection(
+        RtpPcmDirection(send, recv, recv_formats=recv_formats, send_formats=send_formats),
+        direction=audio_direction, remote_sdp=remote_sdp)
     payload_values = [str(fmt.payload_type) for fmt in selected]
     for event in event_formats:
         if str(event.payload_type) not in payload_values:
@@ -542,14 +508,9 @@ def build_answer_directional(
         audio_lines.append(
             f"a=fmtp:{event.payload_type} {_format_dtmf_events(event.events)}"
         )
-    receive_maxptime = (
-        max(recv.frame_ms, recv.max_frame_ms)
-        if format_direction in {"recvonly", "sendrecv"}
-        else send.frame_ms
-    )
     audio_lines.extend(
         [
-            f"a=ptime:{selected[0].frame_ms}",
+            f"a=ptime:{packet_ms}",
             f"a=maxptime:{receive_maxptime}",
             f"a={audio_direction}",
         ]

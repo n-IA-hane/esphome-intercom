@@ -113,7 +113,7 @@ def production_answer_offer(step: Step) -> dict:
     try:
         answer = sdp.build_answer_directional(
             "192.0.2.1", "192.0.2.1", 40000, invite.send_format, invite.recv_format,
-            recv_formats=invite.recv_formats, dtmf=dtmf,
+            recv_formats=invite.recv_formats, send_formats=invite.send_formats, dtmf=dtmf,
             dtmf_direction=invite.dtmf_direction, remote_sdp=invite.remote_sdp,
             video_port=40002 if video is not None else 0, video_format=video)
     except Exception as error:  # noqa: BLE001

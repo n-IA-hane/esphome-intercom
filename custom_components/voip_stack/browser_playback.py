@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 
 
+BROWSER_MEDIA_START_TIMEOUT = 5.0
+
+
 class BrowserPlayback:
     """Only the currently attached media connection can acknowledge readiness."""
 
@@ -35,6 +38,11 @@ class BrowserPlayback:
             self._changed.set()
 
     async def wait_ready(self, *, fail_on_detach=False) -> None:
+        """Bound the media handshake independently of the phone's ring policy."""
+        async with asyncio.timeout(BROWSER_MEDIA_START_TIMEOUT):
+            await self._wait_ready(fail_on_detach=fail_on_detach)
+
+    async def _wait_ready(self, *, fail_on_detach) -> None:
         detached = self._detaches
         while not self._closed:
             if fail_on_detach and self._detaches != detached:

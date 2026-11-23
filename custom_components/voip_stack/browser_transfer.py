@@ -65,7 +65,6 @@ class RetainedBrowserSource(PendingLocalSource):
                 setattr(self.previous_client, name, None)
         self.previous_client.on_media_update = None
         self.previous_client.on_info_dtmf = None
-        self.previous_client.on_info_dtmf_event = None
         self.previous_client.on_info_video = None
         self.retired = True
         super().commit(keep_media=keep_media)

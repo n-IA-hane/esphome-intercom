@@ -665,8 +665,11 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
                 finally:
                     dialog.local_cseq = max(dialog.local_cseq, usage.local_cseq)
 
+        def observation_ended():
+            if dialog.refer_notifier is notifier:
+                dialog.refer_notifier = None
         notifier = sip_transfer.ReferNotifier(usage, refer_cseq.number, send,
-                                            allow_missing_id=dialog.incoming_refer_count == 1)
+            allow_missing_id=dialog.incoming_refer_count == 1, on_end=observation_ended)
         dialog.refer_notifier = notifier
         self._send_response(request, addr, 200, "OK", to_tag=dialog.to_tag)
         self._remember_dialog_response(dialog, request, addr, 200, "OK")
@@ -675,7 +678,7 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
             async def action():
                 return await self.on_refer(call_id, target)
             try:
-                await sip_transfer.run_refer_action(action, notifier.report)
+                await sip_transfer.run_refer_action(action, notifier)
             finally:
                 await notifier.close()
                 if dialog.refer_notifier is notifier:

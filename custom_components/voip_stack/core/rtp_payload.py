@@ -200,6 +200,11 @@ class RtpPayloadEncoder:
         if close is not None:
             close()
 
+    @property
+    def has_pending_pcm(self) -> bool:
+        """Keep a retired input fragment ahead of any direct payload relay."""
+        return self._converter is not None and self._converter.has_pending_pcm
+
     def retarget_input(self, input_format):
         """Change PCM input while retaining the effective native encoder state."""
         from .audio_pcm import PcmFrameConverter

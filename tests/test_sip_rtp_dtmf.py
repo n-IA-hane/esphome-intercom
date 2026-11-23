@@ -165,7 +165,7 @@ class SipRtpDtmfTest(unittest.IsolatedAsyncioTestCase):
         relay.right.send_dtmf_payload_type = None
         fallback: list[tuple[str, str]] = []
 
-        async def send_info(side: str, digit: str) -> bool:
+        async def send_info(side: str, digit: str, _duration_ms: int) -> bool:
             fallback.append((side, digit))
             return True
 

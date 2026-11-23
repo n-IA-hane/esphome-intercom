@@ -127,7 +127,7 @@ class OwnedSipSource:
             if owner is not None and not owner.released.is_set():
                 raise RuntimeError("A card media connection started while preparing the transfer")
 
-    def _commit_resources(self, staged, destination_port, *, preserve_staged=False):
+    def _commit_resources(self, staged, destination_port, *, preserve_staged=False, connected_party=None):
         registry = require_runtime_data(self.hass).sip
         if self.reservation is None:
             self.reservation = (RtpPortReservation.adopt_bound_source(self.hass, self.local_port)
@@ -149,7 +149,7 @@ class OwnedSipSource:
         from .browser_phone_runtime import _release_ha_softphone_claim
 
         _release_ha_softphone_claim(self.hass, self.session.call_id,
-            endpoint_id=self.endpoint_id, destination=self.session.callee)
+            endpoint_id=self.endpoint_id, destination=connected_party or self.session.callee)
         registry.release_endpoint_claim(self.session.call_id, self.endpoint_id)
         self.session.update_metadata(source_endpoint_id=self.peer_endpoint_id,
             endpoint_id=self.peer_endpoint_id, media_client_id="", source_media_client_id="")
@@ -226,8 +226,10 @@ class OwnedSipSource:
             raise
 
     async def rollback_video(self):
+        if self.adopted:
+            return
         hold, self.held_video = self.held_video, None
-        if hold is None or self.adopted:
+        if hold is None:
             return
         try:
             restored = await hold.update.restore(local_video_rtp_port=hold.original_port,
@@ -261,7 +263,8 @@ class OwnedSipSource:
                     setattr(self.client, name, None)
                     sock.close()
 
-    async def _adopt(self, successor, staged, destination_port, install, *, preserve_staged=False):
+    async def _adopt(self, successor, staged, destination_port, install, *, preserve_staged=False,
+                     connected_party=None):
         # This is the sole adapter to the WS owner's existing identity lock.
         # It prevents a late card connection from acquiring the same UDP fd
         # while the no-WS source is prepared and committed.
@@ -293,7 +296,8 @@ class OwnedSipSource:
                     if self.reservation is not None and self.reservation.audio_socket(self.local_port) is original:
                         self.reservation.take_audio_socket(self.local_port)
                     original.close()
-                self._commit_resources(staged, destination_port, preserve_staged=preserve_staged)
+                self._commit_resources(staged, destination_port, preserve_staged=preserve_staged,
+                                       connected_party=connected_party)
             if self.previous_watcher is not None:
                 await asyncio.gather(self.previous_watcher, return_exceptions=True)
             await self._retire_card_video()
@@ -310,12 +314,16 @@ class OwnedSipSource:
                     TerminationIntent("source_handoff_failed"), generation=self.generation)
             raise
 
-    async def adopt_application(self, on_complete, *, video_relay=None, staged=None):
+    async def adopt_application(self, on_complete, *, video_relay=None, staged=None, connected_party=None):
         """Acquire only after the real application has accepted the destination."""
         hold = await self.prepare_video_hold() if video_relay is None else None
+        allocated_here = staged is None and self.reservation is None
         staged = staged or self.reservation or RtpPortReservation.allocate(self.hass)
         media = LocalCallMedia(self.hass, invite=self.invite, local_rtp_port=self.local_port,
             reservation=staged, on_complete=on_complete, rtp_source=self.sender)
+        # Until adoption the attempted successor owns only a new allocation
+        # made here. The retained caller and supplied staging owner keep theirs.
+        media.release_reservation_on_stop = allocated_here
         media.video_relay = video_relay or (hold.relay if hold is not None else None)
         def install(transport, state, sock=None):
             if state is not None:
@@ -327,9 +335,11 @@ class OwnedSipSource:
             media._rtp_socket = sock
             return media.start()
         try:
-            await self._adopt(media, staged, staged.ports[1], install)
+            await self._adopt(media, staged, staged.ports[1], install,
+                              connected_party=connected_party)
         except BaseException:
-            await self.rollback_video()
+            if not self.adopted:
+                await self.rollback_video()
             raise
         media.reservation = self.reservation
         media.release_reservation_on_stop = False

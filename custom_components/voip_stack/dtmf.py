@@ -209,17 +209,25 @@ class RtpDtmfDecoder:
         if previous is not None and previous[2].sample_rate != fmt.sample_rate:
             return None
         receiver = self.audio_receiver
-        shared = bool(receiver is not None and fmt.sample_rate == (
-            receiver.source_clock_rate or receiver.selected_format.rtp_clock_rate)
-            and (receiver.source_ssrc is None or packet.ssrc == receiver.source_ssrc
-                 or packet.ssrc == receiver.receive_state.probation_ssrc))
-        if receiver is not None:
-            self._receive_state = receiver.receive_state if shared else self._clock_states.setdefault(fmt.sample_rate, RtpReceiveState())
+        # SSRC owns the RTP sequence space even when telephone-event and audio
+        # use different timestamp clocks. A separate event SSRC keeps its guard.
+        shared = bool(receiver is not None and (
+            packet.ssrc == receiver.source_ssrc
+            or packet.ssrc == receiver.receive_state.probation_ssrc
+            or (receiver.source_ssrc is None and expected_ssrc == packet.ssrc)))
+        if shared:
+            self._receive_state = receiver.receive_state
         else:
-            self._receive_state = self._clock_states.setdefault(fmt.sample_rate, RtpReceiveState())
+            state = next((state for state in self._clock_states.values()
+                          if state.ssrc == packet.ssrc), None)
+            if state is None:
+                state = self._clock_states.get(fmt.sample_rate)
+            if state is None:
+                state = self._clock_states[fmt.sample_rate] = RtpReceiveState()
+            self._receive_state = state
         if self._receive_state.ssrc is None and expected_ssrc is not None:
             self._receive_state.ssrc = expected_ssrc
-        if not self._receive_state.admit(packet):
+        if not self._receive_state.admit(packet, clock_rate=fmt.sample_rate):
             return None
         if self._receive_state.changed:
             self._seen_events = {key: value for key, value in self._seen_events.items() if key[0] != packet.ssrc}

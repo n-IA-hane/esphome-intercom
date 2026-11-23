@@ -46,103 +46,103 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
     try:
         async with asyncio.timeout(timeout):
             decision = await future
-            registry.take_pending_route(call_id)
-            if decision.get("action") != "answer_ha" or decision.get("endpoint_id") != endpoint.endpoint_id:
-                raise RuntimeError("The browser did not answer")
-            session.ensure_live(token)
-            if owned_source is not None:
-                owned_source.validate()
-                await owned_source.prepare_video_hold()
-            elif registry.resource_for(call_id, "relay") is not media:
-                raise RuntimeError("The source media owner changed")
-            reservation = RtpPortReservation.allocate(runtime.hass)
-            audio = browser_media_contract()
-            fmt = audio.send
-            browser_audio = dict(send_format=audio.send, recv_format=audio.recv,
-                send_formats=audio.send_formats, recv_formats=audio.recv_formats,
-                remote_rtp_host=runtime.local_ip, remote_rtp_port=reservation.ports[0],
-                local_audio_direction="sendrecv", remote_audio_connection_held=False)
-            if isinstance(invite, ApplicationCallSource):
-                events = audio.dtmf_direction
-                receive_event, send_event = (events.recv, events.send) if events is not None else (None, None)
-                browser_invite = replace(invite, **browser_audio, remote_sdp="", source_host=runtime.local_ip,
-                    dtmf_payload_type=receive_event.payload_type if receive_event is not None else None,
-                    dtmf_clock_rate=receive_event.sample_rate if receive_event is not None else 8000,
-                    dtmf_events=receive_event.events if receive_event is not None else frozenset(),
-                    recv_dtmf_formats=events.recv_formats if events is not None else (),
-                    send_dtmf_formats=events.send_formats if events is not None else (),
-                    send_dtmf_payload_type=send_event.payload_type if send_event is not None else None,
-                    send_dtmf_clock_rate=send_event.sample_rate if send_event is not None else 8000,
-                    send_dtmf_events=send_event.events if send_event is not None else frozenset(),
-                    video_format=None, send_video_format=None, recv_video_format=None, answer_video_format=None,
-                    remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
-            elif isinstance(invite, SipInvite):
-                browser_invite = replace(invite, **browser_audio, audio_payloads=audio.payloads,
-                    dtmf_direction=audio.dtmf_direction, remote_sdp=b"",
-                    local_send_capabilities=(fmt.audio_format,), local_recv_capabilities=(fmt.audio_format,),
-                    video_format=None, local_video_format=None)
-            else:
-                raise TypeError("Browser handoff requires an accepted SIP source media contract")
-            if owned_source is not None:
-                prepared = await LocalMediaBridge.prepare_owned_source(owned_source, browser_invite, reservation,
-                    preserve_destination_ports=True)
-            else:
-                prepared = await LocalMediaBridge.prepare(media, browser_invite, right_port=reservation.ports[1])
-            descriptor = {"invite": replace(browser_invite, remote_rtp_port=prepared.relay.right_port),
-                "local_rtp_port": reservation.ports[0], "local_video_rtp_port": 0,
-                "rtp_reservation": reservation, "endpoint_id": endpoint.endpoint_id,
-                "media_client_id": str(decision.get("media_client_id") or "")}
-            registry.own_resource(call_id, media_key, descriptor, lambda _reason: reservation.release(),
-                                  stage=CleanupStage.RESERVATION, generation=session.generation)
-            if previous_playback is not None:
-                session.release_resource(playback_key, value=previous_playback)
-            registry.own_resource(call_id, playback_key, playback, playback.close, stage=CleanupStage.MEDIA,
-                                  generation=session.generation)
-            session.update_metadata(endpoint_id=endpoint.endpoint_id, dest_endpoint_id=endpoint.endpoint_id,
-                target_endpoint_id=endpoint.endpoint_id, session_device_id=endpoint.device_id,
-                media_client_id=descriptor["media_client_id"])
-            registry.observe_leg(call_id, f"browser:{endpoint.endpoint_id}", role="destination",
-                                 endpoint_id=endpoint.endpoint_id, state="in_call", generation=session.generation)
-            publish_phone_projection(runtime.hass, session, endpoint.endpoint_id,
-                direction="incoming", peer_name=session.caller, route_kind="answer_ha",
-                audio_direction="sendrecv", last_sip_event="BROWSER_MEDIA_PREPARED")
-            await playback.wait_ready(fail_on_detach=True)
-            session.ensure_live(token)
-            owner = require_runtime_data(runtime.hass).media.owners_for("audio").get(owner_key)
-            if owner is None or owner.released.is_set():
-                raise RuntimeError("The selected browser media connection ended")
-            prepared.validate()
-            async def close_browser(_reason):
-                owner.revoke()
-                await owner.released.wait()
-            await prepared.acquire_source()
-            relay = prepared.commit()
-            committed = True
-            registry.own_resource(call_id, f"browser_transfer_owner:{endpoint.endpoint_id}:{call_id}", owner,
-                                  close_browser, stage=CleanupStage.OBSERVER, generation=session.generation)
-            # The same bound source transport is now the relay's left leg.
-            if media is not None:
-                registry.release_resource(call_id, f"relay:{call_id}", value=media)
-            registry.attach_relay(call_id, relay)
-            if owned_source is not None:
-                owned_source.release_to_session(relay)
-            if owned_source is not None and owned_source.client is not None:
-                from .bridge_media_updates import BridgeMediaUpdateBinder
+        registry.take_pending_route(call_id)
+        if decision.get("action") != "answer_ha" or decision.get("endpoint_id") != endpoint.endpoint_id:
+            raise RuntimeError("The browser did not answer")
+        session.ensure_live(token)
+        if owned_source is not None:
+            owned_source.validate()
+            await owned_source.prepare_video_hold()
+        elif registry.resource_for(call_id, "relay") is not media:
+            raise RuntimeError("The source media owner changed")
+        reservation = RtpPortReservation.allocate(runtime.hass)
+        audio = browser_media_contract()
+        fmt = audio.send
+        browser_audio = dict(send_format=audio.send, recv_format=audio.recv,
+            send_formats=audio.send_formats, recv_formats=audio.recv_formats,
+            remote_rtp_host=runtime.local_ip, remote_rtp_port=reservation.ports[0],
+            local_audio_direction="sendrecv", remote_audio_connection_held=False)
+        if isinstance(invite, ApplicationCallSource):
+            events = audio.dtmf_direction
+            receive_event, send_event = (events.recv, events.send) if events is not None else (None, None)
+            browser_invite = replace(invite, **browser_audio, remote_sdp="", source_host=runtime.local_ip,
+                dtmf_payload_type=receive_event.payload_type if receive_event is not None else None,
+                dtmf_clock_rate=receive_event.sample_rate if receive_event is not None else 8000,
+                dtmf_events=receive_event.events if receive_event is not None else frozenset(),
+                recv_dtmf_formats=events.recv_formats if events is not None else (),
+                send_dtmf_formats=events.send_formats if events is not None else (),
+                send_dtmf_payload_type=send_event.payload_type if send_event is not None else None,
+                send_dtmf_clock_rate=send_event.sample_rate if send_event is not None else 8000,
+                send_dtmf_events=send_event.events if send_event is not None else frozenset(),
+                video_format=None, send_video_format=None, recv_video_format=None, answer_video_format=None,
+                remote_video_rtp_port=0, remote_video_rtcp_port=0, remote_video_payload_types=())
+        elif isinstance(invite, SipInvite):
+            browser_invite = replace(invite, **browser_audio, audio_payloads=audio.payloads,
+                dtmf_direction=audio.dtmf_direction, remote_sdp=b"",
+                local_send_capabilities=(fmt.audio_format,), local_recv_capabilities=(fmt.audio_format,),
+                video_format=None, local_video_format=None)
+        else:
+            raise TypeError("Browser handoff requires an accepted SIP source media contract")
+        if owned_source is not None:
+            prepared = await LocalMediaBridge.prepare_owned_source(owned_source, browser_invite, reservation,
+                preserve_destination_ports=True)
+        else:
+            prepared = await LocalMediaBridge.prepare(media, browser_invite, right_port=reservation.ports[1])
+        descriptor = {"invite": replace(browser_invite, remote_rtp_port=prepared.relay.right_port),
+            "local_rtp_port": reservation.ports[0], "local_video_rtp_port": 0,
+            "rtp_reservation": reservation, "endpoint_id": endpoint.endpoint_id,
+            "media_client_id": str(decision.get("media_client_id") or "")}
+        registry.own_resource(call_id, media_key, descriptor, lambda _reason: reservation.release(),
+                              stage=CleanupStage.RESERVATION, generation=session.generation)
+        if previous_playback is not None:
+            session.release_resource(playback_key, value=previous_playback)
+        registry.own_resource(call_id, playback_key, playback, playback.close, stage=CleanupStage.MEDIA,
+                              generation=session.generation)
+        session.update_metadata(endpoint_id=endpoint.endpoint_id, dest_endpoint_id=endpoint.endpoint_id,
+            target_endpoint_id=endpoint.endpoint_id, session_device_id=endpoint.device_id,
+            media_client_id=descriptor["media_client_id"])
+        registry.observe_leg(call_id, f"browser:{endpoint.endpoint_id}", role="destination",
+                             endpoint_id=endpoint.endpoint_id, state="in_call", generation=session.generation)
+        publish_phone_projection(runtime.hass, session, endpoint.endpoint_id,
+            direction="incoming", peer_name=session.caller, route_kind="answer_ha",
+            audio_direction="sendrecv", last_sip_event="BROWSER_MEDIA_PREPARED")
+        await playback.wait_ready(fail_on_detach=True)
+        session.ensure_live(token)
+        owner = require_runtime_data(runtime.hass).media.owners_for("audio").get(owner_key)
+        if owner is None or owner.released.is_set():
+            raise RuntimeError("The selected browser media connection ended")
+        prepared.validate()
+        async def close_browser(_reason):
+            owner.revoke()
+            await owner.released.wait()
+        await prepared.acquire_source()
+        relay = prepared.commit()
+        committed = True
+        registry.own_resource(call_id, f"browser_transfer_owner:{endpoint.endpoint_id}:{call_id}", owner,
+                              close_browser, stage=CleanupStage.OBSERVER, generation=session.generation)
+        # The same bound source transport is now the relay's left leg.
+        if media is not None:
+            registry.release_resource(call_id, f"relay:{call_id}", value=media)
+        registry.attach_relay(call_id, relay)
+        if owned_source is not None:
+            owned_source.release_to_session(relay)
+        if owned_source is not None and owned_source.client is not None:
+            from .bridge_media_updates import BridgeMediaUpdateBinder
 
-                BridgeMediaUpdateBinder(runtime.hass).attach_audio_side(owned_source.client, relay,
-                    source_call_id=call_id, side="left")
-            await relay.start()
-            session.ensure_live(token)
-            session.update_metadata(endpoint_id=endpoint.endpoint_id, dest_endpoint_id=endpoint.endpoint_id,
-                target_endpoint_id=endpoint.endpoint_id, session_device_id=endpoint.device_id,
-                media_client_id=descriptor["media_client_id"])
-            registry.transition(call_id, owner="ha_softphone", state="in_call", callee=endpoint.name,
-                route_kind="ha_softphone", expected_generation=token.generation)
-            registry.take_pending_invite(call_id)
-            if application is not None:
-                await application.release_media_for_forward()
-                await application.close("forwarded")
-                registry.release_resource(call_id, application.resource_name, value=application)
+            BridgeMediaUpdateBinder(runtime.hass).attach_audio_side(owned_source.client, relay,
+                source_call_id=call_id, side="left")
+        await relay.start()
+        session.ensure_live(token)
+        session.update_metadata(endpoint_id=endpoint.endpoint_id, dest_endpoint_id=endpoint.endpoint_id,
+            target_endpoint_id=endpoint.endpoint_id, session_device_id=endpoint.device_id,
+            media_client_id=descriptor["media_client_id"])
+        registry.transition(call_id, owner="ha_softphone", state="in_call", callee=endpoint.name,
+            route_kind="ha_softphone", expected_generation=token.generation)
+        registry.take_pending_invite(call_id)
+        if application is not None:
+            await application.release_media_for_forward()
+            await application.close("forwarded")
+            registry.release_resource(call_id, application.resource_name, value=application)
     except BaseException:
         committed = committed or bool(owned_source is not None and owned_source.adopted)
         if not committed:

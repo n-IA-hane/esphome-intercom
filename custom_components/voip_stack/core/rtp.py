@@ -256,30 +256,32 @@ class RtpReceiveState:
         self.ssrc: int | None = None
         self.highest: int | None = None
         self._seen: set[int] = set()
-        self._retired: dict[int, tuple[int | None, int | None]] = {}
+        self._retired: dict[int, tuple[int | None, int | None, int | None]] = {}
         self._timestamp: int | None = None
+        self._timestamp_rate: int | None = None
         self._source_floor: int | None = None
         self._candidate: tuple[int, int] | None = None
         self._restart: int | None = None
         self.window = window
         self.changed = False
 
-    def admit(self, packet: RtpPacket) -> bool:
+    def admit(self, packet: RtpPacket, *, clock_rate: int | None = None) -> bool:
         self.changed = False
         if self.ssrc is None:
             self.ssrc = packet.ssrc
         elif packet.ssrc != self.ssrc:
             previous = self._retired.get(packet.ssrc)
             if previous is not None:
-                highest, timestamp = previous
+                highest, timestamp, previous_rate = previous
                 if highest is not None and (packet.sequence - highest + 32768) % 65536 - 32768 <= 0:
                     return False
-                if timestamp is not None and (packet.timestamp - timestamp + 0x80000000) % 0x100000000 - 0x80000000 < 0:
+                if (timestamp is not None and previous_rate == clock_rate
+                        and (packet.timestamp - timestamp + 0x80000000) % 0x100000000 - 0x80000000 < 0):
                     return False
             if self._candidate != (packet.ssrc, (packet.sequence - 1) & 65535):
                 self._candidate = (packet.ssrc, packet.sequence)
                 return False
-            self._retired[self.ssrc] = (self.highest, self._timestamp)
+            self._retired[self.ssrc] = (self.highest, self._timestamp, self._timestamp_rate)
             self._retired.pop(packet.ssrc, None)
             if len(self._retired) > 8:
                 del self._retired[next(iter(self._retired))]
@@ -290,6 +292,7 @@ class RtpReceiveState:
             self._candidate = None
             self._restart = None
             self._timestamp = None
+            self._timestamp_rate = None
             self.changed = True
         sequence = packet.sequence
         extended = sequence if self.highest is None else self.highest + (
@@ -309,6 +312,7 @@ class RtpReceiveState:
             return False
         if self.highest is None or extended >= self.highest:
             self._timestamp = packet.timestamp
+            self._timestamp_rate = clock_rate
         self.highest = max(extended, self.highest if self.highest is not None else extended)
         self._seen.add(extended)
         self._seen = {value for value in self._seen if value > self.highest - self.window}

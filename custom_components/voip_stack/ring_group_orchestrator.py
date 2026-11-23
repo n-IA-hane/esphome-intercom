@@ -542,7 +542,7 @@ async def run_ring_group_call(
                 local_rtp_port,
                 invite.send_format,
                 invite.recv_format,
-                recv_formats=invite.recv_formats,
+                recv_formats=invite.recv_formats, send_formats=invite.send_formats,
                 dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             )

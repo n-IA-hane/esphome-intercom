@@ -29,13 +29,17 @@ def parking_address(hass, target):
     return parse_parking_address(parking_settings(hass), target)
 
 
+def _parking_contact(slot):
+    return RosterEntry("park." + slot, name=f"Parking {slot}".strip())
+
+
 def resolve_parking_route(hass, target):
     address = parking_address(hass, target)
     if address is None:
         return None
     mode, slot = address
     return RouteDecision(RouteAction.PARKING, target=str(target), source="builtin",
-        entry=RosterEntry(str(target), name=f"Parking {slot}".strip(),
+        entry=RosterEntry(str(target), name=_parking_contact(slot).display_name,
                           metadata={"parking_mode": mode, "parking_slot": slot}))
 
 
@@ -192,7 +196,7 @@ async def start_parking_application(hass, session, invite, local_ip, *, slot="",
         lot.release(parked)
         raise ParkingError("The call changed before it could be parked")
     application = attach_local_application(ParkingCall, hass, session, invite,
-        RosterEntry("park."+parked.slot, name="Parking "+parked.slot), local_ip,
+        _parking_contact(parked.slot), local_ip,
         previous=previous, local_source=local_source, lot=lot, parked=parked, settings=settings, video_source=video_source,
         **({"source_client": source_client} if source_client is not None else {}))
     if media is not None:
@@ -301,7 +305,8 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
     try:
         async def complete(reason):
             registry.request_termination(session.call_id, TerminationIntent(reason), generation=session.generation)
-        media = await source.adopt_application(complete)
+        media = await source.adopt_application(complete,
+            connected_party=_parking_contact(parked.slot).display_name)
         session.update_metadata(source_endpoint_id=source.peer_endpoint_id, endpoint_id=source.peer_endpoint_id,
             dest_endpoint_id="", target_endpoint_id="", ring_endpoint_ids=(), media_client_id="")
         session.caller = caller
@@ -310,7 +315,8 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
             video_source=source.held_video.source if source.held_video is not None else None)
     except BaseException:
         lot.release(parked)
-        await source.rollback_video()
+        if not source.adopted:
+            await source.rollback_video()
         if source.adopted:
             registry.request_termination(session.call_id, TerminationIntent("parking_failed"), generation=session.generation)
         raise
@@ -428,7 +434,7 @@ async def park_established_sip_call(hass, call_id, parker, *, slot="", referrer=
     registry.set_pending_invite(goal.call_id, source)
     goal.update_metadata(event_only=False,
         policy_endpoint_ids=tuple(sorted(set((*original.endpoint_claims, *original.metadata.get("policy_endpoint_ids", ()))))),
-        connected_party="Parking "+parked.slot)
+        connected_party=_parking_contact(parked.slot).display_name)
     if not from_callee:
         if source_client is not None:
             source_client.on_refer = None
@@ -550,7 +556,7 @@ async def prepare_parking_pickup(hass, invite, slot, local_ip):
         if not claim.current:
             raise ParkingError("The parked call ended")
         answer = build_answer_directional(local_ip, local_ip, prepared.relay.right_port,
-            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, dtmf=first_offered_dtmf_format(invite.remote_sdp), remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, dtmf=first_offered_dtmf_format(invite.remote_sdp), remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             **({"video_port": prepared.video_update.answer_video_rtp_port,
                 "video_format": prepared.video_update.answer_video_format,
                 "video_direction": local_direction_for_remote(prepared.video_update.answer_video_format.direction)}

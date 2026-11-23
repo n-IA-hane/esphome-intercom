@@ -338,7 +338,7 @@ class EstablishedSipDestination(PendingSipDestination):
                 if referrer is not None else refer_operation,
             reversed_sides=not from_callee, previous_release=relay._on_release,
             previous_callbacks=tuple(getattr(destination.dialog, name, None)
-                for name in ("on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")))
+                for name in ("on_refer", "on_media_update", "on_info_dtmf", "on_info_video")))
         try:
             async with relay.media_reconfiguration_guard():
                 with _reversed_transfer_media(relay, not from_callee), SessionHandoff(registry, original, goal) as handoff:
@@ -445,7 +445,7 @@ class EstablishedSipDestination(PendingSipDestination):
                 self.registry.attach_sip_client(original.call_id, self.destination_id, self.client,
                     role="callee", state="in_call")
                 self.registry.set_bridge_link(original.call_id, self.destination_id)
-                for name, value in zip(("on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video"), self.previous_callbacks):
+                for name, value in zip(("on_refer", "on_media_update", "on_info_dtmf", "on_info_video"), self.previous_callbacks):
                     setattr(self.client, name, value)
                 original.metadata.update(self.original_metadata)
                 self.registry.transition(original.call_id, owner=self.original_owner, state=self.original_state,

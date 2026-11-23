@@ -30,10 +30,15 @@ async def test_reporter_failure_does_not_cancel_accepted_refer(response):
     async def action():
         actions.append(True)
         return 200
-    async def report(status, terminal):
-        reports.append((status, terminal))
+    async def send(headers, body):
+        reports.append((sip_transfer.parse_sipfrag_status(body),
+                        dict(headers)["Subscription-State"].startswith("terminated")))
         return sip.SipMessage(status_code=response, reason='Result') if response else None
-    result = await sip_transfer.run_refer_action(action, report)
+    notifier = sip_transfer.ReferNotifier(None, 1, send)
+    try:
+        result = await sip_transfer.run_refer_action(action, notifier)
+    finally:
+        await notifier.close()
     assert result == 200 and actions == [True]
     assert reports == [(100, False)]
 
@@ -43,10 +48,15 @@ async def test_refer_action_deadline_reports_failure_and_drains_reporter():
     reports = []
     async def action():
         await asyncio.Future()
-    async def report(status, terminal):
-        reports.append((status, terminal))
+    async def send(headers, body):
+        reports.append((sip_transfer.parse_sipfrag_status(body),
+                        dict(headers)["Subscription-State"].startswith("terminated")))
         return sip.SipMessage(status_code=200, reason='OK')
-    result = await sip_transfer.run_refer_action(action, report, timeout=0.01)
+    notifier = sip_transfer.ReferNotifier(None, 1, send)
+    try:
+        result = await sip_transfer.run_refer_action(action, notifier, timeout=0.01)
+    finally:
+        await notifier.close()
     assert result == 408
     assert reports == [(100, False), (408, True)]
 
