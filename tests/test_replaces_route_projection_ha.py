@@ -75,7 +75,7 @@ async def replacement_route(hass, phones, monkeypatch):
         list_devices=AsyncMock(return_value=devices)))
     monkeypatch.setattr(esphome_actions, "async_call_action", sink)
     monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
-    call_projection.publish_esp_media_route(hass, old.call_id, relay.media_route)
+    call_projection.publish_media_route(hass, old.call_id, relay.media_route)
     await asyncio.gather(*tuple(task for task in old.tasks if task is not watcher))
     old_callback = relay.on_media_route_changed
     assert callable(old_callback)
@@ -109,8 +109,8 @@ async def test_replaces_rebinds_exact_successor_and_retained_wire_call_id(hass, 
     await lab.old.terminate(TerminationIntent("forwarded"))
     assert lab.old.terminated.is_set()
     assert lab.releases == [True]
-    assert successor.metadata["esp_media_routes"]["kitchen-device"] == (
-        lab.client.dialog_ids.call_id, lab.relay.media_route)
+    assert successor.metadata["committed_media_route"] == lab.relay.media_route
+    assert "esp_media_routes" not in successor.metadata
     lab.sink.reset_mock()
     lab.old_callback("direct")
     await hass.async_block_till_done()
@@ -127,10 +127,8 @@ async def test_replaces_rebinds_exact_successor_and_retained_wire_call_id(hass, 
         assert lab.relay.media_route == ("ha_transcoding" if index == 1 else "direct")
         assert successor.metadata["committed_media_route"] == lab.relay.media_route
         assert lab.relay.on_media_route_changed is callback
-    retained = [(call.args[3]["call_id"], call.args[3]["route"])
-        for call in lab.sink.call_args_list if call.args[1]["device_id"] == "kitchen-device"]
-    assert retained == [(lab.client.dialog_ids.call_id, "direct"),
-        (lab.client.dialog_ids.call_id, "ha_transcoding"), (lab.client.dialog_ids.call_id, "direct")]
+    lab.sink.assert_not_awaited()
+    assert lab.client.dialog_ids.call_id == "retained-kitchen-wire"
     await successor.terminate(TerminationIntent("test_done"))
     assert lab.relay.on_media_route_changed is None
     callback("ha_transcoding")
@@ -143,12 +141,12 @@ async def test_replaces_route_binding_rolls_back_with_handoff(hass, replacement_
     from custom_components.voip_stack.call_replaces import prepare_replacement
 
     lab = replacement_route
-    publish = call_projection.publish_esp_media_route
+    publish = call_projection.publish_media_route
     def fail_after_binding(hass, call_id, route):
         publish(hass, call_id, route)
         assert lab.relay.on_media_route_changed is not lab.old_callback
         raise RuntimeError("injected projection handoff failure")
-    monkeypatch.setattr(call_projection, "publish_esp_media_route", fail_after_binding)
+    monkeypatch.setattr(call_projection, "publish_media_route", fail_after_binding)
     result = await prepare_replacement(hass, lab.invite, "192.0.2.1")
     assert result.status == 200
     with pytest.raises(RuntimeError, match="injected projection"):
@@ -159,52 +157,39 @@ async def test_replaces_route_binding_rolls_back_with_handoff(hass, replacement_
     assert lab.calls.sip_client_for(lab.client.dialog_ids.call_id) is lab.client
     assert lab.relay.on_media_route_changed is lab.old_callback
     assert lab.calls.get_session(lab.invite.call_id) is None
-    monkeypatch.setattr(call_projection, "publish_esp_media_route", publish)
+    monkeypatch.setattr(call_projection, "publish_media_route", publish)
     before = lab.sink.await_count
     lab.relay.left_to_right_passthrough = lab.relay.right_to_left_passthrough = True
     lab.old_callback(lab.relay.media_route)
     await hass.async_block_till_done()
-    assert lab.sink.await_count == before + 2
+    assert lab.sink.await_count == before == 0
     assert lab.old.metadata["committed_media_route"] == "direct"
     assert lab.calls.endpoint_claims_snapshot() == {lab.old.call_id: {"kitchen": "destination"}}
 
 
-async def test_replaces_suppresses_queued_old_route_and_stale_generation(hass, replacement_route, monkeypatch):
-    from custom_components.voip_stack import call_projection, device_resolver
+async def test_replaces_suppresses_queued_old_route_and_stale_generation(hass, replacement_route):
+    from custom_components.voip_stack import call_projection
     from custom_components.voip_stack.call_replaces import prepare_replacement
     from custom_components.voip_stack.core import rtp
     from custom_components.voip_stack.endpoint_session import TerminationIntent
     from custom_components.voip_stack.sip_rtp_bridge import SipRtpRelay
 
     lab = replacement_route
-    started, release = asyncio.Event(), asyncio.Event()
-    lookups = 0
-    async def devices():
-        nonlocal lookups
-        lookups += 1
-        if lookups == 1:
-            started.set()
-            await release.wait()
-        return [{"device_id": "office-device"}, {"device_id": "kitchen-device"}]
-    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(list_devices=devices))
     lab.sink.reset_mock()
     packet = rtp.build_packet(rtp.RtpPacket(payload_type=lab.fmt.payload_type,
         sequence=1, timestamp=160, ssrc=1234, payload=bytes([0xD5]) * 160))
     lab.relay.handle_packet("left", packet, ("192.0.2.10", 40000))
-    await asyncio.wait_for(started.wait(), 1)
     result = await prepare_replacement(hass, lab.invite, "192.0.2.1")
     try:
         assert result.status == 200
         await result.commit()
-        release.set()
+        hass.loop.call_soon(lab.old_callback, "ha_transcoding")
         await lab.old.terminate(TerminationIntent("forwarded"))
         await hass.async_block_till_done()
         successor = lab.calls.get_session(lab.invite.call_id)
-        assert [(call.args[1]["device_id"], call.args[3]["call_id"], call.args[3]["route"])
-            for call in lab.sink.call_args_list] == [
-                ("office-device", successor.call_id, "direct"),
-                ("kitchen-device", lab.client.dialog_ids.call_id, "direct"),
-            ]
+        lab.sink.assert_not_awaited()
+        assert successor.metadata["committed_media_route"] == lab.relay.media_route
+        assert lab.client.dialog_ids.call_id == "retained-kitchen-wire"
         stale_callback = lab.relay.on_media_route_changed
         old_generation = successor.generation
         await successor.terminate(TerminationIntent("test_done"))
@@ -213,7 +198,7 @@ async def test_replaces_suppresses_queued_old_route_and_stale_generation(hass, r
         fresh = SipRtpRelay(left=lab.relay.left, right=lab.relay.right, left_port=43000, right_port=43002)
         lab.calls.attach_relay(reused.call_id, fresh)
         assert reused.generation > old_generation
-        call_projection.publish_esp_media_route(hass, reused.call_id, fresh.media_route)
+        call_projection.publish_media_route(hass, reused.call_id, fresh.media_route)
         await hass.async_block_till_done()
         current_callback = fresh.on_media_route_changed
         before = lab.sink.await_count
@@ -227,4 +212,4 @@ async def test_replaces_suppresses_queued_old_route_and_stale_generation(hass, r
         assert fresh.on_media_route_changed is None
         assert not lab.calls.sessions and not lab.calls.endpoint_claims_snapshot()
     finally:
-        release.set()
+        lab.sink.assert_not_awaited()

@@ -13,8 +13,18 @@ pytestmark = pytest.mark.ha
 def media_projection(monkeypatch):
     from custom_components.voip_stack import call_projection
     projection = MagicMock()
-    monkeypatch.setattr(call_projection, "publish_esp_media_route", projection)
+    monkeypatch.setattr(call_projection, "publish_media_route", projection)
     return projection
+
+
+@pytest.fixture(autouse=True)
+def reservation_runtime(monkeypatch):
+    """Keep the real reservation owner backed by this unit's admitted ports."""
+    from custom_components.voip_stack import media_ports
+
+    runtime = SimpleNamespace(rtp_port_pool={"used": {40000, 40002}})
+    monkeypatch.setattr(media_ports, "require_runtime_data", lambda _hass: runtime)
+    return runtime
 
 
 def _format(token: str):
@@ -63,6 +73,8 @@ def _fixture():
         take_media=MagicMock(return_value=None),
     )
     relay = SimpleNamespace(
+        left_port=40000,
+        right_port=40002,
         media_route="ha_transcoding",
         video_relay=None,
         start=AsyncMock(),
@@ -359,7 +371,7 @@ async def test_commit_failure_leaves_no_destination_watcher(monkeypatch, failure
 
 
 @pytest.fixture
-def owned_bridge(monkeypatch, socket_enabled):
+def owned_bridge(monkeypatch, socket_enabled, reservation_runtime):
     """Real session, relay sockets and reservation release inventory."""
     from custom_components.voip_stack import outbound_bridge_commit as module
     from custom_components.voip_stack import media_ports
@@ -379,11 +391,11 @@ def owned_bridge(monkeypatch, socket_enabled):
     def release(_hass, ports):
         assert ports in pool, "reservation was released twice"
         pool.remove(ports)
+        reservation_runtime.rtp_port_pool["used"].difference_update(ports)
         releases.append(ports)
 
     winner.ports = media_ports.RtpPortReservation(object(), (40000, 40002))
     monkeypatch.setattr(media_ports, "release_sip_rtp_port_pair", release)
-    monkeypatch.setattr(module, "release_sip_rtp_port_pair", release)
     monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
     monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
     monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
@@ -402,7 +414,8 @@ def owned_bridge(monkeypatch, socket_enabled):
         relay = SipRtpRelay(
             left=RtpPeer("127.0.0.1", peers[0].getsockname()[1], 96, fmt),
             right=RtpPeer("127.0.0.1", peers[1].getsockname()[1], 96, fmt),
-            left_port=0, right_port=0, on_release=kwargs["on_release"],
+            left_port=kwargs["source_relay_port"], right_port=kwargs["dest_relay_port"],
+            on_release=kwargs["on_release"],
         )
         relays.append(relay)
         return relay
@@ -410,7 +423,7 @@ def owned_bridge(monkeypatch, socket_enabled):
     monkeypatch.setattr(module, "build_invite_client_relay", build)
     monkeypatch.setattr(module, "build_local_client_relay", build)
     data = module.BridgeCommitData(
-        invite=invite, winner=winner, source_relay_port=0, dest_relay_port=0,
+        invite=invite, winner=winner, source_relay_port=40000, dest_relay_port=40002,
         local_ip="127.0.0.1", release_port_pairs=(winner.ports.ports,),
         detach_reservations=(winner.ports,),
     )

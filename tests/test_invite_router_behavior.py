@@ -60,7 +60,6 @@ def _runtime() -> invite_router.InviteRuntime:
         browser_leg_for_member=Mock(),
         defer_invite_to_softphone=Mock(),
         enable_reused_sip_tcp_connection=Mock(),
-        on_conference_inbound_timeout=Mock(),
         ring_conference_members=Mock(),
         run_ring_group_call=Mock(),
         run_trunk_inbound_route_guarded=Mock(),

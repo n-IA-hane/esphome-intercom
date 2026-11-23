@@ -283,9 +283,9 @@
       "adaptation": "Apply the official PPA engine completion and rotated SRM DMA fixes to verified build-local sources.",
       "source_sha256": {
         "__init__.py": "8bd815436a28c7f99802f5b73e2feaf2e9e2b9edae4102b1b69f850e0c3fe3be",
-        "p4_ppa_backport.cmake": "e72d64f4344abf7c99f191270988512f779084e2437ed14ea2f547bc17642939",
+        "p4_ppa_backport.cmake": "5dd5416809421c26e4767cf21d5376074f5b213d2051a8a5e5fbc1d3ef19fefc",
         "9da8ff53.patch": "9e504cbcf1878dee91aa16fcafa6cf763799d5300df32de89479eb265daf25f6",
-        "p4_ppa_backport.json": "3bf30e8fc8a8e6c6f57cfad54bf2ec68a58e44f5e68462281c51082dc8403d99",
+        "p4_ppa_backport.json": "3e23b5d3885374103bad766800b47e4120d9a1bad589a574c3ac324f8902f411",
         "e106b16b.patch": "bcb49e498c81c87a67609a7b988fdc8842b11edcde5e7fc7b0d6be0e7c82d031",
         "8e4e73b0.patch": "b8b960dcd713e73f3b4afad849b5b2f8078ac14c8129543d0a87a93fd13b95b8"
       },
