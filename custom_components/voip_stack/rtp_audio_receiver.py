@@ -236,7 +236,9 @@ class RtpAudioReceiver:
                 native, selected = current_format.audio_format, self.output_pcm
                 if not deliver_frames:
                     decoded = [self.decode_packet(current.payload_type, current.payload)]
-                elif (not normalize_frames and
+                elif (not normalize_frames and not self.has_pending_pcm and
+                        (self._active_format is None or PcmFrameConverter.same_pcm_format(
+                            native, self._active_format.audio_format)) and
                         (native.sample_rate, native.pcm_format, native.channels) ==
                         (selected.sample_rate, selected.pcm_format, selected.channels)):
                     decoded = [self.decode_packet(current.payload_type, current.payload)]

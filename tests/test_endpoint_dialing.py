@@ -42,13 +42,16 @@ def test_standard_rtp_profile_never_reuses_payload_for_different_formats():
 
 
 def test_contact_receiver_ceiling_does_not_invent_fixed_transmit_quanta():
+    from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
+
     profile = endpoint_routing.sip_target_rtp_audio_profile(binding_capabilities())
     assert not profile.evidence.send_geometry_complete
     assert not profile.evidence.receive_geometry_complete
     assert all(not item.times.fixed for item in profile.evidence.sends)
     assert {fmt.encoding for fmt in profile.send_rtp_formats} >= {"L16", "OPUS", "PCMU", "PCMA"}
     assert {fmt.sample_rate for fmt in profile.recv_rtp_formats} >= {16000, 48000}
-    assert all(fmt.frame_ms <= 20 for fmt in profile.send_rtp_formats)
+    assert all(item.times.maximum_ms == 20 for item in profile.evidence.receives)
+    assert all(HA_AUDIO_CAPABILITIES.supports_rtp(fmt) for fmt in profile.send_rtp_formats)
 
 
 @pytest.mark.parametrize("known", [False, True])

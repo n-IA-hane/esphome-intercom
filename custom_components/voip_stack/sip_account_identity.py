@@ -862,9 +862,21 @@ async def _async_migrate_account_identities(hass, entry, *, account_updates=None
         for resource in resources:
             committed.append(resource)
             await resource.commit()
+        for resource in resources:
+            if isinstance(resource, _PreparedQueueRebind):
+                resource.validate_runtime()
+        for resource in resources:
+            if isinstance(resource, _PreparedQueueRebind):
+                resource.apply_runtime()
         plan.commit()
     except BaseException as error:
         failures = []
+        for resource in reversed(committed):
+            if isinstance(resource, _PreparedQueueRebind):
+                try:
+                    resource.restore_runtime()
+                except BaseException as rollback_error:
+                    failures.append(rollback_error)
         for resource in reversed(committed):
             try:
                 await resource.rollback()
@@ -907,25 +919,37 @@ async def _async_prepare_account_binding_migration(hass, entry, mapping):
 
 
 class _PreparedQueueRebind:
-    def __init__(self, store, previous, future, *, current=None, apply=None, original=None):
+    def __init__(self, store, previous, future, *, current=None, apply=None, restore=None, original=None):
         self.store, self.previous, self.future = store, previous, future
         self.current, self.apply, self.original = current, apply, original
+        self.restore = restore or apply
         self.started = False
+        self.applied = False
 
-    async def commit(self):
+    def validate_runtime(self):
         if self.current is not None and self.current() != self.original:
             raise ValueError('Account storage changed during identity migration')
-        self.started = True
+
+    def apply_runtime(self):
         if self.apply is not None:
             self.apply(self.future)
+            self.applied = True
+
+    def restore_runtime(self):
+        if self.applied:
+            self.restore(self.original)
+            self.applied = False
+
+    async def commit(self):
+        self.validate_runtime()
+        self.started = True
         if self.previous != self.future:
             await self.store.async_save(self.future)
 
     async def rollback(self):
         if not self.started:
             return
-        if self.apply is not None:
-            self.apply(self.original)
+        self.restore_runtime()
         if self.previous != self.future:
             if self.previous is None:
                 await self.store.async_remove()
@@ -967,14 +991,24 @@ async def _async_prepare_account_queue_migration(hass, entry, mapping):
                               'fallback_disabled', 'fallback_removed'):
                     if field in policy:
                         policy[field] = _reference(policy[field], mapping)
-    def apply(value):
+    definitions = dict(owner.definitions) if owner is not None else {}
+    renamed_definitions = {key: replace(queue, members=tuple(mapping.get(member, member) for member in queue.members))
+                           for key, queue in definitions.items()}
+    def install_operations(value):
         from .call_queues import normalize_queue_operations
         from .queue_policy import QueuePolicy
         for field, rows in normalize_queue_operations(value).items():
             setattr(owner, field, deepcopy(rows))
         owner.policies = {key: QueuePolicy.from_data(rows) for key, rows in value.get('policies', {}).items()}
+    def apply(value):
+        install_operations(value)
+        owner.definitions = dict(renamed_definitions)
+    def restore(value):
+        install_operations(value)
+        owner.definitions = dict(definitions)
     return _PreparedQueueRebind(store, previous, future, current=current,
-                               apply=apply if owner is not None else None, original=original)
+                               apply=apply if owner is not None else None,
+                               restore=restore if owner is not None else None, original=original)
 
 
 async def _async_prepare_physical_phone_migration(hass, entry, mapping):

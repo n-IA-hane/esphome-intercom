@@ -4236,6 +4236,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 41000,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
                 video_port=41002,
                 video_format=invite.answer_video_format,
@@ -4612,6 +4614,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 41000,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
             )
 

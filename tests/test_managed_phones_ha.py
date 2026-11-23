@@ -105,7 +105,7 @@ async def phone_lab(hass):
     if owner is not None:
         await owner.async_close()
     if entry.runtime_data.sip is not None:
-        await entry.runtime_data.sip.async_shutdown()
+        await entry.runtime_data.sip.shutdown()
     from custom_components.voip_stack.endpoint_lifecycle import cancel_runtime_tasks
     await cancel_runtime_tasks(hass)
     unsub()
@@ -579,32 +579,32 @@ async def test_queue_declaration_changes_preserve_native_delivery_and_unknown_ca
     from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships, iter_phone_queue_memberships
     lab = managed
     await lab.controller.async_sync()
-    await async_set_phone_memberships(lab.hass, lab.entry, phone_record(lab).endpoint_id, 'queues', ['Support', '700'])
+    await async_set_phone_memberships(lab.hass, lab.entry, phone_record(lab).endpoint_id, 'queues', ['Support', '7100'])
     entity = er.async_get(lab.hass).async_get_or_create("text", "esphome",
         "84c7bb000001-voip_queues", config_entry=lab.native,
         device_id=lab.device.id, suggested_object_id="voip_queues")
-    lab.hass.states.async_set(entity.entity_id, "Support, 700, support")
+    lab.hass.states.async_set(entity.entity_id, "Support, 7100, support")
     lab.controller.start()
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     phone = phone_record(lab)
-    assert phone.queues == ("Support", "700")
+    assert phone.queues == ("Support", "7100")
     assert lab.runtime.endpoints.get(phone.endpoint_id).queues == phone.queues
     assert dict(iter_phone_queue_memberships(lab.hass, lab.entry))[phone.endpoint_id] == phone.queues
     sent = list(lab.sent)
     lab.hass.states.async_set(entity.entity_id, "unavailable")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == phone.queues
-    lab.hass.states.async_set(entity.entity_id, "Support, 700")
+    lab.hass.states.async_set(entity.entity_id, "Support, 7100")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
-    lab.hass.states.async_set(entity.entity_id, "700, New queue")
+    lab.hass.states.async_set(entity.entity_id, "7100, New queue")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == phone.queues
-    await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'queues', ['700', 'New queue'])
+    await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'queues', ['7100', 'New queue'])
     await lab.hass.async_block_till_done(wait_background_tasks=True)
-    assert phone_record(lab).queues == ("700", "New queue")
+    assert phone_record(lab).queues == ("7100", "New queue")
     lab.hass.states.async_set(entity.entity_id, "")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
-    assert phone_record(lab).queues == ('700', 'New queue')
+    assert phone_record(lab).queues == ('7100', 'New queue')
     await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'queues', [])
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == ()
@@ -683,11 +683,15 @@ async def test_central_group_batch_updates_browser_sip_and_offline_esp_atomicall
     selected = ["browser_desk", "sip_desk", phone.endpoint_id]
     await async_update_group_members(lab.hass, lab.entry, "queue", "Renamed", selected, old_name="Old")
     await async_update_group_members(lab.hass, lab.entry, "ring", "Renamed ring", selected, old_name="Old ring")
-    assert lab.runtime.endpoints.get("browser_desk").queues == ("Keep", "Renamed")
-    assert lab.runtime.endpoints.get("sip_desk").queues == ("Keep", "Renamed")
+    assert lab.runtime.endpoints.get("browser_desk").queues == ("Renamed", "Keep")
+    assert lab.runtime.endpoints.get("sip_desk").queues == ("Renamed", "Keep")
     assert phone_record(lab).queues == ("Renamed",)
     assert phone_record(lab).membership_pending == {}
-    assert lab.runtime.endpoints.get("browser_desk").ring_group == "Keep ring, Renamed ring"
+    assert lab.runtime.endpoints.get("browser_desk").ring_group == "Renamed ring, Keep ring"
+    from custom_components.voip_stack.group_config import group_records
+    for kind, name in (('queue', 'Renamed'), ('ring', 'Renamed ring')):
+        record = next(row for row in group_records(lab.entry, kind).values() if row['name'] == name)
+        assert record['members'] == selected
     before = dict(lab.entry.data)
     with pytest.raises(ValueError, match="configuration owner"):
         await async_update_group_members(lab.hass, lab.entry, "queue", "Renamed", selected + ["unknown"])
@@ -884,10 +888,12 @@ async def test_managed_default_does_not_replace_multiple_manual_qa_accounts(mana
     manual = [{"username": f"qa_{index}", "display_name": f"QA {index}", "password": "fixture-only"}
               for index in range(2)]
     update_sip_accounts(lab.hass, manual)
+    before = {row.subentry_id: row.as_dict() for row in lab.entry.subentries.values() if row.subentry_type == 'phone'}
     await lab.controller.async_sync()
     phone = phone_record(lab)
     assert set(lab.registrar.accounts) == {phone.username.casefold(), "qa_0", "qa_1"}
-    assert lab.entry.data["sip_accounts"] == manual
+    assert 'sip_accounts' not in lab.entry.data
+    assert all(lab.entry.subentries[identity].as_dict() == value for identity, value in before.items())
     assert [data["account_id"] for action, data in lab.sent if action == "set_account"] == ["ha"]
 
 

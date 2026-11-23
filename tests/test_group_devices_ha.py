@@ -145,6 +145,9 @@ async def test_existing_long_ring_text_survives_import_and_group_reconcile(manag
     from custom_components.voip_stack.router import RouteAction, resolve_ha_router
     lab = managed
     name = "Legacy ring group with a name longer than thirty two bytes"
+    old = 'esphome:' + lab.device.id
+    lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=3, data={**lab.entry.data,
+        'esphome_phone_memberships': {old: {'device_id': lab.device.id, 'ring_group': name}}})
     entity = er.async_get(lab.hass).async_get_or_create("text", "esphome", "84c7bb000001-voip_ring_groups",
         config_entry=lab.native, device_id=lab.device.id, suggested_object_id="voip_ring_groups")
     lab.hass.states.async_set(entity.entity_id, name)

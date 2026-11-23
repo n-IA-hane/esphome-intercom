@@ -106,7 +106,7 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
     try:
         if created_bindings:
             await bindings.async_start()
-        await bindings.async_set_popup_binding(hass_admin_user.id, 'fanvil-casa', casa.endpoint_id, True)
+        await bindings.async_set_popup_binding(hass_admin_user.id, 'fanvil-casa-fixture', casa.endpoint_id, True)
         from custom_components.voip_stack.core.sip_auth import build_digest_authorization
         registrar_uri = f"sip:127.0.0.1:{lab.runtime.transport_config['sip_port']}"
         async def register(cseq, authorization=''):
@@ -202,7 +202,7 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
             await bindings.async_close()
             lab.runtime.ha_bindings = None
         else:
-            await bindings.async_set_popup_binding(hass_admin_user.id, 'fanvil-casa', casa.endpoint_id, False)
+            await bindings.async_set_popup_binding(hass_admin_user.id, 'fanvil-casa-fixture', casa.endpoint_id, False)
         if original is not None and original.live:
             from custom_components.voip_stack.endpoint_session import TerminationIntent
             await lab.calls.request_termination(original.call_id, TerminationIntent('test_done'))

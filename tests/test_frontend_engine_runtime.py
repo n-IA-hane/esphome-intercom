@@ -1918,8 +1918,8 @@ for (const browser of [false,true]) {{
   for (const [target,expected] of [
     [{{name:" Shadow destination ",extension:"101",number:"202"}},"101"],
     [{{name:"Casa", device_id:"54da57478a40e69420df7586730f6706", endpoint_id:"account:home", extension:"101"}},"101"],
-    [{{id:"alice",name:"Kitchen",extension:"201",metadata:{{endpoint_kind:"sip_account"}}}},"201"],
-    [{{id:"bob",name:"Kitchen",extension:"202",metadata:{{endpoint_kind:"sip_account"}}}},"202"],
+    [{{id:"alice",name:"Kitchen",extension:"201",metadata:{{endpoint_kind:"sip_account"}}}},"alice"],
+    [{{id:"bob",name:"Kitchen",extension:"202",metadata:{{endpoint_kind:"sip_account"}}}},"bob"],
     [{{id:"alice",name:"Kitchen",metadata:{{endpoint_kind:"sip_account",endpoint_id:"account:opaque"}}}},"alice"],
     [{{name:"Saved contact",number:"+12025550123"}},"+12025550123"],
     [{{name:"Saved contact",number:"+12025550124"}},"+12025550124"],

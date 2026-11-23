@@ -222,8 +222,10 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         else:
             assert max(struct.unpack(f"!{len(returned.payload)//2}h", returned.payload)) >= 2900
         if not known:
-            await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
-                observed["send"].payload_type, back_count, back_count * target_samples, 902, target_payload * 2)),
+            # This external receive packet may exceed HA's own transmit budget.
+            raw = struct.pack("!BBHII", 0x80, observed["send"].payload_type,
+                back_count, back_count * target_samples, 902) + target_payload * 2
+            await lab.hass.loop.sock_sendto(target.rtp_socket, raw,
                 ("127.0.0.1", target_port))
             # A receive preference of 10 ms is not a hard packet limit.
             # Accumulate exactly the sent 20 ms, preserving sample and clock
@@ -241,13 +243,13 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
                     assert sizes == [frame_bytes, frame_bytes]
                 pcm = b"".join(packet.payload for packet in reframed)
                 assert len(pcm) == frame_bytes * 2
-                elapsed_samples = 0
-                for index, packet in enumerate(reframed, 1):
+                previous = returned_packets[-1]
+                for packet in reframed:
                     assert packet.payload_type == caller.dialog.recv_format.payload_type
                     assert packet.ssrc == returned.ssrc
-                    assert packet.sequence == (returned.sequence + index) & 0xffff
-                    assert packet.timestamp == (returned.timestamp + frame_bytes // 2 + elapsed_samples) & 0xffffffff
-                    elapsed_samples += len(packet.payload) // 2
+                    assert packet.sequence == (previous.sequence + 1) & 0xffff
+                    assert packet.timestamp == (previous.timestamp + len(previous.payload) // 2) & 0xffffffff
+                    previous = packet
                 if expected_return_rate == target_rate:
                     assert pcm == target_payload * 2
                 else:
@@ -255,19 +257,30 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
                 # A distinct following frame detects a missing or duplicated tail,
                 # including an extra old packet still queued after accumulation.
                 marker = struct.pack(f"!{target_samples}h", *([-3000] * target_samples))
-                await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
-                    observed["send"].payload_type, 2, target_samples * 3, 902, marker)),
-                    ("127.0.0.1", target_port))
-                following = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
-                assert following.payload_type == caller.dialog.recv_format.payload_type
-                assert following.ssrc == returned.ssrc
-                assert following.sequence == (reframed[-1].sequence + 1) & 0xffff
-                assert following.timestamp == (returned.timestamp + frame_bytes // 2 * 3) & 0xffffffff
-                assert len(following.payload) == frame_bytes
-                if expected_return_rate == target_rate:
-                    assert following.payload == marker
-                else:
-                    assert all(value < -2900 for value in struct.unpack(f"!{len(following.payload)//2}h", following.payload)[-64:])
+                for offset in range(back_count):
+                    await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
+                        observed["send"].payload_type, back_count + 1 + offset,
+                        target_samples * (back_count + 2 + offset), 902, marker)),
+                        ("127.0.0.1", target_port))
+                    if offset == 0 and back_count > 1:
+                        await wait_until(lambda: decoder.has_pending_pcm)
+                        with pytest.raises(BlockingIOError):
+                            audio.recv(4096)
+                received_bytes = 0
+                while received_bytes < frame_bytes * back_count:
+                    following = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+                    assert following.payload_type == caller.dialog.recv_format.payload_type
+                    assert following.ssrc == returned.ssrc
+                    assert following.sequence == (previous.sequence + 1) & 0xffff
+                    assert following.timestamp == (previous.timestamp + len(previous.payload) // 2) & 0xffffffff
+                    assert len(following.payload) == frame_bytes
+                    received_bytes += len(following.payload)
+                    if expected_return_rate == target_rate:
+                        assert following.payload == marker
+                    else:
+                        assert all(value < -2900 for value in struct.unpack(f"!{len(following.payload)//2}h", following.payload)[-64:])
+                    previous = following
+                assert received_bytes == frame_bytes * back_count
         assert caller.bye()
         await asyncio.wait_for(session.termination_started.wait(), 3)
         barrier = lab.calls.request_termination(session.call_id, session.termination_intent)

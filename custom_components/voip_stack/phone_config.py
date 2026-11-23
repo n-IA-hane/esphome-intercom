@@ -371,6 +371,7 @@ def _add_phone_subentry(
     title: str,
     draft: ConfigSubentry | None = None,
     activate_registrar: bool = True,
+    commit_memberships: bool = True,
 ) -> ConfigSubentry:
     from .phone_queue_membership import _membership_update_plan, _apply_membership_updates
     memberships = {field: data[field] for field in (CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES) if field in data}
@@ -388,7 +389,7 @@ def _add_phone_subentry(
         subentry = replace(subentry, data=MappingProxyType({key: value for key, value in subentry.data.items()
             if key not in memberships}))
     hass.config_entries.async_add_subentry(entry, subentry)
-    if activate_registrar and memberships:
+    if activate_registrar and memberships and commit_memberships:
         _apply_membership_updates(hass, entry, {phone_endpoint_id(subentry): memberships})
     if activate_registrar and data.get(CONF_PHONE_ENABLED, True):
         async_enable_registrar_for_new_account(hass, entry)
@@ -946,6 +947,7 @@ def replace_sip_account_subentries(
                 entry,
                 data=data,
                 title=str(data[CONF_PHONE_NAME]),
+                commit_memberships=False,
             )
             continue
         hass.config_entries.async_update_subentry(

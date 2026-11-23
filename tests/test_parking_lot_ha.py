@@ -1128,7 +1128,8 @@ async def test_audio_parking_pickup_rejects_only_new_jpeg_offer(trunks, monkeypa
         if picker_video:
             assert b"m=video 0 " in answers[-1].body
             received = manager.invite_for_call(picker.dialog.call_id)
-            assert received.video_format.encoding == "JPEG"
+            assert received.video_format is None and received.local_video_format is None
+            assert any(fmt.encoding == "JPEG" for fmt in sdp.offered_video_formats(received.remote_sdp))
             assert received.remote_video_rtp_port == sockets[3].getsockname()[1]
         assert picker.dialog.video_format is None and picker.dialog.local_video_rtp_port == 0
         watchers.append(asyncio.create_task(picker.wait_for_dialog_termination()))

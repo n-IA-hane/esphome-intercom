@@ -64,6 +64,8 @@ async def test_direct_sip_uses_explicit_existing_contact_and_survives_entity_ren
     from custom_components.voip_stack.device_resolver import VoipDeviceResolver
     from custom_components.voip_stack.peer_snapshot import device_is_phonebook_available
     from custom_components.voip_stack.roster import RosterEntry, merge_roster_overrides
+    from custom_components.voip_stack.router import RouteAction, resolve_ha_router
+    from custom_components.voip_stack.websocket_api import _get_voip_devices
     from custom_components.voip_stack.store import store_manual_roster_entries
 
     lab = phone_lab
@@ -75,7 +77,11 @@ async def test_direct_sip_uses_explicit_existing_contact_and_survives_entity_ren
     device, = await VoipDeviceResolver(lab.hass).list_devices()
     assert (device["host"], device["sip_port"], device["sip_transport"]) == ("127.0.0.2", 5077, transport)
     assert device["audio_mode"] is None and "sip_audio_tx_formats" not in device
-    assert device_is_phonebook_available(lab.hass, device)
+    assert not device_is_phonebook_available(lab.hass, device)
+    assert await _get_voip_devices(lab.hass) == []
+    assert not lab.runtime.endpoints.endpoints
+    route = resolve_ha_router(contact.name, [contact])
+    assert route.action is RouteAction.DIRECT and route.sip_uri == contact.sip_uri
     registry = er.async_get(lab.hass)
     registry.async_update_entity(device["entities"]["voip_state"], new_entity_id="sensor.renamed_phone_state")
     renamed, = await VoipDeviceResolver(lab.hass).list_devices()
@@ -150,13 +156,15 @@ def test_unusable_optional_video_does_not_erase_audio_capabilities():
     assert "sip_video_codec" not in caps
 
 
-async def test_card_directory_availability_requires_route_and_current_state(phone_lab):
+async def test_card_directory_availability_requires_route_and_current_state(managed):
     from custom_components.voip_stack.websocket_api import _get_voip_devices
     from custom_components.voip_stack.phone_endpoint import EndpointAvailability
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.store import store_manual_roster_entries
 
-    lab = phone_lab
+    lab = managed
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
     device, = await _get_voip_devices(lab.hass)
     endpoint_id = device["endpoint_id"]
     assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.OFFLINE
@@ -165,14 +173,24 @@ async def test_card_directory_availability_requires_route_and_current_state(phon
         metadata={"device_id": lab.device.id})])
     routed, = await _get_voip_devices(lab.hass)
     assert routed["endpoint_id"] == endpoint_id
+    assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.OFFLINE
+    await bind_account(lab, phone)
+    await _get_voip_devices(lab.hass)
     assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.AVAILABLE
 
     state_id = routed["entities"]["voip_state"]
     lab.hass.states.async_set(state_id, "unavailable")
     offline, = await _get_voip_devices(lab.hass)
     assert offline["endpoint_id"] == endpoint_id
+    assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.AVAILABLE
+    for contact in lab.registrar.registered_contacts(phone.username):
+        lab.registrar.remove_contact(contact.flow_key)
+    await _get_voip_devices(lab.hass)
     assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.OFFLINE
     lab.hass.states.async_set(state_id, "idle")
+    await _get_voip_devices(lab.hass)
+    assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.OFFLINE
+    await bind_account(lab, phone)
     await _get_voip_devices(lab.hass)
     assert lab.runtime.endpoints.get(endpoint_id).availability is EndpointAvailability.AVAILABLE
 
@@ -196,12 +214,14 @@ async def test_observation_cannot_reassign_a_configured_physical_owner(phone_lab
     assert lab.runtime.endpoints.by_device_id(lab.device.id) is None
 
 
-async def test_peer_projection_uses_inventory_availability_once(phone_lab, monkeypatch):
+async def test_peer_projection_uses_inventory_availability_once(managed, monkeypatch):
     from custom_components.voip_stack import peer_snapshot
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.store import store_manual_roster_entries
 
-    lab = phone_lab
+    lab = managed
+    await lab.controller.async_sync()
+    await bind_account(lab, phone_record(lab))
     store_manual_roster_entries(lab.hass, [RosterEntry("direct-phone", name="Entrance",
         sip_uri="sip:phone_node@127.0.0.2:5077;transport=tcp",
         metadata={"device_id": lab.device.id})])

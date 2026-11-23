@@ -16,6 +16,7 @@ from custom_components.voip_stack.core.sip_auth import build_digest_authorizatio
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.sip_registrar import SipAccount
+from custom_components.voip_stack.store import config_entry
 from tests.test_automation_originate_ha import lab as lab
 from tests.test_sip_capabilities_ha import CAPS as BASE_CAPS
 
@@ -27,24 +28,33 @@ pytestmark = pytest.mark.ha
 
 async def bootstrap_camera_phone_configuration(lab):
     """Mirror canonical account/store setup before exercising persistent actions."""
-    from custom_components.voip_stack.phone_config import _add_phone_subentry, phone_subentry_data
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, phone_subentry_data, sync_registry_from_entry
+    from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
     from custom_components.voip_stack.store import config_entry
     from custom_components.voip_stack.websocket_api import _async_load_ha_softphone_store
 
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(entry,
         data={**entry.data, CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
-    for endpoint in lab.runtime.endpoints.endpoints:
+    identities = {endpoint.endpoint_id: endpoint.username or endpoint.name for endpoint in lab.runtime.endpoints.endpoints}
+    saved = []
+    for endpoint in tuple(lab.runtime.endpoints.endpoints):
+        username = identities[endpoint.endpoint_id]
         subentry = _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
-            "endpoint_id": endpoint.endpoint_id, "kind": endpoint.kind.value, "name": endpoint.name,
-            "username": endpoint.username, "password": "fixture-only", "extension": endpoint.extension,
+            "endpoint_id": username, "kind": 'sip_account', "name": endpoint.name,
+            "username": username, "password": "fixture-only", "extension": endpoint.extension,
             "send_video": endpoint.send_video, "video_enabled": True,
         })
-        await _async_load_ha_softphone_store(lab.hass, entry, endpoint_id=endpoint.endpoint_id,
+        saved.append((username, subentry))
+    lab.runtime.endpoints.rekey_accounts(identities)
+    sync_registry_from_entry(lab.hass, entry)
+    for username, subentry in saved:
+        async_ensure_endpoint_device(lab.hass, entry, lab.runtime.endpoints.require(username), lab.runtime.endpoints)
+        await _async_load_ha_softphone_store(lab.hass, entry, endpoint_id=username,
                                             endpoint_data=phone_subentry_data(subentry))
 
 
-async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_generation(lab, monkeypatch, tmp_path):
+async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_generation(lab, monkeypatch, tmp_path, hass_admin_user):
     """Wire and ownership proof; no browser or synthetic RTP counter is used."""
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
@@ -61,14 +71,23 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
 
-    source = PhoneEndpoint(endpoint_id="browser:camera-wire", name="Camera caller",
-        device_id="camera-wire-source", kind=EndpointKind.BROWSER,
+    source = PhoneEndpoint(endpoint_id="Camera caller", username='Camera caller', name="Camera caller",
+        kind=EndpointKind.SIP_ACCOUNT,
         capabilities=frozenset({"audio", "dtmf", "video"}))
-    receiver = PhoneEndpoint(endpoint_id="sip:camera-wire", name="Wire receiver",
+    receiver = PhoneEndpoint(endpoint_id="camera-wire-receiver", name="Wire receiver",
         username="camera-wire-receiver", kind=EndpointKind.SIP_ACCOUNT)
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.register(receiver)
     await bootstrap_camera_phone_configuration(lab)
+    source = lab.runtime.endpoints.require('Camera caller')
+    receiver = lab.runtime.endpoints.require('camera-wire-receiver')
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+    from custom_components.voip_stack.account_runtime import recompute_account_availability
+    created_bindings = lab.runtime.ha_bindings is None
+    if created_bindings:
+        lab.runtime.ha_bindings = HaCardBindings(lab.hass, config_entry(lab.hass), lab.runtime,
+            lambda identities: recompute_account_availability(lab.hass, identities))
+    bindings = lab.runtime.ha_bindings
     assert not any(item.kind is EndpointKind.ESPHOME for item in lab.runtime.endpoints.endpoints)
     registrar = lab.calls.component("registrar")
     registrar.enabled = True
@@ -152,6 +171,9 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
         await lab.hass.services.async_call("voip_stack", name, {"device_id": source.device_id, **data}, blocking=True)
 
     try:
+        if created_bindings:
+            await bindings.async_start()
+        await bindings.async_set_popup_binding(hass_admin_user.id, 'camera-intent-source', source.endpoint_id, True)
         challenge = await register(1)
         assert challenge.status_code == 401
         authorization = build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
@@ -162,13 +184,11 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
             while registrar.registered_contacts(receiver.username)[0].capabilities is None:
                 await asyncio.sleep(.01)
         from custom_components.voip_stack.directory_runtime import async_refresh_directory
-        from custom_components.voip_stack.roster import dump_roster_json
-        directory = await async_refresh_directory(lab.hass)
-        # Publish the entity platform's canonical directory result in this socket fixture.
-        lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(directory)})
+        await async_refresh_directory(lab.hass)
+        lab.roster[:] = lab.runtime.directory.snapshot()
         call_ids = []
         for cycle in range(2):
-            await action("call", destination=receiver.name, send_video=False)
+            await action("call", destination=receiver.username, send_video=False)
             initial_ack = await asyncio.wait_for(acks.get(), 2)
             call_id = initial_ack.header("Call-ID")
             call_ids.append(call_id)
@@ -218,5 +238,10 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
         from custom_components.voip_stack.endpoint_session import TerminationIntent
         for session in tuple(lab.calls.sessions.values()):
             await lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
+        if created_bindings:
+            await bindings.async_close()
+            lab.runtime.ha_bindings = None
+        else:
+            await bindings.async_set_popup_binding(hass_admin_user.id, 'camera-intent-source', source.endpoint_id, False)
         transport.close()
         await endpoint_runtime.async_stop_sip_endpoint(lab.hass)

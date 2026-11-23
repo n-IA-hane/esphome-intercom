@@ -144,8 +144,14 @@ async def reliable_endpoint(*, update=None, send_ok=True):
     answer = offer.replace("192.0.2.2", "192.0.2.1").replace("40000", "42000")
     commit, rollback, finalize = AsyncMock(), AsyncMock(), AsyncMock()
 
+    def answer_for(invite):
+        # Keep the independent wire mapping and serialize the chosen receiver's
+        # actual envelope; the fixture does not choose another media contract.
+        return (offer.replace("192.0.2.2", "192.0.2.1").replace("40000", "42000")
+            + f"a=maxptime:{invite.recv_format.max_frame_ms:g}\r\n")
+
     async def update_media(previous, updated, method):
-        return SipInviteResult(200, "OK", answer_sdp=answer,
+        return SipInviteResult(200, "OK", answer_sdp=answer_for(updated), media_contract=updated,
             commit=commit, rollback=rollback, finalize=finalize)
 
     update = AsyncMock(side_effect=update or update_media)
@@ -155,8 +161,11 @@ async def reliable_endpoint(*, update=None, send_ok=True):
         response = sip.parse_message(raw)
         return send_ok or response.header("CSeq") != "2 PRACK"
 
-    async def invite(_invite):
-        return SipInviteResult(183, "Session Progress", answer_sdp=answer, defer_final=True)
+    async def invite(invite):
+        nonlocal answer
+        answer = answer_for(invite)
+        return SipInviteResult(183, "Session Progress", answer_sdp=answer,
+            media_contract=invite, defer_final=True)
 
     endpoint = SipUdpEndpoint(local_ip="192.0.2.1", local_rtp_port=42000,
         supported_formats=[AudioFormat(16000, frame_ms=20)], on_invite=invite,

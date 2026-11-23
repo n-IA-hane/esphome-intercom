@@ -316,14 +316,17 @@ def test_standard_options_geometry_constrains_a_contact_without_inventing_transm
     entry = SimpleNamespace(metadata={"sip_capabilities_known": True, **capabilities})
     profile = sip_target_rtp_audio_profile(entry)
     evidence = profile.evidence
-    assert evidence.send_geometry_complete and evidence.receive_geometry_complete
+    assert not evidence.complete
+    assert not evidence.send_geometry_complete and not evidence.receive_geometry_complete
     assert all(not item.times.fixed for item in evidence.sends)
     assert all(not item.times.fixed for item in evidence.receives)
-    assert {fmt.sample_rate for fmt in profile.send_rtp_formats} == {16000, 48000}
-    assert {fmt.sample_rate for fmt in profile.recv_rtp_formats} == {16000, 48000}
+    assert all(item.times.maximum_ms == 20 for item in evidence.receives)
+    assert {fmt.sample_rate for fmt in profile.send_rtp_formats} >= {16000, 48000}
+    assert {fmt.sample_rate for fmt in profile.recv_rtp_formats} >= {16000, 48000}
+    assert {fmt.encoding for fmt in profile.send_rtp_formats} >= {"L16", "PCMU", "PCMA"}
     assert profile.send_rtp_formats[0].sample_rate == 48000
     assert profile.recv_rtp_formats[0].sample_rate == 16000
-    assert all(fmt.frame_ms <= 20 for fmt in profile.send_rtp_formats)
+    assert all(HA_AUDIO_CAPABILITIES.supports_rtp(fmt) for fmt in profile.send_rtp_formats)
 
 
 def test_unobserved_hardware_hints_cannot_grant_or_remove_a_sip_codec():

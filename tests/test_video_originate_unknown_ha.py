@@ -481,7 +481,7 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         assert 'sip_audio_rx_geometry_complete' not in row.metadata
         assert row.metadata['sip_audio_receiver_maxptime'] == 10
         assert 'sdp_features' not in row.metadata
-        expected_contract = '' if policy == 'observed_audio_only' else ('jpeg' if known_jpeg else None)
+        expected_contract = 'jpeg' if policy == 'options_native_jpeg' else None
         assert row.metadata['sip_video_codec'] == expected_contract
         assert peer_video_codec(None, row) == expected_contract
         while not caller.queue.empty():
@@ -491,8 +491,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
             result = await caller.wait_for_final(timeout=3)
         call_id = caller.dialog_ids.call_id
         assert result == 'in_call'
-        assert bool(observed['videos']) is (policy != 'observed_audio_only')
-        has_video = policy not in {'observed_audio_only', 'answer_audio_only'}
+        assert observed['videos']
+        has_video = policy != 'answer_audio_only'
         assert (caller.dialog.video_format is not None) is has_video
         assert caller.dialog.send_format.sample_rate == 16000
         assert caller.dialog.recv_format.sample_rate == 48000

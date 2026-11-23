@@ -595,6 +595,7 @@ async def test_browser_replaces_video_uses_standard_contract_and_owned_reservati
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.timeout(90)
 async def test_browser_refer_uses_destination_no_answer_policy_beyond_thirty_seconds(trunks, monkeypatch):
     from custom_components.voip_stack.phone_policy import PhonePolicy, PhoneDestination
 

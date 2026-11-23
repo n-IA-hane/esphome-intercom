@@ -74,8 +74,10 @@ def test_actual_native_48k_alias_copies_and_repacketizes_without_a_16k_roundtrip
     sent = []
     relay.right_transport = SimpleNamespace(sendto=lambda data, _addr: sent.append(rtp.parse_packet(data)))
     samples = tuple(round(12000 * math.sin(2 * math.pi * 10000 * index / 48000)) for index in range(1440))
-    first = rtp.build_packet(packet(0, payload_type=110, timestamp=0, payload=struct.pack("!480h", *samples[:480])))
-    second = rtp.build_packet(packet(1, payload_type=110, timestamp=480, payload=struct.pack("!960h", *samples[480:])))
+    # The independent peer may send 20 ms inside HA's negotiated receive bound;
+    # HA's own packet builder has a separate, smaller transmit payload budget.
+    first = struct.pack("!BBHII", 0x80, 110, 0, 0, 1) + struct.pack("!480h", *samples[:480])
+    second = struct.pack("!BBHII", 0x80, 110, 1, 480, 1) + struct.pack("!960h", *samples[480:])
     relay.handle_packet("left", first, (left.host, left.port))
     assert len(sent) == 1 and sent[0].payload == struct.pack("!480h", *samples[:480])
     relay.handle_packet("left", second, (left.host, left.port))
@@ -179,7 +181,7 @@ def test_partial_options_remains_advisory_without_inventing_transmit_quanta():
     assert all(not value.times.fixed for value in profile.evidence.sends)
 
 
-def test_uas_activation_installs_the_exact_committed_contract_without_negotiating_again(monkeypatch):
+async def test_uas_activation_installs_the_exact_committed_contract_without_negotiating_again(monkeypatch):
     wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
     narrow = sdp.RtpPcmFormat(97, "L16", 16000, 1, 20)
     original = SipInvite("192.0.2.2", 5060, sip.parse_sip_uri("sip:ha@192.0.2.1"), None,

@@ -105,7 +105,7 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         assert "sdp_features" not in bindings[0].capabilities
         assert "sip_audio_tx_geometry_complete" not in bindings[0].capabilities
         assert bindings[1].capabilities is None
-        runtime.roster.extend(roster_from_peers(runtime.hass, [], registrar.registered_roster_entries()))
+        runtime.roster[:] = roster_from_peers(runtime.hass, [], registrar.registered_roster_entries())
         runtime.roster.append(RosterEntry("ContactGroup", metadata={"group_type": "ring", "members": ["caps"]}))
         if route == "forward":
             runtime.phones[0].auto_answer = False
@@ -123,9 +123,13 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
             await wait_until(lambda: registrar.registered_contacts("bedroom0")[0].capabilities is not None)
             initial_entry = next(entry for entry in roster_from_peers(
                 runtime.hass, [], registrar.registered_roster_entries()) if entry.id == "bedroom0")
-            runtime.roster[:] = [initial_entry if entry.id == "bedroom0" else entry for entry in runtime.roster]
+            group = next(row for row in runtime.roster if row.id == 'ContactGroup')
+            runtime.roster[:] = [*roster_from_peers(runtime.hass, [], registrar.registered_roster_entries()), group]
+            assert len([row for row in runtime.roster if row.id == 'bedroom0']) == 1
+            assert next(row for row in runtime.roster if row.id == 'bedroom0').sip_uri == initial_entry.sip_uri
             monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
             monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: runtime.roster)
+        runtime.runtime.directory.replace(runtime.roster)
         result = await caller.invite(target="ContactGroup" if route == "group" else "bedroom0",
             remote_host="127.0.0.1", remote_sip_port=runtime.runtime.transport_config["sip_port"], timeout=2)
         assert result == "ringing"
