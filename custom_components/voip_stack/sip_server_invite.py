@@ -155,6 +155,9 @@ class SipIncomingInvites:
             to_tag=pending.to_tag,
             cseq=_cseq_number(request.header("CSeq")) + 1,
             transport=pending.transport,
+            authenticated_flow=(self.transaction_flow(addr)
+                if pending.transport == "TCP" and signaling_invite.authenticated_username
+                and self.transaction_flow is not None else None),
             codec_policy=pending.codec_policy,
             remote_uri=_uri_text_from_header(request.header("From")),
             remote_target_uri=remote_target,

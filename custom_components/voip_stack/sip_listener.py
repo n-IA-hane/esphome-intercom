@@ -211,6 +211,9 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         A local framing/read timeout has no transport error and must not be
         converted into an EOF recovery attempt on a different connection.
         """
+        for dialog in self.active_dialogs.values():
+            if dialog.authenticated_flow is flow:
+                dialog.authenticated_flow = None
         for responses in tuple(self._client_transaction_responses.values()):
             if responses.flow is flow:
                 if error is not None:
@@ -952,6 +955,8 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
             self.signaling_transport,
             self._send_application_follow_up,
             **({"flow_trunk_id": self.flow_trunk_id} if self.flow_trunk_id and request.method == "REFER" else {}),
+            **({"request_flow": self.transaction_flow(addr) if self.transaction_flow is not None else None}
+               if self.signaling_transport == "TCP" and request.method == "REFER" else {}),
         )
         self._remember_completed(
             self.completed_application_requests,
@@ -1092,6 +1097,16 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
     def dialog_key(self, call_id: str) -> DialogKey | None:
         dialog = self.active_dialogs.get(call_id)
         return DialogKey.for_uas_dialog(dialog.request, local_tag=dialog.to_tag) if dialog is not None else None
+
+    def authenticated_refer_principal(self, call_id: str, flow: object) -> str:
+        """Read the INVITE principal only on its still-owned authenticated TCP flow."""
+        dialog = self.active_dialogs.get(call_id)
+        if (dialog is None or dialog.transport != "TCP" or flow is None
+                or dialog.authenticated_flow is not flow or self.transaction_flow is None
+                or self.transaction_flow(dialog.addr) is not flow or flow.is_closing()
+                or dialog.invite is None):
+            return ""
+        return dialog.invite.authenticated_username
 
     def refer_operation_for(self, call_id: str):
         """Observe the accepted event usage which still owns a transfer decision."""

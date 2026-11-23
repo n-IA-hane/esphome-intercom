@@ -575,6 +575,12 @@ class SipEndpointManager:
                 return key
         return None
 
+    def authenticated_refer_principal(self, call_id, flow):
+        """Read one existing UAS owner's authenticated flow principal."""
+        owners = [endpoint for endpoint in self._dialog_endpoints()
+                  if endpoint.dialog_key(call_id) is not None]
+        return owners[0].authenticated_refer_principal(call_id, flow) if len(owners) == 1 else ""
+
     def refer_operation_for(self, call_id):
         return next((task for endpoint in self._dialog_endpoints()
                      if (task := endpoint.refer_operation_for(call_id)) is not None), None)

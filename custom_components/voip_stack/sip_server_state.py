@@ -384,6 +384,7 @@ class _ActiveDialog(DialogSignalingState):
     codec_policy: CodecPolicy = CodecPolicy()
     event_credentials: Callable[[], SipDigestCredentials | None] | None = None
     audio_payloads: PayloadMap = field(default_factory=PayloadMap)
+    authenticated_flow: asyncio.StreamWriter | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if self.invite is not None:

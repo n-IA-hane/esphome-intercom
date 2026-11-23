@@ -78,7 +78,7 @@ class SipApplicationMethods:
         addr: tuple[str, int],
         transport: str,
         follow_up_sender: "SipFollowUpSender | None" = None,
-        *, flow_trunk_id: str = "",
+        *, flow_trunk_id: str = "", request_flow: object | None = None,
     ) -> SipRequestResult:
         if (request.method == "SUBSCRIBE"
                 and request.header("Event").partition(";")[0].strip().casefold() == "ua-profile"):
@@ -97,7 +97,8 @@ class SipApplicationMethods:
             # From; a shared flow must identify one of its registered accounts.
             account = self.registrar.account_for_source(addr, transport)
         if request.method == "REFER":
-            return self._refer(request, addr, transport, account, follow_up_sender, flow_trunk_id)
+            return self._refer(request, addr, transport, account, follow_up_sender, flow_trunk_id,
+                request_flow=request_flow)
         if request.method == "SUBSCRIBE" and request.header("Event").partition(";")[0].strip().casefold() == "refer":
             for subscription in self.subscriptions.values():
                 notifier = subscription.refer_notifier
@@ -281,7 +282,7 @@ class SipApplicationMethods:
             if subscription.notify_task is not None:
                 subscription.notify_task.cancel()
 
-    def _refer(self, request, addr, transport, account, sender, flow_trunk_id):
+    def _refer(self, request, addr, transport, account, sender, flow_trunk_id, *, request_flow=None):
         """Authorize Target-Dialog against the existing leg's stable principal."""
         from .runtime_data import require_runtime_data, sip_trunks
         from .call_transfer import _inbound_server
@@ -317,6 +318,11 @@ class SipApplicationMethods:
                 trunk_id = session.metadata.get("inbound_trunk_id", "")
             if not matches:
                 return SipRequestResult(481, "Call/Transaction Does Not Exist")
+            if account is None and transport == "TCP" and server is not None and request_flow is not None:
+                username = server.authenticated_refer_principal(target_dialog.call_id, request_flow)
+                current = self.registrar.accounts.get(username.casefold())
+                if current is not None and current.enabled:
+                    account = current
             principal = runtime.endpoints.by_username(account.username) if account is not None else None
             try:
                 trusted_trunk = identify_inbound_trunk(sip_trunks(self.hass), addr[0], addr[1], transport,

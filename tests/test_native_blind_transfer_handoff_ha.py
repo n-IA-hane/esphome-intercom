@@ -35,13 +35,17 @@ def attach_video_peer(monkeypatch, phone, video_socket, encoding, direction, ref
 
     def answer(request, address, status, body=b""):
         if request.method == "INVITE" and status == 200 and body and b"m=video " in request.body:
-            mapping = re.search(rb"a=rtpmap:(\d+) " + encoding.encode() + rb"/90000", request.body)
+            # RTP payload numbers are scoped to one media section. Audio may
+            # legally use the same number for telephone-event.
+            video_section = next(section for section in re.split(rb"(?m)^m=", request.body)
+                                 if section.startswith(b"video "))
+            mapping = re.search(rb"a=rtpmap:(\d+) " + encoding.encode() + rb"/90000", video_section)
             assert mapping is not None, request.body
             payload = int(mapping[1])
             video = (f"m=video {video_socket.getsockname()[1]} RTP/AVP {payload}\r\n"
                      f"a=rtpmap:{payload} {encoding}/90000\r\na={direction}\r\n")
             if encoding == "H264":
-                offered = re.search(rb"a=fmtp:" + str(payload).encode() + rb" ([^\r\n]+)", request.body)
+                offered = re.search(rb"a=fmtp:" + str(payload).encode() + rb" ([^\r\n]+)", video_section)
                 video += f"a=fmtp:{payload} " + (offered[1].decode() if offered else "packetization-mode=1;profile-level-id=42e01f") + "\r\n"
             body += video.encode()
         respond(request, address, status, body)
@@ -143,6 +147,8 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
     target, transfer = lab.phones[1], None
     target.auto_answer = False
     accepted = asyncio.Event()
+    transfer_finished = asyncio.Event()
+    final_notify_statuses = []
     refused_refers, video_sockets, senders = [], [], []
     if video_case:
         from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
@@ -206,6 +212,37 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         old_destination = registry.bridge_link_for(original.call_id)
         retained_client = registry.sip_client_for(old_destination)
         uri = f'sip:bedroom1@127.0.0.1:{lab.runtime.transport_config["sip_port"]}'
+        if transferor == "source" and caller.signaling_transport == "TCP":
+            from custom_components.voip_stack.core.sip_transfer import SipTargetDialog
+            from custom_components.voip_stack.sip_tcp_io import read_sip_stream_message
+
+            # Knowing the real dialog tags on the same host is insufficient:
+            # the alternate connection never authenticated that INVITE.
+            source_host = caller._tcp_writer.writer.get_extra_info("sockname")[0]
+            reader, foreign = await asyncio.open_connection("127.0.0.1",
+                lab.runtime.transport_config["sip_port"], local_addr=(source_host, 0))
+            try:
+                foreign_port = foreign.get_extra_info("sockname")[1]
+                dialog_target = SipTargetDialog(caller.dialog_ids.call_id,
+                    caller.dialog_ids.remote_tag, caller.dialog_ids.local_tag)
+                request = sip.build_request("REFER", caller.dialog.remote_target_uri, [
+                    ("Via", f"SIP/2.0/TCP {source_host}:{foreign_port};branch=z9hG4bK-foreign-refer"),
+                    ("From", f"<{caller.dialog.local_uri}>;tag=foreign"),
+                    ("To", f"<{caller.dialog.remote_target_uri}>"),
+                    ("Call-ID", sip.make_call_id("foreign-refer")), ("CSeq", "1 REFER"),
+                    ("Contact", f"<sip:{account.username}@{source_host}:{foreign_port};transport=tcp>"),
+                    ("Refer-To", f"<{uri}>"), ("Target-Dialog", str(dialog_target)),
+                ])
+                foreign.write(request)
+                await foreign.drain()
+                raw = await asyncio.wait_for(read_sip_stream_message(reader), 2)
+                assert raw is not None and sip.parse_message(raw).status_code == 403
+                assert registry.get_session(original.call_id) is original and original.live
+                assert registry.resource_for(original.call_id, "relay") is original_relay
+                assert not target.invited.is_set()
+            finally:
+                foreign.close()
+                await foreign.wait_closed()
         if transferor == "source":
             native_send = caller._send_in_dialog_request
             async def send(method, **kwargs):
@@ -225,6 +262,11 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
                 receive(raw, address)
                 if message.method == "NOTIFY":
                     phone.respond(message, address, 200)
+                    from custom_components.voip_stack.core.sip_transfer import parse_sipfrag_status
+                    status = parse_sipfrag_status(message.body)
+                    if status >= 200:
+                        final_notify_statuses.append(status)
+                        transfer_finished.set()
                 if (message.status_code == 200 and message.header("CSeq") == "42 REFER"):
                     accepted.set()
                     phone.remote_hangup(cseq=43)
@@ -241,6 +283,11 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         assert not target.answered.is_set()
         assert any(session.live for session in registry.sessions.values())
         target.answer()
+        if transferor == "destination":
+            # The retained session can publish in_call before its media commit.
+            # Final REFER success is the independent peer-visible commit barrier.
+            await asyncio.wait_for(transfer_finished.wait(), 4)
+            assert final_notify_statuses[-1] == 200
         await until(lambda: any(session.live and session.state == "in_call" and registry.bridge_link_for(session.call_id)
             not in {"", old_destination} for session in registry.sessions.values()))
         current = next(session for session in registry.sessions.values()
