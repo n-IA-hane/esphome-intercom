@@ -197,6 +197,7 @@ ha_tests=(
   tests/test_inbound_did_bridge_ha.py
   tests/test_inbound_did_direct_ha.py
   tests/test_esphome_provisioning_batch_ha.py
+  tests/test_legacy_esphome_settings_migration_ha.py
   tests/test_paging_ha.py
   tests/test_paging_autoanswer_interop_ha.py
   tests/test_browser_paging_ha.py

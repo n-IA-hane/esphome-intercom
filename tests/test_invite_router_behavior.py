@@ -208,7 +208,9 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     from custom_components.voip_stack.sip_listener import SipInviteResult
 
     _patch_route_prefix(monkeypatch)
-    original = replace(_invite(), target="601", target_route="601")
+    original = replace(_invite(), request_uri=parse_sip_uri("sip:601@192.0.2.1"),
+        target="601", target_route="601", received_via_trunk=True,
+        called_number="601", called_number_raw="601", called_number_source="request_uri")
     destination = SimpleNamespace(extension="601", display_name="Bedroom")
     fallback = SimpleNamespace(extension="777", display_name="Assistant")
     initial = RouteDecision(RouteAction.FORWARD if known else RouteAction.TRUNK,
@@ -218,7 +220,10 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     runtime.is_trunk_invite = Mock(return_value=True)
     runtime.is_ha_target = Mock(return_value=False)
     runtime.get_trunk_config = Mock(return_value={"name": "Office", "trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Assistant", "automation_routing_enabled": True})
-    runtime.inbound_route_decision = Mock(side_effect=lambda invite, *_: initial if invite.routing_target == "601" else selected_fallback)
+    def route(invite, *_, lookup_target=None):
+        target = invite.routing_target if lookup_target is None else lookup_target
+        return initial if target == "601" else selected_fallback
+    runtime.inbound_route_decision = Mock(side_effect=route)
     runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     request = AsyncMock(return_value=AutomationRoute(action="decline"))
     monkeypatch.setattr(invite_router, "request_route_override", request)
@@ -234,7 +239,9 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     assert request.await_args.kwargs["invite"].routing_target == "601"
     assert request.await_args.kwargs["decision"] == (initial if known else selected_fallback)
     assist.assert_not_awaited()
-    assert "Trunk Office received number not available, normalized to not available" in caplog.text
+    assert runtime.inbound_route_decision.call_args_list[0].kwargs == {"lookup_target": "601"}
+    assert runtime.inbound_route_decision.call_count == (1 if known else 2)
+    assert "Trunk Office received number 601, normalized to 601 from request_uri" in caplog.text
     assert "routing mode=direct" in caplog.text
     assert ("configured fallback is Assistant" in caplog.text) is not known
 

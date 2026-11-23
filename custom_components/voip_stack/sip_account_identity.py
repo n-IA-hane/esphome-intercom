@@ -153,6 +153,38 @@ def legacy_esphome_references(hass, entry, *, stored_references=()):
                 yield origin, device, old
 
 
+def _legacy_esphome_settings(hass, origin, device, mac):
+    """Snapshot native settings only before this hardware owns a SIP account."""
+    from .device_resolver import entity_role
+    from .esphome_native import verified_action_names
+
+    # A complete native inventory distinguishes an absent optional control
+    # from platforms which have not been forwarded yet. MAIN firmware is valid
+    # input even when it has no managed-account provisioning actions.
+    if verified_action_names(origin, mac) is None:
+        return None
+    roles = {"voip_extension": "extension", "voip_ring_groups": "ring_group",
+             "voip_queues": "queues", "voip_conference_groups": "conference_group",
+             "voip_conference_ring": "conference_ring"}
+    settings = {}
+    for entity in er.async_entries_for_device(er.async_get(hass), device.id):
+        field = roles.get(entity_role(entity))
+        if entity.platform != "esphome" or field is None:
+            continue
+        state = hass.states.get(entity.entity_id)
+        if state is None or state.state in {"unknown", "unavailable"}:
+            return None
+        value = state.state.strip()
+        if field == "conference_ring":
+            if value not in {"on", "off"}:
+                raise ValueError("Legacy conference ring control has no boolean state")
+            settings[field] = value == "on"
+        else:
+            # An available empty Text value is an explicit empty setting.
+            settings[field] = value
+    return settings
+
+
 def resolve_ha_endpoint(registry, selector, *, entry=None):
     """Adapt saved HA references without adding aliases to SIP or the directory."""
     identity = str(selector or "").strip()
@@ -571,9 +603,17 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None, stored
         membership = entry.data.get('esphome_phone_memberships', {}).get(old, {})
         membership = membership if isinstance(membership, Mapping) else {}
         try:
+            native_settings = _legacy_esphome_settings(hass, origin, device, mac)
+            if native_settings is None:
+                pending_esphome.append(device.id)
+                continue
+            membership = {**native_settings, **membership}
             phone = ManagedPhone(device_id=device.id, origin_entry_id=origin.entry_id, mac=mac,
                 username=username, password=generate_password(), endpoint_id=old, display_name=username,
                 route_id=str(info.name), api_host=str(origin.data.get('host') or ''),
+                extension=str(membership.get('extension', '')),
+                conference_group=str(membership.get('conference_group', '')),
+                conference_ring=bool(membership.get('conference_ring', False)),
                 queues=membership.get('queues', ()), ring_group=str(membership.get('ring_group') or ''),
                 membership_pending=membership.get('membership_pending', {}), membership_observed=membership.get('membership_observed', {}),
                 active=managed_phone_mode(hass, origin, device.id, mac) is True)
