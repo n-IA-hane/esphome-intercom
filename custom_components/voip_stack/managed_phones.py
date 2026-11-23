@@ -135,6 +135,9 @@ def save_managed_account(hass, entry, phone, *, username_source=None):
     data["managed_exclusive"] = bool(row.data.get("managed_exclusive", True)) if row else True
     if row is not None:
         data = {**row.data, **data}
+        for field in ('name', 'display_name'):
+            if field in row.data:
+                data[field] = row.data[field]
     if username_source is not None:
         data['username_source'] = username_source
     from .phone_queue_membership import GROUP_MEMBERSHIP_VERSION
@@ -149,9 +152,8 @@ def save_managed_account(hass, entry, phone, *, username_source=None):
             from .phone_config import async_enable_registrar_for_new_account
             async_enable_registrar_for_new_account(hass, entry)
     elif row.data != data or row.unique_id != unique_id:
-        # Preserve the title if the administrator renamed this account separately.
-        title = title if row.title == (row.data.get("display_name") or row.data.get("username")) else row.title
-        hass.config_entries.async_update_subentry(entry, row, title=title, data=data, unique_id=unique_id)
+        # Hardware refreshes update the association, never the account label.
+        hass.config_entries.async_update_subentry(entry, row, data=data, unique_id=unique_id)
 
     # HA permits deletion while this integration is unloaded. Keep enough history
     # to distinguish that choice from first discovery and purge the original endpoint.

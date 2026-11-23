@@ -80,7 +80,7 @@ async def get_archive(hass) -> MediaArchive:
             from .repairs import async_sync_archive_record_issues
             from .store import config_entry
 
-            async_sync_archive_record_issues(hass, config_entry(hass), archive.recovery_faults)
+            await async_sync_archive_record_issues(hass, config_entry(hass), archive.recovery_faults)
         return archive
 
 

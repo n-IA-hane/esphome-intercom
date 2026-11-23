@@ -30,7 +30,7 @@ from .managed_phones import (CONF_ESPHOME_ENROLLMENTS, MANAGED_ACCOUNT_ID,
 from .phone_endpoint import EndpointKind
 from .esphome_phone_inventory import managed_phone_endpoint, sync_managed_phone_endpoint
 from .phone_queue_membership import (CONF_ESPHOME_PHONE_MEMBERSHIPS, membership_text,
-    normalize_membership_tracking, observe_native_membership)
+    normalize_membership_tracking, normalize_phone_queues, observe_native_membership)
 from .runtime_data import runtime_data, sip_registrar
 from .repairs import async_sync_esphome_account_name_issue, async_sync_esphome_endpoint_collision_issue
 from .sip_registrar import generate_password
@@ -72,6 +72,7 @@ class EspHomeProvisioner:
         self._membership_scopes = {}
         self._membership_changes = {}
         self._membership_delivered = {}
+        self._identity_retry_signature = None
 
     def _owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -114,10 +115,36 @@ class EspHomeProvisioner:
         """Commit a deferred automatic name only through the account migration owner."""
         from .managed_phones import CONF_MANAGED_PHONES
         from .phone_config import PhoneRouteConflict
-        from .repairs import async_sync_account_route_issue, async_sync_phone_identity_issue
+        from .repairs import async_sync_account_route_issue, async_sync_phone_identity_issue, async_sync_managed_record_issues
         from .sip_account_identity import async_migrate_account_identities, managed_account_name_updates, legacy_esphome_references
 
-        legacy = CONF_MANAGED_PHONES in self.entry.data or any(legacy_esphome_references(self.hass, self.entry))
+        legacy_records, invalid = {}, {}
+        for hardware, raw in self.entry.data.get(CONF_MANAGED_PHONES, {}).items():
+            try:
+                phone = ManagedPhone(**{key: value for key, value in raw.items()
+                    if key in ManagedPhone.__dataclass_fields__})
+                if phone.device_id == hardware:
+                    legacy_records[hardware] = raw
+            except (AttributeError, TypeError, ValueError) as error:
+                # The existing native Repair owns this retained record. A call
+                # state update is not a request to retry corrupted payloads.
+                invalid[hardware] = type(error).__name__
+                continue
+        ready = []
+        for origin, device, old in legacy_esphome_references(self.hass, self.entry):
+            native = runtime_for_entry(origin)
+            if not connected(native):
+                continue
+            try:
+                username = managed_device_username(native)
+                membership = self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}).get(old, {})
+                normalize_phone_queues(membership.get('queues'))
+            except (AttributeError, TypeError, ValueError) as error:
+                invalid[device.id] = {'error': type(error).__name__, 'membership_reference': old}
+                continue
+            ready.append((origin.entry_id, device.id, old, username))
+        legacy = bool(legacy_records or ready)
+        async_sync_managed_record_issues(self.hass, self.entry, invalid)
         try:
             updates = managed_account_name_updates(self.hass, self.entry)
             renamed = any(data.get('username') != self.entry.subentries[identity].data.get('username')
@@ -126,14 +153,23 @@ class EspHomeProvisioner:
                 async_sync_phone_identity_issue(self.hass, self.entry)
                 return True
             if self.runtime.sip is not None and any(session.live for session in self.runtime.sip.sessions.values()):
-                return not legacy
+                return True
+            # This is retry suppression within the existing entry owner, not
+            # another migration version. Signaling state cannot change it.
+            signature = hashlib.sha256(json.dumps({'legacy': legacy_records, 'ready': ready,
+                'updates': updates, 'memberships': self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}),
+                'accounts': [(row.subentry_id, row.data.get('username')) for row in self.entry.subentries.values()
+                             if row.subentry_type == 'phone']}, sort_keys=True).encode()).hexdigest()
+            if signature == self._identity_retry_signature:
+                return True
+            self._identity_retry_signature = signature
             await async_migrate_account_identities(self.hass, self.entry, account_updates=updates)
         except PhoneRouteConflict as error:
             async_sync_account_route_issue(self.hass, self.entry, error)
-            return not legacy
+            return True
         except (ValueError, TypeError, RuntimeError, OSError) as error:
             async_sync_phone_identity_issue(self.hass, self.entry, error)
-            return not legacy
+            return True
         if not self._owned():
             return False
         async_sync_account_route_issue(self.hass, self.entry)
@@ -398,8 +434,11 @@ class EspHomeProvisioner:
                 return
             if not self._owned() or revision != self._revision:
                 return
-            records = managed_records(self.entry)
             rows = managed_account_subentries(self.entry)
+            records = {hardware: phone for hardware, phone in managed_records(self.entry).items() if hardware in rows}
+            from .sip_account_identity import legacy_esphome_references
+            pending_legacy = set(self.entry.data.get('managed_esphome_phones', {}))
+            pending_legacy.update(device.id for _origin, device, _old in legacy_esphome_references(self.hass, self.entry))
             devices = dr.async_get(self.hass)
             for device_id in rows.keys() - self.entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}).keys():
                 if phone := records.get(device_id):
@@ -470,6 +509,8 @@ class EspHomeProvisioner:
                     continue
                 for device in dr.async_entries_for_config_entry(devices, origin.entry_id):
                     if self.is_removed(origin.entry_id, device.id):
+                        continue
+                    if device.id in pending_legacy and device.id not in rows:
                         continue
                     modes = {managed_phone_mode(self.hass, origin, device.id, mac)
                              for kind, mac in device.connections if kind == dr.CONNECTION_NETWORK_MAC}

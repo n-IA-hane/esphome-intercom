@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from inspect import signature
+from pathlib import Path
 import voluptuous as vol
 
 from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
@@ -186,7 +187,8 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
     """Create the native retry flow only for an account migration conflict."""
     if issue_id.startswith('managed_record_') and data is not None:
-        return ManagedRecordRepairFlow(str(data['entry_id']), str(data['hardware']))
+        return ManagedRecordRepairFlow(str(data['entry_id']), str(data['hardware']),
+                                       membership_reference=data.get('membership_reference'))
     if issue_id.startswith('archive_record_') and data is not None:
         return ArchiveRecordRepairFlow(str(data['entry_id']), str(data['filename']))
     if issue_id.startswith('ldap_record_invalid_') and data is not None:
@@ -199,8 +201,9 @@ async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> Rep
 class ManagedRecordRepairFlow(RepairsFlow):
     """Correct a retained malformed account through its native hardware association."""
 
-    def __init__(self, entry_id, hardware):
+    def __init__(self, entry_id, hardware, *, membership_reference=None):
         self.entry_id, self.hardware = entry_id, hardware
+        self.membership_reference = membership_reference
 
     async def async_step_init(self, user_input=None):
         return await self.async_step_account()
@@ -210,9 +213,11 @@ class ManagedRecordRepairFlow(RepairsFlow):
         from .sip_registrar import normalize_username
         from homeassistant.helpers import device_registry as dr
         entry = self.hass.config_entries.async_get_entry(self.entry_id)
-        if entry is None or self.hardware not in entry.data.get('managed_esphome_phones', {}):
+        records = entry.data.get('esphome_phone_memberships' if self.membership_reference else 'managed_esphome_phones', {}) if entry is not None else {}
+        record_key = self.membership_reference or self.hardware
+        if entry is None or record_key not in records:
             return self.async_create_entry(data={})
-        raw = entry.data['managed_esphome_phones'][self.hardware]
+        raw = records[record_key]
         saved = dict(raw) if isinstance(raw, dict) else {}
         from .phone_queue_membership import membership_names, normalize_phone_queues
         try:
@@ -248,7 +253,10 @@ class ManagedRecordRepairFlow(RepairsFlow):
                                    for kind, value in device.connections)):
                     raise ValueError('Choose the original native hardware owner')
                 from .device_resolver import slugify_route_id
+                from .sip_registrar import generate_password
                 password = user_input.get('password') or saved.get('password')
+                if self.membership_reference and not password:
+                    password = generate_password()
                 if not isinstance(password, str):
                     raise ValueError('Provide a valid replacement credential')
                 old = saved.get('endpoint_id')
@@ -266,10 +274,17 @@ class ManagedRecordRepairFlow(RepairsFlow):
                     'api_host': str(origin.data.get('host') or '')}
                 from .managed_phones import ManagedPhone
                 ManagedPhone(**{key: value for key, value in corrected.items() if key in ManagedPhone.__dataclass_fields__})
-                records = {**entry.data['managed_esphome_phones']}
-                records.pop(self.hardware)
-                records[device.id] = corrected
-                self.hass.config_entries.async_update_entry(entry, data={**entry.data, 'managed_esphome_phones': records})
+                if self.membership_reference:
+                    memberships = dict(entry.data['esphome_phone_memberships'])
+                    memberships.pop(self.membership_reference)
+                    records = {**entry.data.get('managed_esphome_phones', {}), device.id: corrected}
+                    self.hass.config_entries.async_update_entry(entry, data={**entry.data,
+                        'esphome_phone_memberships': memberships, 'managed_esphome_phones': records})
+                else:
+                    records = {**entry.data['managed_esphome_phones']}
+                    records.pop(self.hardware)
+                    records[device.id] = corrected
+                    self.hass.config_entries.async_update_entry(entry, data={**entry.data, 'managed_esphome_phones': records})
                 if entry.state is ConfigEntryState.MIGRATION_ERROR:
                     await self.hass.config_entries.async_retry_migration(entry.entry_id)
                 else:
@@ -311,7 +326,9 @@ def async_sync_managed_record_issues(hass, entry, invalid):
             severity=ir.IssueSeverity.ERROR, translation_key='managed_record_invalid',
             translation_placeholders={'phone': (device.name_by_user or device.name or 'Saved phone account')
                 if device is not None else 'Saved phone account'},
-            data={'entry_id': entry.entry_id, 'hardware': hardware})
+            data={'entry_id': entry.entry_id, 'hardware': hardware,
+                  **({'membership_reference': invalid[hardware]['membership_reference']}
+                     if isinstance(invalid[hardware], dict) and 'membership_reference' in invalid[hardware] else {})})
 
 
 def async_sync_esphome_account_setup_issue(hass, entry, device_id, *, pending):
@@ -341,6 +358,10 @@ class ArchiveRecordRepairFlow(RepairsFlow):
         entry = self.hass.config_entries.async_get_entry(self.entry_id)
         if entry is None:
             return self.async_create_entry(data={})
+        await async_sync_archive_record_issues(self.hass, entry, {})
+        issue_id = 'archive_record_' + entry.entry_id + '_' + self.filename
+        if ir.async_get(self.hass).async_get_issue(DOMAIN, issue_id) is None:
+            return self.async_create_entry(data={})
         errors = {}
         if user_input is not None:
             from .core.media_archive import ArchiveError, MediaArchive
@@ -365,7 +386,7 @@ class ArchiveRecordRepairFlow(RepairsFlow):
                     raise ArchiveError('Complete the interrupted recording recovery before retrying')
                 await prepared.commit()
                 ir.async_delete_issue(self.hass, DOMAIN, 'archive_record_' + entry.entry_id + '_' + self.filename)
-                async_sync_archive_record_issues(self.hass, entry, prepared.faults)
+                await async_sync_archive_record_issues(self.hass, entry, prepared.faults)
             except (ArchiveError, HomeAssistantError, OSError, ValueError, TypeError):
                 errors['base'] = 'recording_recovery_failed'
             else:
@@ -376,10 +397,24 @@ class ArchiveRecordRepairFlow(RepairsFlow):
             }))
 
 
-def async_sync_archive_record_issues(hass, entry, faults):
+async def async_sync_archive_record_issues(hass, entry, faults):
     """Report retained archive files without changing their payload or ownership."""
     prefix = 'archive_record_' + entry.entry_id + '_'
     registry = ir.async_get(hass)
+    from .mailbox import archive_path
+    root = archive_path(hass)
+    filenames = {issue_id[len(prefix):] for domain, issue_id in registry.issues
+                 if domain == DOMAIN and issue_id.startswith(prefix)} | set(faults)
+    if root is not None and filenames:
+        # A repaired but still present record needs explicit confirmation. Only
+        # an actual missing file closes its stale issue and quarantine entry.
+        def missing_files():
+            return {filename for filename in filenames
+                    if Path(filename).name == filename and not (root / filename).exists()}
+        missing = await hass.async_add_executor_job(missing_files)
+        for filename in missing:
+            ir.async_delete_issue(hass, DOMAIN, prefix + filename)
+        faults = {filename: reason for filename, reason in faults.items() if filename not in missing}
     for filename in faults:
         ir.async_create_issue(hass, DOMAIN, prefix + filename, config_entry_id=entry.entry_id,
             is_fixable=True, is_persistent=True,

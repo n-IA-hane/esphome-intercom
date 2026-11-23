@@ -1419,17 +1419,14 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                                             errors={"base": "phone_forward_loop" if str(error) == 'phone_forward_loop' else "phone_alias_conflict"})
             current = self._get_reconfigure_subentry()
             if data.get(CONF_PHONE_USERNAME) and data[CONF_PHONE_USERNAME] != phone_endpoint_id(current):
-                from .sip_account_identity import async_migrate_account_identities, _typed_data
+                from .sip_account_identity import async_migrate_account_identities
 
                 try:
-                    mapping = await async_migrate_account_identities(self.hass, self._get_entry(),
-                        account_updates={current.subentry_id: data})
+                    await async_migrate_account_identities(self.hass, self._get_entry(),
+                        account_updates={current.subentry_id: data}, physical_bindings=prepared)
                 except ValueError:
                     return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(),
                                                 errors={"base": "phone_alias_conflict"})
-                prepared = tuple((row, _typed_data(values, 'physical_phone', mapping)) for row, values in prepared)
-                apply_memberships(data[CONF_PHONE_USERNAME])
-                apply_account_bindings(self.hass, self._get_entry(), prepared)
                 self.hass.config_entries.async_schedule_reload(self._get_entry().entry_id)
                 return self.async_abort(reason="reconfigure_successful")
             apply_memberships(data[CONF_PHONE_ENDPOINT_ID])

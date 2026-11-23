@@ -776,8 +776,9 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]]:
     """Expose registrar accounts through the legacy service/storage contract."""
     accounts: list[dict[str, Any]] = []
+    from .phone_queue_membership import project_phone_memberships
     for subentry in phone_subentries(entry):
-        data = subentry.data
+        data = project_phone_memberships(entry, phone_endpoint_id(subentry), subentry.data)
         if data.get(CONF_PHONE_KIND) != EndpointKind.SIP_ACCOUNT.value:
             continue
         accounts.append(
@@ -792,6 +793,7 @@ def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]
                     data.get(CONF_PHONE_CONFERENCE_RING, False)
                 ),
                 "ring_group": data.get(CONF_PHONE_RING_GROUP, ""),
+                "queues": list(data.get(CONF_PHONE_QUEUES, ())),
             }
         )
     return accounts
@@ -815,7 +817,7 @@ def validate_sip_account_namespace(
     replaced = {
         phone_endpoint_id(subentry)
         for subentry in phone_subentries(entry)
-        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value and not subentry.data.get("managed_esphome")
+        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value
     }
     replaced.update(str(data.get(CONF_PHONE_ENDPOINT_ID) or "") for data in candidates)
     existing = entry_route_mappings(entry, {**entry.data, CONF_SIP_ACCOUNTS: []},
@@ -912,26 +914,32 @@ def replace_sip_account_subentries(
     existing = {
         str(subentry.data.get(CONF_PHONE_USERNAME) or "").casefold(): subentry
         for subentry in phone_subentries(entry)
-        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value and not subentry.data.get("managed_esphome")
+        if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value
     }
+    current_accounts = {str(raw['username']).casefold(): sip_account_phone_data(raw)
+                        for raw in sip_account_dicts_from_subentries(entry)}
     wanted: dict[str, dict[str, Any]] = {}
-    managed_usernames = {str(row.data.get(CONF_PHONE_USERNAME) or '').casefold()
-                         for row in phone_subentries(entry) if row.data.get('managed_esphome')}
     for raw in raw_accounts:
         data = sip_account_phone_data(raw)
         username = str(data[CONF_PHONE_USERNAME]).casefold()
-        if username in managed_usernames:
-            raise PhoneRouteConflict(str(data[CONF_PHONE_NAME]), str(data[CONF_PHONE_USERNAME]))
         previous = existing.get(username)
         if previous is not None:
             # Account APIs own credential/registrar fields, not unrelated
             # client preferences, declared HA associations or future metadata.
             managed = {key: data[key] for key in (
                 CONF_PHONE_KIND, CONF_PHONE_NAME, CONF_PHONE_EXTENSION, CONF_PHONE_USERNAME,
-                "username_source",
                 CONF_PHONE_PASSWORD, CONF_PHONE_ENABLED, CONF_PHONE_RING_GROUP,
                 CONF_PHONE_CONFERENCE_GROUP, CONF_PHONE_CONFERENCE_RING)}
+            managed = {key: value for key, value in managed.items()
+                       if key in previous.data or value != current_accounts[username][key]}
             data = {**deepcopy(phone_subentry_data(previous)), **managed}
+            # Membership fields are commands only when supplied. Other account
+            # edits must not clear membership owned by the group subentries.
+            for field in (CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES):
+                if field not in raw:
+                    data.pop(field, None)
+                else:
+                    data[field] = sip_account_phone_data(raw)[field]
             # Credential updates retain the current account key and its
             # native HA associations. Explicit renaming uses the migration owner.
             data[CONF_PHONE_ENDPOINT_ID] = str(
@@ -940,7 +948,6 @@ def replace_sip_account_subentries(
             )
             for key in (
                 CONF_PHONE_DND,
-                CONF_PHONE_QUEUES,
                 CONF_PHONE_VIDEO_ENABLED,
                 CONF_PHONE_OFFLINE_POLICY,
                 CONF_PHONE_OFFLINE_FORWARD_TARGET,
@@ -1013,8 +1020,9 @@ def update_phone_subentry(
     # This read/validate/write section does not yield: all account changes share
     # the ConfigEntry owner on HA's event loop, including concurrent UI clients.
     validate_phone_subentry_data(entry, data)
-    if memberships and entry.data.get(GROUP_MEMBERSHIP_VERSION) == 1:
-        _apply_membership_updates(hass, entry, {endpoint_id: memberships})
+    if entry.data.get(GROUP_MEMBERSHIP_VERSION) == 1:
+        if memberships:
+            _apply_membership_updates(hass, entry, {endpoint_id: memberships})
         data.pop(CONF_PHONE_QUEUES, None)
         data.pop(CONF_PHONE_RING_GROUP, None)
     changed = hass.config_entries.async_update_subentry(
