@@ -1971,6 +1971,59 @@ await pagedMailbox._loadMailbox(true);
 assert.deepEqual(offsets, [0, 2]);
 assert.equal(pagedMailbox._mailboxMessages.map((item) => item.id).join(","), "one,two,three");
 assert.equal(pagedMailbox._mailboxOffset, 4);
+
+// An audio-only incoming offer preserves the Send Camera preference for later
+// renegotiation without opening the camera while answering the current offer.
+const originalCameraPreflight = engine.prepareVideoCameraPermission;
+for (const [offered, permission, suppliedPermission, expectedChecks, expectedAnswer] of [
+  [false, true, undefined, 0, true],
+  [true, true, undefined, 1, true],
+  [true, false, undefined, 1, false],
+  [true, new Error("camera fixture failure"), undefined, 1, null],
+  [false, true, false, 0, false],
+  [false, true, true, 0, true],
+]) {{
+  engine.ownedSoftphoneCalls.clear();
+  engine.active = false;
+  engine.callId = "";
+  engine.mediaIntent = null;
+  const answer = makeCard();
+  answer.config.device_id = "camera-preference-device";
+  answer._softphoneSnapshot = {{
+    endpoint_id: "camera-preference", device_id: "camera-preference-device",
+    state: "ringing", direction: "incoming", call_id: `camera-${{offered}}-${{expectedAnswer}}`,
+    capabilities: ["audio", "video"], video_offered: offered,
+    video_camera_send_enabled: true, send_video: true,
+  }};
+  answer._loadSoftphoneState = async () => {{}};
+  answer._ensureHaSoftphoneAudioPath = () => {{}};
+  const commands = [];
+  answer._hass.callService = async (...args) => commands.push(args);
+  let permissionChecks = 0;
+  engine.prepareVideoCameraPermission = async () => {{
+    permissionChecks++;
+    if (permission instanceof Error) throw permission;
+    return permission;
+  }};
+  await answer._answer(typeof suppliedPermission === "boolean"
+    ? {{ videoPermission: suppliedPermission }} : {{}});
+  assert.equal(permissionChecks, expectedChecks, "Camera acquisition follows the current offer");
+  assert.equal(answer._softphoneSnapshot.send_video, true, "Answer must preserve the logical phone preference");
+  assert.equal(answer._starting, false);
+  assert.equal(engine.mediaIntent, null);
+  if (expectedAnswer === null) {{
+    assert.equal(commands.length, 0);
+    assert.equal(answer._errorMsg, "camera fixture failure");
+    assert.equal(engine.ownsSoftphoneSession(answer._sessionCallId(), "camera-preference"), false);
+  }} else {{
+    assert.equal(commands.length, 1, "Answer must not persist a setting");
+    assert.equal(commands[0][1], "answer");
+    assert.equal(commands[0][2].send_video, expectedAnswer);
+  }}
+}}
+engine.prepareVideoCameraPermission = originalCameraPreflight;
+engine.ownedSoftphoneCalls.clear();
+
 """
     completed = subprocess.run(
         [

@@ -2980,16 +2980,17 @@ class VoipStackCard extends HTMLElement {
           operationId !== this._callOperationId ||
           this._sessionCallId() !== callId
         ) return;
-        // A peer such as Wildix commonly establishes audio first and adds
-        // video with an in-dialog re-INVITE.  A manual answer must preserve
-        // the user's existing Send Camera choice for that later offer; auto
-        // answer still supplies its separately preflighted permission.
+        // Preserve Send Camera intent for a later in-dialog video offer,
+        // without opening the camera while answering an audio-only offer.
+        // Auto answer still supplies its separately preflighted permission.
         const sendVideo = wantsVideo
           ? typeof options.videoPermission === "boolean"
             ? options.videoPermission
-            : await voipStackEngine.prepareVideoCameraPermission({
-                endpointId: this._getSoftphoneEndpointId(),
-              })
+            : this._softphoneSnapshot?.video_offered
+              ? await voipStackEngine.prepareVideoCameraPermission({
+                  endpointId: this._getSoftphoneEndpointId(),
+                })
+              : true
           : false;
         if (
           operationId !== this._callOperationId ||
