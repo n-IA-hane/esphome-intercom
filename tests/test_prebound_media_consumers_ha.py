@@ -1,6 +1,7 @@
 """First RTP survives existing public automation, conference and pickup owners."""
 import asyncio
 from dataclasses import asdict
+from fractions import Fraction
 import json
 import re
 import socket
@@ -350,10 +351,59 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
             store_evidence()
             return raw
 
+        async def receive_source_pcm():
+            # The real ACK owns every accepted receive alias, independently
+            # of the preferred mapping retained in caller.dialog.recv_format.
+            audio = wire_evidence["source_ack_sdp"].split("m=audio ", 1)[1].split("\nm=", 1)[0]
+            accepted = {int(value) for value in audio.splitlines()[0].split()[2:]}
+            mappings = {int(pt): (int(rate), int(channels or "1"))
+                for pt, rate, channels in re.findall(
+                    r"^a=rtpmap:(\d+) L16/(\d+)(?:/(\d+))?\r?$", audio, re.MULTILINE)
+                if int(pt) in accepted}
+            declared = {fmt.payload_type: (fmt.sample_rate, fmt.channels)
+                for fmt in caller.dialog.recv_formats if fmt.encoding == "L16"}
+            duration_ms = Fraction(len(picker_pcm) * 1000,
+                2 * picker.dialog.send_format.sample_rate)
+            assert duration_ms == 20
+            packets, payloads = [], []
+            sample_count = 0
+            while True:
+                packet = rtp.parse_packet(await receive_source())
+                assert packet.payload_type in mappings, str(evidence_path)
+                rate, channels = mappings[packet.payload_type]
+                assert declared[packet.payload_type] == (rate, channels)
+                assert channels == 1 and rate in {16000, 48000}
+                assert packet.payload and len(packet.payload) % 2 == 0
+                if packets:
+                    previous = packets[-1]
+                    assert packet.payload_type == previous.payload_type
+                    assert packet.ssrc == previous.ssrc
+                    assert packet.sequence == (previous.sequence + 1) & 0xffff
+                    assert packet.timestamp == (previous.timestamp + len(previous.payload) // 2) & 0xffffffff
+                packets.append(packet)
+                payloads.append(packet.payload)
+                sample_count += len(packet.payload) // 2
+                expected_samples = rate * duration_ms / 1000
+                assert expected_samples.denominator == 1
+                assert sample_count <= expected_samples
+                if sample_count == expected_samples:
+                    break
+            received = b"".join(payloads)
+            if rate == 16000:
+                assert received == picker_pcm
+            else:
+                assert len(packets) == 2 and all(len(packet.payload) == 480 * 2 for packet in packets)
+                assert sample_count == 960
+                samples = struct.unpack("!960h", received)
+                # The required 16-to-48 kHz interpolation has 24 source
+                # samples of finite support, or 72 output samples (1.5 ms).
+                # Count that startup in the full duration before testing DC.
+                assert all(abs(value - (-3456)) <= 3 for value in samples[72:])
+
         async with asyncio.timeout(3):
-            to_source = await receive_l16_samples(receive_source, len(picker_pcm), caller.dialog.recv_format.payload_type)
+            await receive_source_pcm()
             to_picker = await receive_l16_samples(receive_picker, len(source_pcm), picker.dialog.recv_format.payload_type)
-        assert to_source == picker_pcm and to_picker == source_pcm
+        assert to_picker == source_pcm
         relay = lab.calls.resource_for(source_id, "relay")
         assert relay.left_port == captured["source_port"]
         assert relay.left_transport.get_extra_info("socket").fileno() == captured["source_fd"]

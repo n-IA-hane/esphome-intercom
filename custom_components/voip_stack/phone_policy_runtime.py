@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import logging
 
 from .automation_routing import automation_event_type, matches_call
@@ -152,7 +153,8 @@ def phone_failure_destination(endpoint, status):
 
 
 def dispatch_phone_failure(hass, session, endpoint, destination, *, on_failure="terminate",
-                           failed_forward: asyncio.Task | None = None):
+                           failed_forward: asyncio.Task | None = None,
+                           restore_source: Callable[[], Awaitable[bool]] | None = None):
     """Continue the retained caller after one failed destination leg.
 
     The SIP watcher returns before the shared forwarder retires that watcher.
@@ -182,11 +184,18 @@ def dispatch_phone_failure(hass, session, endpoint, destination, *, on_failure="
     async def forward():
         if not registry.is_generation_current(token.call_id, token.generation) or session.owner != owner or session.state != state:
             return
+        current_owner, current_state = owner, state
         target_endpoint = runtime_data(hass).endpoints.get(destination.target)
         target = target_endpoint.username if target_endpoint is not None else destination.target
         if destination.kind is DestinationKind.VOICEMAIL:
             target = f'voicemail.{destination.target}'
         try:
+            if restore_source is not None:
+                if not await restore_source():
+                    return
+                if not session.live or not registry.is_generation_current(token.call_id, token.generation):
+                    return
+                current_owner, current_state = session.owner, session.state
             context = registry.event_context(token.call_id)
             task = await registry.forward_call(call_id=token.call_id, destination=target,
                                         expected_state=context.state if context else '',
@@ -197,6 +206,6 @@ def dispatch_phone_failure(hass, session, endpoint, destination, *, on_failure="
                 return await await_forward_result(task)
         except Exception:
             _LOGGER.exception('Phone failure route failed call_id=%s', token.call_id)
-            if session.live and session.owner == owner and session.state == state:
+            if session.live and session.owner == current_owner and session.state == current_state:
                 registry.request_termination(token.call_id, TerminationIntent('route_failed'), generation=token.generation)
     return session.create_task(forward(), name=f'phone-failure-route:{len(attempted)}')

@@ -79,8 +79,6 @@ def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
     """Reduce terminal branch outcomes without owning calls or transport state."""
     if not outcomes:
         return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
-    if len(outcomes) == 1 and 300 <= outcomes[0].status <= 699:
-        return outcomes[0]
     dispositions = [outcome.disposition for outcome in outcomes]
     if all(item is DialDisposition.DECLINED for item in dispositions):
         return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
@@ -96,6 +94,10 @@ def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
             488,
             "Not Acceptable Here",
         )
+    if (all(item is DialDisposition.UNAVAILABLE for item in dispositions)
+            and len({outcome.status for outcome in outcomes}) == 1
+            and 300 <= outcomes[0].status <= 699):
+        return outcomes[0]
     return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
 
 

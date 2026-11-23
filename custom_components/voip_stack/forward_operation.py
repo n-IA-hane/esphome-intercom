@@ -1164,9 +1164,41 @@ class ForwardOperation:
             if failure_destination is not None:
                 from .phone_policy_runtime import dispatch_phone_failure
 
+                restore_source = None
+                if application is not None and application.media is not None:
+                    retained_media = application.media
+                    source_token = session.token
+
+                    def source_owned():
+                        return (session.owns(source_token)
+                            and application.media is retained_media
+                            and self.registry.resource_for(session.call_id, "relay") is retained_media
+                            and any(resource.name == application.resource_name and resource.value is application
+                                    for resource in session.resources))
+
+                    async def restore_source():
+                        if not source_owned() or session.owner != "router":
+                            return False
+                        try:
+                            if retained_media.closed.is_set() or not await async_abort_route(
+                                self.abort, RouteAbortIntent(reason, "resume")
+                            ):
+                                raise RuntimeError("The retained application could not be restored")
+                            if not source_owned() or session.owner != application.owner:
+                                return False
+                            if retained_media.closed.is_set():
+                                raise RuntimeError("The retained application media ended during restore")
+                            return True
+                        except BaseException:
+                            if source_owned() and session.owner in {"router", application.owner}:
+                                self.registry.request_termination(session.call_id,
+                                    TerminationIntent("route_failed"), generation=source_token.generation)
+                            raise
+
                 continuation = dispatch_phone_failure(
                     self.runtime.hass, session, failure_endpoint, failure_destination,
-                    on_failure=self.plan.on_failure, failed_forward=asyncio.current_task())
+                    on_failure=self.plan.on_failure, failed_forward=asyncio.current_task(),
+                    restore_source=restore_source)
                 if continuation:
                     # The same session owns the next route. Return without an
                     # await so finally releases this attempt's forward claim

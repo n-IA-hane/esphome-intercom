@@ -144,6 +144,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
         class Client:
             dialog = object()
             dialog_ids = SimpleNamespace(call_id="branch-1")
+            last_sip_status_code = 200
 
             async def invite(self, **kwargs):
                 self.invite_kwargs = kwargs
@@ -192,6 +193,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
 
         class Client:
             dialog = None
+            last_sip_status_code = 486
 
             def __init__(self, call_id: str) -> None:
                 self.dialog_ids = SimpleNamespace(call_id=call_id)
@@ -232,3 +234,23 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(first.disposition, _Disposition.BUSY)
         self.assertIs(second.disposition, _Disposition.BUSY)
         self.assertEqual(published, ["ringing"])
+
+    async def test_remote_failure_status_survives_the_sip_candidate_adapter(self) -> None:
+        class Client:
+            dialog = None
+            dialog_ids = SimpleNamespace(call_id="unavailable-branch")
+            last_sip_status_code = 503
+
+            async def invite(self, **_kwargs):
+                return "sip_503"
+
+        leg = SimpleNamespace(candidate_id="unavailable-branch", client=Client(),
+            uri=SimpleNamespace(user="desk", host="phone.local", port=5060),
+            member="Desk", tier=0, order=0, endpoint_id="desk")
+        fork, _payloads, _decision = ring_group_fork.build_ring_group_fork(
+            sip_port=5060, route_future=asyncio.get_running_loop().create_future(),
+            attempts=[leg], browser_legs=[], preflight_failures=[])
+        outcome = await fork[0].dial()
+        self.assertIs(outcome.disposition, _Disposition.UNAVAILABLE)
+        self.assertEqual(outcome.status, 503)
+        self.assertEqual(outcome.reason, "sip_503")

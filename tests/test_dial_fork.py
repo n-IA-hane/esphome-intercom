@@ -660,6 +660,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             outcome = dial_fork.DialOutcome(
                 dial_fork.DialDisposition.UNAVAILABLE, status, "Remote failure")
             self.assertIs(dial_fork.reduce_dial_failures([outcome]), outcome)
+            self.assertIs(dial_fork.reduce_dial_failures([outcome, outcome]), outcome)
 
     async def test_failure_reducer_preserves_group_semantics(self) -> None:
         cases = (
