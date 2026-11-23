@@ -369,10 +369,16 @@ async def test_linked_sip_account_without_ha_binding_uses_native_controls(
     from copy import deepcopy
     from homeassistant.components.esphome.manager import _async_register_service
     from homeassistant.core import Context, ServiceCall
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.sensor import PhoneEndpointCallStateSensor
     from custom_components.voip_stack.account_runtime import account_has_ha_binding
-    from .test_managed_phones_ha import phone_record
+    from .test_managed_phones_ha import phone_record, phone_subentry
 
     lab = managed
+    entities = er.async_get(lab.hass)
+    for role in ("call", "decline"):
+        entities.async_get_or_create("button", "esphome", "84c7bb000001-voip_" + role,
+            config_entry=lab.native, device_id=lab.device.id)
     await lab.controller.async_sync()
     phone = phone_record(lab)
     endpoint = lab.runtime.endpoints.require(phone.username)
@@ -380,6 +386,10 @@ async def test_linked_sip_account_without_ha_binding_uses_native_controls(
     assert endpoint.device_id == lab.device.id
     assert endpoint.account_device_id and endpoint.account_device_id != endpoint.device_id
     assert not account_has_ha_binding(lab.hass, endpoint.endpoint_id)
+    state = PhoneEndpointCallStateSensor(lab.hass, endpoint, lab.runtime.endpoints)
+    entities.async_get_or_create("sensor", "voip_stack", state.unique_id,
+        config_entry=lab.entry, config_subentry_id=phone_subentry(lab).subentry_id,
+        device_id=endpoint.account_device_id)
     selectors = {"username": endpoint.username, "account_device": endpoint.account_device_id,
                  "hardware": endpoint.device_id}
     native = lab.native.runtime_data
@@ -423,13 +433,19 @@ async def test_linked_account_explicit_or_declared_ha_answer_keeps_browser_trans
     managed, hass_admin_user, declared, explicit_client,
 ) -> None:
     from homeassistant.core import Context, ServiceCall
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.sensor import PhoneEndpointCallStateSensor
     from custom_components.voip_stack.account_runtime import account_has_ha_binding
     from custom_components.voip_stack.ha_bindings import HaCardBindings
-    from .test_managed_phones_ha import phone_record
+    from .test_managed_phones_ha import phone_record, phone_subentry
 
     lab = managed
     await lab.controller.async_sync()
     endpoint = lab.runtime.endpoints.require(phone_record(lab).username)
+    state = PhoneEndpointCallStateSensor(lab.hass, endpoint, lab.runtime.endpoints)
+    er.async_get(lab.hass).async_get_or_create("sensor", "voip_stack", state.unique_id,
+        config_entry=lab.entry, config_subentry_id=phone_subentry(lab).subentry_id,
+        device_id=endpoint.account_device_id)
     owner = HaCardBindings(lab.hass, lab.entry, lab.runtime, lambda _changed: None)
     lab.runtime.ha_bindings = owner
     try:
