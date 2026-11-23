@@ -330,7 +330,8 @@ def bind_application_source_dialog(application):
             return None
         source = ApplicationCallSource.from_peer_dialog(updated, call_id=session.call_id,
             caller=session.caller, target=session.callee, trunk_id=str(session.metadata.get("inbound_trunk_id") or ""),
-            allow_video=video is not None)
+            allow_video=video is not None, max_forwards=media.invite.max_forwards,
+            outbound_trunk_id=media.invite.outbound_trunk_id)
         previous_media_invite = media.invite
         commit_media = media.prepare_media_update(source)
         video_update = source_peer = None

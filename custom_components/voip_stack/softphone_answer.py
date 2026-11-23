@@ -470,7 +470,8 @@ async def async_answer_browser_call(
         registry.take_media(call_id, provisional=True)
         softphone_media["rtp_reservation"] = media_reservation
         invite = (ApplicationCallSource.from_peer_dialog(prepared_video.candidate, call_id=call_id,
-            caller=invite.caller, target=invite.target, trunk_id=invite.trunk_id, allow_video=True)
+            caller=invite.caller, target=invite.target, trunk_id=invite.trunk_id, allow_video=True,
+            max_forwards=invite.max_forwards, outbound_trunk_id=invite.outbound_trunk_id)
             if parking.source_client is not None else prepared_video.candidate)
         softphone_media["invite"] = invite
         await parking.release_media_for_forward()

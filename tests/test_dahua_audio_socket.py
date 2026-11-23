@@ -562,8 +562,11 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             # RFC 3264 overlap accepts in-flight packets under the old mapping,
             # but that overlap must expire rather than keeping stale codecs forever.
             receiver_module = sys.modules[view.RtpAudioReceiver.__module__]
-            now = [receiver_module.monotonic()]
-            monkeypatch.setattr(receiver_module, "monotonic", lambda: now[0])
+            real_monotonic = receiver_module.monotonic
+            clock_offset = [0.0]
+            # Advance the mapping lease without freezing the reorder deadline.
+            monkeypatch.setattr(receiver_module, "monotonic",
+                lambda: real_monotonic() + clock_offset[0])
             # Retire the primary PCM mapping as well as its accepted alias.
             session.recv_format = pcmu
             session.recv_formats = (pcmu,)
@@ -575,7 +578,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             await send(97, struct.pack("<320h", *([1000] * 320)))
             overlap = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
             assert len(overlap) == expected_bytes
-            now[0] += 61
+            clock_offset[0] += 61
             await send(97, struct.pack("<320h", *([1000] * 320)))
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(browser.audio.get(), 0.05)

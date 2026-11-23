@@ -89,17 +89,22 @@ class ApplicationCallSource(LocalAudioContract):
     peer_profile: str = ""
     received_via_trunk: bool = False
     trunk_id: str = ""
+    max_forwards: int | None = None
+    outbound_trunk_id: str = ""
     send_dtmf_payload_type: int | None = None
     send_dtmf_clock_rate: int | None = None
     send_dtmf_events: frozenset[int] | None = None
 
     @classmethod
-    def from_client(cls, client, *, call_id, caller, target="", trunk_id="", allow_video=False):
+    def from_client(cls, client, *, call_id, caller, target="", trunk_id="", allow_video=False,
+                    outbound_trunk_id=""):
         return cls.from_peer_dialog(client.dialog, call_id=call_id, caller=caller, target=target,
-                                    trunk_id=trunk_id, allow_video=allow_video)
+                                    trunk_id=trunk_id, allow_video=allow_video,
+                                    max_forwards=client.max_forwards, outbound_trunk_id=outbound_trunk_id)
 
     @classmethod
-    def from_peer_dialog(cls, dialog, *, call_id, caller, target="", trunk_id="", allow_video=False):
+    def from_peer_dialog(cls, dialog, *, call_id, caller, target="", trunk_id="", allow_video=False,
+                         max_forwards=None, outbound_trunk_id=""):
         from .core.sip import parse_sip_uri
 
         if dialog is None or (dialog.video_format is not None and not allow_video):
@@ -110,6 +115,7 @@ class ApplicationCallSource(LocalAudioContract):
         return cls(**fields, caller=caller, routing_caller=parse_sip_uri(dialog.remote_uri).user,
             target=target, source_host=dialog.remote_host, source_port=dialog.remote_sip_port,
             received_via_trunk=bool(trunk_id), trunk_id=trunk_id,
+            max_forwards=max_forwards, outbound_trunk_id=outbound_trunk_id,
             remote_audio_direction=dialog.remote_audio_direction,
             video_format=dialog.video_format, send_video_format=dialog.send_video_format,
             recv_video_format=dialog.recv_video_format, answer_video_format=dialog.recv_video_format,

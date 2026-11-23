@@ -481,15 +481,17 @@ class EstablishedSipDestination(PendingSipDestination):
             if goal is original:
                 resource = next((item for item in goal.resources if item.name == f"retired_destination:{self.destination_id}"), None)
                 if resource is not None:
-                    await resource.value.close("forwarded" if success else "transfer_failed")
-                    self.registry.release_resource(goal.call_id, resource.name, value=resource.value)
+                    await resource.close("forwarded" if success else "transfer_failed")
+                    if goal.live:
+                        self.registry.release_resource(goal.call_id, resource.name, value=resource.value)
                 if self.endpoint_id and goal.live:
                     self.registry.release_endpoint_claim(goal.call_id, self.endpoint_id)
             elif original.live:
                 self.registry.request_termination(original.call_id, TerminationIntent("forwarded"), generation=original.generation)
             if not success and goal.live:
                 self.registry.request_termination(goal.call_id, TerminationIntent("transfer_failed"), generation=goal.generation)
-            self.registry.release_resource(goal.call_id, f"native_destination:{goal.call_id}", value=self)
+            if goal.live:
+                self.registry.release_resource(goal.call_id, f"native_destination:{goal.call_id}", value=self)
         def done(_transaction=None):
             if goal.live:
                 goal.create_task(retire(), name=f"voip-transfer-retirement-{self.destination_id}")
