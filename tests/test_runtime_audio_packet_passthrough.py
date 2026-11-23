@@ -91,11 +91,13 @@ def test_new_runtime_shortcut_does_not_bypass_stateful_or_vbr_codecs(encoding,ra
     assert not payload_relay_compatible(incoming,outgoing,payload_size=size)
 
 
-@pytest.mark.parametrize('size,minptime', [(319,0),(640,0),(672,0),(320,16)])
-def test_runtime_shortcut_keeps_sample_alignment_duration_and_bounds(size,minptime):
+@pytest.mark.parametrize('size,minptime,compatible', [(319,0,False),(640,0,False),(672,0,False),(320,16,True)])
+def test_runtime_shortcut_keeps_sample_alignment_duration_and_bounds(size,minptime,compatible):
     incoming=sdp.RtpPcmFormat(96,'L16',16000,1,10,min_frame_ms=minptime,max_frame_ms=20)
     outgoing=sdp.RtpPcmFormat(97,'L16',16000,1,10,max_frame_ms=10)
-    assert not payload_relay_compatible(incoming,outgoing,payload_size=size)
+    # A receiver's advisory minimum does not describe its transmitted packet.
+    # Actual source bytes still have to fit the destination's hard 10 ms bound.
+    assert payload_relay_compatible(incoming,outgoing,payload_size=size) is compatible
 
 
 @pytest.mark.asyncio

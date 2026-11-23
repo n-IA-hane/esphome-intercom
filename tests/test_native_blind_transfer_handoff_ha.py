@@ -16,7 +16,6 @@ from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 from custom_components.voip_stack.sip_client import SipCallClient, SipDatagramQueueProtocol
 from custom_components.voip_stack.sip_registrar import SipAccount
-from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 from .test_udp_outbound_flow_ha import register_phone, PASSWORD
 
@@ -115,9 +114,19 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
     registrar = registry.component("registrar")
     registrar.enabled = True
     account = SipAccount("native-source", "Native source", PASSWORD)
-    registrar.update_accounts([*registrar.accounts.values(), account])
-    lab.runtime.endpoints.register(PhoneEndpoint(account.username, account.display_name,
-        EndpointKind.SIP_ACCOUNT, username=account.username))
+    from custom_components.voip_stack.phone_config import _add_phone_subentry
+    from custom_components.voip_stack.store import config_entry, sip_accounts
+    entry = config_entry(lab.hass)
+    _add_phone_subentry(lab.hass, entry, data={
+        "kind": "sip_account", "name": account.display_name,
+        "username": account.username, "password": account.password,
+        "username_source": "user", "video_enabled": bool(video_case),
+    }, title=account.display_name)
+    registrar.update_accounts(sip_accounts(lab.hass))
+    from custom_components.voip_stack.config_entry_runtime import async_config_entry_updated
+    await async_config_entry_updated(lab.hass, entry)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert registrar.accounts[account.username.casefold()].password == account.password
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
@@ -134,6 +143,11 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
     refused_refers, video_sockets, senders = [], [], []
     if video_case:
         from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
+        from .test_video_originate_unknown_ha import set_configured_video_policy
+        lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+            CONF_SIP_VIDEO: True, CONF_VIDEO_TRANSCODING: video_case == "transcoded"})
+        for username in (account.username, "bedroom0", "bedroom1"):
+            set_configured_video_policy(lab, username, True)
         lab.runtime.transport_config[CONF_SIP_VIDEO] = True
         lab.runtime.transport_config[CONF_VIDEO_TRANSCODING] = video_case == "transcoded"
         for endpoint in lab.calls.component("udp_listener")._dialog_endpoints():
@@ -171,6 +185,7 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
             listener=("127.0.0.1", lab.runtime.transport_config["sip_port"])),
             username=account.username, outbound=False, discover=False)
         assert binding.source_host == "127.0.0.2" and binding.source_port == caller.local_sip_port
+        assert registrar.registered_contacts(account.username)
         state = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if state == "ringing":

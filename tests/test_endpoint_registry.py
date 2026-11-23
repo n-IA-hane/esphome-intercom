@@ -214,11 +214,11 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_route_namespace_uses_the_same_normalization_as_the_router(self) -> None:
         registry = endpoint_registry.EndpointRegistry()
-        registry.register(endpoint("kitchen-one", "Kitchen-1"))
-
-        registry.register(endpoint("kitchen-two", "Kitchen 1"))
-        with self.assertRaises(endpoint_registry.EndpointAmbiguousError):
-            registry.by_name('Kitchen1')
+        first = registry.register(endpoint("kitchen-one", "Kitchen-1"))
+        second = registry.register(endpoint("kitchen-two", "Kitchen 1"))
+        self.assertEqual(registry.by_name("Kitchen-1"), first)
+        self.assertEqual(registry.by_name("Kitchen 1"), second)
+        self.assertIsNone(registry.by_name("Kitchen1"))
 
     def test_rejects_stable_device_and_entity_collisions(self) -> None:
         for candidate in (

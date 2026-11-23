@@ -38,10 +38,12 @@ def resolve_service_phone(
         if endpoint is not None:
             return endpoint
         if hass is not None:
-            from .sip_account_identity import resolve_ha_endpoint
             from .store import config_entry
-            if (endpoint := resolve_ha_endpoint(registry, selector, entry=config_entry(hass))) is not None:
-                return endpoint
+            entry = config_entry(hass)
+            if entry is not None:
+                from .sip_account_identity import resolve_ha_endpoint
+                if (endpoint := resolve_ha_endpoint(registry, selector, entry=entry)) is not None:
+                    return endpoint
         if (account := registry.by_username(selector)) is not None:
             return account
         namespaces = (EndpointLookup.NAME, EndpointLookup.USERNAME,

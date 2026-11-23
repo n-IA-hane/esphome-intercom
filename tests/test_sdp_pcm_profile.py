@@ -1371,6 +1371,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             for fmt in audio_format.PcmFormat
             for channels in (1, 2)
         ]
+        browser_rx_formats.sort(key=lambda fmt: fmt.frame_ms != 20)
         offer = sdp.build_offer_directional(
             "192.168.1.10",
             "192.168.1.10",
@@ -1411,7 +1412,7 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertIs(client._reused_flow_send, registered_flow)
         asyncio.run(client.close())
         # An unconfigured codec policy preserves the input catalog order.
-        # CC-2/R1 describes the receiver's 20 ms preference, not a TX quantum.
+        # The explicit receiver preference is 20 ms; transmit quanta stay independent.
         self.assertEqual(offered[0].audio_format, audio_format.AudioFormat(8000, "s16le", 1, 20))
         self.assertIn(audio_format.AudioFormat(16000, "s16le", 1, 20),
                       [fmt.audio_format for fmt in offered])

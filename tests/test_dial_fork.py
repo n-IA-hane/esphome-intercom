@@ -388,7 +388,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(waiting.is_set())
         self.assertTrue(drained.is_set())
         self.assertIsNone(result.winner)
-        self.assertIs(result.outcome.disposition, dial_fork.DialDisposition.PROTOCOL_ERROR)
+        self.assertIs(result.outcome.disposition, dial_fork.DialDisposition.UNAVAILABLE)
         self.assertEqual(closed, [dial_fork.LegCloseMode.CLOSE])
 
     async def test_failed_media_branches_do_not_cancel_ringing_browser(self) -> None:

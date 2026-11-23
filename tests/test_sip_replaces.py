@@ -123,7 +123,16 @@ class InitialTransitionTest(unittest.IsolatedAsyncioTestCase):
                 dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
             ), commit=commit, rollback=rollback)
-        endpoint = self.endpoint(route, lambda _raw, _addr: True)
+        responses = []
+
+        def cooperative_peer(raw, address):
+            message = sip.parse_message(raw)
+            if message.method == "BYE":
+                response = sip.build_uas_response(message, 200, "OK")
+                responses.append(asyncio.create_task(endpoint._handle_datagram(response, address)))
+            return True
+
+        endpoint = self.endpoint(route, cooperative_peer)
         task = asyncio.create_task(endpoint._handle_datagram(self.request(), ("127.0.0.2", 5060)))
         try:
             await asyncio.wait_for(started.wait(), 2)
@@ -136,6 +145,7 @@ class InitialTransitionTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
             self.assertEqual(changes, ["rollback"])
+            self.assertTrue(await endpoint.async_send_bye("replacement", timeout=2))
             self.assertFalse(endpoint.active_dialogs)
             self.assertFalse(endpoint.pending_invites)
         finally:
@@ -143,3 +153,4 @@ class InitialTransitionTest(unittest.IsolatedAsyncioTestCase):
             endpoint.connection_lost(None)
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(*responses, return_exceptions=True)

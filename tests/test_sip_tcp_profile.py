@@ -533,12 +533,18 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
+        def accepted(invite):
+            from custom_components.voip_stack.sip_server_state import answered_media_contract
+            body = answer(invite)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=body,
+                media_contract=answered_media_contract(invite, body))
+
         async def on_invite(invite):
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer(invite))
+            return accepted(invite)
 
         async def on_media_update(_previous, updated, _method):
             updates.append((updated.remote_rtp_port, updated.video_format.direction))
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer(updated))
+            return accepted(updated)
 
         server = sip_listener.SipTcpServer(
             host=local,

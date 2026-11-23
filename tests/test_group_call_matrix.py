@@ -78,6 +78,16 @@ def _install_ha_fakes() -> None:
         entity_registry.async_get = lambda _hass: types.SimpleNamespace(
             async_get_entity_id=lambda *_args: None)
         sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
+    if "homeassistant.helpers.device_registry" not in sys.modules:
+        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+        # The isolated model has no native HA devices, just as it has no HA
+        # entities. Keep the real identity adapter's empty lookup boundary.
+        device_registry.async_get = lambda _hass: types.SimpleNamespace(
+            devices={}, async_get=lambda _identity: None,
+            async_get_device=lambda **_kwargs: None)
+        device_registry.async_entries_for_config_entry = lambda *_args: ()
+        device_registry.CONNECTION_NETWORK_MAC = "mac"
+        sys.modules["homeassistant.helpers.device_registry"] = device_registry
     if "homeassistant.config_entries" not in sys.modules:
         config_entries = types.ModuleType("homeassistant.config_entries")
         config_entries.ConfigEntry = object
@@ -727,9 +737,16 @@ class GroupCallMatrixTest(unittest.TestCase):
         )
         generic = peer.Peer(name="Generic SIP phone", host="192.0.2.30")
 
-        self.assertEqual(endpoint_routing.peer_video_codec(ws3), "")
-        self.assertEqual(endpoint_routing.peer_video_codec(p4), "h264")
+        self.assertIsNone(endpoint_routing.peer_video_codec(ws3))
+        self.assertIsNone(endpoint_routing.peer_video_codec(p4))
         self.assertIsNone(endpoint_routing.peer_video_codec(generic))
+        disabled = roster.RosterEntry("disabled", metadata={"sip_video_codec": ""})
+        self.assertEqual(endpoint_routing.peer_video_codec(ws3, disabled), "")
+        advertised = endpoint_routing.sdp.options_capabilities("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Peer\r\n"
+            "c=IN IP4 192.0.2.30\r\nt=0 0\r\nm=video 0 RTP/AVP 103\r\n"
+            "a=rtpmap:103 H264/90000\r\na=fmtp:103 packetization-mode=1\r\n")
+        self.assertEqual(endpoint_routing.peer_video_codec(generic,
+            roster.RosterEntry("advertised", metadata=advertised)), "h264")
 
     def test_voip_matrix_runner_all_scenarios_validate(self) -> None:
         results, errors = run_matrix()

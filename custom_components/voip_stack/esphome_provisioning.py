@@ -343,6 +343,7 @@ class EspHomeProvisioner:
             username = previous.username
         if not name or len(name.encode()) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in name):
             raise ValueError("Display name exceeds the native phone contract")
+        account = managed_account_subentries(self.entry).get(device.id)
         phone = ManagedPhone(device_id=device.id, origin_entry_id=origin.entry_id,
             mac=normalize_mac(info.mac_address), password=previous.password if previous else generate_password(),
             username=username, endpoint_id=endpoint_id,
@@ -353,7 +354,7 @@ class EspHomeProvisioner:
             membership_observed=previous.membership_observed if previous else {},
             conference_group=previous.conference_group if previous else "",
             conference_ring=previous.conference_ring if previous else False,
-            active=True)
+            active=bool(account.data.get("enabled", True)) if account is not None else True)
         updates = {}
         for entity in er.async_entries_for_device(er.async_get(self.hass), device.id):
             role = entity_role(entity)

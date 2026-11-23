@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -297,7 +298,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_sip_offer_profile_delegates_capability_selection_to_the_media_engine(self) -> None:
         body = _function_body(ENDPOINT_ROUTING.read_text(), "sip_target_rtp_audio_profile")
-        calls = [ast.unparse(node.func) for node in ast.walk(ast.parse(body)) if isinstance(node, ast.Call)]
+        calls = [ast.unparse(node.func) for node in ast.walk(ast.parse(textwrap.dedent(body))) if isinstance(node, ast.Call)]
         self.assertEqual(calls.count("negotiator.sip_offer_plan"), 1)
         self.assertNotIn("AudioFormat", calls)
         self.assertNotIn("device_formats", calls)

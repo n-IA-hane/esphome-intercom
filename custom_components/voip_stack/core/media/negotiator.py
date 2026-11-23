@@ -67,6 +67,7 @@ def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabili
         budget=getattr(capabilities, "transmit_payload_bytes", 1200),
         encodings=frozenset(allowed),
         codec_order=tuple(enabled) if enabled is not None and getattr(codec_policy, "audio_ordered", True) else (),
+        codec_policy_explicit=bool(getattr(codec_policy, "audio_configured", enabled is not None)),
         send_capabilities=send if capabilities is None else None,
         receive_capabilities=receive if capabilities is None else None,
         capabilities=capabilities,

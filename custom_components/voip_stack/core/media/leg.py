@@ -44,6 +44,7 @@ class LegPolicy:
     send_capabilities: tuple[AudioFormat, ...] | None = None
     receive_capabilities: tuple[AudioFormat, ...] | None = None
     capabilities: AudioCapabilities | None = HA_AUDIO_CAPABILITIES
+    codec_policy_explicit: bool = False
 
 
 PHONE_POLICY = LegPolicy(
@@ -405,6 +406,11 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     if local is None and not needs_send:
         send_candidates = sorted(answered, key=lambda fmt: (
             _preferred_receiver(fmt, policy, receive_preferred)[0], answered.index(fmt)))
+    elif (directional and dahua and established is None
+          and not policy.codec_policy_explicit and not policy.codec_order):
+        # The Dahua PCM option adds receive compatibility. It must not replace
+        # the answerer's preferred initial transmit codec with a local PCM rank.
+        send_candidates = peer_receives
     elif directional:
         send_candidates = sorted(peer_receives, key=lambda fmt: (
             established is not None and _mapping(fmt) != _mapping(established.send),

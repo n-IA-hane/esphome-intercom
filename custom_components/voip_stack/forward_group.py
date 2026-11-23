@@ -659,4 +659,8 @@ class ForwardGroup:
             raise RuntimeError(failure)
         if isinstance(winner, BrowserLeg):
             return await self.commit_browser(winner, browser_decision)
-        return await self.commit_sip(winner)
+        try:
+            return await self.commit_sip(winner)
+        finally:
+            # Successful adoption detaches the reservation from this candidate.
+            winner.ports.release()

@@ -1040,11 +1040,15 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
     )
 
     assert result.status == 200
-    assert client.prepared == {
-        "local_video_rtp_port": 43002,
-        "video_formats": (local_format,),
-        "video_direction": "inactive",
-    }
+    assert client.prepared["local_video_rtp_port"] == 43002
+    assert client.prepared["video_direction"] == "inactive"
+    advertised, = client.prepared["video_formats"]
+    assert (advertised.payload_type, advertised.encoding, advertised.clock_rate,
+        advertised.profile_level_id, advertised.packetization_mode, advertised.level_asymmetry_allowed) == (
+            105, "H264", 90000, "42001f", 1, True)
+    assert advertised.sprop_parameter_sets == local_parameters
+    assert SDP.video_fmtp_parameters(advertised)["max-fs"] == "3600"
+    assert SDP.video_fmtp_parameters(advertised) == SDP.video_fmtp_parameters(local_format)
     assert client.committed is False
     assert video_relay.left is old_video_left
     assert video_relay.right is old_video_right

@@ -742,6 +742,7 @@ class PendingLocalSource:
                 self.bridge.detach_established(self.token.call_id, self.call.caller_endpoint_id)
             else:
                 self.bridge.detach_ringing(self.token.call_id)
+        self.registry.release_endpoint_claim(self.token.call_id, self.call.callee_endpoint_id)
         self.committed = True
         if not keep_media:
             self.registry.take_media(self.token.call_id)

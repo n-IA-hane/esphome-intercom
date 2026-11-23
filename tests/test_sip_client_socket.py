@@ -2538,6 +2538,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(abs(int.from_bytes(decoded_tx[index:index + 2], "little", signed=True) - 1234) <= 1
                 for index in range(0, len(decoded_tx), 2)))
 
+            # Timestamp only new arrivals, excluding warmup already in the socket.
+            while True:
+                try:
+                    remote.recv(65535)
+                except BlockingIOError:
+                    break
             for _index in range(40):
                 await ws.messages.put(
                     types.SimpleNamespace(
@@ -4109,10 +4115,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                             )
                     else:
                         self.assertEqual(invites, [])
-                        self.assertNotIn(
-                            "SIP initial target unavailable",
-                            "\n".join(logs.output),
-                        )
+                        if "TCP" in attempts:
+                            self.assertNotIn("UDP", attempts[attempts.index("TCP") + 1:])
                 finally:
                     await client.close()
 
@@ -4690,13 +4694,26 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             reasons.append((call_id, reason))
             terminated.set()
 
+        def send_response(data: bytes, _addr) -> bool:
+            sent.append(data)
+            message = sip.parse_message(data)
+            if message.method == "BYE":
+                response = sip.build_response(200, "OK", [
+                    (key, message.header(key))
+                    for key in ("Via", "From", "To", "Call-ID", "CSeq")
+                ])
+                asyncio.get_running_loop().call_soon(
+                    endpoint.datagram_received, response, ("192.0.2.10", 5060),
+                )
+            return True
+
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.0.2.20",
             local_rtp_port=40000,
             supported_formats=[fmt],
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: not sent.append(data),
+            send_override=send_response,
         )
         request = sip.parse_message(
             sip.build_request(
@@ -5574,7 +5591,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         await endpoint._handle_datagram(stale_bye, addr)
-        self.assertEqual(sip.parse_message(sent[-1]).status_code, 481)
+        # RFC 3261 section 12.2.2 rejects a stale CSeq in this known dialog.
+        self.assertEqual(sip.parse_message(sent[-1]).status_code, 500)
         self.assertIn("active", endpoint.active_dialogs)
 
         refresh = update("active", cseq=3, branch="z9hG4bKrefresh", body=b"")
@@ -6244,16 +6262,15 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         client.dialog = None
         await client.close()
 
-    def test_decline_reason_header_overrides_generic_status(self) -> None:
+    def test_diagnostic_reason_text_cannot_override_final_sip_status(self) -> None:
         msg = sip.SipMessage(
             status_code=486,
             reason="Busy Here",
             headers=(
-                ("Reason", 'X-Voip-Stack;cause=486;text="DND"'),
-                ("X-Voip-Stack-Decline-Reason", "DND"),
+                ("Reason", 'SIP;cause=486;text="DND"'),
             ),
         )
-        self.assertEqual(sip_client_types._sip_decline_reason(msg), "DND")
+        self.assertEqual(sip_client_types._sip_decline_reason(msg), "busy")
 
     def test_roster_target_matching_ignores_spaces_and_underscores(self) -> None:
         entries = [

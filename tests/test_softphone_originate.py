@@ -487,7 +487,7 @@ def test_outgoing_peer_video_offer_respects_camera_and_capabilities(
     sys.modules[f'{module.__package__}.sip_client'].SipCallClient = capture
     with pytest.raises(OfferCaptured):
         asyncio.run(module.async_originate_browser_call(
-            _call(hass, destination='Door', send_video=camera),
+            _call(hass, destination='Door', send_video=camera, receive_video=True),
             endpoint_id='caller', browser_endpoint=endpoint,
         ))
     if expected == 'audio_only':
@@ -575,18 +575,20 @@ def test_static_dahua_contact_builds_full_offer_for_direct_and_trunk(
     sys.modules[f"{module.__package__}.sip_client"].SipCallClient = capture
     with pytest.raises(OfferCaptured):
         asyncio.run(module.async_originate_browser_call(
-            _call(hass, destination="8001", send_video=False), endpoint_id="caller", browser_endpoint=endpoint,
+            _call(hass, destination="8001", send_video=False, receive_video=True), endpoint_id="caller", browser_endpoint=endpoint,
         ))
     assert captured["include_dahua_pcm"] is expect_pcm
-    assert captured["include_common_codecs"] is True
-    assert captured["supported_send_rtp_formats"] is None
-    assert captured["supported_recv_rtp_formats"] is None
-    assert {fmt.frame_ms for fmt in captured["supported_send_formats"]} == {20}
+    assert captured["supported_send_rtp_formats"]
+    assert captured["supported_recv_rtp_formats"]
+    assert any(fmt.sample_rate == 16000 and fmt.frame_ms == 20
+               for fmt in captured["supported_send_formats"])
     assert captured["peer_user_agent"] == ""  # No fabricated registration/User-Agent.
     media = importlib.import_module(f"{module.__package__}.core.sdp")
     offer = media.build_offer_directional(
         captured["local_ip"], captured["local_ip"], captured["local_rtp_port"],
         captured["supported_send_formats"], captured["supported_recv_formats"],
+        send_rtp_formats=captured["supported_send_rtp_formats"],
+        recv_rtp_formats=captured["supported_recv_rtp_formats"],
         include_common_codecs=captured["include_common_codecs"],
         include_dahua_pcm=captured["include_dahua_pcm"],
         video_port=captured["local_video_rtp_port"], video_formats=captured["video_formats"],
@@ -634,13 +636,16 @@ def test_trunk_video_reception_is_independent_from_camera_capture(softphone_orig
     sys.modules[f"{module.__package__}.sip_client"].SipCallClient = capture
     with pytest.raises(OfferCaptured):
         asyncio.run(module.async_originate_browser_call(
-            _call(hass, destination=route.target, send_video=False), endpoint_id="caller", browser_endpoint=endpoint,
+            _call(hass, destination=route.target, send_video=False, receive_video=True), endpoint_id="caller", browser_endpoint=endpoint,
         ))
     assert bool(captured["video_formats"]) is allow_video
     assert captured["local_video_rtp_port"] == (40002 if allow_video else 0)
-    assert captured["video_direction"] == "recvonly"
+    assert captured["video_direction"] == ("recvonly" if allow_video else "inactive")
     assert captured["include_dahua_pcm"] is False
-    assert {fmt.frame_ms for fmt in captured["supported_send_formats"]} == {20}
+    assert captured["supported_send_rtp_formats"]
+    assert captured["supported_recv_rtp_formats"]
+    assert any(fmt.sample_rate == 16000 and fmt.frame_ms == 20
+               for fmt in captured["supported_send_formats"])
     if not allow_video:
         module.reserve_sip_video_media.assert_not_called()
 

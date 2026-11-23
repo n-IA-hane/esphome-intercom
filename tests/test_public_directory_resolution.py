@@ -12,7 +12,7 @@ def test_public_resolution_rejects_cross_namespace_aliases():
             roster.RosterEntry("other-desk", name="204", number="Reception")]
     directory = PhoneDirectory(rows)
     for selector in ("204", "Reception"):
-        with pytest.raises(roster.RosterError, match="Ambiguous"):
+        with pytest.raises(roster.RosterError, match="[Aa]mbiguous"):
             directory.resolve(selector)
         decision = router.resolve_ha_router(selector, rows)
         assert decision.action is router.RouteAction.REJECT and decision.status == 485
@@ -25,7 +25,7 @@ def test_exact_public_alias_precedes_compatible_punctuation():
     assert directory.resolve("Desk.one").id == "desk-two"
     assert roster.find_entry(rows, "Desk.one").id == "desk-two"
     for resolve in (directory.resolve, lambda value: roster.find_entry(rows, value)):
-        with pytest.raises(roster.RosterError, match="Ambiguous"):
+        with pytest.raises(roster.RosterError, match="[Aa]mbiguous"):
             resolve("Desk%20one")
 
 
@@ -38,9 +38,9 @@ def test_internal_references_are_explicit_and_do_not_shadow_public_aliases():
     assert directory.resolve("a52832282eca4f82a000cfacaca56d0c") is None
     assert directory.resolve_reference("a52832282eca4f82a000cfacaca56d0c").id == "desk"
     assert directory.resolve("ha-device").id == "public"
-    with pytest.raises(roster.RosterError, match="Ambiguous"):
+    with pytest.raises(roster.RosterError, match="[Aa]mbiguous"):
         roster.find_entry(rows, "ha-device", include_internal_ids=True)
-    with pytest.raises(roster.RosterError, match="Ambiguous"):
+    with pytest.raises(roster.RosterError, match="[Aa]mbiguous"):
         directory.resolve_reference("ha-device")
     assert roster.find_entry(rows, "hadevice", include_internal_ids=True).id == "public"
     assert roster.find_entry(rows, "a52832282eca4f82a000cfacaca56d0c", include_internal_ids=True).id == "desk"
@@ -64,5 +64,5 @@ def test_internal_extension_precedes_only_an_external_contacts_number():
 def test_extension_does_not_override_another_accounts_explicit_public_name():
     rows = [roster.RosterEntry("Office", extension="101"), roster.RosterEntry("101", name="Other account",
             metadata={'endpoint_kind': 'sip_account', 'endpoint_id': '101'})]
-    with pytest.raises(roster.RosterError, match="Ambiguous"):
+    with pytest.raises(roster.RosterError, match="[Aa]mbiguous"):
         PhoneDirectory(rows).resolve("101")

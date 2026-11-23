@@ -97,7 +97,7 @@ class _Registry:
             if metadata.get("controller_user_id") not in {None, "", user_id}:
                 raise ValueError("Controller is already bound")
             metadata["controller_user_id"] = user_id
-        self.bound.append(user_id)
+        self.bound.append(f"{endpoint_id}:{user_id}" if endpoint_id else user_id)
 
 
 class _ScopedRegistry(_Registry):

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import sys
 import types
 
-from .voip_phase1_support import sdp as protocol_sdp, sip_listener as protocol_listener
+from .voip_phase1_support import sdp as protocol_sdp, sip as protocol_sip, sip_listener as protocol_listener
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -208,13 +208,12 @@ def _load_module():
 
     def build_answer_directional(*args, **kwargs):
         answer_calls.append({"args": args, "kwargs": kwargs})
-        return "v=0\r\nm=audio 40000 RTP/AVP 96\r\n"
+        return protocol_sdp.build_answer_directional(*args, **kwargs)
 
-    _module(
-        "core.sdp",
-        build_answer_directional=build_answer_directional,
-        constrained_video_direction=lambda *_args, **_kwargs: "inactive",
-    )
+    protocol_exports = {name: value for name, value in vars(protocol_sdp).items()
+                        if not name.startswith("__")}
+    protocol_exports["build_answer_directional"] = build_answer_directional
+    _module("core.sdp", **protocol_exports)
     _module("sip_listener", SipInviteResult=_Result)
 
     spec = importlib.util.spec_from_file_location(
@@ -230,19 +229,15 @@ def _load_module():
 
 def _invite():
     audio = protocol_sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
-    return SimpleNamespace(
-        call_id="call-1",
-        caller="ESP",
-        send_format=audio,
-        recv_format=audio,
-        recv_formats=(),
-        remote_sdp=b"offer",
-        video_format=None,
-        answer_video_format=None,
-        send_video_format=None,
-        recv_video_format=None,
-        local_audio_direction="sendrecv",
-        remote_audio_connection_held=False,
+    remote = protocol_sdp.build_offer_directional("192.0.2.20", "192.0.2.20", 42000,
+        [audio.audio_format], [audio.audio_format]).encode()
+    return protocol_listener.SipInvite(
+        source_host="192.0.2.20", source_port=5060,
+        request_uri=protocol_sip.parse_sip_uri("sip:HA@192.0.2.10"),
+        caller_uri=protocol_sip.parse_sip_uri("sip:ESP@192.0.2.20"),
+        target="HA", caller="ESP", call_id="call-1", cseq="1 INVITE",
+        remote_sdp=remote, send_format=audio, recv_format=audio,
+        remote_rtp_host="192.0.2.20", remote_rtp_port=42000,
     )
 
 

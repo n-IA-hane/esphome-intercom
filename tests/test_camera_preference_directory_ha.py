@@ -40,10 +40,17 @@ async def camera(hass, phones, monkeypatch):
     await websocket_api.async_set_ha_softphone_settings(
         hass, endpoint_id="kitchen", send_video=False
     )
+    await updates.async_refresh_directory(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
     runtime.entry_runtime_signature = updates.entry_runtime_signature(phones.entry)
     runtime.entry_phone_signature = updates.entry_phone_signature(phones.entry)
     runtime.entry_contacts_signature = tuple(contact_dicts(phones.entry))
     completed = asyncio.Event()
+    directory = runtime.directory
+    publications = []
+    unsubscribe_directory = directory.subscribe(
+        lambda: publications.append((directory.generation, directory.snapshot()))
+    )
 
     async def updated(_hass, entry):
         await updates.async_config_entry_updated(_hass, entry)
@@ -76,6 +83,8 @@ async def camera(hass, phones, monkeypatch):
         runtime=runtime,
         store=store,
         completed=completed,
+        directory=directory,
+        publications=publications,
         refresh=refresh,
         publish=publish,
         intent=intent,
@@ -83,6 +92,7 @@ async def camera(hass, phones, monkeypatch):
     )
     await hass.async_block_till_done(wait_background_tasks=True)
     remove()
+    unsubscribe_directory()
     await owner.shutdown()
 
 
@@ -136,10 +146,19 @@ async def test_routing_and_mixed_phone_changes_still_refresh(
         assert dict(phone_config.phone_subentry_by_endpoint_id(camera.entry, 'kitchen').data) == before
         camera.refresh.assert_not_awaited()
         return
+    before = (camera.directory.generation, camera.directory.snapshot(), len(camera.publications))
     phone_config.update_phone_subentry(hass, camera.entry, "kitchen", values)
     await asyncio.wait_for(camera.completed.wait(), 1)
     await hass.async_block_till_done(wait_background_tasks=True)
-    camera.refresh.assert_awaited_once_with(hass)
+    if "ring_group" in change:
+        assert camera.directory.generation == before[0] + 1
+        assert camera.directory.snapshot() != before[1]
+        assert len(camera.publications) == before[2] + 1
+        group = next(row for row in camera.directory.snapshot()
+                     if row.name == "family" and row.metadata.get("group_type") == "ring")
+        assert "kitchen" in group.metadata["members"]
+    else:
+        camera.refresh.assert_awaited_once_with(hass)
 
 
 async def test_phone_removal_with_camera_change_still_refreshes_and_retires_state(
@@ -226,6 +245,8 @@ async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_doe
     await hass.async_block_till_done(wait_background_tasks=True)
     camera.completed.clear()
     camera.refresh.reset_mock()
+    before = (camera.directory.generation, camera.directory.snapshot(), len(camera.publications))
+    account_id = phone_config.phone_subentry_by_endpoint_id(camera.entry, "desk").subentry_id
     if 'username' in change:
         from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
         row = phone_config.phone_subentry_by_endpoint_id(camera.entry, 'desk')
@@ -235,10 +256,20 @@ async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_doe
         phone_config.update_phone_subentry(hass, camera.entry, 'desk', change)
     await asyncio.wait_for(camera.completed.wait(), 1)
     await hass.async_block_till_done(wait_background_tasks=True)
-    if set(change) == {"send_video"}:
-        camera.refresh.assert_not_awaited()
+    for field, value in change.items():
+        assert camera.entry.subentries[account_id].data[field] == value
+    if "username" in change:
+        assert camera.directory.generation == before[0] + 1
+        assert camera.directory.snapshot() != before[1]
+        assert len(camera.publications) == before[2] + 1
+        identities = {row.metadata.get("endpoint_id") for row in camera.directory.snapshot()}
+        assert "renamed-desk" in identities and "desk" not in identities
     else:
-        camera.refresh.assert_awaited_once_with(hass)
+        assert camera.directory.generation == before[0]
+        assert camera.directory.snapshot() == before[1]
+        assert len(camera.publications) == before[2]
+        if "password" in change:
+            camera.refresh.assert_awaited_once_with(hass)
 
 
 async def test_camera_change_keeps_parent_reconciliations(hass, camera, monkeypatch):

@@ -50,6 +50,33 @@ def test_media_view_uses_the_canonical_codec_and_format_types():
     assert view.RtpPayloadEncoder(selected).encode(b"\x34\x12" * 320) == b"\x12\x34" * 320
 
 
+def test_dahua_answer_order_yields_to_explicit_policy_and_established_binding():
+    from dataclasses import replace
+    from importlib import import_module
+
+    codec_policy = import_module(f"{sdp.__package__}.codec_policy")
+    preferred = [audio_format.AudioFormat(rate, "s16le", 1, 20) for rate in (16000, 8000)]
+    prefix = ("v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\ns=Door\r\n"
+              "c=IN IP4 192.0.2.10\r\nt=0 0\r\n")
+    attributes = ("a=rtpmap:97 PCM/16000\r\na=rtpmap:0 PCMU/8000\r\n"
+                  "a=ptime:20\r\na=maxptime:20\r\na=sendrecv\r\n")
+    offer = prefix + "m=audio 40000 RTP/AVP 97 0\r\n" + attributes
+    answer = prefix + "m=audio 41000 RTP/AVP 0 97\r\n" + attributes
+
+    def apply(**kwargs):
+        return sdp.negotiate_answer_directional(answer, preferred, preferred,
+            local_offer_sdp=offer, allow_dahua_pcm=True, **kwargs)
+
+    selected = apply()
+    assert selected is not None
+    assert selected.send.payload_type == 0
+    assert selected.recv.payload_type == 97
+    explicit = apply(codec_policy=codec_policy.CodecPolicy(audio=("PCM", "PCMU")))
+    assert explicit is not None and explicit.send.payload_type == 97
+    established = apply(established=replace(selected, send=selected.recv))
+    assert established is not None and established.send.payload_type == 97
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("frame_ms", [2.5, 15, 32, 40])
 async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(monkeypatch, frame_ms):

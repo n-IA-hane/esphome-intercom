@@ -82,13 +82,17 @@ def _load_service_endpoints(
     core = types.ModuleType("homeassistant.core")
     core.HomeAssistant = object
     core.ServiceCall = object
+    config_entries = types.ModuleType("homeassistant.config_entries")
+    config_entries.ConfigEntry = object
     exceptions = types.ModuleType("homeassistant.exceptions")
     exceptions.ServiceValidationError = ServiceValidationError
+    exceptions.ConfigEntryError = type("ConfigEntryError", (Exception,), {})
     authorization = types.ModuleType(f"{PKG_NAME}.authorization")
     authorization.async_require_service_endpoint_control = require_endpoint
     authorization.async_require_service_entity_control = require_entities
     const = types.ModuleType(f"{PKG_NAME}.const")
     const.DOMAIN = "voip_stack"
+    const.CONF_SIP_ACCOUNTS = "sip_accounts"
     const.HA_PEER_FALLBACK_NAME = "Home Assistant"
     const.HA_SOFTPHONE_DEVICE_ID = "ha-softphone"
     phone_endpoint = types.ModuleType(f"{PKG_NAME}.phone_endpoint")
@@ -97,6 +101,7 @@ def _load_service_endpoints(
     phone_endpoint.PhoneEndpoint = PhoneEndpoint
     phone_endpoint.ha_client_endpoint = _ENDPOINT_CONTRACT.ha_client_endpoint
     runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
+    runtime_data.sip_registrar = lambda _hass: None
     runtime_data.endpoint_directory = lambda hass: hass.data.get(
         "voip_stack", {}
     ).get("endpoint_registry", _Registry())
@@ -126,6 +131,7 @@ def _load_service_endpoints(
     dependencies = {
         "homeassistant": homeassistant,
         "homeassistant.core": core,
+        "homeassistant.config_entries": config_entries,
         "homeassistant.exceptions": exceptions,
         authorization.__name__: authorization,
         const.__name__: const,
@@ -133,9 +139,16 @@ def _load_service_endpoints(
         runtime_data.__name__: runtime_data,
         service_errors.__name__: service_errors,
     }
+    store_name = f"{PKG_NAME}.store"
+    store_spec = importlib.util.spec_from_file_location(store_name, PKG_DIR / "store.py")
+    if store_spec is None or store_spec.loader is None:
+        raise RuntimeError("cannot load store.py")
+    store = importlib.util.module_from_spec(store_spec)
     with patch.dict(sys.modules, dependencies):
+        store_spec.loader.exec_module(store)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
+    sys.modules[store_name] = store
     return module
 
 

@@ -1311,15 +1311,15 @@ duplicateNames._rosterEntries = [
   {{id:"alice",name:"Kitchen",extension:"201",enabled:true,metadata:{{endpoint_kind:"sip_account",local_ha:true}}}},
   {{id:"bob",name:"Kitchen",extension:"202",enabled:true,metadata:{{endpoint_kind:"sip_account",local_ha:true}}}},
 ];
-duplicateNames._softphoneDestination = "202";
+duplicateNames._softphoneDestination = "bob";
 const duplicateSelect = new FakeElement();
 Card.prototype._renderSoftphoneDestinationSelect.call(duplicateNames,duplicateSelect);
-assert.equal(duplicateSelect.children.map(option=>option.value).join(","),"201,202");
+assert.equal(duplicateSelect.children.map(option=>option.value).join(","),"alice,bob");
 assert.equal(duplicateSelect.children.map(option=>option.textContent).join(","),"Kitchen,Kitchen");
 assert.equal(duplicateNames._getSoftphoneTargetDevice().id,"bob");
 await duplicateNames._startCall();
-assert.equal(audioOnlyStart.target,"202");
-assert.equal(audioOnlyStart.options.callee,"202");
+assert.equal(audioOnlyStart.target,"bob");
+assert.equal(audioOnlyStart.options.callee,"bob");
 duplicateNames._softphoneDestination = "Kitchen";
 assert.equal(duplicateNames._getSoftphoneTargetDevice(),null,"An ambiguous saved label cannot choose the first account");
 duplicateNames._rosterEntries.pop();
@@ -2268,7 +2268,8 @@ import {pathToFileURL} from 'node:url';
 const model=await import(pathToFileURL(MODEL));
 assert.equal(model.terminalPeerLabel({direction:'incoming',caller_name:'Caffè, Office',caller:'account'}),'Caffè, Office');
 assert.equal(model.terminalPeerLabel({direction:'outgoing',connected_party_name:'Desk @ East',connected_party:'DeskEast'}),'Desk @ East');
-assert.equal(model.terminalPeerLabel({direction:'outgoing',target:'legacy-ha-device-uuid',dialed_target:'entity_id'}),'');
+assert.equal(model.terminalPeerLabel({direction:'outgoing',target:'legacy-ha-device-uuid'}),'');
+assert.equal(model.terminalPeerLabel({direction:'outgoing',target:'legacy-ha-device-uuid',dialed_target:'entity_id'}),'entity_id');
 assert.equal(model.mirroredEndpointPeerLabel({direction:'outgoing',caller:'Desk@East',callee:'DeskEast'},'Desk@East'),'DeskEast');
 assert.equal(model.mirroredEndpointPeerLabel({direction:'incoming',caller:'desk@East',callee:'Desk@East'},'Desk@East'),'desk@East');
 assert.equal(model.mirroredEndpointPeerLabel({direction:'outgoing',callee:'Sala, Nord 20%'},'SalaNord20'),'Sala, Nord 20%');

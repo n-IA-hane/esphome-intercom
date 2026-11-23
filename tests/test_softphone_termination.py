@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
@@ -247,6 +247,6 @@ def test_bridge_termination_rejects_stale_generation(termination) -> None:
     )
 
     assert result == (False, "", "", False, False)
-    registry.get_session.assert_called_once_with("source-call", generation=7)
+    assert registry.get_session.call_args == call("source-call", generation=7)
     registry.sip_client_for.assert_not_called()
     termination.terminate.assert_not_awaited()

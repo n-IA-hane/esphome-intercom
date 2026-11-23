@@ -116,8 +116,13 @@ async def test_accepted_refer_immediate_bye_keeps_opposite_audio_and_application
         registering = SimpleNamespace(address=("127.0.0.2", caller.local_sip_port),
             transport=caller.transport, receive=registration_response)
         listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+        from custom_components.voip_stack.config_entry_runtime import async_config_entry_updated
+        await async_config_entry_updated(lab.hass, entry)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert registrar.accounts[account.username.casefold()].password == account.password
         await register_phone(SimpleNamespace(a=registering, registrar=registrar, lab=lab, listener=listener),
             username=account.username, outbound=False, discover=False)
+        assert registrar.registered_contacts(account.username)
         result = await caller.invite(target="bedroom0", remote_host=listener[0],
             remote_sip_port=listener[1], timeout=3)
         if result == "ringing":
