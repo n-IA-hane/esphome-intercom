@@ -334,7 +334,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
         ("From", f"<sip:{user}@127.0.0.1>;tag=profile"), ("To", f"<sip:{user}@127.0.0.1>"),
         ("Call-ID", "contact-profile"), ("CSeq", "1 REGISTER"),
         ("Contact", f"<sip:{user}@127.0.0.2:41000>"), ("Expires", "120"),
-        ("User-Agent", "Dahua VTO2202F-P"), ("Authorization", auth)]))
+        ("User-Agent", "Dahua UAC/V4.511.0.0"), ("Authorization", auth)]))
     manager = SipEndpointManager(host="127.0.0.1", port=5060, local_ip="127.0.0.1",
         local_rtp_port=40000, supported_formats=list(HA_SIP_PCM_FORMATS), on_invite=None,
         on_register=lab.registrar.handle_register, udp_enabled=True, tcp_enabled=False)
@@ -371,7 +371,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
         sip_uri_transport=uri_transport, enable_reused_tcp_connection=enable_reused_signaling_flow)
     _uri, peer, selected = dialer.sip_uri_for_member(phone.username, peers, rows)
     assert peer is not None and selected is entry
-    assert selected.metadata["user_agent"] == "Dahua VTO2202F-P"
+    assert selected.metadata["user_agent"] == "Dahua UAC/V4.511.0.0"
     assert selected.metadata["sip_audio_rx_formats"] == contact.capabilities["sip_audio_rx_formats"]
     assert peer_video_codec(peer, selected) == "jpeg"
     reservation = RtpPortReservation.allocate(lab.hass)
