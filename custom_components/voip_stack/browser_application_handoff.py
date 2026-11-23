@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import replace
 
-from .browser_playback import BrowserPlayback
+from .browser_playback import BROWSER_MEDIA_START_TIMEOUT, BrowserPlayback
 from .call_projection import publish_phone_projection
 from .core.media.negotiator import browser_media_contract
 from .endpoint_session import CleanupStage
@@ -106,7 +106,8 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
         publish_phone_projection(runtime.hass, session, endpoint.endpoint_id,
             direction="incoming", peer_name=session.caller, route_kind="answer_ha",
             audio_direction="sendrecv", last_sip_event="BROWSER_MEDIA_PREPARED")
-        await playback.wait_ready(fail_on_detach=True)
+        async with asyncio.timeout(timeout if timeout is not None else BROWSER_MEDIA_START_TIMEOUT):
+            await playback.wait_ready(fail_on_detach=True)
         session.ensure_live(token)
         owner = require_runtime_data(runtime.hass).media.owners_for("audio").get(owner_key)
         if owner is None or owner.released.is_set():

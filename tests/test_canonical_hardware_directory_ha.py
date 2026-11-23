@@ -95,6 +95,8 @@ async def test_private_sensor_changes_neither_route_offer_directory_nor_account(
 async def test_account_hardware_getter_is_read_only_and_preserves_native_camera_control_and_ids(managed, monkeypatch):
     from custom_components.voip_stack.esphome_phone_inventory import _get_voip_devices
     from custom_components.voip_stack.phone_control import PhoneOperation
+    from homeassistant.components.esphome.manager import _async_register_service
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
 
     lab = managed
     phone, contact = await registered_account(lab)
@@ -102,12 +104,18 @@ async def test_account_hardware_getter_is_read_only_and_preserves_native_camera_
     camera = registry.async_get_or_create("camera", "esphome", "84c7bb000001-camera",
         config_entry=lab.native, device_id=lab.device.id)
     camera = registry.async_update_entity(camera.entity_id, new_entity_id="camera.kept_preview")
+    native = lab.native.runtime_data
+    action = next(row for row in native.services.values() if row.name == "start_call_on_line")
+    _async_register_service(lab.hass, native, native.device_info, action)
+    await lab.hass.async_block_till_done()
+    sync_registry_from_entry(lab.hass, lab.entry)
     endpoint = lab.runtime.endpoints.require(phone.username)
     native_id = endpoint.account_device_id, lab.device.id, camera.id, camera.entity_id
     before = lab.runtime.endpoints.endpoints
-    monkeypatch.setattr(lab.runtime.endpoints, "upsert", Mock(side_effect=AssertionError("getter cannot upsert")))
-    monkeypatch.setattr(lab.runtime.endpoints, "update", Mock(side_effect=AssertionError("getter cannot update")))
-    device, = await _get_voip_devices(lab.hass)
+    with monkeypatch.context() as getter_only:
+        getter_only.setattr(lab.runtime.endpoints, "upsert", Mock(side_effect=AssertionError("getter cannot upsert")))
+        getter_only.setattr(lab.runtime.endpoints, "update", Mock(side_effect=AssertionError("getter cannot update")))
+        device, = await _get_voip_devices(lab.hass)
     handle = await lab.runtime.phones.resolve_source(ServiceCall(lab.hass, "voip_stack", "call",
         {"device_id": lab.device.id}), PhoneOperation.ORIGINATE)
     assert lab.runtime.endpoints.endpoints == before
@@ -229,18 +237,25 @@ async def test_registered_opaque_contact_is_preserved_on_wire_without_becoming_t
         projected, = await async_build_peer_snapshot(lab.hass)
         assert projected.request_uri_user == projected.sip_uri_user == projected.name == "Reception"
         assert projected.endpoint_kind == "sip_account"
-        assert str(sip_uri_for_peer(projected, default_port=5060)) == first
+        bindings = lab.registrar.registered_contacts("Reception")
+        effective = bindings[0].contact_uri
+        advertised = sip.parse_sip_uri(first)
+        actual = sip.parse_sip_uri(effective)
+        assert actual.user == advertised.user == "opaque-device"
+        assert dict(actual.params) == dict(advertised.params) == {"transport": "tcp", "ob": None}
+        assert str(sip_uri_for_peer(projected, default_port=5060)) == effective
         rows = compose_directory_entries(lab.hass, [projected], lab.registrar.registered_roster_entries())
         account = next(row for row in rows if row.id == "Reception")
         assert account.extension == "" and account.name == "Reception"
         branches = build_sip_contact_targets(["Reception"], rows, policy=RingPolicy())
-        assert {branch.uri for branch in branches} == {first, second}
+        assert {branch.uri for branch in branches} == {binding.contact_uri for binding in bindings}
+        assert {sip.parse_sip_uri(branch.uri).user for branch in branches} == {"opaque-device", "other-instance"}
         assert all(branch.endpoint_id == "Reception" and branch.roster_entry.name == "Reception" for branch in branches)
         target = sip_uri_for_peer(projected, default_port=5060)
         result = await client.invite(target=projected.request_uri_user, remote_host=target.host,
             remote_sip_port=target.port, request_uri=str(target), target_display_name=projected.name, timeout=2)
         request = await asyncio.wait_for(received.get(), 2)
-        assert request.uri == first
+        assert request.uri == effective
         assert sip.name_addr_display_name(request.header("To")) == "Reception"
         assert result == "busy" and client.last_sip_status_code == 486
     finally:
@@ -291,3 +306,172 @@ async def test_upgrade_records_cannot_authenticate_until_native_account_migratio
     assert "queues" not in native.data and "ring_group" not in native.data
     await bind_account(lab, phone_record(lab))
     assert lab.registrar.registered_contacts("Reception")
+
+
+async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_offer(managed, socket_enabled):
+    from urllib.parse import quote
+    from custom_components.voip_stack.core import sip, sdp
+    from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.endpoint_dialing import EndpointDialer
+    from custom_components.voip_stack.endpoint_routing import EndpointRouteResolver, peer_video_codec
+    from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot
+    from custom_components.voip_stack.sip_runtime import uri_transport, enable_reused_signaling_flow
+    from custom_components.voip_stack.media_ports import RtpPortReservation
+
+    lab = managed
+    phone, _previous = await registered_account(lab)
+    uri = "sip:127.0.0.1:5060"
+    user = quote(phone.username, safe="-._~")
+    auth = build_digest_authorization(challenge_header=lab.registrar._challenge()[1],
+        username=phone.username, password=phone.password, method="REGISTER", uri=uri)
+    request = sip.parse_message(sip.build_request("REGISTER", uri, [
+        ("Via", "SIP/2.0/UDP 127.0.0.2:41000;branch=z9hG4bK-contact-profile;rport"),
+        ("From", f"<sip:{user}@127.0.0.1>;tag=profile"), ("To", f"<sip:{user}@127.0.0.1>"),
+        ("Call-ID", "contact-profile"), ("CSeq", "1 REGISTER"),
+        ("Contact", f"<sip:{user}@127.0.0.2:41000>"), ("Expires", "120"),
+        ("User-Agent", "Dahua VTO2202F-P"), ("Authorization", auth)]))
+    assert (await lab.registrar.handle_register(request, ("127.0.0.2", 41000), "UDP")).status == 200
+    contact, = lab.registrar.registered_contacts(phone.username)
+    contact.capabilities = sdp.options_capabilities(OPTIONS + "m=video 0 RTP/AVP 26\r\na=sendrecv\r\n")
+    peers = await async_build_peer_snapshot(lab.hass)
+    rows = compose_directory_entries(lab.hass, peers, lab.registrar.registered_roster_entries())
+    entry = next(row for row in rows if row.id == phone.username)
+    dialer = EndpointDialer(hass=lab.hass, local_ip="127.0.0.1", config=lab.runtime.transport_config,
+        route_resolver=EndpointRouteResolver(lab.hass, "127.0.0.1", 5060),
+        sip_uri_transport=uri_transport, enable_reused_tcp_connection=enable_reused_signaling_flow)
+    _uri, peer, selected = dialer.sip_uri_for_member(phone.username, peers, rows)
+    assert peer is not None and selected is entry
+    assert selected.metadata["user_agent"] == "Dahua VTO2202F-P"
+    assert selected.metadata["sip_audio_rx_formats"] == contact.capabilities["sip_audio_rx_formats"]
+    assert peer_video_codec(peer, selected) == "jpeg"
+    reservation = RtpPortReservation.allocate(lab.hass)
+    leg = None
+    try:
+        # This is the exact shared builder called by conference ringing, pickup
+        # and automation. The SIP client and media reservation are production objects.
+        leg = dialer.prepare_outbound_leg(member=phone.username, peers=peers, roster_entries=rows,
+            local_name="Caller", local_rtp_port_index=0, port_reservation=reservation)
+        assert leg is not None and leg.bridge_to_softphone
+        leg.client._prepare_initial_offer(delayed_offer=False, audio_direction="sendrecv")
+        mappings = sdp.offered_pcm_formats(leg.client._local_sdp_body, allow_dahua_pcm=True)
+        assert any(fmt.encoding == "PCM" for fmt in mappings)
+        assert {fmt.encoding for fmt in mappings} >= {"PCMA", "PCMU"}
+    finally:
+        if leg is not None:
+            await leg.client.close()
+        reservation.release()
+
+
+async def test_canonical_hardware_entity_index_rename_and_late_idle_keep_new_claim(managed, monkeypatch):
+    import asyncio
+    from custom_components.voip_stack import esphome_state_bridge
+
+    lab = managed
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+    entities = er.async_get(lab.hass)
+    state = next(row for row in entities.entities.values() if row.platform == "esphome" and "voip_state" in row.unique_id)
+    assert lab.runtime.endpoints.by_entity_id(state.entity_id).endpoint_id == phone.username
+    esphome_state_bridge.register_state_event_bridge(lab.hass)
+    old_id = state.entity_id
+    entities.async_update_entity(old_id, new_entity_id="sensor.renamed_native_state")
+    await lab.hass.async_block_till_done()
+    assert lab.runtime.endpoints.by_entity_id(old_id) is None
+    assert lab.runtime.endpoints.by_entity_id("sensor.renamed_native_state").endpoint_id == phone.username
+    # Establish the old native state before subscribing anew. No fake endpoint
+    # index or alternate state owner is installed for the ABA witness.
+    lab.runtime.esp_state_event_bridge_unsub()
+    lab.hass.states.async_set("sensor.renamed_native_state", "in_call")
+    lab.runtime.endpoints.claim_call(phone.username, "old-native-call")
+    esphome_state_bridge.register_state_event_bridge(lab.hass)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = esphome_state_bridge.async_emit_state_event
+    captured = {}
+    async def pause_terminal(*args, **kwargs):
+        captured.update(kwargs)
+        entered.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+    monkeypatch.setattr(esphome_state_bridge, "async_emit_state_event", pause_terminal)
+    try:
+        lab.hass.states.async_set("sensor.renamed_native_state", "idle")
+        await asyncio.wait_for(entered.wait(), 2)
+        assert captured["expected_endpoint_id"] == phone.username
+        assert captured["expected_call_id"] == "old-native-call"
+        assert lab.runtime.endpoints.release_call(phone.username, "old-native-call")
+        lab.runtime.endpoints.claim_call(phone.username, "new-native-call")
+        release.set()
+        await lab.hass.async_block_till_done()
+        assert lab.runtime.endpoints.require(phone.username).active_call_id == "new-native-call"
+    finally:
+        release.set()
+        if lab.runtime.esp_state_event_bridge_unsub is not None:
+            lab.runtime.esp_state_event_bridge_unsub()
+        lab.runtime.endpoints.release_call(phone.username, "new-native-call")
+
+
+async def test_missing_native_actions_repair_is_owned_by_provisioning_and_checks_schema(managed):
+    from dataclasses import replace
+    from homeassistant.helpers import issue_registry as ir
+    from custom_components.voip_stack.esphome_phone_inventory import _get_voip_devices
+
+    lab = managed
+    await lab.controller.async_sync()
+    original = lab.native.runtime_data.services
+    issue_id = "esphome_actions_" + lab.device.id
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
+    lab.native.runtime_data.services = {key: service for key, service in original.items() if service.name != "answer_call"}
+    await lab.controller.async_sync()
+    issue = ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id)
+    assert issue is not None and "answer_call" in issue.translation_placeholders["actions"]
+    lab.native.runtime_data.services = {key: replace(service, args=service.args[:2])
+        if service.name == "start_call_on_line" else service for key, service in original.items()}
+    await lab.controller.async_sync()
+    issue = ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id)
+    assert issue is not None and "start_call_on_line" in issue.translation_placeholders["actions"]
+    lab.native.runtime_data.services = original
+    await _get_voip_devices(lab.hass)
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is not None
+    await lab.controller.async_sync()
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
+
+
+async def test_account_enabled_is_independent_of_native_auto_provisioning_and_api_offline(managed):
+    from urllib.parse import quote
+    from custom_components.voip_stack.core import sip
+    from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+    from custom_components.voip_stack.phone_config import update_phone_subentry
+    from custom_components.voip_stack.store import sip_accounts
+    from .test_sip_account_username_identity_ha import register_client
+
+    lab = managed
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+    account = next(row for row in lab.entry.subentries.values() if row.data.get("username") == phone.username)
+    original = lab.native.runtime_data.services
+    lab.native.runtime_data.services = {key: service for key, service in original.items() if service.name != "register_ha_account"}
+    await lab.controller.async_sync()
+    assert account.data["active"] is False and account.data.get("enabled", True)
+    lab.native.runtime_data.available = False
+    lab.native.runtime_data.client.is_connected = False
+    await lab.controller.async_sync()
+    assert sip_accounts(lab.hass)[0].enabled
+    await register_client(lab, phone, host="127.0.0.9", port=42000)
+    assert lab.registrar.registered_contacts(phone.username)
+    update_phone_subentry(lab.hass, lab.entry, phone.username, {"enabled": False})
+    lab.native.runtime_data.services = original
+    lab.native.runtime_data.available = True
+    lab.native.runtime_data.client.is_connected = True
+    await lab.controller.async_sync()
+    assert account.data["enabled"] is False and not sip_accounts(lab.hass)[0].enabled
+    uri = "sip:127.0.0.1:5060"
+    auth = build_digest_authorization(challenge_header=lab.registrar._challenge()[1],
+        username=phone.username, password=phone.password, method="REGISTER", uri=uri)
+    user = quote(phone.username, safe="-._~")
+    request = sip.parse_message(sip.build_request("REGISTER", uri, [
+        ("Via", "SIP/2.0/UDP 127.0.0.9:42000;branch=z9hG4bK-explicit-disabled;rport"),
+        ("From", f"<sip:{user}@127.0.0.1>;tag=disabled"), ("To", f"<sip:{user}@127.0.0.1>"),
+        ("Call-ID", "disabled-account"), ("CSeq", "1 REGISTER"),
+        ("Contact", f"<sip:{user}@127.0.0.9:42000>"), ("Expires", "120"), ("Authorization", auth)]))
+    assert (await lab.registrar.handle_register(request, ("127.0.0.9", 42000), "UDP")).status == 401

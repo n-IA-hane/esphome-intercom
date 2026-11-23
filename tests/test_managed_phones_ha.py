@@ -38,6 +38,7 @@ def native_services(*, managed=True):
                                      "password", "auth_username", "proxy", "proxy_port",
                                      "transport", "expires", "persist")],
         "register_account": [("account_id", string)],
+        "answer_call": [], "decline_call": [("reason", string)], "hangup_call": [],
     }
     if managed:
         fields["register_ha_account"] = []

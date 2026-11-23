@@ -159,8 +159,8 @@ class EspHomeProvisioner:
             # another migration version. Signaling state cannot change it.
             signature = hashlib.sha256(json.dumps({'legacy': legacy_records, 'ready': ready,
                 'updates': updates, 'memberships': self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}),
-                'accounts': [(row.subentry_id, row.data.get('username')) for row in self.entry.subentries.values()
-                             if row.subentry_type == 'phone']}, sort_keys=True).encode()).hexdigest()
+                'configuration': {key: row.as_dict() for key, row in self.entry.subentries.items()},
+                'options': dict(self.entry.options)}, sort_keys=True).encode()).hexdigest()
             if signature == self._identity_retry_signature:
                 return True
             self._identity_retry_signature = signature
@@ -169,6 +169,9 @@ class EspHomeProvisioner:
             async_sync_account_route_issue(self.hass, self.entry, error)
             return True
         except (ValueError, TypeError, RuntimeError, OSError) as error:
+            if (getattr(error, 'legacy', '') in {'active calls', 'concurrent account change'}
+                    or getattr(error, 'active_call_id', '')):
+                self._identity_retry_signature = None
             async_sync_phone_identity_issue(self.hass, self.entry, error)
             return True
         if not self._owned():
@@ -213,6 +216,7 @@ class EspHomeProvisioner:
     @callback
     def _service_changed(self, event):
         if event.data.get("domain") == "esphome":
+            self._identity_retry_signature = None
             # ESPHome replaces the inventory before publishing service events.
             self._refresh_accounts()
             self.schedule()
@@ -225,6 +229,9 @@ class EspHomeProvisioner:
         if entity is not None and entity.platform == "esphome" and entity_role(entity) in {
                 *_ROLES, "voip_state"}:
             old, new = event.data.get("old_state"), event.data.get("new_state")
+            if ((old is None or old.state in {"unknown", "unavailable"})
+                    and new is not None and new.state not in {"unknown", "unavailable"}):
+                self._identity_retry_signature = None
             field = _ROLES.get(entity_role(entity))
             if field in {"queues", "ring_group"}:
                 if (old is not None and new is not None
@@ -256,6 +263,7 @@ class EspHomeProvisioner:
 
     @callback
     def _device_changed(self, event):
+        self._identity_retry_signature = None
         device_id = event.data["device_id"]
         if event.data["action"] == "remove":
             if event.data["device"]["config_entry_id"] == self.entry.entry_id:
@@ -274,6 +282,8 @@ class EspHomeProvisioner:
     @callback
     def _entry_changed(self, change, entry):
         if entry is self.entry and change is ConfigEntryChange.UPDATED:
+            self._identity_retry_signature = None
+            self.schedule()
             rows = managed_account_subentries(entry)
             deleted = {device_id for device_id, receipt in entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}).items()
                        if "endpoint_id" in receipt and device_id not in rows}
@@ -513,6 +523,11 @@ class EspHomeProvisioner:
                         continue
                     if device.id in pending_legacy and device.id not in rows:
                         continue
+                    if device.id in rows or any(entity_role(row) == "voip_state"
+                            for row in er.async_entries_for_device(er.async_get(self.hass), device.id)):
+                        from .repairs import async_sync_esphome_action_issue
+                        async_sync_esphome_action_issue(self.hass, {"device_id": device.id,
+                            "origin_entry_id": origin.entry_id, "name": device.name_by_user or device.name})
                     modes = {managed_phone_mode(self.hass, origin, device.id, mac)
                              for kind, mac in device.connections if kind == dr.CONNECTION_NETWORK_MAC}
                     if True not in modes:

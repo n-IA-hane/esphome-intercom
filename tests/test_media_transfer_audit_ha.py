@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from custom_components.voip_stack import audio_ws_view, browser_playback, call_projection
+from custom_components.voip_stack import audio_ws_view, browser_application_handoff, call_projection
 from custom_components.voip_stack.account_runtime import recompute_account_availability
 from custom_components.voip_stack.core import rtp
 from custom_components.voip_stack.core.rtp_payload import RtpPayloadEncoder
@@ -125,7 +125,7 @@ async def test_unlimited_ring_card_answer_without_websocket_resumes_original_cal
     target = await card_accounts("audit-stalled-card")
     assert target.policy.ringing_timeout is None
     # This changes only the technical owner deadline, never the ring policy.
-    monkeypatch.setattr(browser_playback, "BROWSER_MEDIA_START_TIMEOUT", 0.05)
+    monkeypatch.setattr(browser_application_handoff, "BROWSER_MEDIA_START_TIMEOUT", 0.05)
     transfer = None
     async with incoming_card_call(runtime, original) as (caller, _audio, session):
         identity = (caller.dialog_ids.call_id, caller.dialog_ids.local_tag, caller.dialog_ids.remote_tag)

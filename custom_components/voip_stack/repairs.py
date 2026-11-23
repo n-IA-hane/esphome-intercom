@@ -21,7 +21,10 @@ from .runtime_data import runtime_data
 MEDIA_CAPTURE_ISSUE_ID = "media_capture_enabled"
 ESPHOME_ACTION_ISSUE_PREFIX = "esphome_actions_"
 ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX = "esphome_endpoint_collision_"
-_PHONE_ACTIONS = ("start_call", "answer_call", "decline_call", "hangup_call")
+_PHONE_ACTIONS = {
+    "start_call_on_line": (("dest", 3), ("line", 3), ("send_video", 0), ("receive_video", 0)),
+    "answer_call": (), "decline_call": (("reason", 3),), "hangup_call": (),
+}
 
 
 class AccountMigrationRepairFlow(ConfirmRepairFlow):
@@ -172,12 +175,21 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
         entry = self.hass.config_entries.async_get_entry(self.entry_id)
         if entry is None:
             return self.async_create_entry(data={})
+        retrying_migration = entry.state is ConfigEntryState.MIGRATION_ERROR
         try:
-            await self.hass.config_entries.async_retry_migration(self.entry_id)
-        except HomeAssistantError:
+            if retrying_migration:
+                await self.hass.config_entries.async_retry_migration(self.entry_id)
+            else:
+                from .sip_account_identity import async_migrate_account_identities
+                await async_migrate_account_identities(self.hass, entry)
+        except (HomeAssistantError, OSError, ValueError, TypeError):
             pass
         else:
             if entry.state is not ConfigEntryState.MIGRATION_ERROR:
+                async_sync_phone_identity_issue(self.hass, entry)
+                async_sync_account_route_issue(self.hass, entry)
+                if entry.state is ConfigEntryState.LOADED and not retrying_migration:
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 return self.async_create_entry(data={})
         result = await super().async_step_confirm()
         result["errors"] = {"base": "migration_retry_failed"}
@@ -566,13 +578,28 @@ def async_sync_esphome_action_issue(hass: HomeAssistant, device: dict) -> None:
     if not device_id:
         return
     issue_id = f"{ESPHOME_ACTION_ISSUE_PREFIX}{device_id}"
-    route_id = str(device.get("route_id") or "").strip()
-    missing = tuple(
-        action
-        for action in _PHONE_ACTIONS
-        if not route_id
-        or not hass.services.has_service("esphome", f"{route_id}_{action}")
-    )
+    from homeassistant.helpers import device_registry as dr
+    from .esphome_native import device_info, normalize_mac, runtime_for_entry, verified_action_names
+    hardware = dr.async_get(hass).async_get(device_id)
+    if hardware is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    origin = hass.config_entries.async_get_entry(str(hardware.config_entry_id or ""))
+    native = runtime_for_entry(origin)
+    info = device_info(native)
+    if info is None or origin is None:
+        return
+    try:
+        mac = normalize_mac(info.mac_address)
+        owns_hardware = any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(value) == mac
+                            for kind, value in hardware.connections)
+    except ValueError:
+        return
+    if not owns_hardware or verified_action_names(origin, mac) is None:
+        return
+    services = {service.name: service for service in native.services.values()}
+    missing = tuple(name for name, expected in _PHONE_ACTIONS.items()
+        if name not in services or tuple((arg.name, int(arg.type)) for arg in services[name].args) != expected)
     if not missing:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return

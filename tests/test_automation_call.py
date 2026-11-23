@@ -316,6 +316,42 @@ async def test_browser_announcement_waits_for_current_connection(application, mo
         await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
 
 
+@pytest.mark.parametrize("caller_budget", [30.0, 120.0])
+async def test_browser_readiness_after_five_seconds_respects_caller_budget(monkeypatch, caller_budget):
+    playback = BrowserPlayback()
+    previous, current = object(), object()
+    playback.attach(previous)
+    playback.attach(current)
+    loop = asyncio.get_running_loop()
+    actual_time = loop.time
+    offset = 0.0
+
+    async def wait_for_owner():
+        async with asyncio.timeout(caller_budget):
+            await playback.wait_ready()
+
+    task = None
+    try:
+        with monkeypatch.context() as clock:
+            clock.setattr(loop, "time", lambda: actual_time() + offset)
+            task = asyncio.create_task(wait_for_owner())
+            await asyncio.sleep(0)
+            offset = 6.0
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert not task.done()
+            playback.ready(previous)
+            await asyncio.sleep(0)
+            assert not task.done()
+            playback.ready(current)
+            await task
+    finally:
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await playback.close("test_done")
+
+
 async def test_closed_browser_playback_wakes_waiter():
     playback = BrowserPlayback()
     waiter = asyncio.create_task(playback.wait_ready())

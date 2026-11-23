@@ -242,20 +242,21 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
             _refresh_state_entities()
             if event.data.get("action") == "remove":
                 runtime.esp_state_event_generations.pop(new_id, None)
-        if event.data.get("action") != "update" or not old_id or not new_id:
+        endpoint = runtime.endpoints.by_entity_id(old_id or new_id)
+        if endpoint is None and entity is not None and entity.platform == "esphome":
+            endpoint = runtime.endpoints.by_device_id(entity.device_id)
+        if endpoint is None or str(endpoint.kind) != "sip_account":
             return
-        endpoint = runtime.endpoints.by_entity_id(old_id)
-        entity = er.async_get(hass).async_get(new_id)
-        if (
-            endpoint is None or str(endpoint.kind) != "esphome"
-            or entity is None or entity.platform != "esphome"
-            or entity.device_id != endpoint.device_id
-        ):
+        if entity is not None and (entity.platform != "esphome" or entity.device_id != endpoint.device_id):
             return
-        from .endpoint_device import async_link_endpoint_entity
+        from .phone_config import sync_registry_from_entry
+        from .store import config_entry
 
-        runtime.esp_state_event_generations.pop(old_id, None)
-        async_link_endpoint_entity(runtime.endpoints, endpoint.endpoint_id, new_id, old_id)
+        owner = config_entry(hass)
+        if owner is not None:
+            sync_registry_from_entry(hass, owner)
+        if old_id:
+            runtime.esp_state_event_generations.pop(old_id, None)
 
     unsubscribe_registry = hass.bus.async_listen(
         er.EVENT_ENTITY_REGISTRY_UPDATED, _on_entity_registry_changed

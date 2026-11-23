@@ -13,12 +13,12 @@ def format_entry_unified(peer: Peer) -> str:
     name = peer.name
     peer_ip = peer.host or ""
     if not peer_ip:
-        raise ValueError("A phonebook peer requires its current SIP host")
+        return name
     transport = str((peer.device or {}).get("sip_transport") or ("tcp" if peer.is_ha else "")).lower()
     if transport not in {"tcp", "udp", "tls"}:
-        raise ValueError("A phonebook peer requires its current SIP transport")
+        return name
     if not peer.sip_uri_user or peer.sip_port is None:
-        raise ValueError("A phonebook peer requires its canonical SIP username and port")
+        return name
     return f"{name}|{peer.sip_uri_user}|{peer_ip}|{peer.sip_port}|{peer.rtp_port or 0}|{transport}"
 
 

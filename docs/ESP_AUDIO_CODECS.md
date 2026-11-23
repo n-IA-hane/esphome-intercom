@@ -17,13 +17,15 @@ voip_stack:
     codecs:
       - codec: pcm
         tx:
-          # Prefer 20 ms TX (50 packets/s); keep 10 ms as a compatible alternative.
+          # Prefer the native 16 kHz / 20 ms microphone stream.
           - {sample_rate: 16000, frame_ms: 20}
           - {sample_rate: 16000, frame_ms: 10}
-        rx:
-          # Prefer 48 kHz from HA. At 20 ms this would exceed the payload budget.
+          # This real alternative makes 48 kHz usable in both directions.
           - {sample_rate: 48000, frame_ms: 10}
-          # Common PCM alternatives for compatible phones.
+        rx:
+          # Prefer 48 kHz / 10 ms; accept 20 ms within the receive envelope.
+          - {sample_rate: 48000, frame_ms: 10}
+          - {sample_rate: 48000, frame_ms: 20}
           - {sample_rate: 16000, frame_ms: 20}
           - {sample_rate: 16000, frame_ms: 10}
 ```
@@ -34,8 +36,10 @@ Home Assistant should send 48 kHz/10 ms toward this ESP and receive
 alternatives allow a compatible peer to avoid unnecessary transcoding.
 
 PCM mono S16 produces 960 audio bytes at 48 kHz/10 ms, 1920 bytes at
-48 kHz/20 ms, and 640 bytes at 16 kHz/20 ms. The default RTP payload budget is
-1200 bytes. The preferred HA/ESP PCM path uses 100 packets per second from HA
+48 kHz/20 ms, and 640 bytes at 16 kHz/20 ms. The default transmit RTP payload
+budget is 1200 bytes. Receive storage is separate: the wire payload limit is
+2036 bytes and the decoded PCM buffer is 2048 bytes, so mono S16 at 48 kHz/20 ms
+fits the declared receive envelope. The preferred HA/ESP PCM path uses 100 packets per second from HA
 to the ESP and 50 packets per second from the ESP to HA. The 10 ms TX alternative
 remains available for compatible peers. Changing a preference does not remove
 other declared packet times or make the two directions use the same duration.
@@ -44,16 +48,19 @@ TX and RX packet times are independent. SDP `ptime` describes the duration the
 sender of that SDP prefers to receive; it does not impose an identical duration
 in both directions. A remote `ptime` guides ESP transmission among its declared
 formats; a remote `maxptime` limits the ESP's transmit packet duration.
-Advertised capabilities stay within the configured RTP payload budget, which
-defaults to 1200 bytes. The advertised `maxptime` respects every receive mapping
-on the audio m-line, including alternatives.
+Every advertised mapping must be executable in its stated direction. The
+48 kHz TX alternative is supported by the existing PCM converter; omitting it
+would leave only 16 kHz as a common sendrecv mapping. Ordinary registered SIP
+phones and PBXs use this same SDP negotiation, without private capability
+headers or SDP attributes. The advertised `maxptime` respects every receive
+mapping on the audio m-line, including alternatives.
 See [RFC 3264, section 6.1](https://www.rfc-editor.org/rfc/rfc3264.html#section-6.1).
 
-One audio m-line has one shared `maxptime`. When it advertises both 48 kHz PCM
-at 10 ms and another receive codec, that codec also needs a declared receive
-duration within the shared limit. The G.722 example includes its 10 ms RX
-alternative for this reason. TX can still use 20 ms when the peer accepts it.
-An unrepresentable receive set is rejected with an SDP diagnostic.
+One audio m-line has one shared `maxptime`. This FULL declaration admits up
+to 20 ms for every receive mapping, including 48 kHz PCM. The G.722 example
+includes both 20 ms and 10 ms RX alternatives within that same envelope.
+TX can still use 20 ms when the peer accepts it. An unrepresentable receive set
+is rejected with an SDP diagnostic.
 
 ## Add G.722 for a conventional PBX
 

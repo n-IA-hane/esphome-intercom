@@ -82,6 +82,7 @@ class EndpointDialer:
         """Resolve one member to a remote SIP URI and its source record."""
 
         peer = peer_for_target(member, peers)
+        entry = roster_entry_for_target(member, entries)
         if peer is not None and peer.host:
             return (
                 sip_uri_for_peer(
@@ -90,9 +91,8 @@ class EndpointDialer:
                     fallback_user=member,
                 ),
                 peer,
-                None,
+                entry,
             )
-        entry = roster_entry_for_target(member, entries)
         if entry is None:
             return None, None, None
         if entry.sip_uri:

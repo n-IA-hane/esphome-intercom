@@ -636,6 +636,23 @@ def _phone_subentry_ids(entry: ConfigEntry) -> dict[str, str]:
     }
 
 
+def _project_hardware_entity_ids(hass, endpoint):
+    """Index current native controls through the canonical configuration owner."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from .device_resolver import entity_role
+
+    device = dr.async_get(hass).async_get(endpoint.device_id) if endpoint.device_id else None
+    origin = hass.config_entries.async_get_entry(device.config_entry_id) if device is not None else None
+    if origin is None or origin.domain != "esphome":
+        return endpoint
+    entities = er.async_get(hass)
+    current = {identity for identity in endpoint.entity_ids if entities.async_get(identity) is not None}
+    current.update(row.entity_id for row in er.async_entries_for_device(entities, device.id)
+                   if row.platform == "esphome" and entity_role(row))
+    return replace(endpoint, entity_ids=frozenset(current))
+
+
+@callback
 def async_setup_endpoint_registry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> EndpointRegistry:
@@ -647,7 +664,7 @@ def async_setup_endpoint_registry(
     )
     stores = previous_runtime.softphones if previous_runtime is not None else {}
     for subentry in phone_subentries(entry):
-        endpoint = endpoint_from_subentry(entry, subentry)
+        endpoint = _project_hardware_entity_ids(hass, endpoint_from_subentry(entry, subentry))
         registry.register(endpoint)
     registry.subentry_ids = _phone_subentry_ids(entry)
     pending_removals = registry.pending_removals
@@ -747,7 +764,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 availability=availability,
                 active_call_id=previous.active_call_id,
             )
-        registry.upsert(candidate)
+        registry.upsert(_project_hardware_entity_ids(hass, candidate))
     for endpoint in tuple(registry.endpoints):
         if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT} and (
             endpoint.endpoint_id not in configured
@@ -937,7 +954,8 @@ def replace_sip_account_subentries(
             # edits must not clear membership owned by the group subentries.
             for field in (CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES):
                 if field not in raw:
-                    data.pop(field, None)
+                    if entry.data.get("group_membership_version") == 1:
+                        data.pop(field, None)
                 else:
                     data[field] = sip_account_phone_data(raw)[field]
             # Credential updates retain the current account key and its
@@ -975,13 +993,13 @@ def replace_sip_account_subentries(
                 commit_memberships=False,
             )
             continue
-        hass.config_entries.async_update_subentry(
-            entry=entry,
-            subentry=subentry,
-            data=phone_subentry_storage_data(subentry, {key: value for key, value in data.items()
-                if key not in {CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES}}),
-            title=str(data[CONF_PHONE_NAME]),
-        )
+        owned_membership = entry.data.get("group_membership_version") == 1
+        stored = {key: value for key, value in data.items()
+                  if not owned_membership or key not in {CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES}}
+        title = (str(data[CONF_PHONE_NAME]) if subentry.title in {"", subentry.data.get(CONF_PHONE_NAME)}
+                 else subentry.title)
+        hass.config_entries.async_update_subentry(entry=entry, subentry=subentry,
+            data=phone_subentry_storage_data(subentry, stored), title=title)
     for username, subentry in existing.items():
         if username not in wanted:
             hass.config_entries.async_remove_subentry(entry, subentry.subentry_id)
@@ -1029,7 +1047,9 @@ def update_phone_subentry(
         entry=entry,
         subentry=subentry,
         data=phone_subentry_storage_data(subentry, data),
-        title=str(data.get(CONF_PHONE_NAME) or subentry.title),
+        title=(str(data.get(CONF_PHONE_NAME) or subentry.title)
+               if CONF_PHONE_NAME in updates and subentry.title in {"", subentry.data.get(CONF_PHONE_NAME)}
+               else subentry.title),
     )
     sync_registry_from_entry(hass, entry)
     return changed

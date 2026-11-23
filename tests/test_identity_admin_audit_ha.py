@@ -485,3 +485,144 @@ async def test_rename_rechecks_live_call_claim_after_storage_prepare_before_nati
         release.set()
         if not task.done():
             await task
+
+
+async def test_manual_native_titles_survive_account_services_and_dnd_patches(phone_lab):
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry, update_phone_subentry
+
+    lab = phone_lab
+    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "group_membership_version": 1})
+    edited = native_account(lab.hass, lab.entry, "Desk", title="Explicit edited title", name="Desk display")
+    other = native_account(lab.hass, lab.entry, "Other", title="Explicit other title", name="Other display")
+    sync_registry_from_entry(lab.hass, lab.entry)
+    for action in ("rotate_account_password", "disable_account", "enable_account"):
+        await account_action(lab, action, "Desk")
+        assert (edited.title, other.title) == ("Explicit edited title", "Explicit other title")
+    await account_action(lab, "create_account", "Third")
+    update_phone_subentry(lab.hass, lab.entry, "Desk", {"dnd": True})
+    assert edited.data["dnd"] is True
+    assert (edited.title, other.title) == ("Explicit edited title", "Explicit other title")
+    assert (edited.data["name"], other.data["name"]) == ("Desk display", "Other display")
+
+
+async def test_partial_group_conversion_retains_phone_inputs_until_native_version_one(phone_lab):
+    from custom_components.voip_stack.group_config import group_records, reconcile_group_records
+
+    lab = phone_lab
+    desk = native_account(lab.hass, lab.entry, "Desk", ring_group="Front Ring", queues=["Support"])
+    native_account(lab.hass, lab.entry, "Taken")
+    contact = ConfigSubentry(subentry_type="contact", title="External", unique_id="contact:external",
+        data={"id": "external", "name": "External", "number": "123", "metadata": {"ring_group": "Taken"}})
+    lab.hass.config_entries.async_add_subentry(lab.entry, contact)
+    await account_action(lab, "rotate_account_password", "Desk")
+    assert lab.entry.data.get("group_membership_version") != 1
+    assert desk.data["ring_group"] == "Front Ring" and desk.data["queues"] == ["Support"]
+    lab.hass.config_entries.async_update_subentry(lab.entry, contact, data={**contact.data, "metadata": {}})
+    reconcile_group_records(lab.hass, lab.entry)
+    assert lab.entry.data["group_membership_version"] == 1
+    assert "ring_group" not in desk.data and "queues" not in desk.data
+    assert {row["name"]: row["members"] for row in group_records(lab.entry).values()} == {
+        "Front Ring": ["Desk"], "Support": ["Desk"]}
+
+
+async def test_pending_identity_retry_recovers_after_call_starts_during_prepare(managed, monkeypatch):
+    import asyncio
+    from custom_components.voip_stack import sip_account_identity
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
+
+    lab = managed
+    old = "esp_84c7bb000001"
+    account = native_account(lab.hass, lab.entry, old, username_source="esphome_pending",
+        managed_esphome=True, managed_exclusive=True, device_id=lab.device.id,
+        origin_entry_id=lab.native.entry_id, mac="84c7bb000001", route_id="phone_node")
+    sync_registry_from_entry(lab.hass, lab.entry)
+    lab.runtime.sip.bind_endpoint_registry(lab.runtime.endpoints)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = sip_account_identity._async_prepare_account_queue_migration
+    attempts = 0
+    async def pause_once(*args):
+        nonlocal attempts
+        attempts += 1
+        prepared = await original(*args)
+        if attempts == 1:
+            entered.set()
+            await release.wait()
+        return prepared
+    monkeypatch.setattr(sip_account_identity, "_async_prepare_account_queue_migration", pause_once)
+    lab.controller.start()
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        session = lab.runtime.sip.create_session("call-during-pending-name-prepare")
+        assert lab.runtime.sip.claim_endpoint(session.call_id, old, role="source")
+        release.set()
+        await lab.hass.async_block_till_done()
+        assert account.data["username"] == old and session.live
+        assert attempts == 1
+        barrier = lab.runtime.sip.request_termination(session.call_id, TerminationIntent("test_finished"))
+        if barrier is not None:
+            await barrier
+        await lab.hass.async_block_till_done()
+        assert account.data["username"] == "Ingresso"
+        assert attempts == 2
+    finally:
+        release.set()
+        await lab.controller.async_close()
+
+
+async def test_pending_identity_retry_observes_extension_only_namespace_correction(managed):
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry, update_phone_subentry
+
+    lab = managed
+    lab.native.runtime_data.device_info = replace(lab.native.runtime_data.device_info, friendly_name="101")
+    account = native_account(lab.hass, lab.entry, "esp_84c7bb000001", username_source="esphome_pending",
+        managed_esphome=True, managed_exclusive=True, device_id=lab.device.id,
+        origin_entry_id=lab.native.entry_id, mac="84c7bb000001", route_id="phone_node")
+    desk = native_account(lab.hass, lab.entry, "Desk", extension="101")
+    sync_registry_from_entry(lab.hass, lab.entry)
+    await lab.controller._async_reconcile_account_names()
+    assert account.data["username"] == "esp_84c7bb000001"
+    previous_username = desk.data["username"]
+    update_phone_subentry(lab.hass, lab.entry, "Desk", {"extension": "102"})
+    await lab.controller._async_reconcile_account_names()
+    assert desk.data["username"] == previous_username and desk.data["extension"] == "102"
+    assert account.data["username"] == "101"
+
+
+async def test_existing_native_repair_retries_io_failure_without_restart_or_per_call_load(managed, monkeypatch):
+    from homeassistant.components.repairs import repairs_flow_manager
+    from homeassistant.components.repairs.issue_handler import async_setup
+    from custom_components.voip_stack import sip_account_identity
+
+    lab = managed
+    raw = {"device_id": lab.device.id, "origin_entry_id": lab.native.entry_id,
+        "mac": "84c7bb000001", "username": "Pending", "username_source": "user",
+        "password": "fixture-kept-password", "endpoint_id": "esphome:" + lab.device.id,
+        "display_name": "Pending"}
+    lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=4,
+        data={**lab.entry.data, "managed_esphome_phones": {lab.device.id: raw}})
+    original = sip_account_identity._async_prepare_account_queue_migration
+    attempts = 0
+    async def fail_once(*args):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("fixture temporary storage failure")
+        return await original(*args)
+    monkeypatch.setattr(sip_account_identity, "_async_prepare_account_queue_migration", fail_once)
+    await lab.controller._async_reconcile_account_names()
+    await lab.controller._async_reconcile_account_names()
+    assert attempts == 1 and not lab.entry.subentries
+    issue_id = "phone_identity_conflict_" + lab.entry.entry_id
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id).is_fixable
+    lab.hass.config.components.add("voip_stack")
+    lab.hass.data.setdefault("repairs", {})
+    async_setup(lab.hass)
+    manager = repairs_flow_manager(lab.hass)
+    form = await manager.async_init("voip_stack", context={"issue_id": issue_id})
+    assert form["step_id"] == "confirm"
+    result = await manager.async_configure(form["flow_id"], {})
+    assert result["type"] == "create_entry", result
+    assert attempts == 2
+    assert any(row.data.get("username") == "Pending" for row in lab.entry.subentries.values())
+    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
