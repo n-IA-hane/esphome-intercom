@@ -2,7 +2,8 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 import json
 
 import pytest
@@ -16,7 +17,7 @@ from .test_managed_phones_ha import (
     custom_integration_path as custom_integration_path,
     managed as managed,
     phone_lab as phone_lab,
-    phone_subentry,
+    phone_subentry, native_services,
 )
 
 pytestmark = pytest.mark.ha
@@ -29,6 +30,27 @@ def native_account(hass, entry, username, **data):
             "enabled": True, **data})
     hass.config_entries.async_add_subentry(entry, row)
     return row
+
+
+def second_native_phone(lab):
+    """Add a real native HA hardware owner; only its API transport is an IO spy."""
+    from homeassistant.components.esphome.entry_data import RuntimeEntryData
+
+    native = MockConfigEntry(domain="esphome", title="Second phone", data={
+        "host": "127.0.0.3", "device_name": "second_node"})
+    native.add_to_hass(lab.hass)
+    device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=native.entry_id,
+        connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:02")}, name="Second phone")
+    native.runtime_data = RuntimeEntryData(entry_id=native.entry_id, title=native.title,
+        client=SimpleNamespace(is_connected=True, execute_service=AsyncMock()), store=MagicMock(),
+        device_info=replace(lab.native.runtime_data.device_info, name="second_node",
+            friendly_name="Second phone", mac_address="84:C7:BB:00:00:02"),
+        services=native_services(), available=True)
+    native.runtime_data.first_connect_done.set()
+    sensor = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "84c7bb000002-voip_state",
+        config_entry=native, device_id=device.id)
+    lab.hass.states.async_set(sensor.entity_id, "idle")
+    return native, device
 
 
 async def account_action(lab, action, username):
@@ -327,35 +349,85 @@ async def test_legacy_entity_prefix_uses_its_exact_native_owner_not_another_acco
     assert (current.id, current.entity_id) == (native_id, entity_id)
 
 
-async def test_corrupt_legacy_memberships_are_isolated_and_repaired_on_the_original_native_object(phone_lab):
+async def test_corrupt_legacy_memberships_are_isolated_and_repaired_on_the_original_native_object(managed):
     from homeassistant.components.repairs import repairs_flow_manager
     from homeassistant.components.repairs.issue_handler import async_setup
-    from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
 
-    lab = phone_lab
-    healthy = native_account(lab.hass, lab.entry, "Healthy")
-    old = "esphome:" + lab.device.id
+    lab = managed
+    await lab.controller.async_sync()
+    healthy = phone_subentry(lab)
+    healthy_username = healthy.data["username"]
+    native, hardware = second_native_phone(lab)
+    old = "esphome:" + hardware.id
     broken = {"queues": 42, "extension": "201", "unrelated": {"keep": True}}
     lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=4,
         data={**lab.entry.data, "esphome_phone_memberships": {old: broken}})
     before = deepcopy(healthy.as_dict())
-    await async_migrate_account_identities(lab.hass, lab.entry)
-    assert healthy.as_dict() == before
-    assert lab.entry.data["esphome_phone_memberships"][old] == broken
-    issue_id = "managed_record_" + lab.entry.entry_id + "_" + lab.device.id
-    assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id).is_fixable
+    lab.controller._delivered.clear()
+    lab.sent.clear()
+    issue_id = "managed_record_" + lab.entry.entry_id + "_" + hardware.id
+    for _ in range(2):
+        # Exercise the complete owner, including its continuation after the
+        # quarantined record was rejected. The saved payload has no device_id.
+        await lab.controller.async_sync()
+        assert healthy.as_dict() == before
+        assert lab.entry.data["esphome_phone_memberships"][old] == broken
+        issue = ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id)
+        assert issue is not None and issue.is_fixable
+        assert issue.data["membership_reference"] == old
+    assert any(name == "set_account" and values["username"] == healthy_username for name, values in lab.sent)
+    native.runtime_data.client.execute_service.assert_not_awaited()
     lab.hass.config.components.add("voip_stack")
     lab.hass.data.setdefault("repairs", {})
     async_setup(lab.hass)
     manager = repairs_flow_manager(lab.hass)
     form = await manager.async_init("voip_stack", context={"issue_id": issue_id})
-    result = await manager.async_configure(form["flow_id"], {"device_id": lab.device.id,
+    assert form["step_id"] == "account"
+    result = await manager.async_configure(form["flow_id"], {"device_id": hardware.id,
         "username": "Recovered", "name": "Recovered", "queues": ["Support"]})
     assert result["type"] == "create_entry", result
     recovered = next(row for row in lab.entry.subentries.values() if row.data.get("username") == "Recovered")
-    assert recovered.data["device_id"] == lab.device.id
-    assert recovered.data["origin_entry_id"] == lab.native.entry_id
+    assert recovered.data["device_id"] == hardware.id
+    assert recovered.data["origin_entry_id"] == native.entry_id
     assert ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id) is None
+    assert healthy.as_dict() == before
+
+
+async def test_complete_legacy_record_with_wrong_hardware_association_retains_actionable_repair_across_syncs(managed):
+    from homeassistant.components.repairs import repairs_flow_manager
+    from homeassistant.components.repairs.issue_handler import async_setup
+    lab = managed
+    await lab.controller.async_sync()
+    healthy = phone_subentry(lab)
+    healthy_username = healthy.data["username"]
+    native, hardware = second_native_phone(lab)
+    broken = {"device_id": lab.device.id, "origin_entry_id": native.entry_id,
+        "mac": "84c7bb000002", "username": "Pending account", "password": "fixture-retained-password",
+        "endpoint_id": "esphome:" + hardware.id, "display_name": "Retained account", "queues": ["Support"]}
+    assert broken["device_id"] != hardware.id
+    from custom_components.voip_stack.managed_phones import ManagedPhone
+    ManagedPhone(**broken)  # Complete, valid fields; only the map's owner disagrees.
+    lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=4,
+        data={**lab.entry.data, "managed_esphome_phones": {hardware.id: broken}})
+    before = deepcopy(healthy.as_dict())
+    lab.controller._delivered.clear()
+    lab.sent.clear()
+    issue_id = "managed_record_" + lab.entry.entry_id + "_" + hardware.id
+    for _ in range(2):
+        await lab.controller.async_sync()
+        assert lab.entry.data["managed_esphome_phones"][hardware.id] == broken
+        assert healthy.as_dict() == before
+        issue = ir.async_get(lab.hass).async_get_issue("voip_stack", issue_id)
+        assert issue is not None and issue.is_fixable
+        assert issue.data["hardware"] == hardware.id
+    assert any(name == "set_account" and values["username"] == healthy_username for name, values in lab.sent)
+    native.runtime_data.client.execute_service.assert_not_awaited()
+    lab.hass.config.components.add("voip_stack")
+    lab.hass.data.setdefault("repairs", {})
+    async_setup(lab.hass)
+    form = await repairs_flow_manager(lab.hass).async_init("voip_stack", context={"issue_id": issue_id})
+    assert form["step_id"] == "account"
+    assert lab.entry.data["managed_esphome_phones"][hardware.id] == broken
     assert healthy.as_dict() == before
 
 

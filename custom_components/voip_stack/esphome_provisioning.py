@@ -123,8 +123,9 @@ class EspHomeProvisioner:
             try:
                 phone = ManagedPhone(**{key: value for key, value in raw.items()
                     if key in ManagedPhone.__dataclass_fields__})
-                if phone.device_id == hardware:
-                    legacy_records[hardware] = raw
+                if phone.device_id != hardware:
+                    raise ValueError("The saved hardware association does not match the record")
+                legacy_records[hardware] = raw
             except (AttributeError, TypeError, ValueError) as error:
                 # The existing native Repair owns this retained record. A call
                 # state update is not a request to retry corrupted payloads.
@@ -566,7 +567,6 @@ class EspHomeProvisioner:
                     except Exception as error:
                         # Third-party RPC errors may contain secret parameters.
                         _LOGGER.warning("Phone provisioning incomplete for %s (%s)", device.id, type(error).__name__)
-            await self._sync_legacy_memberships()
             if not self._owned() or revision != self._revision:
                 return
             if self._removed_devices:
@@ -591,60 +591,6 @@ class EspHomeProvisioner:
                 native = runtime_for_entry(origin)
                 if phone.active and native is not None:
                     await self._deliver_directory_refresh(phone, native)
-
-    async def _sync_legacy_memberships(self):
-        """Project saved membership settings while native account enrollment is pending."""
-        legacy = dict(self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}))
-        managed = {phone.endpoint_id for phone in managed_records(self.entry).values()}
-        deliveries = []
-        for endpoint_id, saved in tuple(legacy.items()):
-            device_id = saved.get("device_id", "")
-            device = dr.async_get(self.hass).async_get(device_id)
-            origin = self.hass.config_entries.async_get_entry(device.config_entry_id) if device is not None else None
-            if (endpoint_id in managed or device is None or origin is None
-                    or origin.domain != "esphome" or device_id in self._removed_devices
-                    or origin.entry_id in self._removed_origins):
-                legacy.pop(endpoint_id, None)
-                continue
-            native = runtime_for_entry(origin)
-            if not connected(native):
-                continue
-            from .phone_queue_membership import GROUP_MEMBERSHIP_VERSION, project_phone_memberships
-            record = project_phone_memberships(self.entry, endpoint_id, saved)
-            canonical_membership = self.entry.data.get(GROUP_MEMBERSHIP_VERSION) == 1
-            for entity in er.async_entries_for_device(er.async_get(self.hass), device_id):
-                field = _ROLES.get(entity_role(entity))
-                state = self.hass.states.get(entity.entity_id)
-                if (entity.platform != "esphome" or field not in {"queues", "ring_group"}
-                        or state is None or state.state in {"unknown", "unavailable"}):
-                    continue
-                change = self._membership_changes.pop((device_id, field), None)
-                scope = connection_scope(native)
-                live = (change is not None and all(left is right for left, right in zip(change[0], scope))
-                        and change[1] == record.get("membership_observed", {}).get(field)
-                        and change[2] == membership_text(field, state.state))
-                if canonical_membership:
-                    record["membership_pending"] = {**record.get("membership_pending", {}),
-                                                     field: membership_text(field, record.get(field))}
-                record.update(observe_native_membership(record, field, state.state,
-                                                       allow_change=live and not canonical_membership))
-            if isinstance(record.get("queues"), tuple):
-                record["queues"] = list(record["queues"])
-            legacy[endpoint_id] = record
-            self._membership_scopes[device_id] = connection_scope(native)
-            deliveries.append((device_id, record, native))
-            endpoint = self.runtime.endpoints.get(endpoint_id)
-            if endpoint is not None:
-                self.runtime.endpoints.update(endpoint_id, queues=tuple(record.get("queues", ())),
-                                              ring_group=str(record.get("ring_group") or ""))
-        if legacy != self.entry.data.get(CONF_ESPHOME_PHONE_MEMBERSHIPS, {}):
-            self.hass.config_entries.async_update_entry(self.entry,
-                data={**self.entry.data, CONF_ESPHOME_PHONE_MEMBERSHIPS: legacy})
-        for device_id, record, native in deliveries:
-            revision = self._revision
-            await self._deliver_memberships(device_id, record, native)
-            if not self._owned() or revision != self._revision:
-                return
 
     async def _deliver_memberships(self, device_id, record, native):
         """Deliver desired text through ESPHome's existing HA entity owner."""
