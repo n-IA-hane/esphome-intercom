@@ -338,7 +338,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
     manager = SipEndpointManager(host="127.0.0.1", port=5060, local_ip="127.0.0.1",
         local_rtp_port=40000, supported_formats=list(HA_SIP_PCM_FORMATS), on_invite=None,
         on_register=lab.registrar.handle_register, udp_enabled=True, tcp_enabled=False)
-    lab.runtime.sip.attach_component("udp_listener", manager, closer=manager.stop)
+    lab.runtime.sip.adopt_component("udp_listener", manager, closer=manager.stop)
     assert await manager.start()
     # Register over the same real listener that the selected outbound-flow
     # adapter will borrow. No signaling-flow or admission guard is replaced.
