@@ -55,10 +55,15 @@ class LocalAudioContract:
     dtmf_events: frozenset[int] = frozenset()
     recv_dtmf_formats: tuple = ()
     send_dtmf_formats: tuple = ()
+    source_host: str = ""
 
     @classmethod
     def from_dialog(cls, dialog):
-        return cls(**{name: getattr(dialog, name) for name in cls.__dataclass_fields__ if name != "remote_sdp"})
+        fields = {
+            name: getattr(dialog, name) for name in cls.__dataclass_fields__
+            if name not in {"remote_sdp", "source_host"}
+        }
+        return cls(**fields, source_host=dialog.remote_host)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +77,6 @@ class ApplicationCallSource(LocalAudioContract):
     caller: str = ""
     routing_caller: str = ""
     target: str = ""
-    source_host: str = ""
     source_port: int = 0
     remote_audio_direction: str = "sendrecv"
     video_format: Any = None
@@ -113,7 +117,7 @@ class ApplicationCallSource(LocalAudioContract):
         fields = {name: getattr(base, name) for name in LocalAudioContract.__dataclass_fields__}
         fields["call_id"] = call_id
         return cls(**fields, caller=caller, routing_caller=parse_sip_uri(dialog.remote_uri).user,
-            target=target, source_host=dialog.remote_host, source_port=dialog.remote_sip_port,
+            target=target, source_port=dialog.remote_sip_port,
             received_via_trunk=bool(trunk_id), trunk_id=trunk_id,
             max_forwards=max_forwards, outbound_trunk_id=outbound_trunk_id,
             remote_audio_direction=dialog.remote_audio_direction,
@@ -192,6 +196,7 @@ class LocalCallMedia:
             LOCAL_PCM_FORMAT, invite.send_format.audio_format
         )
         self.rtp_source = rtp_source or rtp.AudioRtpSenderState.create()
+        self.remote_rtp_host = invite.remote_rtp_host
         self.remote_rtp_port = int(invite.remote_rtp_port)
         self.remote_ssrc: int | None = None
         self._consumer_task: asyncio.Task | None = None
@@ -285,11 +290,12 @@ class LocalCallMedia:
             updated.local_audio_direction in {"sendonly", "sendrecv"}
             and not updated.remote_audio_connection_held
         )
-        reset_remote_source = (
+        reset_remote_endpoint = (
             updated.remote_rtp_host != previous.remote_rtp_host
             or int(updated.remote_rtp_port) != int(previous.remote_rtp_port)
-            or updated.recv_format != previous.recv_format
+            or updated.source_host != previous.source_host
         )
+        reset_remote_source = reset_remote_endpoint or updated.recv_format != previous.recv_format
 
         def _commit() -> None:
             if self.closed.is_set() or self._cleanup_done.is_set():
@@ -302,7 +308,9 @@ class LocalCallMedia:
             self.encoder = encoder
             self.rx_converter = rx_converter
             self.tx_converter = tx_converter
-            self.remote_rtp_port = int(updated.remote_rtp_port)
+            if reset_remote_endpoint:
+                self.remote_rtp_host = updated.remote_rtp_host
+                self.remote_rtp_port = int(updated.remote_rtp_port)
             if reset_remote_source:
                 self.remote_ssrc = None
             self.can_receive = can_receive
@@ -452,7 +460,10 @@ class LocalCallMedia:
         if not self.can_receive:
             self.counters["drop_direction_rx"] += 1
             return
-        if str(addr[0]) != self.invite.remote_rtp_host:
+        if not rtp.accepts_source_host(
+            str(addr[0]), current_host=self.remote_rtp_host,
+            advertised_host=self.invite.remote_rtp_host, signaling_host=self.invite.source_host,
+        ):
             self.counters["drop_addr"] += 1
             return
         try:
@@ -473,6 +484,7 @@ class LocalCallMedia:
                             self.rx_converter = PcmFrameConverter(self.rx_converter.src, self.rx_converter.dst)
                         self.decoder.observe_non_audio_sequence(packet.sequence)
                         self.remote_ssrc, self.remote_rtp_port = report.ssrc, int(addr[1])
+                        self.remote_rtp_host = str(addr[0])
                     if digit and self.on_dtmf is not None:
                         self.on_dtmf("left", digit, "rtp_event")
                     return
@@ -489,7 +501,7 @@ class LocalCallMedia:
             # A valid short packet may only fill the normalizer. Its source is
             # still valid; malformed payloads must never establish or rebind it.
             self.remote_ssrc = self.decoder.source_ssrc
-            self.remote_rtp_port = int(addr[1])
+            self.remote_rtp_host, self.remote_rtp_port = str(addr[0]), int(addr[1])
             # Count accepted RTP packets even when their PCM is still buffered.
             self.counters["rtp_rx"] += 1
             self.encoder.follow_received(self.decoder.format_for(packet.payload_type))
@@ -517,9 +529,8 @@ class LocalCallMedia:
                 # A re-INVITE may commit while this task sleeps; pairing the
                 # current encoder, payload type and destination prevents one
                 # mixed old/new RTP packet at that boundary.
-                invite = self.invite
                 encoder = self.encoder
-                remote_rtp_port = self.remote_rtp_port
+                remote_rtp_host, remote_rtp_port = self.remote_rtp_host, self.remote_rtp_port
                 frame_format = encoder.input_format
                 if frame_format != active_format:
                     active_format = frame_format
@@ -554,7 +565,7 @@ class LocalCallMedia:
                         if self.transport is not None:
                             self.transport.sendto(
                                 packet,
-                                (invite.remote_rtp_host, remote_rtp_port),
+                                (remote_rtp_host, remote_rtp_port),
                             )
                             self.counters["rtp_tx"] += 1
                             if queued:

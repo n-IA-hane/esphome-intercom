@@ -382,3 +382,10 @@ def next_sequence(sequence: int) -> int:
 
 def next_timestamp(timestamp: int, samples_per_frame: int) -> int:
     return (int(timestamp) + int(samples_per_frame)) & 0xFFFFFFFF
+
+
+def accepts_source_host(
+    source_host: str, *, current_host: str, advertised_host: str = "", signaling_host: str = ""
+) -> bool:
+    """Allow only negotiated media or the authenticated signaling flow host."""
+    return str(source_host) in {current_host, advertised_host, signaling_host}

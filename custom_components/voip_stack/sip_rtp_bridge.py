@@ -194,11 +194,10 @@ class RtpPeer:
     def accepts_source_host(self, source_host: str) -> bool:
         """Allow the SDP media host or the authenticated SIP flow host."""
 
-        return str(source_host) in {
-            self.host,
-            self.advertised_host,
-            self.signaling_host,
-        }
+        return rtp.accepts_source_host(
+            source_host, current_host=self.host,
+            advertised_host=self.advertised_host, signaling_host=self.signaling_host,
+        )
 
 
 class _RelayProtocol(asyncio.DatagramProtocol):

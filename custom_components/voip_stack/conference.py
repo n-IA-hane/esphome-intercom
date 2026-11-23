@@ -106,6 +106,8 @@ class _ConferenceLeg:
     connection_held: bool = False
     rx_suppressed: int = 0
     tx_suppressed: int = 0
+    advertised_host: str = ""
+    signaling_host: str = ""
 
 
 class _ConferenceRtpProtocol(asyncio.DatagramProtocol):
@@ -174,6 +176,8 @@ class ConferenceRoom:
                 role="owner" if was_empty else "manual",
                 endpoint_id="",
                 remote_host=invite.remote_rtp_host,
+                advertised_host=invite.remote_rtp_host,
+                signaling_host=invite.source_host,
                 remote_port=int(invite.remote_rtp_port),
                 local_ports=local_ports,
                 transport=transport,
@@ -266,6 +270,8 @@ class ConferenceRoom:
                 role=role,
                 endpoint_id="",
                 remote_host=dialog.remote_rtp_host,
+                advertised_host=dialog.remote_rtp_host,
+                signaling_host=dialog.remote_host,
                 remote_port=int(dialog.remote_rtp_port),
                 local_ports=local_ports,
                 transport=transport,
@@ -343,7 +349,10 @@ class ConferenceRoom:
         if not leg.can_receive:
             leg.rx_suppressed += 1
             return
-        if addr[0] != leg.remote_host:
+        if not rtp.accepts_source_host(
+            str(addr[0]), current_host=leg.remote_host,
+            advertised_host=leg.advertised_host, signaling_host=leg.signaling_host,
+        ):
             return
         try:
             packet = parse_packet(data)
@@ -356,6 +365,7 @@ class ConferenceRoom:
                         leg.in_fifo.clear()
                     leg.decoder.observe_non_audio_sequence(packet.sequence)
                     leg.rx_ssrc, leg.remote_port = report.ssrc, int(addr[1])
+                    leg.remote_host = str(addr[0])
                 return
             if leg.decoder.format_for(packet.payload_type) is None:
                 raise ValueError(
@@ -366,7 +376,7 @@ class ConferenceRoom:
             if not leg.decoder.last_packet_accepted:
                 return
             leg.rx_ssrc = leg.decoder.source_ssrc
-            leg.remote_port = int(addr[1])
+            leg.remote_host, leg.remote_port = str(addr[0]), int(addr[1])
             leg.rx_packets += 1
             if leg.encoder is not None:
                 leg.encoder.follow_received(leg.decoder.format_for(packet.payload_type))
