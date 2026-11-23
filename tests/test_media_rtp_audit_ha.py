@@ -68,8 +68,9 @@ async def test_first_different_clock_dtmf_after_four_thousand_audio_packets(rate
     payload = struct.pack(f"!{rate // 100}h", *([1250] * (rate // 100)))
     ssrc = 0x12345678
     async with audio_path(fmt, events=True) as (relay, left, right, observed):
-        event = lambda seq, ts, digit, flags=10, duration=80: rtp.build_packet(
-            rtp.RtpPacket(101, seq, ts, ssrc, bytes((digit, flags)) + duration.to_bytes(2, "big"), True))
+        def event(seq, ts, digit, flags=10, duration=80):
+            return rtp.build_packet(rtp.RtpPacket(
+                101, seq, ts, ssrc, bytes((digit, flags)) + duration.to_bytes(2, "big"), True))
         await exchange(left, event(1, 8000, 1, flags=138), relay.left_port, right)
         for sequence in range(2, 4002):
             packet = rtp.build_packet(rtp.RtpPacket(96, sequence,

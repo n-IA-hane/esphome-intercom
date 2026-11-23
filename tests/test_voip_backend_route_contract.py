@@ -867,7 +867,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     ) -> None:
         peer_snapshot = PEER_SNAPSHOT.read_text()
         self.assertIn(
-            "endpoint.availability is not EndpointAvailability.UNAVAILABLE",
+            "or endpoint.availability is EndpointAvailability.UNAVAILABLE",
             peer_snapshot,
         )
         self.assertNotIn(

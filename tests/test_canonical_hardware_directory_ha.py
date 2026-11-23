@@ -12,6 +12,7 @@ from homeassistant.helpers import entity_registry as er
 from .test_managed_phones_ha import (
     custom_integration_path as custom_integration_path,
     managed as managed,
+    phone_lab as phone_lab,
     bind_account,
     phone_record,
 )
