@@ -1002,7 +1002,8 @@ async def _run_audio_session(
                 session.recv_format, session.recv_formats, previous=rtp_decoder,
                 output_pcm=next_plan.speaker,
             )
-            next_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats, match_received_codec=session.match_received_codec)
+            next_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats,
+                match_received_codec=session.match_received_codec, input_format=next_plan.encoder_input)
             next_dtmf_decoder = (
                 RtpDtmfDecoder(session.recv_dtmf_formats or (RtpDtmfFormat(
                     session.dtmf_payload_type, session.dtmf_clock_rate, session.dtmf_events),),
@@ -1047,7 +1048,8 @@ async def _run_audio_session(
             session.dtmf_payload_type, session.dtmf_clock_rate, session.dtmf_events),),
             audio_receiver=rtp_decoder)
             if session.recv_dtmf_formats or session.dtmf_payload_type is not None else None)
-        rtp_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats, match_received_codec=session.match_received_codec)
+        rtp_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats,
+            match_received_codec=session.match_received_codec, input_format=browser_plan.encoder_input)
         tx_converter = PcmFrameConverter(browser_plan.microphone, rtp_encoder.input_format)
         bind_reorder_callback(rtp_decoder)
     except asyncio.CancelledError:
@@ -1175,7 +1177,7 @@ async def _run_audio_session(
     async def browser_to_rtp() -> None:
         nonlocal sequence, timestamp
         observed_generation = int(session.media_generation)
-        playout_buffer = BrowserPcmPlayout(session.send_format.audio_format, counters)
+        playout_buffer = BrowserPcmPlayout(rtp_encoder.input_format, counters)
 
         async def send_dtmf(digit: str, duration_ms: int) -> None:
             """Send one browser digit using RFC 4733, then SIP INFO fallback."""
@@ -1259,7 +1261,7 @@ async def _run_audio_session(
                 return False
             observed_generation = int(session.media_generation)
             await refresh_media_state(observed_generation)
-            playout_buffer.reconfigure(session.send_format.audio_format)
+            playout_buffer.reconfigure(rtp_encoder.input_format)
             counters["tx_playout_rebuffer"] += 1
             return True
 
@@ -1269,7 +1271,7 @@ async def _run_audio_session(
             while not closed.is_set():
                 if await sync_tx_generation():
                     playout_buffer.restart_prefill()
-                pcm = playout_buffer.next_frame(session.send_format.audio_format.sample_rate)
+                pcm = playout_buffer.next_frame(rtp_encoder.input_format.sample_rate)
 
                 if not (
                     session.remote_audio_connection_held

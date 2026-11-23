@@ -440,7 +440,8 @@ def test_offline_browser_phone_remains_a_local_ringing_destination(
         ('dahua', False, True, True, 'sip_account', False, True, 'audio_only'),
         ('', True, True, True, 'esphome', False, True, 'audio_only'),
         ('', True, True, True, 'esphome', True, True, 'sendrecv_mode1'),
-        ('dahua', False, True, True, 'esphome', True, True, 'recvonly_mode1'),
+        # Diagnostic device kind cannot override an explicit peer profile.
+        ('dahua', False, True, True, 'esphome', True, True, 'recvonly_mode0'),
         ('dahua', False, True, True, '', True, False, 'recvonly_mode0'),
         ('', True, True, True, '', True, False, 'recvonly_mode1'),
     ],

@@ -77,6 +77,56 @@ def test_dahua_answer_order_yields_to_explicit_policy_and_established_binding():
     assert established is not None and established.send.payload_type == 97
 
 
+def test_browser_codec_follow_keeps_pending_48k_capture_and_six_khz_content():
+    from importlib import import_module
+
+    bridge = import_module(f"{sdp.__package__}.media.bridge")
+    pcm = import_module(f"{sdp.__package__}.audio_pcm")
+    initial = sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)
+    following = sdp.RtpPcmFormat(97, "PCM", 16000, 1, 20)
+    plan = bridge.plan_browser_audio(initial, following)
+    encoder = sip_client.RtpPayloadEncoder(initial, send_formats=(initial, following),
+        match_received_codec=True, input_format=plan.encoder_input)
+    try:
+        assert encoder.input_format == audio_format.AudioFormat(48000, "s16le", 1, 20)
+        assert len(encoder.encode(bytes(encoder.input_format.nominal_frame_bytes))) == 160
+        converter = pcm.PcmFrameConverter(plan.microphone, encoder.input_format)
+        samples = [round(5000 * math.sin(2 * math.pi * 6000 * index / 48000))
+                   for index in range(960)]
+        assert converter.convert(struct.pack("<480h", *samples[:480])) == []
+        assert converter.has_pending_pcm
+        assert encoder.follow_received(following)
+        frames = converter.convert(struct.pack("<480h", *samples[480:]))
+        assert len(frames) == 1
+        assert not converter.has_pending_pcm
+        decoded = struct.unpack("<320h", encoder.encode(frames[0]))
+        stable = decoded[64:]
+        sine = [math.sin(2 * math.pi * 6000 * index / 16000) for index in range(len(stable))]
+        cosine = [math.cos(2 * math.pi * 6000 * index / 16000) for index in range(len(stable))]
+        a = 2 * sum(value * wave for value, wave in zip(stable, sine)) / len(stable)
+        b = 2 * sum(value * wave for value, wave in zip(stable, cosine)) / len(stable)
+        assert abs(math.hypot(a, b) - 5000) <= 128
+        assert encoder.fmt == following
+    finally:
+        encoder.close()
+
+
+@pytest.mark.parametrize("wire,expected_rate", [
+    (sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 60), 48000),
+    (sdp.RtpPcmFormat(111, "OPUS", 48000, 2, 2.5), 48000),
+    (sdp.RtpPcmFormat(96, "L16", 32000, 1, 16.03125), 32000),
+])
+def test_browser_encoder_input_preserves_long_and_fractional_wire_quanta(wire, expected_rate):
+    from importlib import import_module
+
+    bridge = import_module(f"{sdp.__package__}.media.bridge")
+    plan = bridge.plan_browser_audio(wire, wire)
+    assert plan.microphone.sample_rate == 48000
+    assert plan.microphone.frame_ms == 10
+    assert plan.encoder_input.sample_rate == expected_rate
+    assert plan.encoder_input.frame_ms == wire.audio_format.frame_ms
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("frame_ms", [2.5, 15, 32, 40])
 async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(monkeypatch, frame_ms):
@@ -256,18 +306,27 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         receive = audio_format.parse_audio_format_token(browser.json[0]["rx_format"])
         assert (capture.sample_rate, capture.frame_ms) == (48000, 10)
 
-        async def send(pt, sequence, timestamp, payload):
+        source_sequence = 65520 if delayed_playback else 1
+        source_timestamps = {8000: 0, 16000: 0}
+
+        async def send(pt, payload):
+            nonlocal source_sequence
+            rate = 8000 if pt == 0 else 16000
+            timestamp = source_timestamps[rate]
             packet = rtp.build_packet(rtp.RtpPacket(
-                payload_type=pt, sequence=sequence, timestamp=timestamp,
+                payload_type=pt, sequence=source_sequence, timestamp=timestamp,
                 ssrc=123, payload=payload,
             ))
+            source_sequence = (source_sequence + 1) & 0xFFFF
+            if pt != 111:  # Injected unknown payload is not another media quantum.
+                source_timestamps[rate] += len(payload) // (1 if pt == 0 else 2)
             await loop.sock_sendto(remote, packet, ("127.0.0.1", local_port))
 
         if delayed_playback:
             # The SIP answer can precede the browser's final ready message.
             # Preserve each initial PCMU frame while that handshake completes.
-            for index, encoded in enumerate((0xCE, 0xBE, 0xAE, 0x9E)):
-                await send(0, 65520 + index, index * 160, bytes([encoded]) * 160)
+            for encoded in (0xCE, 0xBE, 0xAE, 0x9E):
+                await send(0, bytes([encoded]) * 160)
                 await asyncio.sleep(0.02)
             assert browser.audio.empty()
             playback.ready(browser)
@@ -278,7 +337,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                 assert len(frame) == receive.nominal_frame_bytes
                 assert all(abs(value - expected) <= 2 for value in struct.unpack(f"<{len(frame)//2}h", frame)[-64:])
 
-        await send(pcm_rx_pt, 1, 0, struct.pack("<320h", *([1000] * 320)))
+        await send(pcm_rx_pt, struct.pack("<320h", *([1000] * 320)))
         expected_bytes = receive.nominal_frame_bytes
         if user_agent:
             first = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
@@ -293,12 +352,12 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
 
         # A payload present in the same answer remains valid even when the
         # peer changes encoder without a new offer. Mu-law 0xff decodes to zero.
-        await send(0, 2, 160, b"\xff" * 160)
+        await send(0, b"\xff" * 160)
         second = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
         assert len(second) == expected_bytes
         assert all(abs(sample) <= 2 for sample in struct.unpack(f"<{len(second) // 2}h", second)[-64:])
 
-        await send(111, 3, 320, b"\xff" * 160)
+        await send(111, b"\xff" * 160)
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(browser.audio.get(), 0.05)
         assert not runtime.done()
@@ -320,7 +379,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         if symmetric:
             # Establish the received codec before starting microphone capture;
             # frames transmitted before that observation legitimately use PCMU.
-            await send(97, 19, 2880, struct.pack("<320h", *([1000] * 320)))
+            await send(97, struct.pack("<320h", *([1000] * 320)))
             await asyncio.wait_for(browser.audio.get(), 1)
 
         # Queue less than the production 200 ms limit before measuring. This
@@ -337,12 +396,11 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                     data=audio_ws.encode_audio_frame(struct.pack(f"<{len(chunk)}h", *chunk))))
 
         async def microphone_and_door():
-            for index in range(len(expected_frames)):
+            for _index in range(len(expected_frames)):
                 # The automatic contact receives PCM while it sends PCMU;
                 # the manual contact receives PCMU. Neither may alter TX.
                 await send(
-                    97 if user_agent else 0, 20 + index,
-                    3200 + index * (320 if user_agent else 160),
+                    97 if user_agent else 0,
                     struct.pack("<320h", *([1000] * 320)) if user_agent else b"\xce" * 160,
                 )
                 await asyncio.sleep(.02)
@@ -465,7 +523,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                                 session.send_dtmf_payload_type = 110
                                 session.send_dtmf_clock_rate = 48000
                                 session.send_dtmf_events = frozenset({6})
-                            await send(0, 40, 6400, b"\xff" * 160)
+                            await send(0, b"\xff" * 160)
             assert {item.payload_type for item in events} == {initial_dtmf_payload}
             assert len({item.timestamp for item in events}) == 1
             assert len({item.ssrc for item in events}) == 1
@@ -489,7 +547,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                     return tuple(decoded_frames)
             # Once the key press has finished, the next valid PCMU packet may
             # change TX back. RFC 7160 starts a new source for the new clock.
-            await send(0, 41, 6560, b"\xff" * 160)
+            await send(0, b"\xff" * 160)
             async with asyncio.timeout(1):
                 while True:
                     raw, _address = await loop.sock_recvfrom(remote, 2048)
@@ -506,20 +564,22 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             receiver_module = sys.modules[view.RtpAudioReceiver.__module__]
             now = [receiver_module.monotonic()]
             monkeypatch.setattr(receiver_module, "monotonic", lambda: now[0])
+            # Retire the primary PCM mapping as well as its accepted alias.
+            session.recv_format = pcmu
             session.recv_formats = (pcmu,)
             browser.ready.clear()
             session.media_generation += 1
             session.update_event.set()
             await asyncio.wait_for(browser.ready.wait(), 1)
             assert browser.json[-1]["type"] == "media_update"
-            await send(97, 4, 640, struct.pack("<320h", *([1000] * 320)))
+            await send(97, struct.pack("<320h", *([1000] * 320)))
             overlap = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
             assert len(overlap) == expected_bytes
             now[0] += 61
-            await send(97, 5, 960, struct.pack("<320h", *([1000] * 320)))
+            await send(97, struct.pack("<320h", *([1000] * 320)))
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(browser.audio.get(), 0.05)
-            await send(0, 6, 640, b"\xff" * 160)
+            await send(0, b"\xff" * 160)
             current = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
             assert len(current) == expected_bytes
             assert current == bytes(expected_bytes)

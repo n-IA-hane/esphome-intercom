@@ -77,6 +77,7 @@ class BrowserAudioPlan:
     microphone: AudioFormat
     speaker: AudioFormat
     max_message_bytes: int
+    encoder_input: AudioFormat
 
 
 def plan_browser_audio(send, receive) -> BrowserAudioPlan:
@@ -94,11 +95,17 @@ def plan_browser_audio(send, receive) -> BrowserAudioPlan:
 
     microphone = replace(send.audio_format, sample_rate=capture.sample_rate,
                          frame_ms=capture.frame_ms)
+    try:
+        encoder_input = replace(send.audio_format, sample_rate=capture.sample_rate)
+    except ValueError:
+        # A valid native packet may contain a fractional number of 48 kHz
+        # samples. Keep its representable PCM input and exact wire cadence.
+        encoder_input = send.audio_format
     # A WebSocket survives codec changes. Reserve one real capture quantum
     # across the PCM widths/channels supported by the existing worklet.
     maximum = max(replace(capture, pcm_format=width, channels=channels).nominal_frame_bytes
                   for width in PcmFormat for channels in SUPPORTED_CHANNELS)
-    return BrowserAudioPlan(microphone, edge(receive), maximum + 1)
+    return BrowserAudioPlan(microphone, edge(receive), maximum + 1, encoder_input)
 
 
 def plan_bridge_offer(send_formats, receive_formats, source, *, send_rtp_formats=None,

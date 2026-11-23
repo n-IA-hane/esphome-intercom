@@ -164,12 +164,19 @@ class RtpPayloadDecoder:
 
 
 class RtpPayloadEncoder:
-    def __init__(self, fmt: RtpPcmFormat, *, send_formats=(), match_received_codec=False) -> None:
-        self.input_format = fmt.audio_format
+    def __init__(self, fmt: RtpPcmFormat, *, send_formats=(), match_received_codec=False,
+                 input_format: AudioFormat | None = None) -> None:
+        self.input_format = input_format or fmt.audio_format
+        if self.input_format.frame_ms != fmt.audio_format.frame_ms:
+            raise ValueError("Encoder input must preserve the RTP packet duration")
         self.send_formats = tuple(send_formats) or (fmt,)
         self.match_received_codec = bool(match_received_codec)
         self._converter = None
         self._set_format(fmt)
+        if self.input_format != fmt.audio_format:
+            from .audio_pcm import PcmFrameConverter
+
+            self._converter = PcmFrameConverter(self.input_format, fmt.audio_format)
 
     def _set_format(self, fmt: RtpPcmFormat) -> None:
         pcm_format = fmt.audio_format
@@ -210,6 +217,8 @@ class RtpPayloadEncoder:
             and fmt.audio_format.frame_ms == self.input_format.frame_ms
         )), None)
         if selected is None or selected == self.fmt:
+            return False
+        if self._converter is not None and self._converter.has_pending_pcm:
             return False
         from .audio_pcm import PcmFrameConverter
 

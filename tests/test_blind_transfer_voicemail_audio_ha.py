@@ -39,7 +39,7 @@ async def test_accepted_refer_immediate_bye_keeps_opposite_audio_and_application
     registrar = registry.component("registrar")
     registrar.enabled = True
     account = SipAccount("transfer-source", "Transfer source", PASSWORD)
-    from custom_components.voip_stack.phone_config import _add_phone_subentry
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
     from custom_components.voip_stack.store import sip_accounts
     entry = config_entry(lab.hass)
     _add_phone_subentry(lab.hass, entry, data={
@@ -47,6 +47,9 @@ async def test_accepted_refer_immediate_bye_keeps_opposite_audio_and_application
         "username": account.username, "password": account.password,
         "username_source": "user",
     }, title=account.display_name)
+    sync_registry_from_entry(lab.hass, entry)
+    source = lab.runtime.endpoints.by_username(account.username)
+    assert source is not None and source.endpoint_id == account.username
     registrar.update_accounts(sip_accounts(lab.hass))
     lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     mailbox_id = "bedroom1"

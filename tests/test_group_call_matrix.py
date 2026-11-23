@@ -743,7 +743,8 @@ class GroupCallMatrixTest(unittest.TestCase):
         disabled = roster.RosterEntry("disabled", metadata={"sip_video_codec": ""})
         self.assertEqual(endpoint_routing.peer_video_codec(ws3, disabled), "")
         advertised = endpoint_routing.sdp.options_capabilities("v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=Peer\r\n"
-            "c=IN IP4 192.0.2.30\r\nt=0 0\r\nm=video 0 RTP/AVP 103\r\n"
+            "c=IN IP4 192.0.2.30\r\nt=0 0\r\nm=audio 0 RTP/AVP 0\r\n"
+            "a=rtpmap:0 PCMU/8000\r\nm=video 0 RTP/AVP 103\r\n"
             "a=rtpmap:103 H264/90000\r\na=fmtp:103 packetization-mode=1\r\n")
         self.assertEqual(endpoint_routing.peer_video_codec(generic,
             roster.RosterEntry("advertised", metadata=advertised)), "h264")

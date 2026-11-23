@@ -1048,7 +1048,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
             105, "H264", 90000, "42001f", 1, True)
     assert advertised.sprop_parameter_sets == local_parameters
     assert SDP.video_fmtp_parameters(advertised)["max-fs"] == "3600"
-    assert SDP.video_fmtp_parameters(advertised) == SDP.video_fmtp_parameters(local_format)
+    assert SDP.serialized_video_fmtp(advertised) == SDP.serialized_video_fmtp(local_format)
     assert client.committed is False
     assert video_relay.left is old_video_left
     assert video_relay.right is old_video_right
