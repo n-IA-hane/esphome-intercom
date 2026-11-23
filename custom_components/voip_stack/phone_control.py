@@ -439,20 +439,26 @@ class PhoneAdapterRegistry:
             )
         endpoint = resolve_service_phone(self._endpoints, selector, hass=self._hass)
         if endpoint is not None:
-            hardware_control = bool(endpoint.account_device_id and (
-                selector == endpoint.device_id
-                or (operation is PhoneOperation.ORIGINATE and endpoint.device_id != endpoint.account_device_id
-                    and not call.data.get("media_client_id"))))
-            if endpoint.kind is EndpointKind.SIP_ACCOUNT and not hardware_control:
+            if endpoint.kind is EndpointKind.SIP_ACCOUNT:
+                from .account_runtime import account_has_ha_binding
                 from .runtime_data import runtime_data
                 from .browser_phone_projection import _account_browser_media
                 runtime = runtime_data(self._hass)
                 call_id = str(call.data.get("call_id") or endpoint.active_call_id or "")
                 media = bool(runtime is not None and runtime.sip is not None
                     and _account_browser_media(runtime, runtime.sip, endpoint.endpoint_id, call_id))
-                if operation in {PhoneOperation.ORIGINATE, PhoneOperation.ANSWER} or media:
-                    return self._endpoint_handle(ha_client_endpoint(endpoint), ALL_PHONE_OPERATIONS)
-                return self._endpoint_handle(endpoint, frozenset({PhoneOperation.HANGUP, PhoneOperation.DECLINE}))
+                hardware_control = bool(
+                    endpoint.account_device_id and endpoint.device_id
+                    and endpoint.device_id != endpoint.account_device_id
+                    and not call.data.get("media_client_id") and not media
+                    and (selector == endpoint.device_id
+                         or operation is PhoneOperation.ORIGINATE
+                         or not account_has_ha_binding(self._hass, endpoint.endpoint_id))
+                )
+                if not hardware_control:
+                    if operation in {PhoneOperation.ORIGINATE, PhoneOperation.ANSWER} or media:
+                        return self._endpoint_handle(ha_client_endpoint(endpoint), ALL_PHONE_OPERATIONS)
+                    return self._endpoint_handle(endpoint, frozenset({PhoneOperation.HANGUP, PhoneOperation.DECLINE}))
             if endpoint.kind.is_softphone:
                 capabilities = ALL_PHONE_OPERATIONS
                 return self._endpoint_handle(endpoint, capabilities)

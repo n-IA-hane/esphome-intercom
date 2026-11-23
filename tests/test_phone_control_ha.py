@@ -358,3 +358,124 @@ async def test_esphome_hangup_terminates_owned_pbx_session(
     assert result.call_id == "p4-call"
     termination.terminate.assert_awaited_once()
     invoke.assert_not_awaited()
+
+
+@pytest.mark.parametrize("selector_kind", ["username", "account_device", "hardware"])
+@pytest.mark.parametrize("operation", list(PhoneOperation))
+async def test_linked_sip_account_without_ha_binding_uses_native_controls(
+    managed, hass_admin_user, selector_kind, operation,
+) -> None:
+    """Account Device selectors must reach the same native control as hardware."""
+    from copy import deepcopy
+    from homeassistant.components.esphome.manager import _async_register_service
+    from homeassistant.core import Context, ServiceCall
+    from custom_components.voip_stack.account_runtime import account_has_ha_binding
+    from .test_managed_phones_ha import phone_record
+
+    lab = managed
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+    endpoint = lab.runtime.endpoints.require(phone.username)
+    assert endpoint.kind is EndpointKind.SIP_ACCOUNT
+    assert endpoint.device_id == lab.device.id
+    assert endpoint.account_device_id and endpoint.account_device_id != endpoint.device_id
+    assert not account_has_ha_binding(lab.hass, endpoint.endpoint_id)
+    selectors = {"username": endpoint.username, "account_device": endpoint.account_device_id,
+                 "hardware": endpoint.device_id}
+    native = lab.native.runtime_data
+    action = {PhoneOperation.ORIGINATE: "start_call_on_line", PhoneOperation.ANSWER: "answer_call",
+              PhoneOperation.DECLINE: "decline_call", PhoneOperation.HANGUP: "hangup_call"}[operation]
+    advertised = next(row for row in native.services.values() if row.name == action)
+    _async_register_service(lab.hass, native, native.device_info, advertised)
+    await lab.hass.async_block_till_done()
+    original = {key: deepcopy(subentry.as_dict()) for key, subentry in lab.entry.subentries.items()}
+    context = Context(user_id=hass_admin_user.id)
+    data = {"device_id": selectors[selector_kind]}
+    expected = {}
+    if operation is PhoneOperation.ORIGINATE:
+        data.update(destination="P4", send_video=False, receive_video=False)
+        expected = {"dest": "P4", "line": "ha", "send_video": False, "receive_video": False}
+    elif operation is PhoneOperation.DECLINE:
+        data["reason"] = "declined"
+        expected = {"reason": "declined"}
+    call = ServiceCall(lab.hass, "voip_stack", "call" if operation is PhoneOperation.ORIGINATE
+                       else operation.value, data, context=context)
+    offset = len(lab.sent)
+    if operation is PhoneOperation.ORIGINATE:
+        result = await lab.runtime.phones.originate(call, OriginateRequest(destination="P4", context=context))
+    else:
+        result = await lab.runtime.phones.control(call, operation,
+            CallControlRequest(reason=data.get("reason", ""), context=context))
+    assert result.phone.kind is EndpointKind.ESPHOME
+    assert result.phone.endpoint_id == endpoint.endpoint_id
+    assert result.phone.device_id == lab.device.id
+    assert lab.sent[offset:] == [(action, expected)]
+    native_event, = [event for event in lab.events if event["domain"] == "esphome"
+                     and event["service"].endswith("_" + action)]
+    assert native_event["service_data"] == expected
+    assert lab.runtime.endpoints.require(phone.username) is endpoint
+    assert {key: subentry.as_dict() for key, subentry in lab.entry.subentries.items()} == original
+    assert not lab.runtime.sip.sessions
+
+
+@pytest.mark.parametrize("declared,explicit_client", [(True, False), (True, True), (False, True)])
+async def test_linked_account_explicit_or_declared_ha_answer_keeps_browser_transport(
+    managed, hass_admin_user, declared, explicit_client,
+) -> None:
+    from homeassistant.core import Context, ServiceCall
+    from custom_components.voip_stack.account_runtime import account_has_ha_binding
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+    from .test_managed_phones_ha import phone_record
+
+    lab = managed
+    await lab.controller.async_sync()
+    endpoint = lab.runtime.endpoints.require(phone_record(lab).username)
+    owner = HaCardBindings(lab.hass, lab.entry, lab.runtime, lambda _changed: None)
+    lab.runtime.ha_bindings = owner
+    try:
+        if declared:
+            await owner.async_set_popup_binding(hass_admin_user.id, "browser-1234567890abcdef",
+                                               endpoint.endpoint_id, True)
+        assert account_has_ha_binding(lab.hass, endpoint.endpoint_id) is declared
+        data = {"device_id": endpoint.account_device_id}
+        if explicit_client:
+            data["media_client_id"] = "browser-1234567890abcdef"
+        call = ServiceCall(lab.hass, "voip_stack", "answer", data,
+                           context=Context(user_id=hass_admin_user.id))
+        offset = len(lab.sent)
+        handle = await lab.runtime.phones.resolve_source(call, PhoneOperation.ANSWER)
+        assert handle.kind is EndpointKind.BROWSER
+        assert handle.endpoint_id == endpoint.endpoint_id
+        assert handle.device_id == endpoint.account_device_id
+        assert lab.runtime.endpoints.require(endpoint.endpoint_id) is endpoint
+        assert lab.sent[offset:] == []
+    finally:
+        await owner.async_close()
+        lab.runtime.ha_bindings = None
+
+
+async def test_linked_account_owned_browser_leg_is_not_replaced_by_native_answer(managed):
+    from homeassistant.core import ServiceCall
+    from .test_managed_phones_ha import phone_record
+
+    lab = managed
+    await lab.controller.async_sync()
+    endpoint = lab.runtime.endpoints.require(phone_record(lab).username)
+    calls = lab.runtime.sip
+    with calls.state_operation():
+        session = calls.upsert("browser-answer", state="ringing", owner="ha_softphone",
+            caller="Caller", callee=endpoint.name, dest_endpoint_id=endpoint.endpoint_id,
+            endpoint_id=endpoint.endpoint_id)
+        calls.claim_endpoint(session.call_id, endpoint.endpoint_id, role="destination")
+        calls.observe_leg(session.call_id, "browser-recipient", role="ha_softphone",
+            endpoint_id=endpoint.endpoint_id, state="ringing")
+    call = ServiceCall(lab.hass, "voip_stack", "answer", {
+        "device_id": endpoint.device_id, "call_id": session.call_id,
+    })
+    offset = len(lab.sent)
+    handle = await lab.runtime.phones.resolve_source(call, PhoneOperation.ANSWER)
+    assert handle.kind is EndpointKind.BROWSER
+    assert handle.endpoint_id == endpoint.endpoint_id
+    assert lab.sent[offset:] == []
+    assert calls.get_session(session.call_id) is session and session.live
+    calls.release_endpoint_claim(session.call_id, endpoint.endpoint_id)
