@@ -56,6 +56,7 @@ class VideoReceiveState:
     last_keyframe_feedback: float = 0.0
     last_browser_keyframe_feedback: float = 0.0
     restart_notified_generation: int = -1
+    admission_duplicates: int = 0
 
 
 def video_receive_counters(keepalives: int) -> dict[str, int]:

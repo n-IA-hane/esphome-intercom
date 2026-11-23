@@ -277,7 +277,7 @@ async def _prepare_bridge_video_contract_change(
                     connection_held=candidate.remote_video_connection_held,
                 ),
             )
-        next_left = invite_rtp_peer(updated, established=relay.left)
+        next_left = invite_rtp_peer(updated)
         next_right = dialog_rtp_peer(candidate)
         previous_left = relay.left
         previous_right = relay.right
@@ -995,11 +995,9 @@ async def async_prepare_media_update(
             ),
         )
         local_video_port = int(getattr(video_relay, f"{side}_port"))
-    # A refresh keeps the audio this leg already uses while it is still offered,
-    # exactly like a video change does. Re-running the defaults here would undo
-    # the format chosen when the call was bridged.
+    # Retention and changed receiver bounds were resolved by the leg engine.
     previous_audio_peer = getattr(relay, side)
-    next_audio_peer = invite_rtp_peer(updated, established=previous_audio_peer)
+    next_audio_peer = invite_rtp_peer(updated)
     answer = build_answer_directional(
         local_ip,
         local_ip,

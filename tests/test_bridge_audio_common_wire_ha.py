@@ -44,7 +44,9 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             sip_audio_rx_formats=[f"L16/{rate}/1/10" for rate in receive_rates],
             sip_audio_tx_geometry_complete=True, sip_audio_rx_geometry_complete=True,
             sip_audio_receiver_ptime=10, sip_audio_receiver_maxptime=20)
-    lab.roster[1] = replace(lab.roster[1], metadata=metadata)
+    target_row = next(index for index, row in enumerate(lab.roster) if row.id == "bedroom0")
+    lab.roster[target_row] = replace(lab.roster[target_row], metadata=metadata)
+    lab.runtime.directory.replace(lab.roster)
     lab.runtime.endpoints.update("bedroom0", availability="available")
     observed = {}
 
@@ -321,14 +323,14 @@ async def restore_managed_caller(lab, caller, discovery):
     caller.password = restored.password
     registrar = sip_registrar(lab.hass)
     registrar.enabled = True
-    registrar.update_accounts([restored.account()])
+    registrar.update_accounts([*registrar.accounts.values(), restored.account()])
     # The runtime captured this fixture callable at startup. Restore the actual
     # resolver/projection behind that same callable, without replacing its owner.
     peer_snapshot.async_build_peer_snapshot.side_effect = build_real_peer_snapshot
     await register_peer(lab, caller.protocol, restored.username,
         contact=f"sip:opaque-contact@127.0.0.2:{caller.local_sip_port}")
     await wait_until(lambda: registrar.registered_contacts(restored.username)[0].capabilities is not None)
-    entry = registrar.registered_roster_entries()[0]
+    entry = next(row for row in registrar.registered_roster_entries() if row.id == restored.username)
     assert entry.metadata["sip_capabilities_known"] is True
     if discovery == "no-ptime":
         assert entry.metadata["sip_audio_tx_formats"] == entry.metadata["sip_audio_rx_formats"] == ["L16/48000/1", "L16/16000/1"]

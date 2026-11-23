@@ -29,6 +29,7 @@ pytestmark = pytest.mark.ha
 @pytest.mark.parametrize("initial_video_capable", [False, True])
 async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(lab, monkeypatch, tmp_path, initial_video_capable):
     """Wire and ownership proof; no browser or synthetic RTP counter is used."""
+    await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
         udp.bind(("127.0.0.1", 0))
@@ -44,14 +45,16 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
 
-    source = PhoneEndpoint(endpoint_id="browser:camera-wire", name="Camera caller",
-        device_id="camera-wire-source", kind=EndpointKind.BROWSER,
+    source = PhoneEndpoint(endpoint_id="Camera caller", username="Camera caller", name="Camera caller",
+        device_id="camera-wire-source", kind=EndpointKind.SIP_ACCOUNT,
         capabilities=frozenset({"audio", "dtmf", "video"}))
-    receiver = PhoneEndpoint(endpoint_id="sip:camera-wire", name="Wire receiver",
+    receiver = PhoneEndpoint(endpoint_id="camera-wire-receiver", name="Wire receiver",
         username="camera-wire-receiver", kind=EndpointKind.SIP_ACCOUNT)
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.register(receiver)
     await bootstrap_camera_phone_configuration(lab)
+    source = lab.runtime.endpoints.require("Camera caller")
+    receiver = lab.runtime.endpoints.require("camera-wire-receiver")
     assert not any(item.kind is EndpointKind.ESPHOME for item in lab.runtime.endpoints.endpoints)
     registrar = lab.calls.component("registrar")
     registrar.enabled = True

@@ -21,8 +21,8 @@ from .codecs import CODECS
 from .packet_time import PacketTimes, ReceiverBounds, choose_transmit_packet_ms
 from .payload_map import TELEPHONE_EVENT, RtpMapping, PayloadMap
 
-# Decoded PCM geometry: (sample rate, channels).
-Geometry = tuple[int, int]
+# Decoded PCM preferences may include the valid sample width.
+Geometry = tuple[int, int] | tuple[int, int, int]
 
 OPUS_FRAMES = PacketTimes(explicit=(2.5, 5, 10, 20, 40, 60))
 ANY_DURATION = PacketTimes()
@@ -117,7 +117,10 @@ def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool, send=True, rec
 
 def _rank(order: tuple[Geometry, ...], fmt: RtpPcmFormat) -> int:
     geometry = _geometry(fmt)
-    return order.index(geometry) if geometry in order else len(order)
+    valid_bits = 24 if CODECS[fmt.encoding].decodes_to_24_bit else 16
+    return next((index for index, preferred in enumerate(order)
+                 if preferred[:2] == geometry
+                 and (len(preferred) == 2 or preferred[2] == valid_bits)), len(order))
 
 
 def _fixed_times(fmt: RtpPcmFormat, formats: tuple[AudioFormat, ...] | None) -> PacketTimes | None:

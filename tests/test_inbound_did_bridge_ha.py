@@ -36,7 +36,8 @@ async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex
     from custom_components.voip_stack.sip_registrar import SipAccount
     registrar = registry.component("registrar")
     registrar.enabled = True
-    registrar.update_accounts([SipAccount(f"bedroom{index}", f"bedroom{index}", "fixture-only") for index in range(2)])
+    registrar.update_accounts([*registrar.accounts.values(),
+        *(SipAccount(f"bedroom{index}", f"bedroom{index}", "fixture-only") for index in range(2))])
     for index, phone in enumerate(lab.phones):
         replies = asyncio.Queue()
         previous = phone.datagram_received
@@ -64,7 +65,7 @@ async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex
         headers = [(key, "2 REGISTER" if key == "CSeq" else value.replace(";rport", "-auth;rport") if key == "Via" else value) for key, value in headers]
         phone.transport.sendto(sip.build_request("REGISTER", uri, [*headers, ("Authorization", authorization)]), listener)
         assert (await asyncio.wait_for(replies.get(), 3)).status_code == 200
-        assert lab.runtime.endpoints.get(f"sip:bedroom{index}").is_available
+        assert lab.runtime.endpoints.require(f"bedroom{index}").is_available
     config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
         "trunk_allowed_ips": ["127.0.0.2/32"], "trunk_server": "127.0.0.2",
         "trunk_inbound_default_target": "bedroom0", "trunk_did_source": "to",

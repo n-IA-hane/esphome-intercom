@@ -35,6 +35,7 @@ async def test_member_noanswer_mailbox_does_not_steal_group_winner_media(
     name = "Protection"
     queue_policy = QueuePolicy(max_wait=8, ring_timeout=3, no_agent_wait=1)
     group = normalize_group_data({"kind": kind, "name": name, "extension": "402",
+        "members": ["transfer_b", "transfer_c"],
         "origin": "manual", "policy": asdict(queue_policy) if kind == "queue" else {}}, identity=lab.identity)
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="group",
         title=name, unique_id="group:"+lab.identity, data=group))
@@ -47,8 +48,10 @@ async def test_member_noanswer_mailbox_does_not_steal_group_winner_media(
         data = {"name": member, "username": member, "kind": "sip_account", **membership}
         if member == "transfer_b":
             data.update(call_policy=member_policy, voicemail={"enabled": True, "max_seconds": 2})
-        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone",
-            title=member, unique_id="phone:"+member, data=data))
+        account = next(row for row in entry.subentries.values()
+                       if row.subentry_type == "phone" and row.data.get("username") == member)
+        lab.hass.config_entries.async_update_subentry(entry, account,
+            data={**account.data, **data})
         lab.runtime.endpoints.update(member, **({"queues": (name,)} if kind == "queue" else {"ring_group": name}))
     lab.runtime.endpoints.update("transfer_b", policy=PhonePolicy.from_data(member_policy))
     if kind == "queue":

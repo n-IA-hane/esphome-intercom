@@ -22,7 +22,9 @@
     {
       "outcome": "accept",
       "recv": {
-        "ptime": 20
+        "ptime": 20,
+        "codec": "G722/8000/1",
+        "payload": 9
       }
     }
   ],
@@ -37,5 +39,10 @@
   "captured": {
     "status": null,
     "reoffers": 0
+  },
+  "local_policy_decision": {
+    "source": "media_corpus_support.POLICIES.phone",
+    "capabilities": "HA_AUDIO_CAPABILITIES",
+    "reason": "The supplied local receive preference is 16 kHz mono. G722 provides that decoded geometry and precedes the equal-geometry L16 mapping in this offer; retain Opus and all other admitted aliases."
   }
 }

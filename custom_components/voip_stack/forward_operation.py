@@ -136,6 +136,7 @@ class ForwardOperation:
         self.retained_video_update = None
         self.retained_video_answer = None
         self.preanswered = None
+        self.failure_sip_status = 0
         self.owned_sip_source = source.owned_sip_source
 
     async def commit_source_answer(
@@ -1117,13 +1118,15 @@ class ForwardOperation:
                           self.source.call_id, destination, exc_info=True)
             reason = (TerminalReason.TIMEOUT.value if isinstance(err, TimeoutError) else
                       str(err).strip() or TerminalReason.TRANSPORT_UNREACHABLE.value)
-            sip_status = (
+            failure_sip_status = self.failure_sip_status or (
                 self.client.last_sip_status_code
+                if self.client is not None and 300 <= self.client.last_sip_status_code <= 699 else 0)
+            sip_status = (
+                failure_sip_status
                 if self.plan.initial_selection
                 and self.source.native_caller
                 and not source_dialog_is_answered(self.preanswered)
-                and self.client is not None
-                and 300 <= self.client.last_sip_status_code <= 699
+                and failure_sip_status
                 else 0
             )
             failure_endpoint = failure_destination = None
@@ -1134,7 +1137,8 @@ class ForwardOperation:
                 failure_endpoint = endpoint_directory(self.runtime.hass).get(self.plan.account.endpoint_id)
                 if failure_endpoint is not None:
                     failure_destination = (failure_endpoint.policy.no_answer if reason == TerminalReason.TIMEOUT.value
-                        else phone_failure_destination(failure_endpoint, sip_failure_response(reason)[0]))
+                        else phone_failure_destination(failure_endpoint,
+                            failure_sip_status or sip_failure_response(reason)[0]))
             if (
                 self.plan.decision.action is RouteAction.FORWARD
                 and self.client is not None
@@ -1194,8 +1198,7 @@ class ForwardOperation:
             )
             return TransferResult(
                 "failed_resumed" if resumed else "ended", destination, reason,
-                sip_status=(self.client.last_sip_status_code
-                    if self.client is not None and 300 <= self.client.last_sip_status_code <= 699 else 0),
+                sip_status=failure_sip_status,
             )
         finally:
             self.artifacts.forward_claim = False

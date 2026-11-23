@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import AsyncIterator
+from collections.abc import Callable
+from dataclasses import replace
 from .core import sip
 from .core.sip_auth import DigestChallengeTracker, build_digest_authorization
 from .core.sip_dialog import SubscriptionDialog, build_dialog_request
@@ -29,6 +31,10 @@ class SipDialogRequests:
         content_type: str = "",
         timeout: float = 8.0,
         usage: SubscriptionDialog | None = None,
+        local_uri: str | None = None,
+        local_display_name: str | None = None,
+        is_current: Callable[[], bool] | None = None,
+        on_sent: Callable[[], None] | None = None,
     ) -> sip.SipMessage | None:
         """Run one serialized non-INVITE client transaction on the dialog."""
 
@@ -43,7 +49,9 @@ class SipDialogRequests:
                     pending_auth: dict[str, tuple[str, int]] = {}
                     request = None
                     def active():
-                        return (usage.key.call_id in self._outside_refer or usage.key.call_id in self._event_dialogs) if usage is not None else self._dialog_is_current(dialog)
+                        owned = ((usage.key.call_id in self._outside_refer or usage.key.call_id in self._event_dialogs)
+                                 if usage is not None else self._dialog_is_current(dialog))
+                        return owned and (is_current is None or is_current())
 
                     while active() and asyncio.get_running_loop().time() < deadline:
                         authorization = {}
@@ -67,14 +75,14 @@ class SipDialogRequests:
                                 local_tag=usage.key.local_tag if usage else self.dialog_ids.local_tag,
                                 remote_tag=usage.key.remote_tag if usage else self.dialog_ids.remote_tag,
                                 cseq=usage.next_cseq() if usage and usage.key.call_id != self.dialog_ids.call_id else self._next_dialog_cseq(),
-                                local_uri=usage.local_uri if usage else dialog.local_uri,
+                                local_uri=local_uri if local_uri is not None else (usage.local_uri if usage else dialog.local_uri),
                                 remote_uri=usage.remote_uri if usage else dialog.remote_uri,
                                 remote_target_uri=usage.remote_target_uri if usage else dialog.remote_target_uri,
                                 route_set=usage.route_set if usage else dialog.route_set,
                                 contact_uri=self._pending_contact_uri or (usage.local_uri if usage else dialog.local_uri),
                                 transport=self.signaling_transport,
                                 via_sent_by=(self.local_ip, self.local_sip_port),
-                                local_display_name=self.local_name,
+                                local_display_name=self.local_name if local_display_name is None else local_display_name,
                                 remote_display_name=self._dialog_remote_display_name,
                                 extra_headers=(*extra_headers, *authorization.items()),
                                 content_type=content_type,
@@ -104,6 +112,7 @@ class SipDialogRequests:
                                 method=method,
                                 timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
                                 active=active, dialog_scoped=usage is None,
+                                on_sent=on_sent,
                             )
                         except ConnectionAbortedError:
                             raise
@@ -132,6 +141,46 @@ class SipDialogRequests:
 
         except TimeoutError:
             return None
+
+
+    async def async_update_connected_identity(
+        self,
+        name: str,
+        uri: str,
+        *,
+        expected_dialog: SipDialog,
+        is_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Publish RFC 4916 identity on this call without changing the account."""
+
+        identity_uri = str(sip.parse_sip_uri(uri))
+        identity_name = str(name or "")
+        sip.format_name_addr(identity_uri, identity_name)
+
+        def owned() -> bool:
+            return (not self._closing and not self._closed
+                    and self._dialog_is_current(expected_dialog)
+                    and self.dialog.peer_supports_from_change
+                    and (is_current is None or is_current()))
+
+        if not owned():
+            return False
+
+        def sent() -> None:
+            # RFC 4916 sender state follows the sent From, even after rejection.
+            self.dialog = replace(self.dialog, local_uri=identity_uri)
+            self.local_name = identity_name
+
+        response = await self._send_in_dialog_request(
+            "UPDATE",
+            local_uri=identity_uri,
+            local_display_name=identity_name,
+            is_current=owned,
+            on_sent=sent,
+        )
+        if response is None or not 200 <= int(response.status_code or 0) < 300 or not owned():
+            return False
+        return True
 
 
     @contextlib.asynccontextmanager

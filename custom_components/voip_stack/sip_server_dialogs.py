@@ -10,7 +10,7 @@ from .sip_listener_request import SipRequestResult
 from .core import sdp, sip
 from .core.sip_auth import DigestChallengeTracker
 from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox
-from .core.sip_dialog import apply_remote_offer_media, notify_media_commit, build_dialog_request, uas_request_matches_dialog
+from .core.sip_dialog import DialogKey, apply_remote_offer_media, notify_media_commit, build_dialog_request, uas_request_matches_dialog
 from .core.sip_transaction import SIP_TIMER_B as _INVITE_2XX_TIMEOUT, async_run_dialog_request_transaction, matches_invite_error_ack
 import logging
 
@@ -102,14 +102,12 @@ class SipServerDialogs:
         )
         async def _run() -> None:
             try:
-                response = await self._send_dialog_request(
+                await self.async_update_connected_identity(
                     call_id,
-                    dialog,
-                    "UPDATE",
-                    local_uri=identity_uri,
-                    local_display_name=dialog.connected_identity_name,
+                    dialog.connected_identity_name,
+                    identity_uri,
+                    expected_key=DialogKey.for_uas_dialog(dialog.request, local_tag=dialog.to_tag),
                 )
-                dialog.connected_identity_sent = response is not None
             except asyncio.CancelledError:
                 return
             finally:
@@ -125,6 +123,73 @@ class SipServerDialogs:
         task.add_done_callback(self._maintenance_tasks.discard)
 
 
+    async def async_update_connected_identity(
+        self,
+        call_id: str,
+        name: str,
+        uri: str,
+        *,
+        expected_key: DialogKey | None = None,
+        is_current: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Change one dialog's local identity through its existing UPDATE writer."""
+
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None or not dialog.peer_supports_from_change:
+            return False
+        key = DialogKey.for_uas_dialog(dialog.request, local_tag=dialog.to_tag)
+        if expected_key is not None and key != expected_key:
+            return False
+        identity_uri = str(sip.parse_sip_uri(uri))
+        identity_name = str(name or "")
+        sip.format_name_addr(identity_uri, identity_name)
+
+        def owned() -> bool:
+            return (self.active_dialogs.get(call_id) is dialog
+                    and dialog.termination_task is None
+                    and (is_current is None or is_current()))
+
+        # The existing 2xx owner is cancelled by ACK or retired on timeout.
+        # Reuse that barrier instead of sending an identity UPDATE before ACK.
+        ack_task = dialog.invite_2xx.task
+        if ack_task is not None and not ack_task.done():
+            try:
+                await asyncio.shield(ack_task)
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+        initial_identity = dialog.connected_identity_task
+        if (initial_identity is not None and initial_identity is not asyncio.current_task()
+                and not initial_identity.done()):
+            await asyncio.shield(initial_identity)
+        if not owned() or dialog.invite_2xx.active:
+            return False
+        if (dialog.connected_identity_sent and dialog.local_uri == identity_uri
+                and dialog.local_display_name == identity_name):
+            return True
+
+        def sent() -> None:
+            # Sender identity persists after sending, independent of the response.
+            dialog.local_uri = identity_uri
+            dialog.local_display_name = identity_name
+            dialog.connected_identity_user = sip.parse_sip_uri(identity_uri).user
+            dialog.connected_identity_name = identity_name
+            dialog.connected_identity_sent = True
+
+        response = await self._send_dialog_request(
+            call_id,
+            dialog,
+            "UPDATE",
+            local_uri=identity_uri,
+            local_display_name=identity_name,
+            is_current=owned,
+            on_sent=sent,
+        )
+        if response is None or not 200 <= int(response.status_code or 0) < 300 or not owned():
+            return False
+        return True
+
+
     async def _send_dialog_request(
         self,
         call_id: str,
@@ -132,16 +197,22 @@ class SipServerDialogs:
         method: str,
         *,
         local_uri: str = "",
-        local_display_name: str = "",
+        local_display_name: str | None = None,
         extra_headers: tuple[tuple[str, str], ...] = (),
         body: bytes = b"",
         content_type: str = "",
         timeout: float = _INVITE_2XX_TIMEOUT,
+        is_current: Callable[[], bool] | None = None,
+        on_sent: Callable[[], None] | None = None,
     ) -> sip.SipMessage | None:
         """Send one serialized non-INVITE request on an owned dialog."""
 
         async with dialog.update_lock:
-            if not self._dialog_request_current(call_id, dialog, method):
+            def active() -> bool:
+                return (self._dialog_request_current(call_id, dialog, method)
+                        and (is_current is None or is_current()))
+
+            if not active():
                 return None
             remote_uri = dialog.remote_uri or _uri_text_from_header(
                 dialog.request.header("From")
@@ -152,7 +223,7 @@ class SipServerDialogs:
                 or remote_uri
             )
             remote_tag = sip.extract_tag(dialog.request.header("From"))
-            local_uri = local_uri or _uri_text_from_header(dialog.request.header("To"))
+            local_uri = local_uri or dialog.local_uri or _uri_text_from_header(dialog.request.header("To"))
             try:
                 request = build_dialog_request(
                     method,
@@ -166,7 +237,8 @@ class SipServerDialogs:
                     route_set=dialog.route_set,
                     contact_uri=self._contact_for_request(dialog.request, transport=dialog.transport),
                     transport=dialog.transport,
-                    local_display_name=local_display_name,
+                    local_display_name=(dialog.local_display_name
+                                        if local_display_name is None else local_display_name),
                     remote_display_name=dialog.remote_display_name,
                     extra_headers=extra_headers,
                     content_type=content_type,
@@ -192,8 +264,9 @@ class SipServerDialogs:
                 ids=request.ids,
                 method=method,
                 transport=dialog.transport,
-                active=lambda: self._dialog_request_current(call_id, dialog, method),
+                active=active,
                 timeout=timeout,
+                on_sent=on_sent,
             )
             if method == "INVITE" and response is not None:
                 self._send_dialog_invite_ack(

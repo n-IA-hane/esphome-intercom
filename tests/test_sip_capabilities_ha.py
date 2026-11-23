@@ -10,6 +10,7 @@ import pytest
 
 from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
+from custom_components.voip_stack.directory_runtime import compose_directory_entries
 from custom_components.voip_stack.sip_listener import SipTcpServer, SipUdpEndpoint
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
@@ -174,7 +175,9 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         monkeypatch.setattr(peer, "datagram_received", datagram_received)
         await register_peer(lab, peer)
         await wait_until(lambda: registrar.registered_contacts("caps")[0].capabilities is not None)
-        lab.roster.extend(registrar.registered_roster_entries())
+        automation = [row for row in lab.roster if row.metadata.get("virtual_endpoint") == "automation"]
+        lab.roster[:] = [*compose_directory_entries(lab.hass, [], registrar.registered_roster_entries()),
+                         *automation]
         destination = "caps"
     else:
         phone = lab.phones[0]
@@ -185,8 +188,10 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
                 independent_answer(phone.last_request, phone.rtp_socket.getsockname()[1]))
 
         monkeypatch.setattr(phone, "answer", answer)
-        lab.roster[1] = replace(lab.roster[1], metadata={
-            **lab.roster[1].metadata, "endpoint_kind": "esphome",
+        destination_index = next(index for index, row in enumerate(lab.roster)
+            if row.metadata.get("endpoint_id") == "bedroom0")
+        lab.roster[destination_index] = replace(lab.roster[destination_index], metadata={
+            **lab.roster[destination_index].metadata, "endpoint_kind": "esphome",
             "tx_formats": (["16000:s16le:1:20"] if receive_twenty else []) + ["16000:s16le:1:10"],
             "rx_formats": ["48000:s16le:1:10", "16000:s16le:1:20", "16000:s16le:1:10"],
         })
@@ -464,7 +469,10 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
             assert binding.capabilities is None
         # Use the real registrar export as routing input; no manual capability
         # injection or endpoint-brand classification participates.
-        lab.roster.extend(registrar.registered_roster_entries())
+        automation = [row for row in lab.roster if row.metadata.get("virtual_endpoint") == "automation"]
+        lab.roster[:] = [*compose_directory_entries(lab.hass, [], registrar.registered_roster_entries()),
+                         *automation]
+        lab.runtime.directory.replace(lab.roster)
         result = await caller.invite(target="caps", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=2)
         if result == "ringing":

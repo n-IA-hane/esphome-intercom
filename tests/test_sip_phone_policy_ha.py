@@ -162,21 +162,20 @@ async def test_native_sip_noanswer_reaches_own_mailbox(
             },
         },
     )
-    runtime.hass.config_entries.async_add_subentry(
-        entry,
-        ConfigSubentry(
-            subentry_type="phone",
-            title=destination_id,
-            unique_id=f"phone:{destination_id}",
-            data={
-                "endpoint_id": destination_id,
-                "name": destination_id,
-                "username": destination_id,
-                "kind": "browser" if destination_kind.startswith("browser") else "sip_account",
-                "voicemail": {"enabled": True, "max_seconds": 2},
-            },
-        ),
-    )
+    account = next((row for row in entry.subentries.values()
+                    if row.subentry_type == "phone" and row.data.get("username") == destination_id), None)
+    settings = {
+        "name": destination_id, "username": destination_id,
+        "kind": "browser" if destination_kind.startswith("browser") else "sip_account",
+        "voicemail": {"enabled": True, "max_seconds": 2},
+    }
+    if account is not None:
+        runtime.hass.config_entries.async_update_subentry(entry, account,
+            data={**account.data, **settings})
+    else:
+        runtime.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
+            subentry_type="phone", title=destination_id,
+            unique_id=f"phone:{destination_id}", data=settings))
     runtime.runtime.endpoints.update(
         destination_id,
         policy=PhonePolicy.from_data(

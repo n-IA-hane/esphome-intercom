@@ -21,7 +21,11 @@
   ],
   "expect": [
     {
-      "outcome": "accept"
+      "outcome": "accept",
+      "recv": {
+        "codec": "G722/8000/1",
+        "payload": 9
+      }
     }
   ],
   "rules": [
@@ -29,5 +33,10 @@
     "S6",
     "P3",
     "V3"
-  ]
+  ],
+  "local_policy_decision": {
+    "source": "media_corpus_support.POLICIES.phone",
+    "capabilities": "HA_AUDIO_CAPABILITIES",
+    "reason": "The supplied local receive preference is 16 kHz mono; G722 decodes to that geometry. Opus and all other accepted aliases remain available."
+  }
 }

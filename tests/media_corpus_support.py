@@ -211,6 +211,7 @@ CC_FIELDS = {
     "CC-11": ("send.ptime",),
     "CC-12": ("outcome",),
     "RFC3556": ("answer.rtcp_bandwidth",),
+    "LOCAL_CAPABILITIES": ("send.codec", "send.ptime", "send.payload", "recv.codec", "recv.payload"),
 }
 
 

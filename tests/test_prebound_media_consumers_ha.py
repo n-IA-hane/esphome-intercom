@@ -1,6 +1,5 @@
 """First RTP survives existing public automation, conference and pickup owners."""
 import asyncio
-from dataclasses import replace
 import re
 import socket
 import struct
@@ -37,10 +36,6 @@ def observe_reserved_sockets(monkeypatch):
 
 
 def ordinary_phone(lab):
-    lab.roster[1] = replace(lab.roster[1], metadata={
-        "endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True,
-        "sip_audio_tx_formats": ["L16/16000/1/20"], "sip_audio_rx_formats": ["L16/16000/1/20"],
-    })
     lab.runtime.endpoints.update("bedroom0", availability="available")
 
 
@@ -209,8 +204,9 @@ async def test_public_conference_auto_invite_reads_queued_first_rtp_after_leg_ex
 async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_packets(trunks, monkeypatch):
     from custom_components.voip_stack import sip_rtp_bridge
     from custom_components.voip_stack.endpoint_routing import roster_from_peers
-    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
-    from custom_components.voip_stack.sip_registrar import SipAccount
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
+    from custom_components.voip_stack.sip_registrar import account_from_mapping
+    from custom_components.voip_stack.store import config_entry
     from custom_components.voip_stack.sip_trunk import SipTrunkClient, SipTrunkConfig
     from custom_components.voip_stack.trunk_signaling import reuse_registered_trunk_flow
 
@@ -225,9 +221,14 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
     sockets = observe_reserved_sockets(monkeypatch)
     registrar = lab.calls.component("registrar")
     registrar.enabled = True
-    registrar.update_accounts([SipAccount("reservation-picker", "Reservation picker", "controlled-test-only")])
-    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="reservation-picker", name="Reservation picker",
-        username="reservation-picker", kind=EndpointKind.SIP_ACCOUNT, availability="available"))
+    entry = config_entry(lab.hass)
+    configured = _add_phone_subentry(lab.hass, entry, data={
+        "kind": "sip_account", "username": "reservation-picker", "name": "Reservation picker",
+        "username_source": "user", "password": "controlled-test-only", "enabled": True,
+    }, title="Reservation picker")
+    sync_registry_from_entry(lab.hass, entry)
+    registrar.update_accounts([*registrar.accounts.values(),
+        account_from_mapping(dict(configured.data))])
     registration = SipTrunkClient(config=SipTrunkConfig(enabled=True, transport="udp", server="127.0.0.1",
         port=lab.runtime.transport_config["sip_port"], domain="127.0.0.1", username="reservation-picker",
         auth_username="reservation-picker", password="controlled-test-only", expires=60, audio_codecs=("L16",)),

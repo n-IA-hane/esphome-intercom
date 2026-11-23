@@ -37,6 +37,32 @@ def _connected_identity_for_call(
     if session is None:
         return "", ""
     metadata = session.metadata
+    connected_uri = str(metadata.get("connected_uri") or "").strip()
+    connected_name = str(metadata.get("connected_display_name") or "").strip()
+    destination_id = registry.bridge_link_for(session_id)
+    client = registry.sip_client_for(destination_id or call_id)
+    if client is not None and not destination_id and not any(
+        leg.dialog is client and leg.role == "callee" for leg in session.legs.values()
+    ):
+        client = None
+    if client is not None and client.dialog is not None:
+        from .counterpart_display import connected_display_name
+
+        # The client distinguishes a received To display from its initial
+        # contact-label fallback. A retained caller is never the callee here.
+        display = connected_display_name(client)
+        if display and not connected_uri:
+            connected_name = display
+            connected_uri = client.dialog.remote_uri
+    if connected_name or connected_uri:
+        user = ""
+        try:
+            user = parse_sip_uri(connected_uri).user if connected_uri else ""
+        except (TypeError, ValueError):
+            pass
+        name = connected_name or str(metadata.get("connected_party") or user).strip()
+        if name and user:
+            return name, user
     endpoints = endpoint_directory(hass)
     source_endpoint_id = str(metadata.get("source_endpoint_id") or "").strip()
     for key in ("dest_endpoint_id", "target_endpoint_id", "endpoint_id"):
@@ -47,7 +73,7 @@ def _connected_identity_for_call(
             continue
         endpoint = endpoints.get(endpoint_id) if endpoint_id else None
         if endpoint is not None:
-            return str(endpoint.name), str(endpoint.sip_uri_user)
+            return connected_name or str(endpoint.name), str(endpoint.sip_uri_user)
     name = str(
         metadata.get("connected_party")
         or metadata.get("answered_by")

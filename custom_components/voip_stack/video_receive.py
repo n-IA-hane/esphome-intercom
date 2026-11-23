@@ -64,6 +64,8 @@ class VideoReceiveWorkers:
             receiver.ssrc = self.state.route.latched_ssrc
         if not receiver.admit(packet):
             counter = "video_duplicate_packets" if packet.ssrc == receiver.ssrc else "video_drop_addr"
+            if counter == "video_duplicate_packets":
+                self.state.admission_duplicates += 1
             self.state.counters[counter] += 1
             return False
         if not transcoded:
@@ -83,6 +85,15 @@ class VideoReceiveWorkers:
             if transcoded:
                 self.request_key_frame(now)
         return True
+
+    def sync_reorder_counters(self) -> None:
+        """Retain admission duplicates when publishing the reorder counters."""
+
+        self.hooks.sync_reorder(
+            self.state.counters, self.session, self.state.reorder,
+            self.state.input_reorder,
+            admission_duplicates=self.state.admission_duplicates,
+        )
 
     def queue_access_unit(self, access_unit: VideoAccessUnit, now: float) -> None:
         if len(access_unit.data) > self.max_access_unit_bytes:
@@ -207,7 +218,7 @@ class VideoReceiveWorkers:
                     self.forward_ordered_to_transcoder(ordered)
                 if self.state.input_reorder.lost > lost_before:
                     self.recover_from_video_loss(local_loop.time())
-                self.hooks.sync_reorder(self.state.counters, self.session, self.state.reorder, self.state.input_reorder)
+                self.sync_reorder_counters()
                 continue
             dequeued_in_burst += 1
             if dequeued_in_burst >= self.receive_burst_packets:
@@ -259,7 +270,7 @@ class VideoReceiveWorkers:
                     self.forward_ordered_to_transcoder(ordered)
                 if self.state.input_reorder.lost > lost_before:
                     self.recover_from_video_loss(local_loop.time())
-                self.hooks.sync_reorder(self.state.counters, self.session, self.state.reorder, self.state.input_reorder)
+                self.sync_reorder_counters()
             except (OSError, RuntimeError, ValueError) as err:
                 self.state.counters["video_drop_error"] += 1
                 drop_logs += 1
@@ -290,7 +301,7 @@ class VideoReceiveWorkers:
                     self.consume_ordered(ordered, loop.time())
                 if self.state.reorder.lost > lost_before:
                     self.recover_from_video_loss(loop.time())
-                self.hooks.sync_reorder(self.state.counters, self.session, self.state.reorder, self.state.input_reorder)
+                self.sync_reorder_counters()
                 continue
             dequeued_in_burst += 1
             if dequeued_in_burst >= self.receive_burst_packets:
@@ -358,7 +369,7 @@ class VideoReceiveWorkers:
                     self.consume_ordered(ordered, loop.time())
                 if self.state.reorder.lost > lost_before:
                     self.recover_from_video_loss(loop.time())
-                self.hooks.sync_reorder(self.state.counters, self.session, self.state.reorder, self.state.input_reorder)
+                self.sync_reorder_counters()
             except Exception as err:  # noqa: BLE001 - a bad frame must not stop audio/call control.
                 self.state.counters["video_drop_error"] += 1
                 drop_logs += 1

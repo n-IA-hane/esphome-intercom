@@ -6,7 +6,7 @@ import asyncio
 from contextlib import nullcontext
 from dataclasses import dataclass
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
@@ -16,7 +16,7 @@ from .media_offer_answer import validate_bridged_video_reoffer
 from .media_ports import release_sip_rtp_port_pair, reserve_sip_video_relay_media
 from .runtime_data import sip_endpoint_manager
 from .session_cleanup import async_wait_for_cleanup
-from .core import sdp
+from .core import sdp, sip
 from .sip_bridge import (
     dialog_rtp_peer,
     dialog_video_rtp_peer,
@@ -328,6 +328,91 @@ class BridgeMediaUpdateBinder:
             )
         client.on_media_update = prepare
 
+    def _attach_connected_identity(
+        self, client, relay, *, source_call_id, source_client, media_callback,
+    ) -> Callable[[], None] | None:
+        """Relay accepted peer identity through the same call and dialog owners."""
+        from .call_projection import publish_bridge_projection
+        from .counterpart_display import connected_display_name
+
+        registry = call_registry(self.hass)
+        session = registry.get_session(source_call_id)
+        if session is None:
+            return
+        generation = session.generation
+        destination_call_id = client.dialog_ids.call_id
+        previous_callback = client.on_connected_identity
+        source_dialog = source_client.dialog if source_client is not None else None
+        endpoint = sip_endpoint_manager(self.hass) if source_client is None else None
+        source_key = (endpoint.dialog_key(source_call_id)
+                      if source_client is None and endpoint is not None else None)
+        source_was_established = source_dialog is not None or source_key is not None
+        pending: tuple[str, str] | None = None
+        task: asyncio.Task | None = None
+
+        def owned() -> bool:
+            return (session.live and registry.is_generation_current(source_call_id, generation)
+                    and registry.resource_for(source_call_id, "relay") is relay
+                    and registry.sip_client_for(destination_call_id) is client
+                    and client.dialog is not None
+                    and client.on_media_update is media_callback
+                    and client.on_connected_identity is update)
+
+        async def forward() -> None:
+            nonlocal pending
+            while pending is not None and owned():
+                name, uri = pending
+                pending = None
+                try:
+                    if source_client is not None and source_dialog is not None:
+                        await source_client.async_update_connected_identity(
+                            name, uri, expected_dialog=source_dialog, is_current=owned,
+                        )
+                    elif source_key is not None and endpoint is not None:
+                        await endpoint.async_update_connected_identity(
+                            source_call_id, name, uri, expected_key=source_key, is_current=owned,
+                        )
+                except (ConnectionError, OSError, ValueError) as error:
+                    _LOGGER.debug("SIP bridge connected identity update failed: %s", error)
+
+        def update(connected_party: str, connected_uri: str) -> None:
+            nonlocal pending, task, source_key
+            if not owned():
+                return
+            if previous_callback is not None:
+                try:
+                    previous_callback(connected_party, connected_uri)
+                except Exception:
+                    _LOGGER.exception("SIP connected identity observer failed")
+            if not owned():
+                return
+            try:
+                uri = str(sip.parse_sip_uri(connected_uri))
+            except (TypeError, ValueError, sip.SipError):
+                return
+            name = connected_display_name(client)
+            session.update_metadata(connected_party=connected_party, connected_uri=uri,
+                                    connected_display_name=name)
+            publish_bridge_projection(self.hass, session, event_type="state_changed",
+                                      connected_party=connected_party, remote_uri=uri,
+                                      last_sip_event="UPDATE")
+            if source_client is None and source_key is None and endpoint is not None:
+                source_key = endpoint.dialog_key(source_call_id)
+            if source_dialog is None and source_key is None:
+                return
+            pending = name, uri
+            if task is None or task.done():
+                task = session.create_task(forward(), name=f"voip-bridge-identity-{destination_call_id}")
+
+        client.on_connected_identity = update
+
+        def publish_initial() -> None:
+            if source_was_established and owned():
+                uri = client.dialog.remote_uri
+                update(connected_display_name(client) or sip.name_addr_identity(uri), uri)
+
+        return publish_initial
+
     def attach(
         self,
         client: SipCallClient,
@@ -337,7 +422,7 @@ class BridgeMediaUpdateBinder:
         source_client: SipCallClient | None = None,
         source_video_send_format: sdp.RtpVideoFormat | None = None,
         source_video_receive_format: sdp.RtpVideoFormat | None = None,
-    ) -> None:
+    ) -> Callable[[], None] | None:
         """Install the staged media-update callback on one SIP client."""
 
         async def prepare(previous: Any, updated: Any, method: str):
@@ -749,3 +834,7 @@ class BridgeMediaUpdateBinder:
             )
 
         client.on_media_update = prepare
+        return self._attach_connected_identity(
+            client, relay, source_call_id=source_call_id,
+            source_client=source_client, media_callback=prepare,
+        )

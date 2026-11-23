@@ -12,7 +12,7 @@ import pytest
 from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
 from custom_components.voip_stack.core import sdp
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
-from tests.test_automation_originate_ha import lab as lab
+from tests.test_automation_originate_ha import lab as lab, register_shared_phone
 
 pytestmark = pytest.mark.ha
 
@@ -43,7 +43,7 @@ def source_account(lab, username, display_name):
     """Give the real SIP caller credentials, without granting trust by address."""
     from .test_trunk_calls_ha import sip_test_account
 
-    identity = f"sip:{username}"
+    identity = username
     if lab.runtime.endpoints.get(identity) is None:
         lab.runtime.endpoints.register(PhoneEndpoint(
             endpoint_id=identity, username=username, name=display_name,
@@ -61,7 +61,10 @@ async def test_public_unknown_video_negotiates_without_relaxing_profile_validati
         capabilities=frozenset({"audio", "dtmf", "video"}))
     lab.runtime.endpoints.register(source)
     capabilities = ["audio", "dtmf"] if policy == "known_audio_only" else []
-    lab.roster[1] = replace(lab.roster[1], metadata={**lab.roster[1].metadata, "capabilities": capabilities})
+    destination_index = next(index for index, row in enumerate(lab.roster)
+        if row.metadata.get("endpoint_id") == "bedroom0")
+    lab.roster[destination_index] = replace(lab.roster[destination_index],
+        metadata={**lab.roster[destination_index].metadata, "capabilities": capabilities})
     if policy == "known_audio_only":
         set_configured_video_policy(lab, "bedroom0", False)
     lab.runtime.directory.replace(lab.roster)
@@ -168,6 +171,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.sip_client import SipCallClient
 
+    await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     # The endpoint owns UDP and TCP at one address. Keep its listener outside
     # the OS ephemeral range used by earlier outgoing TCP connections.
@@ -193,7 +197,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     for module in (invite_router, call_forwarder):
         monkeypatch.setattr(module, "_roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
-    source = PhoneEndpoint(endpoint_id="sip:plain-source", username="plain-source",
+    source = PhoneEndpoint(endpoint_id="plain-source", username="plain-source",
         name="Standard source", kind=EndpointKind.SIP_ACCOUNT,
         capabilities=frozenset({"audio", "dtmf"}), availability="available")
     lab.runtime.endpoints.register(source)
@@ -202,9 +206,11 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     assert not source.supports("video")
     for name in ("bedroom0", "bedroom1"):
         lab.runtime.endpoints.update(name, availability="available")
+    assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
+    for index in range(2):
+        await register_shared_phone(lab, index, network=True)
     if known_audio_only:
         set_configured_video_policy(lab, "bedroom1", False)
-    assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
     account = source_account(lab, "plain-source", "Standard source")
     first, destination = lab.phones
     first.auto_answer = False
@@ -372,6 +378,7 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     # The larger video INVITE may try TCP before falling back to this UDP peer.
     pytest_socket.socket_allow_hosts(['127.0.0.1', '127.0.0.2', '127.0.0.3'])
 
+    await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
         udp.bind(('127.0.0.1', 0))

@@ -833,7 +833,8 @@ async def test_ordinary_browser_session_cannot_be_converted_by_tts(lab, monkeypa
 
 
 async def test_script_stop_between_actions_is_bounded_by_application_deadline(lab):
-    lab.roster[0].metadata["automation_timeout"] = 1
+    source = next(row for row in lab.roster if row.id == "Wakeup-Caller")
+    source.metadata["automation_timeout"] = 1
     checkpoint = asyncio.Event()
 
     async def reached(_call):

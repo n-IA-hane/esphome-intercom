@@ -160,6 +160,8 @@ class SipIncomingInvites:
                 and self.transaction_flow is not None else None),
             codec_policy=pending.codec_policy,
             remote_uri=_uri_text_from_header(request.header("From")),
+            local_uri=_uri_text_from_header(request.header("To")),
+            local_display_name=sip.name_addr_display_name(request.header("To")),
             remote_target_uri=remote_target,
             route_set=sip.record_route_set(request),
             status=pending.status,

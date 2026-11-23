@@ -160,8 +160,10 @@ async def test_application_caller_uses_the_same_native_window_before_its_sip_leg
     from .test_automation_originate_ha import dial
 
     lab, _phone = browser_route_lab
-    lab.roster[0] = replace(lab.roster[0], extension="351777")
-    source = SimpleNamespace(name=lab.roster[0].display_name)
+    previous = next(row for row in lab.roster if row.id == "Wakeup-Caller")
+    configured = replace(previous, extension="351777")
+    lab.roster[:] = [configured if row is previous else row for row in lab.roster]
+    source = SimpleNamespace(name=configured.display_name)
     detach, snapshots, tasks = await attach_route(lab, source)
     context = Context()
     try:

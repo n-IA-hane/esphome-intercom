@@ -28,11 +28,20 @@
       ],
       "dtmf": {
         "clock": 8000
+      },
+      "recv": {
+        "codec": "PCM/16000/1",
+        "payload": 97
       }
     }
   ],
   "rules": [
     "S4",
     "P3"
-  ]
+  ],
+  "local_policy_decision": {
+    "source": "media_corpus_support.POLICIES.trunk",
+    "capabilities": "HA_AUDIO_CAPABILITIES",
+    "reason": "Receive the admitted native 16 kHz PCM independently of the PCMU transmit mapping; keep both receive alternatives."
+  }
 }

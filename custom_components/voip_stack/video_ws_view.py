@@ -745,13 +745,15 @@ def _sync_video_reorder_counters(
     session: _VideoMediaSession,
     reorder: RtpReorderBuffer,
     input_reorder: RtpReorderBuffer,
+    *,
+    admission_duplicates: int = 0,
 ) -> None:
     """Publish loss state even when a timeout is the final media event."""
 
     active_reorder = input_reorder if session.requires_receive_transcoding else reorder
     counters["video_reordered_packets"] = active_reorder.reordered
     counters["video_lost_packets"] = active_reorder.lost
-    counters["video_duplicate_packets"] = active_reorder.duplicates
+    counters["video_duplicate_packets"] = active_reorder.duplicates + admission_duplicates
 
 
 class _BrowserJpegNormalizer:
@@ -1170,7 +1172,10 @@ async def _run_video_session(
                 if transcode_protocol is not None
                 else 0
             )
-            _sync_video_reorder_counters(counters, session, state.reorder, state.input_reorder)
+            _sync_video_reorder_counters(
+                counters, session, state.reorder, state.input_reorder,
+                admission_duplicates=state.admission_duplicates,
+            )
             store_counters(force=True)
             _LOGGER.info(
                 "HA softphone video websocket detached call_id=%s counters=%s",

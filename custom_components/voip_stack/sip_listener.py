@@ -1131,7 +1131,8 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
 
     def local_uri_for_call(self, call_id: str) -> str:
         dialog = self.active_dialogs.get(call_id)
-        return _uri_text_from_header(dialog.request.header("To")) if dialog is not None else ""
+        return ((dialog.local_uri or _uri_text_from_header(dialog.request.header("To")))
+                if dialog is not None else "")
 
     def remote_target_for_call(self, call_id: str) -> str:
         dialog = self.active_dialogs.get(call_id)
@@ -1157,6 +1158,7 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         subscription = sip_transfer.ReferSubscription()
         dialog.refer_subscription = subscription
         subscription.dialog = SubscriptionDialog.from_request(dialog.request, dialog.to_tag)
+        subscription.dialog.local_uri = dialog.local_uri or subscription.dialog.local_uri
         subscription.dialog.remote_cseq = dialog.cseq - 1
         subscription.dialog.remote_target_uri = dialog.remote_target_uri or dialog.remote_uri
         subscription.dialog.route_set = dialog.route_set
@@ -1164,7 +1166,7 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         usage = None
         if any(key.casefold() == "gr" for key, _ in peer_uri.params):
             usage = SubscriptionDialog(key=DialogKey(sip.make_call_id("refer"), sip.make_tag(), ""),
-                local_uri=_uri_text_from_header(dialog.request.header("To")),
+                local_uri=dialog.local_uri or _uri_text_from_header(dialog.request.header("To")),
                 remote_uri=dialog.remote_uri, remote_target_uri=str(peer_uri), remote_cseq=0)
             subscription.dialog = usage
             self._outside_refer[usage.key.call_id] = subscription

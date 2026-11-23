@@ -24,6 +24,9 @@ class _Registry:
     def resource_for(self, call_id, kind):
         return self.relay if call_id == "call-1" and kind == "relay" else None
 
+    def get_session(self, call_id):
+        return self.sessions.get(call_id)
+
     @staticmethod
     def resolve_session_id(call_id: str) -> str:
         return call_id
@@ -152,6 +155,9 @@ class _SourceEndpoint:
         self.calls.append((call_id, kwargs))
         return self.prepared
 
+    def dialog_key(self, _call_id):
+        return None
+
 
 @pytest.fixture
 def bridge_media_updates(monkeypatch):
@@ -200,7 +206,10 @@ def bridge_media_updates(monkeypatch):
 
     dependencies = {
         "call_projection": {
-            "publish_esp_media_route": lambda *_args: None,
+            "publish_bridge_projection": lambda *_args, **_kwargs: None,
+        },
+        "counterpart_display": {
+            "connected_display_name": lambda _client: "",
         },
         "endpoint_lifecycle": {
             "call_registry": lambda hass: hass.registry,
@@ -225,6 +234,7 @@ def bridge_media_updates(monkeypatch):
                 not connection_held and fmt.direction in {"sendrecv", "recvonly"}
             ),
         },
+        "core.sip": {},
         "sip_bridge": {
             "build_pending_invite_video_relay": lambda *_args, **_kwargs: None,
             "configure_answered_invite_video_relay": lambda *_args, **_kwargs: None,
@@ -274,6 +284,7 @@ def test_audio_update_stays_staged_until_generation_checked(
         dialog=SimpleNamespace(video_format=None),
         dialog_ids=SimpleNamespace(call_id="dest-1"),
         on_media_update=None,
+        on_connected_identity=None,
     )
     updated = SimpleNamespace(
         audio_peer=new_peer,
@@ -358,6 +369,7 @@ def test_audio_and_video_commit_share_one_owner_check(
         dialog=SimpleNamespace(video_format=video_format),
         dialog_ids=SimpleNamespace(call_id="dest-2"),
         on_media_update=None,
+        on_connected_identity=None,
     )
     updated = SimpleNamespace(
         audio_peer=new_audio,
@@ -426,6 +438,7 @@ def test_cross_codec_video_direction_change_uses_owned_transcoders(
         dialog=SimpleNamespace(video_format=video_format),
         dialog_ids=SimpleNamespace(call_id="dest-cross-codec"),
         on_media_update=None,
+        on_connected_identity=None,
     )
     updated = SimpleNamespace(
         audio_peer=object(),
@@ -551,6 +564,7 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
         dialog=SimpleNamespace(video_format=None),
         dialog_ids=SimpleNamespace(call_id="dest-add-video"),
         on_media_update=None,
+        on_connected_identity=None,
     )
     updated_video = SimpleNamespace(direction="sendrecv", passthrough=True)
     updated = SimpleNamespace(
@@ -623,6 +637,7 @@ def test_destination_reinvite_removes_video_from_both_bridge_legs(
         dialog=SimpleNamespace(video_format=SimpleNamespace(direction="sendrecv")),
         dialog_ids=SimpleNamespace(call_id="dest-remove-video"),
         on_media_update=None,
+        on_connected_identity=None,
     )
     updated = SimpleNamespace(
         audio_peer=object(),

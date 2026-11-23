@@ -698,6 +698,7 @@ class ForwardGroup:
                 handoff.set_result(dict(reroute_decision))
             return
         if winner is None:
+            self.operation.failure_sip_status = fork_result.outcome.status
             failure = terminal_reason(
                 fork_result.outcome.disposition,
                 fork_result.outcome.reason or "transport_unreachable",

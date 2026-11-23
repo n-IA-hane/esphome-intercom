@@ -53,12 +53,17 @@ def _endpoint(
 
 
 async def test_esphome_originate_uses_native_action_and_canonical_response(managed) -> None:
+    from homeassistant.components.esphome.manager import _async_register_service
     from homeassistant.core import Context, ServiceCall
     from .test_managed_phones_ha import phone_record
 
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
+    native = lab.native.runtime_data
+    advertised = next(service for service in native.services.values()
+                      if service.name == "start_call_on_line")
+    _async_register_service(lab.hass, native, native.device_info, advertised)
     before = len(lab.sent)
     call = ServiceCall(lab.hass, "voip_stack", "call", {
         "device_id": lab.device.id, "destination": "P4", "send_video": True,

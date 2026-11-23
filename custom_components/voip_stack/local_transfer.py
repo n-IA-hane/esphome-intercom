@@ -70,7 +70,9 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
     )
     ready = asyncio.Event()
     watchers = []
+    publish_connected_identity = None
     def commit_owner(relay):
+        nonlocal publish_connected_identity
         calls.remove_leg(consultation.call_id, new_destination)
         calls.forget_bridge_link(consultation.call_id)
         for session, retired in ((original, source_relay), (consultation, destination_relay)):
@@ -124,7 +126,8 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
                                       *(consultation.metadata.get("policy_endpoint_ids") or ()))
                                  ))))
         binder = BridgeMediaUpdateBinder(hass)
-        binder.attach(client, relay, source_call_id=goal.call_id)
+        publish_connected_identity = binder.attach(
+            client, relay, source_call_id=goal.call_id, source_client=source_client)
         if source_client is not None:
             binder.attach_audio_side(source_client, relay, source_call_id=goal.call_id, side="left")
             goal.claim_answer(goal.token, lambda: True)
@@ -137,7 +140,7 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
                 handoff.preserve(old_leg, "phase", "endpoint_id")
                 for value in (client, source_client, referrer):
                     if value is not None:
-                        handoff.preserve(value, "on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
+                        handoff.preserve(value, "on_refer", "on_media_update", "on_connected_identity", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
                 relay = SipRtpRelay.splice_audio(
                     source_relay, "left" if from_callee else "right", destination_relay, "right",
                     merge_reservations=merge_reservations, commit_owner=commit_owner,
@@ -150,6 +153,8 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
             await async_wait_for_cleanup(calls.request_termination(
                 goal.call_id, TerminationIntent("transfer_failed"), generation=goal.generation))
         raise
+    if publish_connected_identity is not None:
+        publish_connected_identity()
     old_watcher = calls.cancel_task(original.call_id, f"client_watcher:{old_destination}")
     new_watcher = calls.cancel_task(consultation.call_id, f"client_watcher:{new_destination}")
     ready.set()

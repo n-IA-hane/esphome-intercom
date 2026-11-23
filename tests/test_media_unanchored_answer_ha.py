@@ -28,7 +28,8 @@ def test_unanchored_opus_answer_keeps_remote_tx_limits_out_of_the_local_receiver
     assert (selected.send.payload_type, selected.send.frame_ms,
             selected.send.max_frame_ms, selected.send.fmtp) == (110, 10, 10, remote_parameters)
     assert (selected.recv.payload_type, selected.recv.frame_ms, selected.recv.min_frame_ms,
-            selected.recv.max_frame_ms, selected.recv.fmtp) == (110, 20, 0, 120, "")
+            selected.recv.max_frame_ms, selected.recv.fmtp) == (
+                110, 20, 0, 120, "stereo=0;sprop-stereo=0;maxaveragebitrate=28000")
     assert selected.recv_formats == (selected.recv,)
     assert selected.send_formats == ()
 
@@ -40,9 +41,11 @@ def test_unanchored_answer_preserves_answer_order_and_one_common_mapping():
     selected = sdp.negotiate_answer_directional(answer, preferred, preferred,
         local_offer_sdp=None, local_capabilities=HA_AUDIO_CAPABILITIES)
     assert selected is not None
-    assert (selected.send.payload_type, selected.send.encoding, selected.send.frame_ms) == (0, "PCMU", 10)
-    assert (selected.recv.payload_type, selected.recv.encoding, selected.recv.frame_ms) == (0, "PCMU", 20)
-    assert selected.recv_formats == (selected.recv,)
+    # The same public engine honors the supplied local preference, while all
+    # valid mappings in the peer description remain receivable.
+    assert (selected.send.payload_type, selected.send.encoding, selected.send.frame_ms) == (96, "L16", 10)
+    assert (selected.recv.payload_type, selected.recv.encoding, selected.recv.frame_ms) == (96, "L16", 20)
+    assert {(fmt.payload_type, fmt.encoding) for fmt in selected.recv_formats} == {(0, "PCMU"), (96, "L16")}
     assert selected.send_formats == ()
 
 

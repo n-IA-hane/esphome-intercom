@@ -173,7 +173,7 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
     from .bridge_media_updates import BridgeMediaUpdateBinder
     from .dtmf_events import attach_dtmf_event_bridge
     from .softphone_termination import async_terminate_sip_bridge_session
-    from .call_projection import publish_bridge_projection
+    from .call_projection import publish_bridge_projection, publish_media_route
     from .endpoint_registry import EndpointBusyError
 
     runtime = require_runtime_data(hass)
@@ -315,7 +315,7 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
         watcher = asyncio.create_task(watch(), name=f"voip-bridge-destination-{destination_id}")
         try:
             with SessionHandoff(calls, old, new) as handoff:
-                handoff.preserve(client, "on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
+                handoff.preserve(client, "on_refer", "on_media_update", "on_connected_identity", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
                 handoff.preserve(relay, "on_dtmf", "on_dtmf_fallback", "on_media_route_changed")
                 calls.remove_leg(old.call_id, destination_id)
                 old.release_resource(f"relay:{old.call_id}", value=relay)
@@ -340,6 +340,7 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
                                          callee=old.callee, client=client)
                 if not new.claim_answer(new.token, lambda: True):
                     raise RuntimeError("replacement answer ownership changed")
+                publish_media_route(hass, new.call_id, relay.media_route)
         except BaseException:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)

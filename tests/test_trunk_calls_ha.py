@@ -920,6 +920,7 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
             if mode == "forward-browser":
                 from aiohttp import WSMsgType
                 from custom_components.voip_stack import audio_ws, audio_ws_view
+                from custom_components.voip_stack.core.media.bridge import plan_browser_audio
                 async with asyncio.timeout(2):
                     while session.metadata.get("endpoint_id") != endpoint.endpoint_id:
                         await asyncio.sleep(0)
@@ -949,7 +950,12 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                 browser_task = asyncio.create_task(audio_ws_view._run_audio_session(
                     lab.hass, browser, active, endpoint_id=endpoint.endpoint_id))
                 await asyncio.wait_for(browser.ready.wait(), 2)
-                frame = struct.pack("<160h", *([4096] * 160))
+                browser_plan = plan_browser_audio(active.send_format, active.recv_format)
+                capture = browser_plan.microphone
+                speaker = browser_plan.speaker
+                assert (capture.sample_rate, capture.channels, capture.frame_ms) == (48000, 1, 10)
+                assert (speaker.sample_rate, speaker.channels, speaker.frame_ms) == (48000, 1, 20)
+                frame = struct.pack(f"<{capture.nominal_frame_samples}h", *([4096] * capture.nominal_frame_samples))
                 for _ in range(5):
                     browser.messages.put_nowait(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(frame)))
                 async with asyncio.timeout(2):
@@ -960,10 +966,17 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                             break
                 assert after.ssrc == packet.ssrc
                 # Both directions still use the caller's original SDP contract.
-                await lab.hass.loop.sock_sendto(audio,
-                    rtp.build_packet(rtp.RtpPacket(8, 30, 4800, 0xABCDEF99, tone)), ("127.0.0.1", ports[0]))
+                for offset in range(2):
+                    await lab.hass.loop.sock_sendto(audio,
+                        rtp.build_packet(rtp.RtpPacket(8, 30 + offset,
+                            4800 + offset * active.recv_format.rtp_timestamp_step,
+                            0xABCDEF99, tone)), ("127.0.0.1", ports[0]))
                 received = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 2))
-                assert set(struct.unpack("<160h", received)) == {32256}
+                assert len(received) == speaker.nominal_frame_bytes
+                samples = struct.unpack(f"<{speaker.nominal_frame_samples}h", received)
+                # The first half includes the 8-to-48 kHz filter startup;
+                # the independent decoded PCMA plateau keeps its 1% bound.
+                assert max(abs(value - 32256) for value in samples[len(samples) // 2:]) <= 32256 * .01
             elif mode == "forward-queue":
                 final = await source_response(200)
                 assert final.body == early.body
@@ -1015,8 +1028,12 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                 assert sum(resource.name == f"relay:{ids.call_id}" for resource in session.resources) == 1
                 source_socket = provider.rtp_socket if mode == "forward-resume" else replacement.rtp_socket
                 assert relay.right.port == source_socket.getsockname()[1]
-                await lab.hass.loop.sock_sendto(source_socket,
-                    rtp.build_packet(rtp.RtpPacket(8, 21, 3360, 0xDEADBEEF, next_tone)), ("127.0.0.1", relay.right_port))
+                # A changed source completes the receiver's two-packet probation.
+                step = relay.right.inbound_rtp_format.rtp_timestamp_step
+                for offset in range(2):
+                    await lab.hass.loop.sock_sendto(source_socket,
+                        rtp.build_packet(rtp.RtpPacket(8, 21 + offset, 3360 + offset * step,
+                            0xDEADBEEF, next_tone)), ("127.0.0.1", relay.right_port))
                 after = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
                 assert after.payload == next_tone
                 assert struct.unpack("<160h", __import__("audioop").alaw2lin(after.payload, 2)) == (-32256,) * 160
@@ -1052,8 +1069,11 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
             assert forwarded.ssrc == priming[0].ssrc
             assert forwarded.sequence == rtp.next_sequence(priming[0].sequence)
             assert forwarded.timestamp == rtp.next_timestamp(priming[0].timestamp, 160)
-            await lab.hass.loop.sock_sendto(source_socket,
-                rtp.build_packet(rtp.RtpPacket(8, 20, 3200, 0xABCDEF12, next_tone)), ("127.0.0.1", relay.right_port))
+            step = relay.right.inbound_rtp_format.rtp_timestamp_step
+            for offset in range(2):
+                await lab.hass.loop.sock_sendto(source_socket,
+                    rtp.build_packet(rtp.RtpPacket(8, 20 + offset, 3200 + offset * step,
+                        0xABCDEF12, next_tone)), ("127.0.0.1", relay.right_port))
             after = rtp.parse_packet(await asyncio.wait_for(lab.hass.loop.sock_recv(audio, 2048), 2))
             assert after.payload == next_tone and after.payload_type == 8
             assert after.ssrc == packet.ssrc and after.sequence == rtp.next_sequence(packet.sequence)

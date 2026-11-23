@@ -2047,6 +2047,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
     async def _run_built_dialog_request(
         self, request, host: str, port: int, *, method: str, timeout: float,
         active: Callable[[], bool], on_provisional=None, on_final=None, dialog_scoped=True,
+        on_sent: Callable[[], None] | None = None,
     ) -> sip.SipMessage | None:
         """Await this transaction's mailbox; only the dispatcher reads SIP."""
         dispatcher = self._ensure_dialog_dispatcher()
@@ -2054,13 +2055,17 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             return sip.response_matches_dialog_transaction(message, request.ids, method, creating_dialog=not dialog_scoped)
         mailbox = dispatcher.register(matches)
         mailbox.dialog_scoped = dialog_scoped
+        def sent():
+            sip.mark_sip_event(self, method)
+            if on_sent is not None:
+                on_sent()
         try:
             response = await async_run_dialog_request_transaction(
                 send=lambda: self._send_dialog_request(request.raw, host, port),
                 read=mailbox.receive, matches=matches, active=active,
                 transport=self.signaling_transport, timeout=timeout, method=method,
                 on_provisional=on_provisional, on_final=on_final,
-                on_sent=lambda: sip.mark_sip_event(self, method),
+                on_sent=sent,
             )
             if response is None and dialog_scoped and self._dialog_result.done():
                 raise ConnectionAbortedError(self._dialog_result.result())

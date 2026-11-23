@@ -26,11 +26,11 @@ def configure(lab, account_audio=None):
         "audio_codecs": [{"codec": "PCMU", "enabled": True}, {"codec": "L16", "enabled": False}],
         "video_codecs": [],
     })
-    data = {"endpoint_id": "codec-browser", "name": "Codec browser", "kind": "sip_account", "username": "codec"}
+    data = {"endpoint_id": "codec", "name": "Codec browser", "kind": "sip_account", "username": "codec"}
     if account_audio is not None:
         data["audio_codecs"] = account_audio
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone",
-        title=data["name"], data=data, unique_id="phone:codec-browser"))
+        title=data["name"], data=data, unique_id="phone:codec"))
     return entry
 
 
@@ -38,7 +38,7 @@ def configure(lab, account_audio=None):
 async def test_registered_ingress_inherits_global_and_account_codec_rows(lab, account_audio, expected):
     entry = configure(lab, account_audio)
     policy = SipIngressPolicy(lab.hass, {}, "127.0.0.1", None)
-    initial = SimpleNamespace(received_via_trunk=False, identified_source_endpoint_id="codec-browser",
+    initial = SimpleNamespace(received_via_trunk=False, identified_source_endpoint_id="codec",
                               authenticated_username="codec")
     selected = policy.codec_policy_for_invite(initial)
     assert selected.audio == expected and selected.video == ()
@@ -56,10 +56,10 @@ async def test_browser_outbound_sdp_uses_effective_account_codec_policy(lab, mon
 
     entry = configure(lab, account_audio)
     if destination_audio is not None:
-        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title="Bedroom",
-            data={"endpoint_id": "bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
-                  "audio_codecs": destination_audio}, unique_id="phone:sip:bedroom0"))
-    source = PhoneEndpoint("codec-browser", "Codec browser", "browser", device_id="codec-browser-device")
+        destination = next(row for row in entry.subentries.values() if row.data.get("username") == "bedroom0")
+        lab.hass.config_entries.async_update_subentry(entry, destination,
+            data={**destination.data, "audio_codecs": destination_audio})
+    source = PhoneEndpoint("codec", "Codec browser", "browser", username="codec", device_id="codec-browser-device")
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.update("bedroom0", availability="available")
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
@@ -110,9 +110,9 @@ async def test_sip_target_leg_uses_destination_account_codec_policy(lab, monkeyp
     from .test_automation_originate_ha import dial
 
     entry = configure(lab)
-    lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title="Bedroom",
-        data={"endpoint_id": "bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
-              "audio_codecs": ["PCMA"]}, unique_id="phone:sip:bedroom0"))
+    destination = next(row for row in entry.subentries.values() if row.data.get("username") == "bedroom0")
+    lab.hass.config_entries.async_update_subentry(entry, destination,
+        data={**destination.data, "audio_codecs": ["PCMA"]})
     peer = lab.phones[0]
 
     def answer():
@@ -141,9 +141,9 @@ async def test_registered_pcma_source_reaches_l16_destination_without_policy_int
     lab = trunks
     entry = config_entry(lab.hass)
     for identity, codec in (("transfer_a", "PCMA"), ("transfer_b", "L16")):
-        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title=identity,
-            data={"endpoint_id": identity, "username": identity, "name": identity, "kind": "sip_account",
-                  "audio_codecs": [codec]}, unique_id="phone:" + identity))
+        account = next(row for row in entry.subentries.values() if row.data.get("username") == identity)
+        lab.hass.config_entries.async_update_subentry(entry, account,
+            data={**account.data, "audio_codecs": [codec]})
     caller, target, _other = registered_phones
     try:
         await asyncio.to_thread(caller.dial, "transfer_b")

@@ -67,6 +67,7 @@ async def test_public_sip_browser_answer_declares_atomic_video_choice_on_udp(lab
     from custom_components.voip_stack.sip_client import SipCallClient
     from tests.test_udp_outbound_flow_ha import reserve_udp_tcp_sockets
 
+    await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     udp, tcp = reserve_udp_tcp_sockets()
     with udp, tcp:
@@ -179,7 +180,8 @@ async def test_dashboard_camera_off_receives_casa_camera_on_after_public_answer(
     try:
         await lab.hass.services.async_call("voip_stack", "call", {
             "device_id": caller.device_id, "destination": callee.name,
-            "media_client_id": "dashboard-media-owner", "send_video": caller_send}, blocking=True)
+            "media_client_id": "dashboard-media-owner", "send_video": caller_send,
+            "receive_video": True}, blocking=True)
         call_id = _ha_softphone_store(lab.hass, caller.endpoint_id)["call_id"]
         bridge = local_softphone_bridge(lab.hass)
         await lab.hass.services.async_call("voip_stack", "answer", {

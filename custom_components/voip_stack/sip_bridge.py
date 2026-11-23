@@ -341,10 +341,8 @@ def configure_answered_invite_video_relay(
 
 def invite_rtp_peer(
     invite: SipInvite,
-    *,
-    established: RtpPeer | None = None,
 ) -> RtpPeer:
-    """Build one inbound peer, retaining an offered established audio mapping."""
+    """Materialize the inbound media contract chosen by the negotiation engine."""
 
     dtmf = invite.recv_dtmf_format
     send_dtmf = invite.send_dtmf_format

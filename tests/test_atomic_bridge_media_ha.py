@@ -51,7 +51,8 @@ async def test_joint_update_does_not_publish_audio_during_video_await(monkeypatc
         right=dialog_video_rtp_peer(previous if side == 'right' else other), left_port=44000, right_port=44002)
     video.started = True
     relay.attach_video_relay(video)
-    client = SimpleNamespace(dialog=previous, dialog_ids=SimpleNamespace(call_id=previous.call_id))
+    client = SimpleNamespace(dialog=previous, dialog_ids=SimpleNamespace(call_id=previous.call_id),
+                             on_connected_identity=None)
     session = SimpleNamespace(call_id='logical-source', live=True, generation=7, metadata={}, state_changed=Mock())
     current, generations = [relay], [True]
     registry = SimpleNamespace(sessions={session.call_id: session},

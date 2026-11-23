@@ -368,7 +368,6 @@ async def test_sip_pickup_uses_committed_relay_without_private_device_commands(
 ):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from homeassistant.config_entries import ConfigSubentry
     from custom_components.voip_stack import call_projection, device_resolver, esphome_actions
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
     from custom_components.voip_stack.roster import RosterEntry
@@ -381,11 +380,10 @@ async def test_sip_pickup_uses_committed_relay_without_private_device_commands(
         "audio_codecs": ["PCMA"],
         "video_codecs": [],
     })
-    runtime.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
-        subentry_type="phone", title="Picker", unique_id="phone:transfer_c",
-        data={"endpoint_id": "transfer_c", "username": "transfer_c",
-              "name": "Picker", "kind": "sip_account", "audio_codecs": [picker_codec]},
-    ))
+    picker_account = next(row for row in entry.subentries.values()
+                          if row.subentry_type == "phone" and row.data.get("username") == "transfer_c")
+    runtime.hass.config_entries.async_update_subentry(entry, picker_account, title="Picker",
+        data={**picker_account.data, "name": "Picker", "audio_codecs": [picker_codec]})
     runtime.runtime.endpoints.register(PhoneEndpoint(
         endpoint_id="browser-target", username="browser-target", name="browser-target", device_id="browser-device",
         kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}),
@@ -1170,9 +1168,9 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
     ordinary.auto_answer = False
     for index, phone in enumerate(runtime.phones):
         name = f"bedroom{index}"
-        runtime.runtime.endpoints.update("sip:" + name, availability="available")
+        runtime.runtime.endpoints.update(name, availability="available")
         destination_index = next(position for position, row in enumerate(runtime.roster)
-                                 if row.metadata.get("endpoint_id") == "sip:" + name)
+                                 if row.metadata.get("endpoint_id") == name)
         runtime.roster[destination_index] = RosterEntry(name,
             sip_uri=f"sip:{name}@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
             metadata={"endpoint_id": name, "endpoint_kind": "sip_account", "registered": True})

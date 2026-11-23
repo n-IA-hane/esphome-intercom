@@ -71,7 +71,7 @@ async def test_wait_false_stop_cancels_one_producer_and_both_calls_idempotently(
     await asyncio.wait_for(stream.started.wait(), 3)
     job = owner.jobs[pending["announcement_id"]]
     owned = {task.get_name() for task in job.session.tasks}
-    assert {"voip-page-output-sip:bedroom0", "voip-page-output-sip:bedroom1",
+    assert {"voip-page-output-bedroom0", "voip-page-output-bedroom1",
             "paging-output-complete", "paging-next-chunk"} <= owned
     stop = ServiceCall(lab.hass, "voip_stack", "stop_announcement", {"announcement_id": pending["announcement_id"]}, context=Context())
     first = await asyncio.wait_for(paging.async_stop_announcement(stop), 4)

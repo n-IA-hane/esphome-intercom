@@ -525,7 +525,7 @@ async def test_selected_outbound_binding_reaches_browser_and_inbound_factories(w
                 "device_id": browser.device_id, "destination": "outbound-phone",
             }, blocking=True, context=context)
         else:
-            account = sip_test_account(wire.lab, "sip:bedroom1")
+            account = sip_test_account(wire.lab, "bedroom1")
             caller = SipCallClient(local_ip="127.0.0.2", local_name="Direct incoming caller",
                 username=account.username, password=account.password,
                 local_sip_port=5060, local_rtp_port=40010,

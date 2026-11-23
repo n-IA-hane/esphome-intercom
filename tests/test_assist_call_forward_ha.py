@@ -82,7 +82,7 @@ async def test_assist_successful_forward_retires_only_old_consumer_and_commits_b
     assert result == {"status": "connected"}
     session = registry.get_session(call_id)
     assert session.live and session.owner == "bridge"
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+    assert session.metadata["dest_endpoint_id"] == "bedroom0"
     assert registry.resource_for(call_id, "assist_application") is None
     assert consumer.done() and media.closed.is_set()
     assert application.conversation.context is context and application.conversation.detached
@@ -176,13 +176,13 @@ async def test_assist_transfer_tool_can_enter_queue_and_keep_the_original_call(q
     application = lab.calls.resource_for(call_id, "assist_application")
     media, context = application.media, application.conversation.context
     lab.runtime.directory = PhoneDirectory(lab.roster)
-    lab.manager.agent_states[lab.identity]["sip:bedroom1"] = "paused"
+    lab.manager.agent_states[lab.identity]["bedroom1"] = "paused"
     transfer = next(tool for tool in current_call_tools(lab.hass, context) if tool.action == "transfer")
     llm_context = LLMContext(platform="conversation", context=context, language="en", assistant="conversation", device_id=None)
     result = await transfer.async_call(lab.hass, ToolInput(transfer.name, {"destination": "Reception"}), llm_context)
     assert result["status"] == "connected"
     await wait_for_bridge(lab, call_id)
-    assert lab.calls.get_session(call_id).metadata["dest_endpoint_id"] == "sip:bedroom0"
+    assert lab.calls.get_session(call_id).metadata["dest_endpoint_id"] == "bedroom0"
     assert application.conversation.detached and media.closed.is_set()
     assert not lab.manager.waiting and not lab.manager.reservations
     assert len(lab.phones[0].invites) == 1

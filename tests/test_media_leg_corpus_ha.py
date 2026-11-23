@@ -43,7 +43,8 @@ def negotiate(step) -> dict:
         # The existing writer serializes the contract: only the negotiation is new.
         written = sdp.build_answer_directional(
             "192.0.2.1", "192.0.2.1", 40000, result.send, result.receive,
-            dtmf=result.dtmf, remote_sdp=step.sdp)
+            recv_formats=result.receive_accept, dtmf=result.dtmf,
+            dtmf_direction=result.dtmf_direction, remote_sdp=step.sdp)
     return {
         "outcome": "accept",
         "answer": [line for line in written.split("\r\n") if line.startswith("a=")],
@@ -55,13 +56,32 @@ def negotiate(step) -> dict:
                  "payload": result.dtmf_direction.send.payload_type}
                 if result.dtmf_direction is not None and result.dtmf_direction.send is not None else None,
         "recv_accept": sorted(_describe(fmt)["codec"] for fmt in result.receive_accept) or None,
+        "recv_payloads": [fmt.payload_type for fmt in result.receive_accept],
     }
 
 
 @pytest.mark.parametrize("step", STEPS, ids=lambda step: step.name)
 def test_leg_engine_meets_the_contract(step):
-    found = mismatches(step.expect, negotiate(step))
+    actual = negotiate(step)
+    found = mismatches(step.expect, actual)
     assert not found, "\n".join(found)
+    if actual["outcome"] != "accept":
+        return
+
+    def payloads(body):
+        media = next(line for line in body.decode().splitlines() if line.startswith("m=audio "))
+        return {int(value) for value in media.split()[3:]}
+
+    assert actual["send"]["payload"] in payloads(step.sdp)
+    assert actual["recv"]["payload"] in payloads(step.local_offer if step.local_offer else step.sdp)
+    direction = sdp.parse_sdp(step.sdp)["direction"]
+    if step.op == "answer_offer" and direction in {"sendonly", "sendrecv"}:
+        assert set(actual["recv_payloads"]) <= payloads(actual["answer_bytes"].encode())
+    encoding, rate, channels = actual["send"]["codec"].split("/")
+    if encoding in {"L16", "PCM", "L24"} and direction in {"recvonly", "sendrecv"}:
+        width = 3 if encoding == "L24" else 2
+        wire_bytes = int(rate) * int(channels) * width * actual["send"]["ptime"] / 1000
+        assert wire_bytes.is_integer() and wire_bytes <= HA_AUDIO_CAPABILITIES.transmit_payload_bytes
 
 
 @pytest.mark.parametrize("step", STEPS, ids=lambda step: step.name)

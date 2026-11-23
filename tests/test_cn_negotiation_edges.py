@@ -29,10 +29,11 @@ def test_retained_opus_receive_mapping_rejects_preliminary_pcmu_cn_clock():
         "a=rtpmap:0 PCMU/8000\r\na=rtpmap:98 OPUS/48000/2\r\na=rtpmap:13 CN/8000",
     )
 
-    def negotiate(description):
+    def negotiate(description, *, established=None):
         return sdp.negotiate_directional(
             description, HA_SIP_PCM_FORMATS, HA_SIP_PCM_FORMATS,
             codec_policy=policy, local_capabilities=HA_AUDIO_CAPABILITIES,
+            established=established,
         )
 
     original = negotiate(original_offer)
@@ -48,12 +49,14 @@ def test_retained_opus_receive_mapping_rejects_preliminary_pcmu_cn_clock():
     established = invite_rtp_peer(invite)
     preliminary = negotiate(reoffer)
     assert preliminary is not None
-    assert [fmt.encoding for fmt in preliminary.recv_formats] == ["PCMU", "CN"]
+    assert [fmt.encoding for fmt in preliminary.recv_formats] == ["PCMU", "OPUS", "CN"]
+    negotiated = negotiate(reoffer, established=original)
+    assert negotiated is not None
     updated = replace(
-        invite, remote_sdp=reoffer.encode(), send_format=preliminary.send,
-        recv_format=preliminary.recv, recv_formats=preliminary.recv_formats,
+        invite, remote_sdp=reoffer.encode(), send_format=negotiated.send,
+        recv_format=negotiated.recv, recv_formats=negotiated.recv_formats,
     )
-    retained = invite_rtp_peer(updated, established=established)
+    retained = invite_rtp_peer(updated)
 
     assert retained.inbound_rtp_format == established.inbound_rtp_format
     assert retained.outbound_rtp_format == established.outbound_rtp_format
@@ -62,7 +65,7 @@ def test_retained_opus_receive_mapping_rejects_preliminary_pcmu_cn_clock():
         retained.outbound_rtp_format, retained.inbound_rtp_format,
         recv_formats=retained.inbound_rtp_formats, remote_sdp=reoffer,
     )
-    assert sdp.parse_sdp(answer)["payload_order"] == [98]
+    assert sdp.parse_sdp(answer)["payload_order"] == [98, 0]
     assert all(fmt.encoding != "CN" for fmt in retained.inbound_rtp_formats)
     receiver = RtpAudioReceiver(retained.inbound_rtp_format, retained.inbound_rtp_formats)
     receiver.close()
@@ -85,19 +88,24 @@ def test_retained_pcmu_packet_time_owns_the_existing_cn_receive_quantum():
         recv_formats=(primary, cn), remote_rtp_host="192.0.2.1", remote_rtp_port=40000,
         codec_policy=CodecPolicy(audio=("PCMU", "CN")),
     )
-    established = invite_rtp_peer(invite)
-    preliminary_primary = replace(primary, frame_ms=10)
-    preliminary_cn = replace(cn, frame_ms=10)
-    updated = replace(
-        invite, remote_sdp=offer.replace("ptime:20", "ptime:10").encode(),
-        send_format=preliminary_primary, recv_format=preliminary_primary,
-        recv_formats=(preliminary_primary, preliminary_cn),
-    )
+    reoffer = offer.replace("ptime:20", "ptime:10")
+    previous = sdp.RtpPcmDirection(primary, primary, recv_formats=(primary, cn))
+    negotiated = sdp.negotiate_directional(reoffer, [primary.audio_format],
+        [primary.audio_format], codec_policy=invite.codec_policy,
+        established=previous)
+    assert negotiated is not None
+    updated = replace(invite, remote_sdp=reoffer.encode(),
+        send_format=negotiated.send, recv_format=negotiated.recv,
+        recv_formats=negotiated.recv_formats)
 
-    retained = invite_rtp_peer(updated, established=established)
+    retained = invite_rtp_peer(updated)
 
-    assert retained.inbound_rtp_format == primary
-    assert retained.inbound_rtp_formats == (primary, cn)
+    assert retained.inbound_rtp_format == negotiated.recv
+    assert (retained.inbound_rtp_format.payload_type, retained.inbound_rtp_format.encoding,
+            retained.inbound_rtp_format.sample_rate, retained.inbound_rtp_format.frame_ms,
+            retained.inbound_rtp_format.max_frame_ms) == (0, "PCMU", 8000, 20, 20)
+    assert [(fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.frame_ms)
+            for fmt in retained.inbound_rtp_formats] == [(0, "PCMU", 8000, 20), (13, "CN", 8000, 20)]
     receiver = RtpAudioReceiver(retained.inbound_rtp_format, retained.inbound_rtp_formats)
     try:
         pcm = receiver.decode(13, bytes([40]))

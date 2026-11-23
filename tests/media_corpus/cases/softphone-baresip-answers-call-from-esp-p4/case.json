@@ -21,7 +21,12 @@
   ],
   "expect": [
     {
-      "outcome": "accept"
+      "outcome": "accept",
+      "send": {
+        "codec": "L16/48000/1",
+        "ptime": 10,
+        "payload": 101
+      }
     }
   ],
   "rules": [
@@ -29,5 +34,10 @@
     "S6",
     "P3",
     "V3"
-  ]
+  ],
+  "local_policy_decision": {
+    "source": "media_corpus_support.POLICIES.phone",
+    "capabilities": "HA_AUDIO_CAPABILITIES",
+    "reason": "Use the offered 48 kHz mono mapping with the supplied transmit preference. Its 10 ms packet is 960 bytes; 20 ms would exceed the 1200 byte transmit budget."
+  }
 }

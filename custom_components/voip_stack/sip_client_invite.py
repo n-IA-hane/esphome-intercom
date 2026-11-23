@@ -322,8 +322,14 @@ class SipInviteTransactions:
         failure = await self._prepare_initial_media(exchange)
         if failure is not None:
             return failure
-        self._prepare_initial_offer(delayed_offer=delayed_offer, audio_direction=audio_direction)
-        exchange.request = self._build_pending_invite()
+        try:
+            self._prepare_initial_offer(delayed_offer=delayed_offer, audio_direction=audio_direction)
+            exchange.request = self._build_pending_invite()
+        except BaseException:
+            # Offer/serialization failure precedes any INVITE on the wire.
+            # Its owner can release signaling without a nonexistent Timer F.
+            self._invite_transaction_active = False
+            raise
         failure = await self._prepare_invite_request_transport(exchange)
         if failure is not None:
             return failure

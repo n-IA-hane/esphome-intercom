@@ -76,6 +76,12 @@ def _patch_route_prefix(
     pending_routes: dict[str, object] | None = None,
     pending_invites: dict[str, object] | None = None,
 ) -> None:
+    from custom_components.voip_stack import trunk_selection
+
+    # This routing unit has no configured trunks; public trunk-name parsing
+    # has its own native configuration tests.
+    monkeypatch.setattr(trunk_selection, "parse_public_trunk_destination",
+                        lambda _hass, target: ("", target))
     monkeypatch.setattr(
         invite_router,
         "_registered_roster_entries",

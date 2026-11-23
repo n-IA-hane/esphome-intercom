@@ -366,6 +366,8 @@ class _ActiveDialog(DialogSignalingState):
     connected_identity_user: str = ""
     connected_identity_sent: bool = False
     connected_identity_task: asyncio.Task[None] | None = None
+    local_uri: str = ""
+    local_display_name: str = ""
     remote_uri: str = ""
     remote_display_name: str = ""
     update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)

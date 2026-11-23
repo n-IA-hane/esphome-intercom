@@ -413,6 +413,17 @@ async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_t
         root = ElementTree.fromstring(refreshed.follow_up.body)
         assert root.attrib["entity"] == request.uri
         dialog = root.find("d:dialog", NS)
+        session = lab.calls.get_session(call_id)
+        watched = lab.runtime.endpoints.resolve("101")
+        assert dialog is not None, {
+            "watched_endpoint": watched.endpoint_id if watched is not None else None,
+            "owner": session.owner, "route_kind": session.route_kind,
+            "source_endpoint_id": session.metadata.get("source_endpoint_id"),
+            "target_endpoint_id": session.metadata.get("target_endpoint_id"),
+            "endpoint_claims": tuple(session.endpoint_claims),
+            "legs": [(leg.endpoint_id, leg.role, leg.state) for leg in session.legs.values()],
+            "early_dialogs": tuple(client.early_dialogs),
+        }
         assert dialog.find("d:state", NS).text == "early"
         wire = phone.invites[-1]
         assert dialog.attrib["call-id"] == wire.header("Call-ID")

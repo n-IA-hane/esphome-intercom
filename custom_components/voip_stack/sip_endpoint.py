@@ -554,6 +554,15 @@ class SipEndpointManager:
             return bool(callable(send) and await send(call_id, digit, duration_ms=duration_ms))
         return False
 
+    async def async_update_connected_identity(
+        self, call_id: str, name: str, uri: str, *, expected_key=None, is_current=None,
+    ) -> bool:
+        """Use the sole inbound dialog owner for an RFC 4916 UPDATE."""
+        owners = [endpoint for endpoint in self._dialog_endpoints()
+                  if endpoint.dialog_key(call_id) is not None]
+        return bool(len(owners) == 1 and await owners[0].async_update_connected_identity(
+            call_id, name, uri, expected_key=expected_key, is_current=is_current))
+
     async def acquire_replacement_dialog(self, replaces):
         matches = [endpoint for endpoint in self._dialog_endpoints()
                    if endpoint.invite_for_replaces(replaces) is not None]

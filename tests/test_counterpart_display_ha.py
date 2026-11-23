@@ -35,14 +35,22 @@ async def test_outgoing_number_displays_identity_without_rewriting_request_uri(
     source = PhoneEndpoint("identity-browser", "Casa", "browser", device_id="identity-browser-device")
     lab.runtime.endpoints.register(source)
     lab.runtime.endpoints.update("bedroom0", name=name or "204", extension="204", availability="available")
-    entry = replace(lab.roster[1], id="204", name=name, extension="204")
-    lab.roster[1] = entry
+    previous = next(row for row in lab.roster
+                    if row.metadata.get("endpoint_id") == "bedroom0")
+    entry = replace(previous, name=name, extension="204")
+    lab.roster[:] = [entry if row is previous else row for row in lab.roster]
     lab.runtime.directory.replace([*lab.roster, RosterEntry("Remote reception", name="Unrelated directory contact")])
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
     phone = lab.phones[0]
+    phone.auto_answer = False
+    allow_ringing = False
+    answers = []
+
     def identity_response(request, address, status, body=b""):
+        if status == 180 and not allow_ringing:
+            return
         to = request.header("To")
         if remote_name and status == 200 and request.method == "INVITE":
             to = f'"{remote_name}" <{sip.name_addr_uri(to)}>'
@@ -52,18 +60,37 @@ async def test_outgoing_number_displays_identity_without_rewriting_request_uri(
             port = phone.transport.get_extra_info("sockname")[1]
             headers += [("Content-Type", "application/sdp"), ("Contact", f"<sip:bedroom@127.0.0.1:{port}>")]
         reason = {180: "Ringing", 200: "OK", 486: "Busy Here", 487: "Request Terminated"}[status]
+        if status == 200 and request.method == "INVITE":
+            answers.append(to)
         phone.transport.sendto(sip.build_response(status, reason, headers, body), address)
 
     monkeypatch.setattr(phone, "respond", identity_response)
-    await lab.hass.services.async_call("voip_stack", "call", {
+    originate = asyncio.create_task(lab.hass.services.async_call("voip_stack", "call", {
         "device_id": source.device_id, "destination": "204",
-    }, blocking=True)
+    }, blocking=True))
+    try:
+        await asyncio.wait_for(phone.invited.wait(), 2)
+        calling = _ha_softphone_state(lab.hass, source.endpoint_id)
+        assert calling["state"] == "calling"
+        assert calling["peer_name"] == (name or "204")
+        assert calling["dialed_target"] == "204"
+        assert not answers
+        allow_ringing = True
+        phone.respond(phone.last_request, phone.remote, 180)
+        await asyncio.wait_for(originate, 2)
+        assert not answers
+        phone.answer()
+    finally:
+        if not originate.done():
+            originate.cancel()
+            await asyncio.gather(originate, return_exceptions=True)
     async with asyncio.timeout(2):
         while _ha_softphone_state(lab.hass, source.endpoint_id)["state"] != "in_call":
             await asyncio.sleep(.01)
     current = _ha_softphone_state(lab.hass, source.endpoint_id)
     session = lab.calls.get_session(current["call_id"])
     assert phone.invites[-1].uri == entry.sip_uri
+    assert sip.name_addr_uri(answers[-1]) == sip.name_addr_uri(phone.invites[-1].header("To"))
     assert current["peer_name"] == expected
     assert current["dialed_target"] == "204"
     row = snapshot(lab.runtime, source.endpoint_id)[0]
@@ -91,8 +118,14 @@ async def test_outgoing_number_displays_identity_without_rewriting_request_uri(
             while _ha_softphone_state(lab.hass, source.endpoint_id)["peer_name"] != updated:
                 await asyncio.sleep(.01)
         assert lab.calls.get_session(session.call_id).metadata["connected_party"] == updated
-        assert snapshot(lab.runtime, source.endpoint_id)[0].peer_name == updated
-        assert _ha_softphone_state(lab.hass, source.endpoint_id)["dialed_target"] == "204"
+        updated_row = snapshot(lab.runtime, source.endpoint_id)[0]
+        assert updated_row.peer_name == updated
+        updated_state = _ha_softphone_state(lab.hass, source.endpoint_id)
+        assert updated_state["dialed_target"] == "204"
+        assert updated_state["call_id"] == session.call_id
+        assert account_call_details({**session.metadata, "callee": session.callee}, source.endpoint_id,
+                                    {"peer_name": updated_row.peer_name}) == ("outgoing", updated)
+        assert updated in _describe_call({**updated_state, "type": "ended"})["message"]
     await lab.hass.services.async_call("voip_stack", "hangup", {
         "device_id": source.device_id, "call_id": session.call_id,
     }, blocking=True)
@@ -173,20 +206,40 @@ async def test_incoming_trunk_display_preserves_real_names_and_resolves_e164_ech
 async def test_incoming_caller_name_survives_public_forward_to_another_phone(
     trunks, registered_phones, remote_name, tmp_path,
 ):
+    await _assert_incoming_caller_identity_through_forward(
+        trunks, registered_phones, remote_name, tmp_path,
+    )
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("remote_name", ["n-IA-hane", "Remote reception"])
+async def test_forwarded_phone_receives_original_sip_caller_name_and_number(
+    trunks, remote_name, tmp_path,
+):
+    await _assert_incoming_caller_identity_through_forward(
+        trunks, (), remote_name, tmp_path,
+        receiving_phone=trunks.phones[0], caller_number="+3902123456",
+    )
+
+
+async def _assert_incoming_caller_identity_through_forward(
+    lab, registered_phones, remote_name, tmp_path, *,
+    receiving_phone=None, caller_number="external",
+):
     from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
     from custom_components.voip_stack.config import normalized_trunk_config
     from custom_components.voip_stack.phone_endpoint import EndpointKind
     from custom_components.voip_stack.sip_trunk import SipTrunkClient
     from custom_components.voip_stack.trunk_runtime import trunk_client_config
 
-    lab = trunks
-    browser = PhoneEndpoint("casa", "Casa", EndpointKind.BROWSER,
+    browser = PhoneEndpoint("casa", "Casa", EndpointKind.BROWSER, username="Casa",
         device_id="browser-casa", availability="available")
     lab.runtime.endpoints.register(browser)
     lab.roster.append(RosterEntry("Casa", metadata={"local_ha": True, "endpoint_id": "casa"}))
-    lab.runtime.endpoints.update("transfer_b", name="Waveshare P4 Touch")
+    target_username = "bedroom0" if receiving_phone is not None else "transfer_b"
+    lab.runtime.endpoints.update(target_username, name="Waveshare P4 Touch")
     for index, entry in enumerate(lab.roster):
-        if entry.id == "transfer_b":
+        if entry.metadata.get("endpoint_id") == target_username:
             lab.roster[index] = replace(entry, name="Waveshare P4 Touch")
     # Explicit SIP display must win even when another contact uses that alias.
     lab.roster.append(RosterEntry(remote_name, name="Unrelated directory alias"))
@@ -222,9 +275,9 @@ async def test_incoming_caller_name_survives_public_forward_to_another_phone(
     transport, caller = await lab.hass.loop.create_datagram_endpoint(Caller, local_addr=("127.0.0.2", 0))
     source_port = transport.get_extra_info("sockname")[1]
     headers = [("Via", f"SIP/2.0/UDP 127.0.0.2:{source_port};branch=z9hG4bK-incoming-forward;rport"),
-        ("From", f'"{remote_name}" <sip:external@provider.example>;tag=external'),
+        ("From", f'"{remote_name}" <sip:{caller_number}@provider.example>;tag=external'),
         ("To", "<sip:Casa@127.0.0.1>"), ("Call-ID", call_id), ("CSeq", "1 INVITE"),
-        ("Contact", f"<sip:external@127.0.0.2:{source_port}>"), ("Content-Type", "application/sdp")]
+        ("Contact", f"<sip:{caller_number}@127.0.0.2:{source_port}>"), ("Content-Type", "application/sdp")]
     offer = ("v=0\r\no=- 1 1 IN IP4 127.0.0.2\r\ns=Incoming caller\r\n"
         "c=IN IP4 127.0.0.2\r\nt=0 0\r\nm=audio 35000 RTP/AVP 110\r\n"
         "a=rtpmap:110 L16/16000/1\r\na=ptime:20\r\na=sendrecv\r\n")
@@ -237,7 +290,7 @@ async def test_incoming_caller_name_survives_public_forward_to_another_phone(
         assert ringing["caller"] == ringing["peer_name"] == remote_name
         await lab.hass.services.async_call("voip_stack", "forward", {
             "device_id": browser.device_id, "call_id": call_id,
-            "destination": "Waveshare P4 Touch",
+            "destination": target_username if receiving_phone is not None else "Waveshare P4 Touch",
         }, blocking=True)
         response = await asyncio.wait_for(final.get(), 3)
         assert response.status_code == 200
@@ -246,7 +299,14 @@ async def test_incoming_caller_name_survives_public_forward_to_another_phone(
                 await asyncio.sleep(.01)
         connected = _ha_softphone_state(lab.hass, "casa")
         assert connected["caller"] == connected["peer_name"] == remote_name
-        assert "Call established" in registered_phones[1].read()
+        received_from = ""
+        if receiving_phone is not None:
+            received = receiving_phone.invites[-1]
+            received_from = received.header("From")
+            assert sip.name_addr_display_name(received_from) == remote_name
+            assert sip.parse_sip_uri(sip.name_addr_uri(received_from)).user == caller_number
+        else:
+            assert "Call established" in registered_phones[1].read()
         dialog = [(key, response.header(key)) for key in ("Via", "From", "To", "Call-ID")]
         transport.sendto(sip.build_request("BYE", uri, [*dialog, ("CSeq", "2 BYE")]), listener)
         bye = await asyncio.wait_for(final.get(), 3)
@@ -258,7 +318,8 @@ async def test_incoming_caller_name_survives_public_forward_to_another_phone(
         assert terminal["peer_name"] == remote_name
         assert not lab.runtime.rtp_port_pool.get("used") and not lab.calls.endpoint_claims_snapshot()
         (tmp_path / "incoming-forward-identity.json").write_text(json.dumps({
-            "caller": remote_name, "ringing": ringing, "connected": connected,
+            "caller": remote_name, "caller_number": caller_number,
+            "received_from": received_from, "ringing": ringing, "connected": connected,
             "terminal": terminal, "statuses": [message.status_code for message in messages],
         }, indent=2) + "\n")
     finally:

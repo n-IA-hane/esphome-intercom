@@ -431,5 +431,145 @@
    "RR": 0
   },
   "cc": "RFC3556"
+ },
+ {
+  "step": "door-station-dahua-vto2211-two-codecs-issue-115#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.codec",
+  "prior": "PCMU/8000/1",
+  "intended": "PCM/16000/1",
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.trunk / HA_AUDIO_CAPABILITIES",
+  "reason": "Receive the admitted native 16 kHz PCM independently of the PCMU transmit mapping; keep both receive alternatives."
+ },
+ {
+  "step": "door-station-dahua-vto2211-two-codecs-issue-115#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.payload",
+  "prior": 0,
+  "intended": 97,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.trunk / HA_AUDIO_CAPABILITIES",
+  "reason": "Receive the admitted native 16 kHz PCM independently of the PCMU transmit mapping; keep both receive alternatives."
+ },
+ {
+  "step": "softphone-baresip-answers-call-from-esp-box-opus#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.codec",
+  "prior": "OPUS/48000/2",
+  "intended": "G722/8000/1",
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "The supplied local receive preference is 16 kHz mono; G722 decodes to that geometry. Opus and all other accepted aliases remain available."
+ },
+ {
+  "step": "softphone-baresip-answers-call-from-esp-box-opus#0",
+  "entry_point": "answer to a local offer",
+  "field": "recv.payload",
+  "prior": 98,
+  "intended": 9,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "The supplied local receive preference is 16 kHz mono; G722 decodes to that geometry. Opus and all other accepted aliases remain available."
+ },
+ {
+  "step": "softphone-baresip-answers-call-from-esp-p4#0",
+  "entry_point": "answer to a local offer",
+  "field": "send.codec",
+  "prior": "L16/16000/1",
+  "intended": "L16/48000/1",
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "Use the offered 48 kHz mono mapping with the supplied transmit preference. Its 10 ms packet is 960 bytes; 20 ms would exceed the 1200 byte transmit budget."
+ },
+ {
+  "step": "softphone-baresip-answers-call-from-esp-p4#0",
+  "entry_point": "answer to a local offer",
+  "field": "send.ptime",
+  "prior": 20,
+  "intended": 10,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "Use the offered 48 kHz mono mapping with the supplied transmit preference. Its 10 ms packet is 960 bytes; 20 ms would exceed the 1200 byte transmit budget."
+ },
+ {
+  "step": "softphone-baresip-answers-call-from-esp-p4#0",
+  "entry_point": "answer to a local offer",
+  "field": "send.payload",
+  "prior": 103,
+  "intended": 101,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "Use the offered 48 kHz mono mapping with the supplied transmit preference. Its 10 ms packet is 960 bytes; 20 ms would exceed the 1200 byte transmit budget."
+ },
+ {
+  "step": "softphone-baresip-answers-video-call-from-esp-p4#0",
+  "entry_point": "answer to a local offer",
+  "field": "send.codec",
+  "prior": "L16/16000/1",
+  "intended": "L16/48000/1",
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "Use the offered 48 kHz mono mapping at 10 ms within the 1200 byte transmit budget; the rejected video section does not change audio preferences."
+ },
+ {
+  "step": "softphone-baresip-answers-video-call-from-esp-p4#0",
+  "entry_point": "answer to a local offer",
+  "field": "send.ptime",
+  "prior": 20,
+  "intended": 10,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "Use the offered 48 kHz mono mapping at 10 ms within the 1200 byte transmit budget; the rejected video section does not change audio preferences."
+ },
+ {
+  "step": "softphone-baresip-answers-video-call-from-esp-p4#0",
+  "entry_point": "answer to a local offer",
+  "field": "send.payload",
+  "prior": 103,
+  "intended": 101,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "Use the offered 48 kHz mono mapping at 10 ms within the 1200 byte transmit budget; the rejected video section does not change audio preferences."
+ },
+ {
+  "step": "softphone-baresip-offers-all-20-101#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.codec",
+  "prior": "L16/48000/1",
+  "intended": "G722/8000/1",
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "The supplied local receive preference is 16 kHz mono. G722 provides that decoded geometry and precedes the equal-geometry L16 mapping in this offer; retain Opus and all other admitted aliases."
+ },
+ {
+  "step": "softphone-baresip-offers-all-20-101#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.payload",
+  "prior": 100,
+  "intended": 9,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "The supplied local receive preference is 16 kHz mono. G722 provides that decoded geometry and precedes the equal-geometry L16 mapping in this offer; retain Opus and all other admitted aliases."
+ },
+ {
+  "step": "softphone-baresip-offers-all-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.codec",
+  "prior": "L16/48000/1",
+  "intended": "G722/8000/1",
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "The supplied local receive preference is 16 kHz mono. G722 provides that decoded geometry and precedes the equal-geometry L16 mapping in this offer; retain Opus and all other admitted aliases."
+ },
+ {
+  "step": "softphone-baresip-offers-all-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "recv.payload",
+  "prior": 100,
+  "intended": 9,
+  "cc": "LOCAL_CAPABILITIES",
+  "source_policy": "POLICIES.phone / HA_AUDIO_CAPABILITIES",
+  "reason": "The supplied local receive preference is 16 kHz mono. G722 provides that decoded geometry and precedes the equal-geometry L16 mapping in this offer; retain Opus and all other admitted aliases."
  }
 ]

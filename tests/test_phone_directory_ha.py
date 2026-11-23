@@ -147,7 +147,7 @@ async def test_duplicate_esp_name_does_not_block_other_directory_identities(mana
 async def test_esp_restore_collision_never_reassigns_a_stable_endpoint_owner(managed):
     from homeassistant.helpers import device_registry as dr, issue_registry as ir
     from custom_components.voip_stack.directory_runtime import async_refresh_directory
-    from custom_components.voip_stack.phone_config import _add_phone_subentry
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
 
     lab = managed
     other = dr.async_get(lab.hass).async_get_or_create(config_entry_id=lab.native.entry_id,
@@ -155,6 +155,7 @@ async def test_esp_restore_collision_never_reassigns_a_stable_endpoint_owner(man
     _add_phone_subentry(lab.hass, lab.entry, data={"kind": "sip_account", "name": "Existing owner",
         "username": "Ingresso", "password": "existing-owner-fixture", "device_id": other.id,
         "username_source": "user"}, title="Existing owner")
+    sync_registry_from_entry(lab.hass, lab.entry)
     owner = lab.runtime.endpoints.require("Ingresso")
     await lab.controller.async_sync()
     assert lab.runtime.endpoints.require("Ingresso") == owner
@@ -192,10 +193,13 @@ async def test_cold_reload_publishes_managed_identity_without_api_or_binding(man
 
 
 def add_phone(lab, *, username, name, extension="", group=""):
-    from custom_components.voip_stack.phone_config import _add_phone_subentry
-    return _add_phone_subentry(lab.hass, lab.entry, data={"kind": "sip_account", "username": username,
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
+    subentry = _add_phone_subentry(lab.hass, lab.entry, data={"kind": "sip_account", "username": username,
         "name": name, "password": "synthetic-phone-secret", "username_source": "user",
         "extension": extension, "ring_group": group, "enabled": True}, title=name)
+    sync_registry_from_entry(lab.hass, lab.entry)
+    assert lab.runtime.endpoints.by_username(username) is not None
+    return subentry
 
 
 @pytest.mark.parametrize("publish_sensor", [True, False], ids=["sensor", "disabled-sensor"])

@@ -30,6 +30,19 @@ def body(policy, *, common=True, **kwargs):
     )
 
 
+def assert_frozen_audio_wire(wire, expected):
+    """Allow only the explicit disabled-RTCP bandwidth declaration."""
+
+    lines = wire.splitlines(keepends=True)
+    audio = [index for index, line in enumerate(lines) if line.startswith("m=audio ")]
+    assert len(audio) == 1, wire
+    position = audio[0] + 1
+    assert lines[position:position + 2] == ["b=RS:0\r\n", "b=RR:0\r\n"], wire
+    assert sum(line.startswith(("b=RS:", "b=RR:")) for line in lines) == 2, wire
+    preserved = "".join(lines[:position] + lines[position + 2:])
+    assert hashlib.sha256(preserved.encode()).hexdigest() == expected, wire
+
+
 @pytest.mark.parametrize("configured_absent", [False, True])
 @pytest.mark.parametrize(
     "common,expected",
@@ -50,7 +63,7 @@ def test_absent_policy_and_default_catalogue_retain_frozen_wire_bytes(
     ):
         pytest.skip("The frozen common-codec oracle requires actual G722/Opus backends")
     policy = CodecPolicy.from_config({}, prefix="") if configured_absent else None
-    assert hashlib.sha256(body(policy, common=common).encode()).hexdigest() == expected
+    assert_frozen_audio_wire(body(policy, common=common), expected)
 
 
 @pytest.mark.parametrize("enabled", [("L24",), ("PCMU", "L24"), ("L16", "L24")])
@@ -132,6 +145,7 @@ def test_explicit_rtp_mapping_and_fmtp_remain_exact_without_linear_expansion():
     fmt = sdp.RtpPcmFormat(112, "L24", 16000, 1, 20, fmtp="emphasis=50-15")
     wire = body(
         CodecPolicy(audio=("L24", "L16")),
+        local_capabilities=HA_AUDIO_CAPABILITIES,
         send_rtp_formats=(fmt,),
         recv_rtp_formats=(fmt,),
     )
@@ -326,11 +340,7 @@ def test_dynamic_default_offer_keeps_independent_baseline_wire_bytes(
     ):
         pytest.skip("The frozen baseline requires actual G722/Opus backends")
     policy = CodecPolicy.from_config({}, prefix="") if configured_absent else None
-    assert (
-        hashlib.sha256(
-            body(
-                policy, common=common, local_capabilities=HA_AUDIO_CAPABILITIES
-            ).encode()
-        ).hexdigest()
-        == expected
+    assert_frozen_audio_wire(
+        body(policy, common=common, local_capabilities=HA_AUDIO_CAPABILITIES),
+        expected,
     )

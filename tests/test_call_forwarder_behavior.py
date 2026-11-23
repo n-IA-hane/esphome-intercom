@@ -10,6 +10,7 @@ from homeassistant.exceptions import ServiceValidationError
 import pytest
 
 from custom_components.voip_stack import call_forwarder
+from custom_components.voip_stack.endpoint_session import CallEventContext
 
 
 pytestmark = pytest.mark.ha
@@ -38,10 +39,11 @@ def _registry(
     sequence: int = 4,
     route_history: tuple[str, ...] = (),
 ) -> SimpleNamespace:
-    context = SimpleNamespace(
+    context = CallEventContext(
         state=state,
         sequence=sequence,
-        route_history=route_history,
+        route_history=[{"action": "forward", "target": hop} for hop in route_history],
+        route_hops=len(route_history),
     )
     return SimpleNamespace(
         pending_invites={"call-1": invite} if invite is not None else {},

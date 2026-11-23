@@ -319,7 +319,7 @@ async def async_commit_outbound_bridge(
         if data.prepared_media is not None and data.prepared_media.video_update is not None:
             await data.prepared_media.video_update.commit()
             _require_current()
-        BridgeMediaUpdateBinder(hass).attach(
+        publish_connected_identity = BridgeMediaUpdateBinder(hass).attach(
             client, relay, source_call_id=invite.call_id,
             source_client=data.source_client,
             source_video_send_format=invite.send_video_format,
@@ -443,6 +443,8 @@ async def async_commit_outbound_bridge(
         registry.observe_leg(invite.call_id, invite.call_id, role=policy.source_role,
                              state=CallState.IN_CALL.value,
                              endpoint_id=policy.source_endpoint_id, generation=generation)
+        if publish_connected_identity is not None:
+            publish_connected_identity()
         if request_video_keyframe:
             assert relay.video_relay is not None
             session.create_task(

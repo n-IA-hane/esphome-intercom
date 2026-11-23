@@ -1,6 +1,5 @@
 """Immediate peer RTP is retained by one existing bridge socket owner."""
 import asyncio
-from dataclasses import replace
 import re
 import socket
 import struct
@@ -22,11 +21,6 @@ async def test_bridge_retains_first_rtp_after_ack_before_media_commit(trunks, mo
 
     lab = trunks
     target = lab.phones[0]
-    lab.roster[1] = replace(lab.roster[1], metadata={
-        "endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True,
-        "sip_audio_tx_formats": ["L16/16000/1/10"],
-        "sip_audio_rx_formats": ["L16/16000/1/10"],
-    })
     lab.runtime.endpoints.update("bedroom0", availability="available")
     commit_entered, release_commit, first_sent = asyncio.Event(), asyncio.Event(), asyncio.Event()
     observed = {}
@@ -279,7 +273,8 @@ async def test_inbound_bridge_failure_releases_prebound_audio(trunks, monkeypatc
             assert caller.cancel()
         assert await asyncio.wait_for(task, 12 if failure == "timeout" else 3) != "in_call"
         async with asyncio.timeout(3):
-            while lab.calls.sessions or lab.runtime.rtp_port_pool.get("used"):
+            while (lab.calls.sessions or lab.runtime.rtp_port_pool.get("used")
+                   or any(sock.fileno() >= 0 for _owner, sockets in owners for sock in sockets)):
                 await asyncio.sleep(0)
         for owner, sockets in owners:
             assert owner._audio_sockets is None

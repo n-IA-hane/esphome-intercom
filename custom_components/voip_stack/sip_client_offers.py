@@ -426,6 +426,12 @@ class SipLocalOffers:
             )
         if not remote_uri:
             remote_uri = request_uri
+        # The dialog remote URI comes from the accepted To, independently of
+        # the Request-URI and the Contact used for subsequent routing.
+        try:
+            remote_uri = str(sip.parse_sip_uri(msg.header("To")))
+        except (TypeError, ValueError, sip.SipError):
+            return False
         remote_target_uri = request_uri
         try:
             contact_target = sip.contact_target_uri(msg)
@@ -468,6 +474,7 @@ class SipLocalOffers:
             and (candidate := self.early_dialogs.get(remote_tag)) is not None
         ):
             candidate.remote_target_uri = remote_target_uri
+            candidate.remote_uri = remote_uri
             candidate.route_set = route_set
             self.dialog_ids.remote_tag = remote_tag
             self.dialog = candidate

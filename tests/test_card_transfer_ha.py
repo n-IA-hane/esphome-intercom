@@ -236,6 +236,14 @@ async def test_browser_transfer_service_moves_peer_to_registered_phone(
     assert len(dialogs) == 1
     assert dialogs[0].peer_endpoint_id == "transfer_a"
     assert dialogs[0].peer_user == "transfer_a"
+    original_session = runtime.calls.get_session(call_id)
+    original_client = runtime.calls.sip_client_for(call_id)
+    original_dialog = original_client.dialog if original_client is not None else None
+    from custom_components.voip_stack.runtime_data import sip_endpoint_manager
+    manager = sip_endpoint_manager(runtime.hass)
+    original_key = manager.dialog_key(call_id) if incoming else None
+    if incoming:
+        assert original_key is not None
     runtime.runtime.endpoints.update("transfer_c", device_id="other-phone")
     with pytest.raises(ServiceValidationError, match="does not own"):
         await runtime.hass.services.async_call(
@@ -276,11 +284,19 @@ async def test_browser_transfer_service_moves_peer_to_registered_phone(
         assert not runtime.runtime.rtp_port_pool.get("used")
         return
     assert response["success"], str(response)
-    await wait_for(lambda: call_id not in runtime.calls.sessions)
+    await wait_for(lambda: runtime.calls.get_session(call_id) is original_session
+        and original_session.state == "in_call"
+        and set(original_session.endpoint_claims) == {"transfer_a", "transfer_b"})
+    assert not runtime.runtime.endpoints.get(endpoint.endpoint_id).active_call_id
+    if incoming:
+        assert manager.dialog_key(call_id) == original_key
+    else:
+        assert runtime.calls.source_sip_client_for(call_id) is original_client
+        assert original_client.dialog is original_dialog
     for peer in registered_phones[:2]:
         await asyncio.to_thread(peer.read)
-        assert "established" in peer.output.lower(), peer.output
-    remaining = next(iter(runtime.calls.sessions.values()))
+        assert peer.output.count("Call established") == 1, peer.output
+    remaining = original_session
     relay = runtime.calls.resource_for(remaining.call_id, "relay")
     await wait_for(lambda: relay.left_tx_packets >= 30 and relay.right_tx_packets >= 30)
     await asyncio.to_thread(registered_phones[0].hangup)

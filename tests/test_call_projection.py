@@ -77,7 +77,7 @@ def _runtime(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_media_route_targets_each_physical_sip_leg_once(monkeypatch):
+async def test_media_route_keeps_pbx_diagnostics_without_device_commands(monkeypatch):
     from custom_components.voip_stack import device_resolver, esphome_actions
     runtime = SipEndpointRuntime()
     runtime.activate()
@@ -96,16 +96,13 @@ async def test_media_route_targets_each_physical_sip_leg_once(monkeypatch):
                              bridge_dest_call_id="dest-call")
     session.add_resource("relay:source-call", SimpleNamespace(media_route="ha_transcoding"),
                          lambda _reason: None)
-    call_projection.publish_esp_media_route(object(), "source-call", "direct")
+    call_projection.publish_media_route(object(), "source-call", "direct")
     await asyncio.gather(*tuple(session.tasks))
-    assert { (call.args[1]["device_id"], call.args[3]["call_id"], call.args[3]["route"])
-             for call in sink.call_args_list } == {
-        ("device-p4", "source-call", "ha_transcoding"),
-        ("device-ws3", "dest-call", "ha_transcoding"),
-    }
-    call_projection.publish_esp_media_route(object(), "source-call", "direct")
+    sink.assert_not_awaited()
+    assert session.metadata["committed_media_route"] == "ha_transcoding"
+    call_projection.publish_media_route(object(), "source-call", "direct")
     await asyncio.gather(*tuple(session.tasks))
-    assert sink.await_count == 2
+    assert sink.await_count == 0
     await session.terminate(TerminationIntent("local_hangup"))
 
 
@@ -119,96 +116,69 @@ async def test_media_route_accepts_local_endpoint_resource_without_relay_route(m
     session = runtime.upsert("assist-call", state="in_call")
     # Assist endpoints share relay lifecycle ownership, not relay capabilities.
     session.add_resource("relay:assist-call", SimpleNamespace(), lambda _reason: None)
-    call_projection.publish_esp_media_route(object(), "assist-call", route)
+    call_projection.publish_media_route(object(), "assist-call", route)
     assert session.metadata["committed_media_route"] == route
     assert session.live and session.state == "in_call"
     session.add_resource("relay:transcoder", SimpleNamespace(media_route="ha_transcoding"),
                          lambda _reason: None)
-    call_projection.publish_esp_media_route(object(), "assist-call", "direct")
+    call_projection.publish_media_route(object(), "assist-call", "direct")
     assert session.metadata["committed_media_route"] == "ha_transcoding"
     await session.terminate(TerminationIntent("local_hangup"))
 
 
 @pytest.mark.asyncio
 async def test_media_route_cannot_outlive_its_call_generation(monkeypatch):
-    from custom_components.voip_stack import device_resolver, esphome_actions
+    from custom_components.voip_stack import esphome_actions
     runtime = _runtime(monkeypatch)
-    lookup_started = asyncio.Event()
-    lookup_finish = asyncio.Event()
-    async def devices():
-        lookup_started.set()
-        await lookup_finish.wait()
-        return [{"device_id": "dev-1"}]
-    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(list_devices=devices))
     sink = AsyncMock()
     monkeypatch.setattr(esphome_actions, "async_call_action", sink)
-    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
     session = runtime.upsert("source-call", state="in_call", source_endpoint_id="p4")
-    call_projection.publish_esp_media_route(object(), "source-call", "ha_transcoding")
-    await lookup_started.wait()
+    call_projection.publish_media_route(object(), session.call_id, "ha_transcoding")
+    assert session.metadata["committed_media_route"] == "ha_transcoding"
     await session.terminate(TerminationIntent("local_hangup"))
-    lookup_finish.set()
+    call_projection.publish_media_route(object(), session.call_id, "direct")
+    assert session.metadata["committed_media_route"] == "ha_transcoding"
     sink.assert_not_awaited()
     assert not session.tasks
 
 
 @pytest.mark.asyncio
 async def test_media_route_queued_notification_cannot_outlive_relay_owner(monkeypatch):
-    from custom_components.voip_stack import device_resolver, esphome_actions
+    from custom_components.voip_stack import esphome_actions
     from custom_components.voip_stack.core.sdp import RtpPcmFormat
     from custom_components.voip_stack.sip_rtp_bridge import RtpPeer, SipRtpRelay
 
     runtime = _runtime(monkeypatch)
-    lookup_started, lookup_finish = asyncio.Event(), asyncio.Event()
-    lookups = 0
-
-    async def devices():
-        nonlocal lookups
-        lookups += 1
-        if lookups == 1:
-            lookup_started.set()
-            await lookup_finish.wait()
-        return [{"device_id": "dev-1"}]
-
-    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(
-        list_devices=devices))
     sink = AsyncMock()
     monkeypatch.setattr(esphome_actions, "async_call_action", sink)
-    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
     fmt = RtpPcmFormat(8, "PCMA", 8000, 1, 20)
     relay = SipRtpRelay(
         left=RtpPeer("192.0.2.10", 40000, fmt.payload_type, fmt.audio_format,
                      rtp_format=fmt, send_rtp_format=fmt),
         right=RtpPeer("192.0.2.20", 41000, fmt.payload_type, fmt.audio_format,
                       rtp_format=fmt, send_rtp_format=fmt),
-        left_port=42000, right_port=42002,
-    )
+        left_port=42000, right_port=42002)
     previous = runtime.upsert("previous-call", state="in_call", source_endpoint_id="p4")
     current = runtime.upsert("current-call", state="in_call", source_endpoint_id="p4")
     runtime.attach_relay(previous.call_id, relay)
     try:
-        call_projection.publish_esp_media_route(object(), previous.call_id, relay.media_route)
-        await asyncio.wait_for(lookup_started.wait(), 1)
-        pending = tuple(previous.tasks)
+        call_projection.publish_media_route(object(), previous.call_id, relay.media_route)
+        retired = relay.on_media_route_changed
+        assert callable(retired)
         previous.release_resource(f"relay:{previous.call_id}", value=relay)
         runtime.attach_relay(current.call_id, relay)
-        call_projection.publish_esp_media_route(object(), current.call_id, relay.media_route)
-        await asyncio.gather(*tuple(current.tasks))
-        assert previous.live and previous.state == "in_call"
-        lookup_finish.set()
-        await asyncio.gather(*pending)
-
-        assert {
-            "notifications": [(call.args[3]["call_id"], call.args[3]["route"])
-                              for call in sink.call_args_list],
-            "previous_delivery": previous.metadata.get("esp_media_routes", {}),
-        } == {
-            "notifications": [(current.call_id, relay.media_route)],
-            "previous_delivery": {},
-        }
+        call_projection.publish_media_route(object(), current.call_id, relay.media_route)
+        active = relay.on_media_route_changed
+        assert callable(active) and active is not retired
+        asyncio.get_running_loop().call_soon(retired, "ha_transcoding")
+        await asyncio.sleep(0)
+        assert previous.metadata["committed_media_route"] == "direct"
+        assert current.metadata["committed_media_route"] == "direct"
+        assert relay.on_media_route_changed is active
+        assert "esp_media_routes" not in current.metadata
+        sink.assert_not_awaited()
         assert not previous.tasks and not current.tasks
     finally:
-        lookup_finish.set()
         await previous.terminate(TerminationIntent("test_done"))
         await current.terminate(TerminationIntent("test_done"))
         await relay.stop()
@@ -240,7 +210,7 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
     runtime.attach_relay(previous.call_id, relay)
 
     try:
-        call_projection.publish_esp_media_route(object(), previous.call_id, relay.media_route)
+        call_projection.publish_media_route(object(), previous.call_id, relay.media_route)
         await asyncio.gather(*tuple(previous.tasks))
         previous_callback = relay.on_media_route_changed
         assert callable(previous_callback)
@@ -253,9 +223,9 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         assert not previous.tasks
         assert previous.metadata["committed_media_route"] == "ha_transcoding"
         assert "committed_media_route" not in current.metadata
-        assert sink.await_count == 1
+        assert sink.await_count == 0
 
-        call_projection.publish_esp_media_route(object(), current.call_id, relay.media_route)
+        call_projection.publish_media_route(object(), current.call_id, relay.media_route)
         await asyncio.gather(*tuple(current.tasks))
         current_callback = relay.on_media_route_changed
         assert callable(current_callback) and current_callback is not previous_callback
@@ -267,16 +237,11 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         previous_callback(relay.media_route)
         assert not previous.tasks and not current.tasks
         assert current.metadata["committed_media_route"] == "direct"
-        assert sink.await_count == 2
+        assert sink.await_count == 0
         current_callback(relay.media_route)
         await asyncio.gather(*tuple(current.tasks))
         assert current.metadata["committed_media_route"] == "ha_transcoding"
-        assert [(call.args[3]["call_id"], call.args[3]["route"])
-                for call in sink.call_args_list] == [
-            (previous.call_id, "ha_transcoding"),
-            (current.call_id, "direct"),
-            (current.call_id, "ha_transcoding"),
-        ]
+        sink.assert_not_awaited()
 
         detached_callback = relay.on_media_route_changed
         assert callable(detached_callback)
@@ -286,28 +251,28 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         detached_callback(relay.media_route)
         assert not current.tasks
         assert current.metadata["committed_media_route"] == "ha_transcoding"
-        assert sink.await_count == 3
+        assert sink.await_count == 0
 
-        call_projection.publish_esp_media_route(object(), current.call_id, relay.media_route)
+        call_projection.publish_media_route(object(), current.call_id, relay.media_route)
         await asyncio.gather(*tuple(current.tasks))
         current_callback = relay.on_media_route_changed
         assert callable(current_callback) and current_callback is not detached_callback
         assert current.metadata["committed_media_route"] == "direct"
-        assert sink.await_count == 4
+        assert sink.await_count == 0
         relay.left_to_right_passthrough = False
         previous_callback(relay.media_route)
         detached_callback(relay.media_route)
         assert not previous.tasks and not current.tasks
         assert current.metadata["committed_media_route"] == "direct"
         assert relay.on_media_route_changed is current_callback
-        assert sink.await_count == 4
+        assert sink.await_count == 0
 
         await relay.stop()
         assert relay.on_media_route_changed is None
         current_callback(relay.media_route)
         assert not current.tasks
         assert current.metadata["committed_media_route"] == "direct"
-        assert sink.await_count == 4
+        assert sink.await_count == 0
     finally:
         await previous.terminate(TerminationIntent("test_done"))
         await current.terminate(TerminationIntent("test_done"))

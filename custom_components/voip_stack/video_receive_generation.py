@@ -91,6 +91,7 @@ class VideoGenerationUpdates:
             )
             self.state.reorder = RtpReorderBuffer()
             self.state.input_reorder = RtpReorderBuffer()
+            self.state.admission_duplicates = 0
             drain_queue(self.queue)
             if self.media_queue is not self.queue:
                 drain_queue(self.media_queue)

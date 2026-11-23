@@ -329,7 +329,8 @@ async def test_destination_resume_negotiates_retained_uac_source_on_wire(monkeyp
     )
     assert hold is not None and hold.commit()
     previous, updated = _dialog("inactive", call_id="destination"), _dialog(call_id="destination")
-    client = SimpleNamespace(dialog=previous, dialog_ids=SimpleNamespace(call_id="destination"))
+    client = SimpleNamespace(dialog=previous, dialog_ids=SimpleNamespace(call_id="destination"),
+                             on_connected_identity=None)
     relay = SipRtpRelay(left=dialog_rtp_peer(source.dialog), right=dialog_rtp_peer(previous), left_port=0, right_port=0)
     video = SipVideoRtpRelay(left=dialog_video_rtp_peer(source.dialog), right=dialog_video_rtp_peer(previous), left_port=44000, right_port=44002)
     video.started = True
@@ -337,6 +338,7 @@ async def test_destination_resume_negotiates_retained_uac_source_on_wire(monkeyp
     session = SimpleNamespace(call_id="logical-source", live=True, generation=7, state_changed=Mock())
     registry = SimpleNamespace(
         sessions={"logical-source": session}, resolve_session_id=lambda key: key,
+        get_session=lambda key: session if key == "logical-source" else None,
         is_generation_current=lambda *_: True, resource_for=lambda *_: relay,
     )
     monkeypatch.setattr(module, "call_registry", lambda _: registry)
@@ -389,6 +391,9 @@ async def test_preanswered_bridge_activates_explicit_uac_source_without_uas_look
     monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
     monkeypatch.setattr(module, "async_watch_sip_bridge_destination", AsyncMock())
     monkeypatch.setattr(call_projection, "publish_media_route", Mock())
+    from custom_components.voip_stack import media_ports
+    inventory = SimpleNamespace(rtp_port_pool={"used": {40000, 40002}})
+    monkeypatch.setattr(media_ports, "require_runtime_data", lambda _: inventory)
     hass = object()
     result = await module.async_commit_outbound_bridge(
         hass, registry,

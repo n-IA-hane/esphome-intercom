@@ -13,6 +13,7 @@ from ..sdp_types import RtpPcmDirection
 from ..sdp_types import SdpError
 from ..sdp_audio_facts import offered_pcm_formats, offered_dtmf_formats
 from ..codec_policy import DEFAULT_AUDIO_CODECS
+from ..audio_format import PcmFormat
 from . import leg
 from .capability import PeerEvidence, resolve_peer_media_profile
 from .payload_map import PayloadMap, PayloadConflict, TELEPHONE_EVENT
@@ -61,9 +62,11 @@ def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabili
     receive = tuple(receive_formats)
     enabled = getattr(codec_policy, "audio", None)
     allowed = DEFAULT_AUDIO_CODECS if enabled is None else enabled
+    widths = {PcmFormat.S16LE: 16, PcmFormat.S24LE: 24,
+              PcmFormat.S24LE_IN_S32: 24, PcmFormat.S32LE: 32}
     return leg.LegPolicy(
-        send_rank=tuple(dict.fromkeys((item.sample_rate, item.channels) for item in send)),
-        receive_rank=tuple(dict.fromkeys((item.sample_rate, item.channels) for item in receive)),
+        send_rank=tuple(dict.fromkeys((item.sample_rate, item.channels, widths[item.pcm_format]) for item in send)),
+        receive_rank=tuple(dict.fromkeys((item.sample_rate, item.channels, widths[item.pcm_format]) for item in receive)),
         budget=getattr(capabilities, "transmit_payload_bytes", 1200),
         encodings=frozenset(allowed),
         codec_order=tuple(enabled) if enabled is not None and getattr(codec_policy, "audio_ordered", True) else (),

@@ -216,6 +216,7 @@ async def test_receive_timeout_publishes_loss_without_requiring_a_later_packet(p
     lab = processing
     if transcoding:
         lab.session.local_video_format = sdp.RtpVideoFormat(payload_type=96, encoding="H263")
+        lab.session.transcoding_enabled = True
     decoded, forwarded, requests = [], [], []
     def decode(_decoder, packet, *_args):
         decoded.append(packet.sequence)
@@ -361,7 +362,14 @@ async def test_same_generation_source_change_uses_probation_and_rearms_recovery(
         assert lab.state.route.latched_ssrc == 77
         assert requests[-1] == 77
         assert lab.state.counters["video_drop_payload_type"] == 1
-        assert lab.state.counters["video_duplicate_packets"] >= 1
+        assert lab.state.counters["video_duplicate_packets"] == 1
+        receiver.sync_reorder_counters()
+        receiver.sync_reorder_counters()
+        assert lab.state.counters["video_duplicate_packets"] == 1
+        lab.session.media_generation = 1
+        assert await generation(lab).refresh(1)
+        receiver.sync_reorder_counters()
+        assert lab.state.counters["video_duplicate_packets"] == 0
     finally:
         lab.closed.set()
         task.cancel()

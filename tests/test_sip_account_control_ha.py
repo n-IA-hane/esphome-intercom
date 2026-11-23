@@ -156,9 +156,9 @@ async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(t
         assert ambiguous.status_code == 403 and not lab.calls.sessions
     finally:
         connection.close()
-    lab.runtime.endpoints.update("sip:bedroom1", username="204", name="Telefono ufficio")
-    account = sip_test_account(lab, "sip:bedroom1")
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom1", name="Telefono ufficio")
+    account = sip_test_account(lab, "bedroom1")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     origin = SipCallClient(local_ip=address[0], local_name=from_display, local_uri_user=account.username,
         local_sip_port=0, local_rtp_port=36022, supported_formats=[AudioFormat(16000, frame_ms=20)],
         username=account.username, password=account.password)
@@ -168,9 +168,9 @@ async def test_local_account_can_authenticate_on_an_ambiguous_provider_address(t
             state = await origin.wait_for_final(timeout=3)
         assert state == "in_call"
         session = lab.calls.get_session(origin.dialog_ids.call_id)
-        assert session is not None and session.metadata["source_endpoint_id"] == "sip:bedroom1"
+        assert session is not None and session.metadata["source_endpoint_id"] == "bedroom1"
         assert session.caller == (from_display or "Telefono ufficio")
-        incoming = _ha_softphone_state(lab.hass, "sip:bedroom0")
+        incoming = _ha_softphone_state(lab.hass, "bedroom0")
         assert incoming["direction"] == "incoming"
         assert incoming["peer_name"] == (from_display or "Telefono ufficio")
         assert not session.metadata.get("inbound_trunk_id")

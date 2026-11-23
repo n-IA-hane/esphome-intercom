@@ -364,6 +364,7 @@ ha_tests=(
   tests/test_codec_policy_forms_ha.py
   tests/test_codec_settings_ha.py
   tests/test_counterpart_display_ha.py
+  tests/test_bridge_connected_identity_wire_ha.py
   tests/test_dialog_payload_lifetime_ha.py
   tests/test_dialog_subscription_lease_ha.py
   tests/test_directory_consumers_ha.py

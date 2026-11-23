@@ -11,7 +11,6 @@ from homeassistant.exceptions import ServiceValidationError
 from custom_components.voip_stack import audio_ws_view
 from custom_components.voip_stack.audio_ws import decode_audio_frame, encode_audio_frame
 from custom_components.voip_stack.browser_paging import async_originate_browser_paging
-from custom_components.voip_stack.endpoint_lifecycle import project_session_termination
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.softphone_answer import async_answer_browser_call
@@ -58,8 +57,7 @@ def browser_lab(lab):
                           kind=EndpointKind.BROWSER, availability="available")
     lab.runtime.endpoints.register(phone)
     lab.runtime.softphone_presence[phone.endpoint_id] = 1
-    lab.calls._bind_endpoint_registry(lab.runtime.endpoints)
-    lab.calls.bind_termination_observer(lambda session, intent: project_session_termination(lab.hass, session, intent))
+    assert lab.calls.has_termination_observer
     job = SimpleNamespace(manager=SimpleNamespace(hass=lab.hass), identity="job-identity", data={"answer_timeout": 2})
     return lab, phone, job
 

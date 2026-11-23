@@ -35,6 +35,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
     lab, monkeypatch, receiver_hint, transcoding, peer_attributes, source_calls, expected_resize, caller_fps,
 ):
     """A receiver-originated real SIP call must resize the opposite RTP path."""
+    await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
         udp.bind(("127.0.0.1", 0))
@@ -208,12 +209,13 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
 
 
 @pytest.mark.parametrize("caller_fps", [10, 2])
-@pytest.mark.parametrize("direction,receiver_limit", [
-    pytest.param("sendonly", 2, id="direction-only-unchanged-receiver"),
-    pytest.param("sendrecv", 2, id="unchanged-direction"),
-    pytest.param("sendonly", 5, id="fresh-receiver-budget"),
+@pytest.mark.parametrize("direction,receiver_limit,expected_invites", [
+    pytest.param("sendrecv", 2, 2, id="direction-only-unchanged-receiver"),
+    pytest.param("sendonly", 2, 1, id="unchanged-direction"),
+    pytest.param("sendrecv", 5, 2, id="fresh-receiver-budget"),
 ])
-async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, direction, receiver_limit, caller_fps):
+async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, direction, receiver_limit, expected_invites, caller_fps):
+    await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
         udp.bind(("127.0.0.1", 0))
@@ -269,6 +271,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
             result = await caller.wait_for_final(timeout=3)
         assert result == "in_call"
         initial = caller.dialog
+        assert initial.local_video_direction == "sendonly"
         assert sdp.offered_video_formats(answers[-1].body)[0].max_framerate == 2
         call_id = caller.dialog_ids.call_id
         relay = lab.calls.resource_for(call_id, "relay")
@@ -292,7 +295,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
                 await asyncio.sleep(0)
         assert destination.dialog.send_video_format.max_framerate == receiver_limit
         assert destination.dialog.recv_video_format.max_framerate == caller_fps
-        assert len(receiver.invites) == (1 if direction == "sendrecv" else 2)
+        assert len(receiver.invites) == expected_invites
         assert caller.bye()
         session = lab.calls.get_session(call_id)
         await asyncio.wait_for(session.termination_started.wait(), 3)

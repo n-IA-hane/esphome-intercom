@@ -439,7 +439,6 @@ async def async_transfer_target(
                                if source_client is not None else call_id == session.metadata.get("bridge_dest_call_id"))
                 parker = str(session.metadata.get("dest_endpoint_id" if from_callee else "source_endpoint_id") or "")
                 try:
-                    import asyncio
                     await park_established_sip_call(hass, call_id, parker, slot=address[1], referrer=source_client,
                                                    refer_transaction=asyncio.current_task())
                 except ParkingError:

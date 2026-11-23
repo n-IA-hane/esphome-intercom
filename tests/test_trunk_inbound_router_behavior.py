@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from custom_components.voip_stack import endpoint_runtime, trunk_inbound_router
+from custom_components.voip_stack.core import sdp, sip
+from custom_components.voip_stack.sip_listener import SipInvite
 
 
 pytestmark = pytest.mark.ha
@@ -42,12 +44,15 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
         hass=object(), config={"sip_port": 15060}, local_ip="192.0.2.10",
         sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA",
     )
-    invite = SimpleNamespace(
-        outbound_trunk_id="",
-        trunk_id="",
-        call_id="esp-trunk-108", caller="ESP", routing_caller="ESP",
-        target="12345", routing_target="12345", source_host="192.0.2.20",
-        source_port=5060, signaling_transport=incoming_transport, video_format=None,
+    audio = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+    invite = SipInvite(
+        call_id="esp-trunk-108", caller="ESP", target="12345",
+        request_uri=sip.parse_sip_uri("sip:12345@192.0.2.10"),
+        caller_uri=sip.parse_sip_uri("sip:ESP@192.0.2.20"),
+        source_host="192.0.2.20", source_port=5060,
+        cseq="1 INVITE", remote_sdp=b"", send_format=audio, recv_format=audio,
+        remote_rtp_host="192.0.2.20", remote_rtp_port=40000,
+        signaling_transport=incoming_transport,
     )
     decision = SimpleNamespace(target="12345", entry=None, sip_uri="")
     with pytest.raises(ClientObserved):
@@ -314,23 +319,17 @@ async def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
 
     owner = pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
     ports = SimpleNamespace(ports=(40000, 40002), release=Mock())
-    audio_format = SimpleNamespace(wire_token=lambda: "PCMA/8000/1")
-    rtp_format = SimpleNamespace(
-        audio_format=audio_format,
-        wire_token=lambda: "pt=8:PCMA/8000/1",
-    )
-    invite = SimpleNamespace(
-        trunk_id="",
+    rtp_format = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+    invite = SipInvite(
         call_id="trunk-call-1",
         caller="Wildix caller",
-        source_host="192.0.2.10",
+        target="Casa", source_host="192.0.2.10", source_port=5060,
+        request_uri=sip.parse_sip_uri("sip:Casa@192.0.2.1"),
+        caller_uri=sip.parse_sip_uri("sip:caller@192.0.2.10"),
+        cseq="1 INVITE", remote_rtp_host="192.0.2.10", remote_rtp_port=41000,
         send_format=rtp_format,
         recv_format=rtp_format,
-        recv_formats=(),
-        recv_dtmf_format=None,
-        remote_sdp="v=0\r\n",
-        video_format=None,
-        answer_video_format=None,
+        remote_sdp=b"v=0\r\n",
     )
     config = {
         CONF_TRUNK_INBOUND_MODE: TRUNK_INBOUND_MODE_DTMF,
