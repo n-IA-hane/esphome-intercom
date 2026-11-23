@@ -94,6 +94,35 @@ async def test_phone_state_service_returns_same_calls_as_conditions(hass, phones
     assert phone_states(hass)["kitchen"]["calls"]
 
 
+async def test_recipient_reservation_is_invisible_until_delivery_owns_a_leg(hass, phones):
+    from custom_components.voip_stack.dialog_info import snapshot
+
+    calls = phones.calls
+    session = calls.upsert(
+        "reserved-recipient", state="calling", owner="router",
+        caller="Office", callee="Kitchen",
+        source_endpoint_id="office", dest_endpoint_id="kitchen",
+    )
+    calls.claim_endpoint(session.call_id, "office", role="source")
+    calls.claim_endpoint(session.call_id, "kitchen", role="destination")
+
+    source = snapshot(phones.runtime, "office")
+    assert len(source) == 1 and source[0].state == "trying"
+    assert source[0].direction == "initiator"
+    assert phone_states(hass)["office"]["state"] == "calling"
+    assert not snapshot(phones.runtime, "kitchen")
+    assert phone_states(hass)["kitchen"]["state"] == "idle"
+    assert calls.get_session(session.call_id) is session and session.live
+
+    calls.observe_leg(session.call_id, "recipient-kitchen", role="callee",
+                      endpoint_id="kitchen", state="ringing")
+    recipient = snapshot(phones.runtime, "kitchen")
+    assert len(recipient) == 1 and recipient[0].state == "early"
+    assert recipient[0].direction == "recipient"
+    assert phone_states(hass)["kitchen"]["state"] == "ringing"
+    assert snapshot(phones.runtime, "office")[0].state == "trying"
+
+
 async def test_state_trigger_keeps_exact_call_context_and_suppresses_duplicate_state(
     hass, phones
 ):

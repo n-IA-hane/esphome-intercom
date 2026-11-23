@@ -19,7 +19,7 @@ from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.websocket_api import CALL_EVENT
 
 
-from .test_automation_originate_ha import lab as lab, simple_sequence, tts_fixture, dial
+from .test_automation_originate_ha import PHONE_PASSWORD, lab as lab, simple_sequence, tts_fixture, dial
 from .test_browser_phone_policy_ha import browser_lab as browser_lab, originate
 from .test_trunk_calls_ha import trunks as trunks, sip_test_account
 
@@ -254,10 +254,11 @@ def mailbox_lab(lab, tmp_path, monkeypatch):
     }})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Kitchen", unique_id="phone:kitchen",
-        data={"endpoint_id": "kitchen", "name": "Kitchen", "kind": "browser",
+        data={"endpoint_id": "kitchen", "name": "Kitchen", "kind": "sip_account",
+              "username": "kitchen", "username_source": "user", "password": PHONE_PASSWORD,
               "voicemail": {"enabled": True, "max_seconds": 2}},
     ))
-    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="kitchen", name="Kitchen", kind=EndpointKind.BROWSER,
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="kitchen", name="Kitchen", username="kitchen", kind=EndpointKind.SIP_ACCOUNT,
                                                device_id="mailbox-device", availability="available"))
     return lab
 
@@ -546,35 +547,21 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
     }})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="phone", title="Kitchen", unique_id="phone:kitchen",
-        data={"endpoint_id": "kitchen", "name": "Kitchen", "kind": "browser",
+        data={"endpoint_id": "kitchen", "name": "Kitchen", "kind": "sip_account",
+              "username": "kitchen", "username_source": "user", "password": PHONE_PASSWORD,
               "voicemail": {"enabled": True, "max_seconds": 10}},
     ))
     lab.phones[0].auto_answer = False
-    # This fixture has independent UDP phones, but no listener/REGISTER setup.
-    # Declare their valid input bindings in the real registrar owner: changing
-    # routing policy must not leave an unregistered account falsely AVAILABLE.
-    # Full wire REGISTER is covered by the shared-account call witnesses.
-    from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar, SipRegistration
-    registrar = SipRegistrar(enabled=True, local_ip="127.0.0.1", local_sip_port=5099,
-        accounts=[SipAccount(f"bedroom{index}", f"bedroom{index}", "fixture-only") for index in range(2)])
-    for index, phone in enumerate(lab.phones):
-        name = f"bedroom{index}"
-        host, port = phone.transport.get_extra_info("sockname")
-        registrar.registrations[name] = SipRegistration(
-            name, f"sip:{name}@{host}:{port}", host, port, "UDP", 9999999999,
-        )
-    lab.calls.adopt_component("registrar", registrar)
-    # There is no listening signaling socket in browser_lab to lend to a UAC.
-    # Keep this fixture's independent UDP clients; live registered-flow reuse
-    # is qualified by the socket/registered-phone suites instead.
-    from custom_components.voip_stack import sip_runtime
-    monkeypatch.setattr(sip_runtime, "select_registered_outbound_flow", lambda *_args, **_kwargs: None)
+    registrar = lab.calls.component("registrar")
+    assert registrar.registered_contacts("bedroom0") and registrar.registered_contacts("bedroom1")
     for identity in ("browser", "bedroom0", "bedroom1"):
         endpoint = lab.runtime.endpoints.require(identity)
-        _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
-            "endpoint_id": endpoint.endpoint_id, "name": endpoint.name,
-            "kind": endpoint.kind.value, "username": endpoint.username,
-        })
+        if not any(row.subentry_type == "phone" and row.data.get("username") == endpoint.username
+                   for row in entry.subentries.values()):
+            _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
+                "endpoint_id": endpoint.endpoint_id, "name": endpoint.name,
+                "kind": endpoint.kind.value, "username": endpoint.username,
+            })
     monkeypatch.setattr(voip_stack, "_refresh_directory", AsyncMock())
     await lab.hass.services.async_call("voip_stack", "set_phone_settings", {
         "device_id": "device-bedroom0", "ringing_timeout": 1,

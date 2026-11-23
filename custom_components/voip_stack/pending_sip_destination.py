@@ -282,7 +282,7 @@ class EstablishedSipDestination(PendingSipDestination):
     original_metadata: object = None
 
     @classmethod
-    async def prepare(cls, hass, runtime, original, referrer, wire_id):
+    async def prepare(cls, hass, runtime, original, referrer, wire_id, *, refer_operation=None):
         from .local_call_media import ApplicationCallSource
         from .media_ports import RtpPortReservation
         from .sip_rtp_bridge import SipRtpRelay
@@ -334,7 +334,8 @@ class EstablishedSipDestination(PendingSipDestination):
             original.callee, original.owner, original.state, original.route_kind,
             original_session=original, retained_client=retained_client, referrer=referrer, runtime=runtime,
             original_metadata=dict(original.metadata),
-            transaction=getattr(referrer, "_incoming_refer_task", None) if referrer is not None else asyncio.current_task(),
+            transaction=(getattr(referrer, "_incoming_refer_task", None) or refer_operation)
+                if referrer is not None else refer_operation,
             reversed_sides=not from_callee, previous_release=relay._on_release,
             previous_callbacks=tuple(getattr(destination.dialog, name, None)
                 for name in ("on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")))

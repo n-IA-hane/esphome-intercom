@@ -1369,9 +1369,9 @@ async def test_internal_transfer_anchors_peer_without_refer_and_preserves_its_bu
     lab = trunks
     caller, second, _target = registered_phones
     legacy = lab.phones[0]
-    lab.runtime.endpoints.update("sip:bedroom0", kind=EndpointKind.ESPHOME, availability="available")
+    lab.runtime.endpoints.update("bedroom0", kind=EndpointKind.ESPHOME, availability="available")
     port = legacy.transport.get_extra_info("sockname")[1]
-    endpoint = lab.runtime.endpoints.get("sip:bedroom0")
+    endpoint = lab.runtime.endpoints.get("bedroom0")
     # Discovery must see the same real legacy peer during registration refreshes.
     monkeypatch.setattr(get_resolver(lab.hass), "list_devices", AsyncMock(return_value=[{
         "device_id": endpoint.device_id, "endpoint_id": endpoint.endpoint_id,
@@ -1382,7 +1382,7 @@ async def test_internal_transfer_anchors_peer_without_refer_and_preserves_its_bu
                         if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
     lab.roster[legacy_index] = RosterEntry(
         "bedroom0", sip_uri=f"sip:bedroom0@127.0.0.1:{port}",
-        metadata={"endpoint_id": "sip:bedroom0", "endpoint_kind": "esphome"},
+        metadata={"endpoint_id": "bedroom0", "endpoint_kind": "esphome"},
     )
     original_dispatch = legacy.datagram_received
     refers = []
@@ -1408,7 +1408,7 @@ async def test_internal_transfer_anchors_peer_without_refer_and_preserves_its_bu
     async with asyncio.timeout(5):
         while True:
             sessions = tuple(lab.calls.sessions.values())
-            if len(sessions) == 1 and set(sessions[0].endpoint_claims) == {"sip:bedroom0", "transfer_c"}:
+            if len(sessions) == 1 and set(sessions[0].endpoint_claims) == {"bedroom0", "transfer_c"}:
                 current = sessions[0]
                 break
             await asyncio.sleep(.01)
@@ -1416,6 +1416,6 @@ async def test_internal_transfer_anchors_peer_without_refer_and_preserves_its_bu
     await asyncio.to_thread(second.command, "/dial bedroom0")
     await asyncio.to_thread(second.wait_for, "486 Busy Here", 5)
     assert len(legacy.invites) == 1
-    assert lab.runtime.endpoints.get("sip:bedroom0").active_call_id == current.call_id
+    assert lab.runtime.endpoints.get("bedroom0").active_call_id == current.call_id
     await asyncio.to_thread(_target.hangup)
     await asyncio.wait_for(current.terminated.wait(), 3)

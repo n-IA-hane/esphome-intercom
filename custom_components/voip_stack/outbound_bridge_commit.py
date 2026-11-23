@@ -464,7 +464,7 @@ async def async_commit_outbound_bridge(
         if winner.pickup:
             from .call_projection import publish_bridge_projection
             publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
-        if data.prepared_media is not None:
+        if data.prepared_media is not None and data.prepared_media.media is not None:
             old_media = data.prepared_media.media
             await old_media.stop()
             registry.release_resource(invite.call_id, f"retired_local_media:{id(old_media):x}", value=old_media)

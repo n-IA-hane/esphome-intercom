@@ -10,8 +10,9 @@ import json
 import pytest
 
 from custom_components.voip_stack.core import sdp
-from custom_components.voip_stack.core.media import leg
-from tests.media_corpus_support import CORPUS, GOLDEN, _describe, _value, load_steps, mismatches
+from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
+from custom_components.voip_stack.core.media import leg, negotiator
+from tests.media_corpus_support import CORPUS, GOLDEN, POLICIES, _describe, _value, load_steps, mismatches
 
 pytestmark = pytest.mark.ha
 
@@ -22,11 +23,19 @@ COMPARED = ("outcome", "send.codec", "send.ptime", "send.payload", "recv.codec",
             "recv.payload", "dtmf.clock", "dtmf.payload")
 
 
-def negotiate(step) -> dict:
-    policy = leg.TRUNK_POLICY if step.policy == "trunk" else leg.PHONE_POLICY
+def contract(step):
+    """Use the production boundary's actual local formats and backend capability."""
+    send, receive = POLICIES[step.policy]
     dahua = step.profile == "dahua_pcm"
-    result = (leg.answer_offer(step.sdp, policy, dahua=dahua) if step.op == "answer_offer"
-              else leg.apply_answer(step.local_offer, step.sdp, policy, dahua=dahua))
+    return (negotiator.answer_offer(step.sdp, send, receive,
+                capabilities=HA_AUDIO_CAPABILITIES, dahua=dahua)
+            if step.op == "answer_offer" else
+            negotiator.apply_answer(step.local_offer, step.sdp, send, receive,
+                capabilities=HA_AUDIO_CAPABILITIES, dahua=dahua))
+
+
+def negotiate(step) -> dict:
+    result = contract(step)
     if isinstance(result, leg.Refusal):
         return {"outcome": "reject", "reason": result.reason}
     written = ""
@@ -41,7 +50,10 @@ def negotiate(step) -> dict:
         "answer_bytes": written,
         "send": _describe(result.send),
         "recv": _describe(result.receive),
-        "dtmf": {"clock": result.dtmf.sample_rate, "payload": result.dtmf.payload_type} if result.dtmf else None,
+        # The corpus field describes sent digits, like the public entrypoint.
+        "dtmf": {"clock": result.dtmf_direction.send.sample_rate,
+                 "payload": result.dtmf_direction.send.payload_type}
+                if result.dtmf_direction is not None and result.dtmf_direction.send is not None else None,
         "recv_accept": sorted(_describe(fmt)["codec"] for fmt in result.receive_accept) or None,
     }
 
@@ -67,10 +79,7 @@ def test_leg_engine_differs_from_frozen_reference_only_as_declared(step):
 def test_every_decision_is_explained():
     """Principle 8: a contract or a refusal carries the rules that produced it."""
     for step in STEPS:
-        policy = leg.TRUNK_POLICY if step.policy == "trunk" else leg.PHONE_POLICY
-        dahua = step.profile == "dahua_pcm"
-        result = (leg.answer_offer(step.sdp, policy, dahua=dahua) if step.op == "answer_offer"
-                  else leg.apply_answer(step.local_offer, step.sdp, policy, dahua=dahua))
+        result = contract(step)
         if isinstance(result, leg.LegContract):
             assert any(line.startswith(("S2", "S5")) for line in result.trace), step.name
         else:
@@ -80,6 +89,15 @@ def test_every_decision_is_explained():
 @pytest.mark.parametrize("step", [step for step in STEPS if step.op == "answer_offer"], ids=lambda step: step.name)
 def test_written_answer_is_byte_identical_where_nothing_was_declared(step):
     """Audio only offers with no ledger row must produce the same bytes as production."""
-    if any(row["step"] == step.name for row in LEDGER) or b"m=video" in step.sdp:
+    changes = [row for row in LEDGER if row["step"] == step.name]
+    if any(row["field"] != "answer.rtcp_bandwidth" for row in changes) or b"m=video" in step.sdp:
         return
-    assert negotiate(step)["answer_bytes"] == LEGACY[step.name]["answer_bytes"]
+    actual, expected = negotiate(step), LEGACY[step.name]["answer_bytes"]
+    if changes:
+        assert len(changes) == 1 and changes[0]["cc"] == "RFC3556"
+        assert _value(actual, "answer.rtcp_bandwidth") == {"RS": 0, "RR": 0}
+        media = next(line for line in expected.split("\r\n") if line.startswith("m=audio "))
+        # RFC 3556: advertise the existing lack of audio RTCP. Every other
+        # byte, including payloads, clocks, timing and fmtp, remains frozen.
+        expected = expected.replace(media + "\r\n", media + "\r\nb=RS:0\r\nb=RR:0\r\n", 1)
+    assert actual["answer_bytes"] == expected

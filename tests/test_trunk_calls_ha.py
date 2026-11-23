@@ -86,6 +86,14 @@ async def trunks(lab, monkeypatch, request):
     lab.runtime.trunk_configs = configs
     lab.runtime.default_trunk_id = "home"
     lab.runtime.trunk_config = configs["home"]
+    from custom_components.voip_stack.contact_config import contact_dicts, replace_contacts
+    from custom_components.voip_stack.store import config_entry
+
+    entry = config_entry(lab.hass)
+    replace_contacts(lab.hass, entry, [
+        *(row for row in contact_dicts(entry) if row.get("id") != "External"),
+        {"id": "External", "name": "External", "number": "12345"},
+    ])
     lab.roster.append(RosterEntry("External", number="12345"))
     lab.runtime.directory.replace(lab.roster)
     await async_start_sip_trunk(lab.hass, local_ip="127.0.0.1")
@@ -257,6 +265,12 @@ async def test_registrar_only_phone_keeps_local_call_and_cannot_dial_or_forward_
         local_addr=("127.0.0.8", 0))
     local_phone.auto_answer = False
     local_port = local_transport.get_extra_info("sockname")[1]
+    from custom_components.voip_stack.contact_config import contact_dicts, replace_contacts
+    from custom_components.voip_stack.store import config_entry
+
+    entry = config_entry(lab.hass)
+    replace_contacts(lab.hass, entry, [*contact_dicts(entry),
+        {"id": "Local phone", "name": "Local phone", "sip_uri": f"sip:desk@127.0.0.8:{local_port}"}])
     lab.roster.append(RosterEntry("Local phone", sip_uri=f"sip:desk@127.0.0.8:{local_port}"))
     handlers, writers = set(), set()
 

@@ -152,6 +152,7 @@ async def test_account_subscription_access_lifecycle(hass, phones, action):
     # Closing a view never releases someone else's live phone claim.
     call = phones.calls.upsert("other-owner", state="in_call", owner="router", dest_endpoint_id="kitchen")
     phones.calls.claim_endpoint(call.call_id, "kitchen", role="destination")
+    phones.calls.observe_leg(call.call_id, "callee:kitchen", role="callee", endpoint_id="kitchen", state="in_call")
     if action == "control_only":
         policies.remove("control")
         hass.bus.async_fire(EVENT_USER_UPDATED, {"user_id": "account-user"})

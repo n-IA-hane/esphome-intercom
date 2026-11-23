@@ -1193,7 +1193,9 @@ class ForwardOperation:
                 resumed,
             )
             return TransferResult(
-                "failed_resumed" if resumed else "ended", destination, reason
+                "failed_resumed" if resumed else "ended", destination, reason,
+                sip_status=(self.client.last_sip_status_code
+                    if self.client is not None and 300 <= self.client.last_sip_status_code <= 699 else 0),
             )
         finally:
             self.artifacts.forward_claim = False

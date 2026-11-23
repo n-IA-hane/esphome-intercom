@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import secrets
 import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -244,13 +245,19 @@ async def lab(hass, monkeypatch, socket_enabled):
         suggested_object_id="voip_stack_call",
     )
     calls = SipEndpointRuntime(allow_dark_sessions=True)
-    from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount(name, name, PHONE_PASSWORD) for name in ('bedroom0', 'bedroom1')],
-        local_ip='127.0.0.1', local_sip_port=5099)
-    calls.attach_component('registrar', registrar)
-    calls.activate()
+    for _ in range(128):
+        sip_port = 10000 + secrets.randbelow(2000)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_probe, socket.socket() as tcp_probe:
+                udp_probe.bind(("0.0.0.0", sip_port))
+                tcp_probe.bind(("0.0.0.0", sip_port))
+        except OSError:
+            continue
+        break
+    else:
+        raise RuntimeError("No free UDP/TCP SIP laboratory port")
     runtime = VoipStackRuntime(
-        transport_config={"sip_port": 5099, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1", 'sip_registrar_enabled': True},
+        transport_config={"sip_port": sip_port, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1", 'sip_registrar_enabled': True},
         assist_config={}, trunk_config={}, endpoints=endpoints,
         phones=PhoneAdapterRegistry(hass, endpoints), sip=calls, directory=PhoneDirectory(roster),
     )
@@ -289,8 +296,14 @@ async def lab(hass, monkeypatch, socket_enabled):
     from custom_components.voip_stack.phone_config import sync_registry_from_entry
     sync_registry_from_entry(hass, entry)
     obj = SimpleNamespace(hass=hass, phones=phones, calls=calls, runtime=runtime, roster=roster)
+    from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
+    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
+    monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: roster)
+    monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: roster)
+    assert await endpoint_runtime.async_start_sip_endpoint(hass)
+    registrar = calls.component("registrar")
     for index in range(2):
-        await register_shared_phone(obj, index)
+        await register_shared_phone(obj, index, network=True)
     from custom_components.voip_stack.account_runtime import recompute_account_availability
     recompute_account_availability(hass)
     from custom_components.voip_stack.directory_runtime import compose_directory_entries
@@ -301,7 +314,10 @@ async def lab(hass, monkeypatch, socket_enabled):
     from custom_components.voip_stack.endpoint_session import TerminationIntent
     for session in list(calls.sessions.values()):
         await calls.request_termination(session.call_id, TerminationIntent("test_done"))
-    await calls.shutdown()
+    if runtime.sip is calls:
+        await endpoint_runtime.async_stop_sip_endpoint(hass)
+    else:
+        await calls.shutdown()
     for transport in transports:
         transport.close()
     for task in collectors:

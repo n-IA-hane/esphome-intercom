@@ -62,9 +62,14 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
     from custom_components.voip_stack.sip_registrar import SipAccount
     for username in ('transfer_a', 'transfer_b', 'transfer_c', 'Casa', 'P4'):
         name = {'P4': 'Waveshare P4 Touch'}.get(username, username)
-        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type='phone', title=name,
-            unique_id='phone:' + username, data={'kind': 'sip_account', 'name': name, 'username': username,
-                'password': 'isolated-test-only', 'username_source': 'user'}))
+        existing = next((row for row in entry.subentries.values()
+            if row.subentry_type == 'phone' and row.data.get('username') == username), None)
+        if existing is None:
+            lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type='phone', title=name,
+                unique_id='phone:' + username, data={'kind': 'sip_account', 'name': name, 'username': username,
+                    'password': 'isolated-test-only', 'username_source': 'user'}))
+        else:
+            assert existing.data['password'] == 'isolated-test-only'
     sync_registry_from_entry(lab.hass, entry)
     casa, p4 = lab.runtime.endpoints.require('Casa'), lab.runtime.endpoints.require('P4')
     registrar = lab.calls.component('registrar')

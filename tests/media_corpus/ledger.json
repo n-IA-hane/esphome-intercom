@@ -310,5 +310,126 @@
   "prior": 10,
   "intended": 20,
   "cc": "CC-2"
+ },
+ {
+  "step": "door-station-hikvision-pcmu-issue-165#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-g722-16000-1-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-16000-1-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-44100-1-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-l16-8000-1-60-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-pcma-20-101#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-pcma-20-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-pcma-60-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-pcmu-30-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "softphone-baresip-offers-video-inactive-430#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
+ },
+ {
+  "step": "trunk-fritzbox-g711-16khz-issue-94#0",
+  "entry_point": "inbound initial offer",
+  "field": "answer.rtcp_bandwidth",
+  "prior": null,
+  "intended": {
+   "RS": 0,
+   "RR": 0
+  },
+  "cc": "RFC3556"
  }
 ]

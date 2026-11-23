@@ -28,12 +28,14 @@ pytestmark = pytest.mark.ha
 async def queue_lab(trunks, monkeypatch):
     lab = trunks
     from custom_components.voip_stack import call_forwarder
+    from custom_components.voip_stack.store import config_entry
     monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: lab.roster)
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
     assert all(lab.runtime.endpoints.require(name).availability.value == "available"
                for name in ("bedroom0", "bedroom1"))
-    manager = QueueManager(lab.hass, SimpleNamespace(runtime_data=lab.runtime,
-        entry_id=lab.hass.config_entries.async_entries("voip_stack")[0].entry_id))
+    entry = config_entry(lab.hass)
+    assert entry is not None and entry.runtime_data is lab.runtime
+    manager = QueueManager(lab.hass, entry)
     identity = "d5cf849db68449f49f03552eeab34511"
     manager.definitions[identity] = QueueDefinition(identity, "Reception", ("bedroom0", "bedroom1"), "401")
     manager.policies[identity] = QueuePolicy(max_wait=5, ring_timeout=1, retry_delay=0.1, no_agent_wait=1, wrap_up=1)

@@ -56,6 +56,7 @@ class TransferResult:
     generation: int = 0
     call_id: str = ""
     continuation: asyncio.Task[TransferResult | None] | None = field(default=None, repr=False, compare=False)
+    sip_status: int = 0
 
     def committed_for(self, session) -> bool:
         """Match the committed receipt, even after a later application transition."""

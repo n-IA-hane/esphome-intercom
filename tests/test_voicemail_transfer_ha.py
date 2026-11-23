@@ -6,7 +6,6 @@ import wave
 
 import pytest
 from homeassistant.components import tts
-from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import callback
 
 from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_RECEIVED, get_archive
@@ -32,10 +31,10 @@ async def test_established_call_transfer_to_mailbox_saves_caller_voice_and_reuse
     lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {
         "enabled": True, "tts_entity_id": "tts.test", "language": "en"}})
-    lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone",
-        title="Mailbox recipient", unique_id="phone:transfer_c", data={
-            "endpoint_id": "transfer_c", "name": "transfer_c", "username": "transfer_c", "kind": "sip_account",
-            "voicemail": {"enabled": True, "max_seconds": 2}}))
+    recipient = next(row for row in entry.subentries.values()
+                     if row.subentry_type == "phone" and row.data.get("username") == "transfer_c")
+    lab.hass.config_entries.async_update_subentry(entry, recipient,
+        data={**recipient.data, "voicemail": {"enabled": True, "max_seconds": 2}})
     class Speech:
         def async_set_message(self, _text):
             pass

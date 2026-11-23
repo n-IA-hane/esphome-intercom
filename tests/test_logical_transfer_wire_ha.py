@@ -30,10 +30,15 @@ async def test_public_transfer_addresses_logical_phone_and_preserves_failure_con
     await exercise_transfer(registered_phones, trunks, monkeypatch, tmp_path, reject, incoming)
     references = [message for message, _remote, _tcp, outgoing in sip_messages
                   if outgoing and message.method == "REFER"]
-    if not reject:
-        assert references
-    for message in references:
-        target = sip.parse_sip_uri(message.header("Refer-To"))
-        assert target.user == "transfer_b"
-        assert target.host == "127.0.0.1"
-        assert target.port == trunks.runtime.transport_config["sip_port"]
+    assert references == [], "Local dashboard transfers remain owned by the PBX"
+    invitations = [(message, remote) for message, remote, _tcp, outgoing in sip_messages
+        if outgoing and message.method == "INVITE" and sip.parse_sip_uri(message.uri).user == "transfer_b"]
+    if reject:
+        assert not invitations
+    else:
+        assert invitations
+        for message, remote in invitations:
+            target = sip.parse_sip_uri(message.uri)
+            assert sip.parse_sip_uri(message.header("To")).user == "transfer_b"
+            assert target.host == "127.0.0.1" and target.port == remote[1]
+            assert target.port != trunks.runtime.transport_config["sip_port"]

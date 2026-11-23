@@ -338,6 +338,7 @@ async def test_snom_wire_adoption_keeps_source_token_and_native_identity_binding
 async def test_real_snom_udp_creates_native_ha_proposal_without_provisioning_or_catalog(pnp_listener, monkeypatch):
     """A real datagram reaches Core's actual discovery flow while delivery is off."""
     from homeassistant.components import network
+    from custom_components.voip_stack import async_setup
     from custom_components.voip_stack.const import DOMAIN
     from custom_components.voip_stack.phone_profile_catalog import PhoneProfileCatalog
     from custom_components.voip_stack.physical_phone import physical_phone_records
@@ -349,6 +350,10 @@ async def test_real_snom_udp_creates_native_ha_proposal_without_provisioning_or_
     assert await async_setup_component(lab.hass, "http", {})
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "lovelace", "media_source", "network"})
     prepare_frontend_dependency(lab.hass)
+    assert await async_setup(lab.hass, {})
+    # The fixture owns the entry runtime; shared setup completes the loaded
+    # component state before Core creates an independent ignored discovery.
+    lab.hass.config.components.add(DOMAIN)
     manifest = AsyncMock(side_effect=AssertionError("Discovery downloaded the catalog"))
     profile = AsyncMock(side_effect=AssertionError("Discovery downloaded a profile"))
     monkeypatch.setattr(PhoneProfileCatalog, "async_manifest", manifest)

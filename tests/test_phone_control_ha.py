@@ -23,6 +23,12 @@ from custom_components.voip_stack.phone_endpoint import (
 )
 
 
+from .test_managed_phones_ha import (
+    custom_integration_path as custom_integration_path,
+    phone_lab as phone_lab,
+    managed as managed,
+)
+
 pytestmark = pytest.mark.ha
 
 
@@ -46,64 +52,31 @@ def _endpoint(
     )
 
 
-async def test_esphome_originate_uses_native_action_and_canonical_response(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from custom_components.voip_stack import phone_control
+async def test_esphome_originate_uses_native_action_and_canonical_response(managed) -> None:
+    from homeassistant.core import Context, ServiceCall
+    from .test_managed_phones_ha import phone_record
 
-    endpoint = _endpoint(
-        endpoint_id="esphome:ws3",
-        device_id="device-ws3",
-        name="WS3",
-        kind=EndpointKind.ESPHOME,
-    )
-    endpoints = EndpointRegistry()
-    endpoints.register(endpoint)
-    device = {
-        "endpoint_id": endpoint.endpoint_id,
-        "device_id": endpoint.device_id,
-        "name": endpoint.name,
-        "route_id": "ws3",
-        "entities": {"call": "button.ws3_call"},
-    }
-    hass = MagicMock()
-    call = _call(hass, device_id=endpoint.device_id, destination="P4")
-    resolve = AsyncMock(return_value=device)
-    authorize = AsyncMock()
-    invoke = AsyncMock()
-    monkeypatch.setattr(phone_control, "async_resolve_source_device", resolve)
-    monkeypatch.setattr(phone_control, "has_action", lambda *_args: True)
-    monkeypatch.setattr(
-        phone_control,
-        "async_require_phone_service_control",
-        authorize,
-    )
-    monkeypatch.setattr(phone_control, "async_call_action", invoke)
-
-    result = await PhoneAdapterRegistry(hass, endpoints).originate(
-        call,
-        OriginateRequest(
-            destination="P4",
-            send_video=True,
-            context=call.context,
-        ),
-    )
-
-    invoke.assert_awaited_once_with(
-        hass,
-        device,
-        "start_call",
-        {"dest": "P4"},
-        context=call.context,
-    )
+    lab = managed
+    await lab.controller.async_sync()
+    phone = phone_record(lab)
+    before = len(lab.sent)
+    call = ServiceCall(lab.hass, "voip_stack", "call", {
+        "device_id": lab.device.id, "destination": "P4", "send_video": True,
+        "receive_video": True,
+    }, context=Context())
+    result = await lab.runtime.phones.originate(call, OriginateRequest(
+        destination="P4", send_video=True, context=call.context,
+    ))
+    assert lab.sent[before:] == [("start_call_on_line", {
+        "dest": "P4", "line": "ha", "send_video": True, "receive_video": True,
+    })]
     response = result.as_service_response()
     assert response["schema_version"] == 2
     assert response["phone"] == {
-        "device_id": endpoint.device_id,
-        "kind": "esphome",
-        "name": endpoint.name,
+        "device_id": lab.device.id, "kind": "esphome", "name": phone.display_name,
     }
     assert response["call"]["destination"] == "P4"
+    assert not lab.runtime.sip.sessions
 
 
 async def test_sip_account_originate_uses_ephemeral_ha_view(monkeypatch) -> None:

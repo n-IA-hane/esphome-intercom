@@ -42,7 +42,7 @@ async def features(phone_lab):
     from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistration
 
     lab = phone_lab
-    data = sip_account_phone_data({"username": "alice", "password": "fixture-password", "display_name": "Alice", "extension": "301"}, endpoint_id="sip:alice")
+    data = sip_account_phone_data({"username": "alice", "password": "fixture-password", "display_name": "Alice", "extension": "301"}, endpoint_id="alice")
     _add_phone_subentry(lab.hass, lab.entry, data=data, title="Alice")
     sync_registry_from_entry(lab.hass, lab.entry)
     lab.registrar.update_accounts([SipAccount("alice", "Alice", "fixture-password"), SipAccount("bob", "Bob", "fixture-bob")])
@@ -73,14 +73,14 @@ async def test_phone_and_ha_dnd_share_one_state_and_subscription(features, targe
     assert result.status == 200
     result.follow_up_scheduler()
     await lab.hass.async_block_till_done()
-    assert lab.runtime.endpoints.get("sip:alice").dnd is True
-    assert phone_subentry_by_endpoint_id(lab.entry, "sip:alice").data["dnd"] is True
+    assert lab.runtime.endpoints.get("alice").dnd is True
+    assert phone_subentry_by_endpoint_id(lab.entry, "alice").data["dnd"] is True
     assert ET.fromstring(sent[-1].follow_up.body).findtext(f"{{{NS}}}doNotDisturbOn") == "true"
-    await async_set_endpoint_dnd(lab.hass, "sip:alice", False)
+    await async_set_endpoint_dnd(lab.hass, "alice", False)
     await lab.hass.async_block_till_done()
     assert ET.fromstring(sent[-1].follow_up.body).findtext(f"{{{NS}}}doNotDisturbOn") == "false"
     count = len(sent)
-    await async_set_endpoint_dnd(lab.hass, "sip:alice", False)
+    await async_set_endpoint_dnd(lab.hass, "alice", False)
     await lab.hass.async_block_till_done()
     assert len(sent) == count
     assert len(app.subscriptions) == 1
@@ -92,7 +92,7 @@ async def test_foreign_line_device_or_source_cannot_set_dnd(features, target, de
     lab, app, sender, sent = features
     result = await app.handle(request(target=target, device=device, enabled=True), (source, 5060), "UDP", sender)
     assert result.status == 403
-    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert lab.runtime.endpoints.get("alice").dnd is False
     assert not app.subscriptions and not sent
 
 
@@ -108,14 +108,14 @@ async def test_opaque_device_hint_uses_authenticated_account_without_inventory(f
     assert result.status == 200
     result.follow_up_scheduler()
     await lab.hass.async_block_till_done()
-    assert lab.runtime.endpoints.get("sip:alice").dnd is True
-    assert phone_subentry_by_endpoint_id(lab.entry, "sip:alice").data["dnd"] is True
+    assert lab.runtime.endpoints.get("alice").dnd is True
+    assert phone_subentry_by_endpoint_id(lab.entry, "alice").data["dnd"] is True
     # The body hint neither chooses another owner nor changes notification identity.
     notification = ET.fromstring(sent[-1].follow_up.body)
     assert notification.findtext(f"{{{NS}}}device") == "sip:301@localhost"
-    await async_set_endpoint_dnd(lab.hass, "sip:alice", False)
+    await async_set_endpoint_dnd(lab.hass, "alice", False)
     await lab.hass.async_block_till_done()
-    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert lab.runtime.endpoints.get("alice").dnd is False
     assert ET.fromstring(sent[-1].follow_up.body).findtext(f"{{{NS}}}doNotDisturbOn") == "false"
 
 
@@ -125,7 +125,7 @@ async def test_opaque_hint_never_authorizes_a_foreign_target_or_source(features,
     result = await app.handle(request(target=target, device_ref="0c383e68475c", enabled=True),
         (source, 5060), "UDP", sender)
     assert result.status == 403
-    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert lab.runtime.endpoints.get("alice").dnd is False
     assert not app.subscriptions and not sent
 
 
@@ -134,7 +134,7 @@ async def test_explicit_foreign_SIP_device_reference_stays_forbidden(features, d
     lab, app, sender, sent = features
     result = await app.handle(request(device_ref=device_ref, enabled=True), ("127.0.0.2", 5060), "UDP", sender)
     assert result.status == 403
-    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert lab.runtime.endpoints.get("alice").dnd is False
     assert not app.subscriptions and not sent
 
 
@@ -147,7 +147,7 @@ async def test_stale_cseq_cannot_change_dnd_and_credential_revoke_retires_owner(
     result.follow_up_scheduler()
     await lab.hass.async_block_till_done()
     stale = await app.handle(request(enabled=False, tag=result.to_tag), ("127.0.0.2", 5060), "UDP", sender)
-    assert stale.status != 200 and lab.runtime.endpoints.get("sip:alice").dnd is True
+    assert stale.status != 200 and lab.runtime.endpoints.get("alice").dnd is True
     lab.registrar.update_accounts([SipAccount("alice", "Alice", "new-fixture-password")])
     await lab.hass.async_block_till_done()
     assert not app.subscriptions
@@ -166,7 +166,7 @@ async def test_malformed_or_unsupported_feature_never_creates_owner_or_changes_s
     lab, app, sender, sent = features
     result = await app.handle(replace(request(), body=body), ("127.0.0.2", 5060), "UDP", sender)
     assert result.status == 400
-    assert lab.runtime.endpoints.get("sip:alice").dnd is False
+    assert lab.runtime.endpoints.get("alice").dnd is False
     assert not app.subscriptions and not sent
 
 
@@ -195,7 +195,7 @@ async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_
     entry = config_entry(wire.lab.hass)
     assert not any(row.subentry_type == "physical_phone" for row in entry.subentries.values())
     data = sip_account_phone_data({"username": "outbound-phone", "password": "fixture-only-password",
-        "display_name": "Feature phone", "extension": "301"}, endpoint_id="sip:feature-phone")
+        "display_name": "Feature phone", "extension": "301"}, endpoint_id="outbound-phone")
     _add_phone_subentry(wire.lab.hass, entry, data=data, title="Feature phone")
     sync_registry_from_entry(wire.lab.hass, entry)
     await register_phone(wire, outbound=False, discover=False)
@@ -233,14 +233,14 @@ async def test_digest_registered_udp_phone_syncs_dnd_in_both_directions_on_real_
     accepted = await transaction("false")
     send(2, tag=sip.extract_tag(accepted.header("To")), value=True)
     await transaction("true")
-    assert wire.lab.runtime.endpoints.get("sip:feature-phone").dnd is True
-    await async_set_endpoint_dnd(wire.lab.hass, "sip:feature-phone", False)
+    assert wire.lab.runtime.endpoints.get("outbound-phone").dnd is True
+    await async_set_endpoint_dnd(wire.lab.hass, "outbound-phone", False)
     notification, address = await phone.receive("NOTIFY")
     assert ET.fromstring(notification.body).findtext(f"{{{NS}}}doNotDisturbOn") == "false"
     phone.respond(notification, address)
-    assert wire.lab.runtime.endpoints.get("sip:feature-phone").dnd is False
+    assert wire.lab.runtime.endpoints.get("outbound-phone").dnd is False
     send(3, tag=sip.extract_tag(accepted.header("To")), value=False)
     await transaction("false")
-    assert wire.lab.runtime.endpoints.get("sip:feature-phone").dnd is False
+    assert wire.lab.runtime.endpoints.get("outbound-phone").dnd is False
     send(4, tag=sip.extract_tag(accepted.header("To")), expires=0)
     await transaction("false")

@@ -273,7 +273,8 @@ async def _transfer_local_source(
             registry.release_resource(session.call_id, f"browser_source:{session.call_id}", value=source)
 
 
-async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wire_id, *, endpoint_id=""):
+async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wire_id, *,
+                                    endpoint_id="", refer_operation=None):
     """Keep an internal target in this PBX, independent of provider REFER support."""
     from .endpoint_routing import is_local_listener_uri
     from .pending_sip_destination import EstablishedSipDestination
@@ -296,14 +297,17 @@ async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wi
             reason = str(getattr(outcome, "reason", "") or "transfer_failed")
             from .fsm import sip_failure_response
 
-            return SipTransferResult(success, 200 if success else sip_failure_response(reason)[0],
+            status = 200 if success else (outcome.sip_status if outcome is not None and outcome.sip_status
+                                         else sip_failure_response(reason)[0])
+            return SipTransferResult(success, status,
                 "completed" if success else reason, retained_call=success and session.live)
         except BaseException:
             if task is not None and not task.done():
                 task.cancel()
                 await async_wait_for_cleanup(asyncio.gather(task, return_exceptions=True))
             raise
-    operation = await EstablishedSipDestination.prepare(hass, runtime, session, referrer, wire_id)
+    operation = await EstablishedSipDestination.prepare(hass, runtime, session, referrer, wire_id,
+                                                        refer_operation=refer_operation)
     if operation is None:
         return SipTransferResult(False, 488, "local_transfer_unavailable")
     task, success, reason = None, False, "transfer_failed"
@@ -318,7 +322,8 @@ async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wi
         if not success:
             await operation.restore(runtime)
         from .fsm import sip_failure_response
-        status = 200 if success else sip_failure_response(reason)[0]
+        status = 200 if success else (outcome.sip_status if outcome is not None and outcome.sip_status
+                                     else sip_failure_response(reason)[0])
         return SipTransferResult(success, status, "completed" if success else reason,
                                  retained_call=success and operation.session.live)
     except BaseException:
@@ -486,7 +491,8 @@ async def async_transfer_target(
     if hass is not None and target.replaces is None:
         session = runtime.sip.get_session(runtime.sip.resolve_session_id(call_id))
         local = await _try_local_blind_transfer(hass, runtime, session, target, source_client,
-            source_client.dialog_ids.call_id if source_client is not None else call_id)
+            source_client.dialog_ids.call_id if source_client is not None else call_id,
+            refer_operation=asyncio.current_task())
         if local is not None:
             return local
     if _external_transfer_denied(

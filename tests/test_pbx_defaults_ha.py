@@ -39,7 +39,7 @@ async def test_migration_preserves_resource_configuration_and_drops_only_global_
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
     assert entry.version == 7 and entry.minor_version == 4
-    assert entry.data["parking"] == {"access": "800", "slots": ["801"], "hold_media": "media-source://media_source/local/hold.wav"}
+    assert entry.data["parking"] == {"access": "800", "slots": ["801"], "hold_media": "media-source://media_source/local/hold.wav", "return_destination": ""}
     assert entry.data["voicemail"] == {"tts_entity_id": "tts.existing", "language": "it"}
     assert entry.data["esphome_mailboxes"]["esp"]["enabled"]
     saved = dict(entry.data)
@@ -64,7 +64,7 @@ async def test_reconfigure_has_separate_resource_panels(lab, custom_integrations
     entry = config_entry(lab.hass)
     menu = await lab.hass.config_entries.flow.async_init("voip_stack", context={"source": "reconfigure", "entry_id": entry.entry_id})
     assert menu["type"] == "menu"
-    assert set(menu["menu_options"]) == {"user", "parking", "voicemail", "phone_services", "phone_provisioning"}
+    assert set(menu["menu_options"]) == {"user", "parking", "voicemail", "phone_services", "phone_provisioning", "esphome_enrollment"}
     form = await lab.hass.config_entries.flow.async_configure(menu["flow_id"], {"next_step_id": "parking"})
     assert form["step_id"] == "parking" and "enabled" not in form["data_schema"]({})
 
@@ -84,12 +84,18 @@ async def test_available_applications_do_not_open_an_unused_archive(lab, tmp_pat
 
 
 async def test_existing_route_wins_over_default_parking_namespace(lab):
+    from custom_components.voip_stack.contact_config import contact_dicts, replace_contacts
+    from custom_components.voip_stack.config_validation import entry_route_mappings
+
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
-        subentry_type="contact", unique_id="contact:701", title="Existing phone", data={"id": "existing", "number": "701"}))
+    existing = contact_dicts(entry)
+    replace_contacts(lab.hass, entry, [*existing,
+        {"id": "existing", "name": "Existing phone", "number": "701"}])
+    assert any(item.get("number") == "701" for item in
+               entry_route_mappings(entry, entry.data, include_features=False))
     settings = parking_settings(lab.hass)
     assert not settings["enabled"] and settings["unavailable_reason"] == "route_conflict"
-    lab.hass.config_entries.async_remove_subentry(entry, next(iter(entry.subentries)))
+    replace_contacts(lab.hass, entry, existing)
     assert parking_settings(lab.hass)["enabled"]
 
 
@@ -159,7 +165,7 @@ async def test_unconfigured_spoken_menu_returns_sip_failure_without_claims(trunk
     lab = trunks
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user=account.username, local_sip_port=5060,
                            username=account.username, password=account.password,
                            local_rtp_port=audio.getsockname()[1], supported_formats=[AudioFormat(16000, frame_ms=20)])

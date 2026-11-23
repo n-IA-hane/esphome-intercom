@@ -53,8 +53,10 @@ _LOGGER = logging.getLogger(__name__)
 class _ForwardRouteFailure(Exception):
     """A route failure after request/source validation, before its worker."""
 
-    def __init__(self, error):
+    def __init__(self, error, *, sip_status=0, terminal_reason=""):
         self.error = error
+        self.sip_status = sip_status
+        self.terminal_reason = terminal_reason
         super().__init__(str(error))
 
 
@@ -65,8 +67,9 @@ def _route_preflight(operation):
         raise _ForwardRouteFailure(error) from error
 
 
-def _routing_service_error(*args, **kwargs):
-    return _ForwardRouteFailure(_service_error(*args, **kwargs))
+def _routing_service_error(*args, sip_status=0, terminal_reason="", **kwargs):
+    return _ForwardRouteFailure(_service_error(*args, **kwargs),
+        sip_status=sip_status, terminal_reason=terminal_reason)
 
 
 async def async_forward_existing_call(
@@ -154,15 +157,16 @@ async def async_forward_existing_call(
             or registry.get_session(session_id) is not session
         ):
             raise failure.error from failure
-        reason = str(
+        reason = failure.terminal_reason or str(
             getattr(failure.error, "translation_key", "") or "transport_unreachable"
         )
+        sip_status = failure.sip_status
         if request.on_failure != "resume":
             await async_abort_route(
                 RouteAbortContext(
                     runtime.hass, registry, session_id, consume_source=True
                 ),
-                RouteAbortIntent(reason, request.on_failure),
+                RouteAbortIntent(reason, request.on_failure, sip_status=sip_status),
             )
 
         async def completed():
@@ -170,6 +174,7 @@ async def async_forward_existing_call(
                 "failed_resumed" if request.on_failure == "resume" else "ended",
                 request.destination,
                 reason,
+                sip_status=sip_status,
             )
 
         return create_runtime_task(runtime.hass, completed())
@@ -568,7 +573,8 @@ class _ForwardAdmission:
             _registered_roster_entries(hass),
         )
         def resolve_destination(target):
-            from .inbound_routing.targets import resolve_phone_target
+            from .inbound_routing.targets import resolve_phone_target, validate_target_endpoint
+            from .phone_endpoint import ha_client_endpoint
 
             selected = self.request.resolved_decision or route_resolver.route(target, roster_entries)
             resolution = resolve_phone_target(
@@ -576,9 +582,17 @@ class _ForwardAdmission:
                 roster_entries=roster_entries, route_resolver=route_resolver.route,
                 call_id=call_id, apply_policy=self.request.resolved_decision is None,
             )
-            if resolution.failure is not None:
-                return replace(resolution.decision, action=RouteAction.REJECT,
-                               status=resolution.failure.status)
+            refusal = resolution.failure
+            if refusal is None and self.request.resolved_decision is None:
+                endpoint = resolution.endpoint
+                if resolution.decision.action is RouteAction.ANSWER_HA:
+                    endpoint = ha_client_endpoint(endpoint)
+                refusal = validate_target_endpoint(invite=source.invite, endpoint=endpoint)
+            if refusal is not None:
+                raise _routing_service_error(
+                    f"destination {target} cannot receive the call: {refusal.reason}",
+                    "destination_not_forwardable", destination=target,
+                    sip_status=refusal.status, terminal_reason=refusal.decline_reason)
             return resolution.decision
 
         decision = _route_preflight(lambda: resolve_destination(destination))
@@ -676,6 +690,8 @@ class _ForwardAdmission:
                 f"destination {destination} is not a forwardable SIP dial-plan target",
                 "destination_not_forwardable",
                 destination=destination,
+                sip_status=decision.status,
+                terminal_reason=str(decision.reason),
             )
         if (
             decision.action is RouteAction.GROUP

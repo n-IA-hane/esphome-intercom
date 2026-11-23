@@ -840,9 +840,16 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
             worker = asyncio.create_task(audio_ws_view._run_audio_session(lab.hass, browser, media, endpoint_id=phone.endpoint_id))
             workers.append(worker)
             await asyncio.wait_for(browser.ready.wait(), 2)
-            # Keep the call's real RTP path observable before each park.
+            # Each probe window starts after queued audio from the preceding
+            # window has been retired, including its ordinary PLC fade packet.
+            while True:
+                try:
+                    audio.recvfrom(4096)
+                except BlockingIOError:
+                    break
+            probe_level = 6000 if cycle == 0 else -6000
             capture = browser.capture_format
-            frame = struct.pack("<h", 6000) * (capture.nominal_frame_bytes // 2)
+            frame = struct.pack("<h", probe_level) * (capture.nominal_frame_bytes // 2)
             captured_ms = 0
             while captured_ms < media.send_format.frame_ms:
                 await browser.messages.put(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(frame)))
@@ -858,7 +865,10 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
                         assert len(payload) == wire.audio_format.nominal_frame_bytes
                         assert len(payload) * 1000 / (wire.sample_rate * wire.channels * 2) == wire.frame_ms
                         samples = struct.unpack(f"!{len(payload)//2}h", payload)
-                        assert all(abs(value - 6000) <= 60 for value in samples[-64:])
+                        # A nonzero packet can still belong to the old probe.
+                        # The unchanged deadline must contain the new plateau.
+                        if not all(abs(value - probe_level) <= 60 for value in samples[-64:]):
+                            continue
                         break
             assert client.dialog.send_format.encoding == "L16"
             for index in range(10):

@@ -8,7 +8,7 @@ import time
 import pytest
 
 from custom_components.voip_stack import sip_runtime, trunk_inbound_router
-from custom_components.voip_stack.core import sip
+from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.sdp import RtpPcmFormat
 from custom_components.voip_stack.core.audio_format import AudioFormat
@@ -16,7 +16,7 @@ from custom_components.voip_stack.inbound_routing import bridge
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.router import RouteAction, RouteDecision
 from custom_components.voip_stack.sip_client import SipCallClient
-from custom_components.voip_stack.sip_listener import SipUdpEndpoint
+from custom_components.voip_stack.sip_listener import SipInvite, SipUdpEndpoint
 from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar, SipRegistration
 
 
@@ -108,10 +108,14 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         entry = RosterEntry("phone", sip_uri=contact, metadata=metadata)
         decision = RouteDecision(RouteAction.BRIDGE, target="phone", entry=entry)
         media = RtpPcmFormat(96, "L16", 16000, 1, 20)
-        invite = SimpleNamespace(trunk_id="", call_id="inbound-factory", caller="Caller", target="phone",
-            routing_caller="Caller", routing_target="phone", source_host="127.0.0.9", source_port=5090,
-            send_format=media, recv_format=media, recv_formats=(), video_format=None, recv_video_format=None,
-            remote_sdp="", signaling_transport="UDP")
+        source_offer = sdp.build_offer_directional("127.0.0.9", "127.0.0.9", 34000,
+            [media.audio_format], [media.audio_format], send_rtp_formats=(media,), recv_rtp_formats=(media,))
+        invite = SipInvite(call_id="inbound-factory", caller="Caller", target="phone", cseq="1 INVITE",
+            request_uri=sip.parse_sip_uri("sip:phone@127.0.0.1"),
+            caller_uri=sip.parse_sip_uri("sip:Caller@127.0.0.9"),
+            source_host="127.0.0.9", source_port=5090, remote_sdp=source_offer.encode(),
+            remote_rtp_host="127.0.0.9", remote_rtp_port=34000,
+            send_format=media, recv_format=media, recv_formats=(media,), send_formats=(media,))
         artifacts = SimpleNamespace(trunk_closed=False, trunk_info_queue=None)
         registry = Mock()
         registry.resource_for.return_value = None
@@ -137,13 +141,14 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         real_profile = bridge.bridge_audio_profile
 
         def profile(*args, **kwargs):
-            observed["profile_common"] = kwargs["include_common_codecs"]
-            return real_profile(*args, **kwargs)
+            result = real_profile(*args, **kwargs)
+            observed["profile_rtp_formats"] = result.send_rtp_formats
+            return result
 
         monkeypatch.setattr(bridge, "bridge_audio_profile", profile)
 
         def client_factory(**kwargs):
-            observed["client_common"] = kwargs["include_common_codecs"]
+            observed["client_rtp_formats"] = kwargs["supported_send_rtp_formats"]
             if codec_policy is not None:
                 kwargs["codec_policy"] = codec_policy
             client = SipCallClient(**kwargs)
@@ -179,9 +184,9 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         policy_allowed = codec_policy is None or codec_policy.audio is None or encoding in codec_policy.audio
         assert observed["result"] == ("in_call" if policy_allowed else "media_incompatible")
         invite_wire = next(m for m, _ in delivered.messages if m.method == "INVITE")
+        offered = sdp.offered_pcm_formats(invite_wire.body)
+        offered_codecs = {fmt.encoding for fmt in offered}
         if codec_policy is not None:
-            from custom_components.voip_stack.core import sdp
-            offered_codecs = {fmt.encoding for fmt in sdp.offered_pcm_formats(invite_wire.body)}
             assert offered_codecs <= set(codec_policy.audio)
             assert ("PCMU" in offered_codecs) is policy_allowed
         if observed["result"] == "in_call":
@@ -190,10 +195,12 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
             assert invite_wire.uri == contact and ack.uri == contact
             assert ack.header("Route") == f"<{contact};lr>"
         assert not any(m.method == "OPTIONS" for peer in peers for m, _ in peer.messages)
-        if encoding == "PCMU":
-            assert observed["client_common"] is True
+        if encoding == "PCMU" and codec_policy is None:
+            assert {"PCMU", "PCMA", "L16"} <= offered_codecs
+            assert {16000, 48000} <= {fmt.sample_rate for fmt in offered if fmt.encoding == "L16"}
+            assert {"PCMU", "PCMA", "L16"} <= {fmt.encoding for fmt in observed["client_rtp_formats"]}
             if factory == "bridge":
-                assert observed["profile_common"] is True
+                assert {"PCMU", "PCMA", "L16"} <= {fmt.encoding for fmt in observed["profile_rtp_formats"]}
     finally:
         for client in clients:
             await client.close()

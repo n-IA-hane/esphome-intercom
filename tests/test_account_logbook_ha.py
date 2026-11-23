@@ -33,11 +33,11 @@ async def test_account_activity_native_bus_has_one_phase_and_fast_failure_withou
     lab = phone_lab
     lab.hass.config.language = "it"  # Persisted custom Logbook messages do not follow a user's UI locale.
     data = sip_account_phone_data({"username": "desk", "password": "fixture-password",
-        "display_name": "Desk"}, endpoint_id="sip:desk")
+        "display_name": "Desk"}, endpoint_id="desk")
     _add_phone_subentry(lab.hass, lab.entry, data=data, title="Desk")
     sync_registry_from_entry(lab.hass, lab.entry)
     sensor = er.async_get(lab.hass).async_get_or_create("sensor", "voip_stack",
-        "phone_endpoint_sip:desk_call_state", config_entry=lab.entry, suggested_object_id="desk_call")
+        "phone_endpoint_desk_call_state", config_entry=lab.entry, suggested_object_id="desk_call")
     async_setup_account_activity(lab.hass, lab.entry)
     captured = []
     unsubscribe = lab.hass.bus.async_listen("logbook_entry", captured.append)
@@ -45,17 +45,17 @@ async def test_account_activity_native_bus_has_one_phase_and_fast_failure_withou
     row = {"call_id": "call-one", "generation": 1, "state": "early", "direction": "initiator", "leg_id": "one"}
     before, ringing = {"name": "Desk", "calls": []}, {"name": "Desk", "calls": [row, {**row, "leg_id": "two"}]}
     details = {"call_id": "call-one", "generation": 1, "dialed_target": "3511234567"}
-    lab.hass.bus.async_fire(PHONE_STATE_CHANGED, {"endpoint_id": "sip:desk", "previous": before,
+    lab.hass.bus.async_fire(PHONE_STATE_CHANGED, {"endpoint_id": "desk", "previous": before,
         "phone": ringing, "call": details}, context=context)
     await lab.hass.async_block_till_done()
     assert [event.data["message"] for event in captured] == ["Calling 3511234567"]
     confirmed = {"name": "Desk", "calls": [{**row, "state": "confirmed", "leg_id": "winner"}]}
-    lab.hass.bus.async_fire(PHONE_STATE_CHANGED, {"endpoint_id": "sip:desk", "previous": ringing,
+    lab.hass.bus.async_fire(PHONE_STATE_CHANGED, {"endpoint_id": "desk", "previous": ringing,
         "phone": confirmed, "call": {**details, "answered_by": "Fanvil"}}, context=context)
     await lab.hass.async_block_till_done()
     terminal = {**details, "type": "ended", "state": "idle", "reason": "remote_hangup",
-        "participant_endpoint_ids": ["sip:desk", "sip:desk"], "endpoint_id": "sip:desk"}
-    lab.hass.bus.async_fire(PHONE_STATE_CHANGED, {"endpoint_id": "sip:desk", "previous": confirmed,
+        "participant_endpoint_ids": ["desk", "desk"], "endpoint_id": "desk"}
+    lab.hass.bus.async_fire(PHONE_STATE_CHANGED, {"endpoint_id": "desk", "previous": confirmed,
         "phone": before, "call": terminal}, context=context)
     lab.hass.bus.async_fire(SIP_CALL_ENDED_EVENT, terminal, context=context)
     await lab.hass.async_block_till_done()
@@ -64,7 +64,7 @@ async def test_account_activity_native_bus_has_one_phase_and_fast_failure_withou
     # No preceding phone dialog is needed for the one terminal occurrence.
     lab.hass.bus.async_fire(SIP_CALL_ENDED_EVENT, {"call_id": "failed-fast", "generation": 2,
         "type": "failed", "reason": "busy", "sip_status_code": 486,
-        "source_endpoint_id": "sip:desk"}, context=context)
+        "source_endpoint_id": "desk"}, context=context)
     await lab.hass.async_block_till_done()
     assert captured[-1].data["message"] == "Outgoing call failed · busy · SIP 486"
     assert all(event.data["entity_id"] == sensor.entity_id and event.context.id == context.id for event in captured)
@@ -78,8 +78,8 @@ async def test_native_call_entities_keep_state_and_capture_account_relative_summ
     from custom_components.voip_stack.websocket_api import CALL_EVENT
 
     lab = phone_lab
-    source = PhoneEndpoint(endpoint_id="sip:test", name="Test", kind=EndpointKind.SIP_ACCOUNT)
-    destination = PhoneEndpoint(endpoint_id="sip:desk", name="Desk", kind=EndpointKind.SIP_ACCOUNT)
+    source = PhoneEndpoint(endpoint_id="test", name="Test", kind=EndpointKind.SIP_ACCOUNT)
+    destination = PhoneEndpoint(endpoint_id="desk", name="Desk", kind=EndpointKind.SIP_ACCOUNT)
     context = Context()
     original = {"call_id": "original-call", "generation": 7, "sequence": 9,
         "type": "ended", "state": "idle", "pbx_phase": "terminated", "direction": "outgoing",
@@ -131,7 +131,7 @@ async def test_pbx_call_activity_is_selected_by_real_recorder_and_local_accounts
     from custom_components.voip_stack.phone_config import _add_phone_subentry, sip_account_phone_data, sync_registry_from_entry
 
     lab = phone_lab
-    accounts = [("sip:test", "Test"), ("sip:other", "Other"), ("sip:desk", "Desk")]
+    accounts = [("test", "Test"), ("other", "Other"), ("desk", "Desk")]
     for identity, name in accounts:
         data = sip_account_phone_data({"username": name.lower(), "password": "fixture-only-password",
             "display_name": name}, endpoint_id=identity)
@@ -164,9 +164,9 @@ async def test_pbx_call_activity_is_selected_by_real_recorder_and_local_accounts
     registry = call_registry(lab.hass)
     start = dt_util.utcnow() - timedelta(seconds=1)
     cases = [
-        ("first-call", "sip:test", "Test", "esp:p4", "430", "Waveshare P4 Touch"),
-        ("other-pair", "sip:other", "Other", "sip:desk", "Desk", "Desk"),
-        ("next-call", "sip:test", "Test", "sip:desk", "Desk", "Desk"),
+        ("first-call", "test", "Test", "esp:p4", "430", "Waveshare P4 Touch"),
+        ("other-pair", "other", "Other", "desk", "Desk", "Desk"),
+        ("next-call", "test", "Test", "desk", "Desk", "Desk"),
     ]
     for call_id, source_id, caller, dest_id, callee, connected in cases:
         context = Context()
@@ -198,10 +198,10 @@ async def test_pbx_call_activity_is_selected_by_real_recorder_and_local_accounts
         matching = [native for native in native_terminal if native.data.get("call_id") == event.data["call_id"]]
         assert matching and all(native.context.id == event.context.id for native in matching)
     assert all(event.data["device_id"] != pbx.id for event in captured if event.data.get("device_id"))
-    test_rows = [row for row in await activity(local["sip:test"].entity_id) if row.get("message")]
+    test_rows = [row for row in await activity(local["test"].entity_id) if row.get("message")]
     assert len(test_rows) == 2 and all("Other" not in row["message"] for row in test_rows)
     assert test_rows[0]["message"] == "Outgoing call to Waveshare P4 Touch ended · local hangup"
-    desk_rows = [row for row in await activity(local["sip:desk"].entity_id) if row.get("message")]
+    desk_rows = [row for row in await activity(local["desk"].entity_id) if row.get("message")]
     assert len(desk_rows) == 2
     assert desk_rows[0]["message"] == "Incoming call from Other ended · local hangup"
     assert desk_rows[1]["message"] == "Incoming call from Test ended · local hangup"

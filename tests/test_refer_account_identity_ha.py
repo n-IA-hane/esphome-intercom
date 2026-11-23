@@ -393,10 +393,10 @@ async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=F
             ])
             response, _ = await receive()
             assert response.status_code == 200
-            await asyncio.wait_for(terminated.wait(), 2)
+            assert not terminated.is_set()
             assert call_id not in endpoint.active_dialogs
             assert call_id in endpoint._event_dialogs
-            assert calls.get_session(call_id) is None
+            assert calls.get_session(call_id) is not None
             result["BYE_before_terminal"] = True
         if revoke and credentials is not None:
             result["unregister_Alice"] = await registration(
@@ -409,6 +409,9 @@ async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=F
             assert final.method == "NOTIFY"
             await challenge_notify(final, address, 2, expect_retry=not revoke)
         await asyncio.wait_for(task, 2)
+        if end_before_final:
+            await asyncio.wait_for(terminated.wait(), 2)
+            assert calls.get_session(call_id) is None
         result["transfer_action_completed"] = actions == [call_id]
         result["authenticated_NOTIFIES"] = successful
         result["terminal_authenticated"] = any(

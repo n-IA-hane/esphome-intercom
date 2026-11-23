@@ -210,10 +210,20 @@ CC_FIELDS = {
     "CC-5": ("answer must not contain",),
     "CC-11": ("send.ptime",),
     "CC-12": ("outcome",),
+    "RFC3556": ("answer.rtcp_bandwidth",),
 }
 
 
 def _value(data, field: str):
+    if field == "answer.rtcp_bandwidth":
+        bandwidth, inside = {}, False
+        for line in str(data.get("answer_bytes") or "").split("\r\n"):
+            if line.startswith("m="):
+                inside = line.startswith("m=audio ")
+            elif inside and line.startswith(("b=RS:", "b=RR:")):
+                key, value = line[2:].split(":", 1)
+                bandwidth[key] = int(value)
+        return bandwidth or None
     for key in field.split("."):
         data = data.get(key) if isinstance(data, dict) else None
     return data
@@ -245,7 +255,10 @@ def ledger_problems(ledger: list[dict], steps: list[Step], observed: dict[str, d
         if not any(field == name or (text and field.startswith(name)) for name in allowed):
             problems.append(f"{key}: {row.get('cc')} does not cover this field")
         prior = "written" if text else _value(observed[step.name], field)
-        intended = "absent" if text else _value(step.expect, field)
+        intended = ({"RS": 0, "RR": 0} if field == "answer.rtcp_bandwidth" else
+                    "absent" if text else _value(step.expect, field))
+        if field == "answer.rtcp_bandwidth" and row.get("prior") is not None:
+            problems.append(f"{key}: RFC 3556 delta permits only omitted bandwidth becoming zero")
         if row.get("prior") != prior:
             problems.append(f"{key}: prior is {prior!r}, the row says {row.get('prior')!r}")
         if row.get("intended") != intended:
@@ -259,6 +272,10 @@ def ledger_problems(ledger: list[dict], steps: list[Step], observed: dict[str, d
                 problems.append(f"not in the ledger: {step.name} {item}")
     for (name, field), row in rows.items():
         step = by_name.get(name)
+        if step is not None and field == "answer.rtcp_bandwidth":
+            if _value(observed[name], field) == {"RS": 0, "RR": 0}:
+                problems.append(f"stale row: {name} {field}")
+            continue
         if step is not None and field not in {item.split(":", 1)[0] for item in mismatches(step.expect, observed[name])}:
             problems.append(f"stale row: {name} {field}")
     return problems
