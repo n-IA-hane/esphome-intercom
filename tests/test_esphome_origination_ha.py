@@ -14,6 +14,8 @@ from custom_components.voip_stack.core import sip, rtp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+from custom_components.voip_stack.contact_config import contact_dicts, replace_contacts
+from custom_components.voip_stack.directory_runtime import compose_directory_entries
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.phone_policy import PhonePolicy
 from custom_components.voip_stack.sip_client import SipCallClient
@@ -53,6 +55,18 @@ async def esp_phones(trunks, monkeypatch):
                 subentry_type='trunk', title=identity, unique_id='trunk:'+identity,
                 data={**config, 'trunk_id': identity},
             ))
+    contacts = [item for item in contact_dicts(entry) if item.get('id') not in {'External', 'Other'}]
+    replace_contacts(runtime.hass, entry, [*contacts,
+        {'id': 'External', 'name': 'External', 'number': '12345'},
+        {'id': 'Other', 'name': 'Other', 'number': '54321'}])
+
+    def publish_directory():
+        automation = [row for row in runtime.roster if row.metadata.get('virtual_endpoint') == 'automation']
+        rows = compose_directory_entries(runtime.hass, [], runtime.calls.component('registrar').roster_entries())
+        runtime.roster[:] = [*rows, *automation]
+        runtime.runtime.directory.replace(runtime.roster)
+
+    publish_directory()
     phones = []
     for index in range(2):
         identity = f'esp_{index}'
@@ -116,9 +130,7 @@ async def esp_phones(trunks, monkeypatch):
             registrar = runtime.calls.component('registrar')
             assert any(binding.source_host == phone.host and binding.source_port == client.local_sip_port
                        for binding in registrar.registered_contacts(phone.identity))
-            row = next(row for row in registrar.roster_entries() if row.id == phone.identity)
-            runtime.roster[:] = [item for item in runtime.roster if item.id != phone.identity] + [row]
-            runtime.runtime.directory.replace(runtime.roster)
+            publish_directory()
             return client
 
         phone.ensure_client = ensure_client

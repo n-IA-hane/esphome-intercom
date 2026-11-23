@@ -114,7 +114,7 @@ def _dialog(fmt):
 
 
 def test_changed_receive_alternatives_trigger_media_generation_update():
-    original = _dialog(sdp.RtpPcmFormat(96, "PCM" if dahua else "L16", 16000, 1, 20))
+    original = _dialog(sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20))
     changed = replace(original, recv_formats=(*original.recv_formats, sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)))
     assert not sip_client.SipCallClient._same_dialog_media(original, changed)
     assert sip_client.SipCallClient._same_dialog_media(original, replace(original))
@@ -131,7 +131,7 @@ def test_local_reoffer_answer_retains_receive_set_and_dahua_compatibility(dahua)
         local_ip="192.0.2.1", local_name="HA", local_sip_port=5060, local_rtp_port=40002,
         peer_user_agent="Dahua UAC/1.0" if dahua else "",
     )
-    original = _dialog(sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20))
+    original = _dialog(sdp.RtpPcmFormat(96, "PCM" if dahua else "L16", 16000, 1, 20))
     candidate = client._dialog_candidate_from_answer(
         original, offer, answer, local_video_rtp_port=0, offered_video_formats=(),
         video_direction="inactive", session_version=2,

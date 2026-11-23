@@ -15,7 +15,6 @@ from custom_components.voip_stack.core import rtp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_RECEIVED, get_archive
-from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.sip_client import SipCallClient, SipDatagramQueueProtocol
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.store import config_entry
@@ -40,11 +39,16 @@ async def test_accepted_refer_immediate_bye_keeps_opposite_audio_and_application
     registrar = registry.component("registrar")
     registrar.enabled = True
     account = SipAccount("transfer-source", "Transfer source", PASSWORD)
-    registrar.update_accounts([*registrar.accounts.values(), account])
-    lab.runtime.endpoints.register(PhoneEndpoint(account.username, account.display_name,
-        EndpointKind.SIP_ACCOUNT, username=account.username))
-    lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
+    from custom_components.voip_stack.phone_config import _add_phone_subentry
+    from custom_components.voip_stack.store import sip_accounts
     entry = config_entry(lab.hass)
+    _add_phone_subentry(lab.hass, entry, data={
+        "kind": "sip_account", "name": account.display_name,
+        "username": account.username, "password": account.password,
+        "username_source": "user",
+    }, title=account.display_name)
+    registrar.update_accounts(sip_accounts(lab.hass))
+    lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     mailbox_id = "bedroom1"
     if destination == "voicemail":
         from custom_components.voip_stack.phone_config import update_phone_subentry

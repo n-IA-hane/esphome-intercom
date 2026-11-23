@@ -81,9 +81,21 @@ async def test_account_revocation_closes_authenticated_socket_before_next_search
         elif change == "runtime":
             lab.entry.runtime_data = replace(lab.runtime, ldap_server=None, phone_services=None)
         elif change == "suspend":
+            from custom_components.voip_stack.config_entry_runtime import async_config_entry_updated
             from custom_components.voip_stack.phone_config import update_phone_subentry
-            assert update_phone_subentry(lab.hass, lab.entry, phone.endpoint_id, {"enabled": False})
-            await lab.controller.async_sync()
+            async def updated(hass, entry):
+                await async_config_entry_updated(hass, entry)
+            remove_listener = lab.entry.add_update_listener(updated)
+            changes = []
+            remove_observer = lab.registrar.subscribe_account_changes(changes.append)
+            try:
+                assert update_phone_subentry(lab.hass, lab.entry, phone.endpoint_id, {"enabled": False})
+                await lab.hass.async_block_till_done(wait_background_tasks=True)
+                assert not lab.registrar.accounts[phone.username.casefold()].enabled
+                assert any(phone.username.casefold() in usernames for usernames in changes)
+            finally:
+                remove_observer()
+                remove_listener()
         else:
             accounts = [] if change in {"remove", "remove-readd"} else [replace(account,
                 password="rotated-fixture-only" if change == "password" else account.password,

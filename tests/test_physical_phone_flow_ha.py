@@ -1027,7 +1027,7 @@ async def test_esphome_line_is_a_blf_target_and_preserves_its_own_credential(phy
     fields = {field.schema: selector.config["fields"] for field, selector in form["data_schema"].schema.items()}
     line_models = {f["model_id"] for f in fields["lines"]["account_device"]["selector"].config["filter"]}
     blf_models = {f["model_id"] for f in fields["keys"]["target_device"]["selector"].config["filter"]}
-    assert line_models == {"sip_account"}
+    assert line_models == {"sip_account", "esphome_sip_account"}
     assert blf_models == {"sip_account", "esphome_sip_account"}
     front = lab.runtime.endpoints.require("481").device_id
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
@@ -1054,7 +1054,7 @@ async def test_account_without_a_registry_device_uses_its_name_in_the_form(physi
     assert 'Guest desk' in choices and 'guest-alpha' not in str(choices)
     result = await submit(state, form, {'lines': [{'slot': '1', 'endpoint_id': 'Guest desk'}], 'keys': []})
     assert result['type'] == 'abort' and result['reason'] == 'reconfigure_successful'
-    assert physical_record(state).data['lines'][0]['endpoint_id'] == 'sip:guest'
+    assert physical_record(state).data['lines'][0]['endpoint_id'] == 'guest-alpha'
     assert 'fixture-guest-secret' not in repr(form)
 
 

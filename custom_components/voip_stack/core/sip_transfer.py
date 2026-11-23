@@ -306,8 +306,8 @@ def refer_event_headers(cseq: int, *, terminal: bool) -> tuple[tuple[str, str], 
             ("Subscription-State", "terminated;reason=noresource" if terminal else "active;expires=60"))
 
 
-async def run_refer_action(action, report, *, timeout: float = 30.0) -> int:
-    """Execute an accepted operation independently of its progress reporter."""
+async def run_refer_action(action, report, *, timeout: float | None = None) -> int:
+    """Let the owned route supply its deadline independently of progress reporting."""
     progress = asyncio.create_task(report(100, False), name="voip-refer-progress")
     try:
         try:

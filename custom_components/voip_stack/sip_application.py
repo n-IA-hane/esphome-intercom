@@ -300,6 +300,7 @@ class SipApplicationMethods:
             session = calls.get_session(calls.resolve_session_id(target_dialog.call_id))
             if session is None or not session.live:
                 return SipRequestResult(481, "Call/Transaction Does Not Exist")
+            server = None
             client = calls.sip_client_for(target_dialog.call_id)
             if client is not None:
                 ids = client.dialog_ids
@@ -325,6 +326,9 @@ class SipApplicationMethods:
             if not ((principal is not None and principal.endpoint_id == endpoint_id)
                     or (trunk_id and trusted_trunk == trunk_id)):
                 return SipRequestResult(403, "Forbidden")
+            if ((client is not None and client.incoming_refer_dialog is not None)
+                    or (server is not None and server.refer_operation_for(target_dialog.call_id) is not None)):
+                return SipRequestResult(491, "Request Pending")
             subscriber = account.username if account is not None else f"trunk:{trusted_trunk}"
             owned = {id(item): item for item in self.subscriptions.values()}
             owned.update(self.notifiers)
@@ -367,6 +371,10 @@ class SipApplicationMethods:
 
         def start():
             subscription.notify_task = self._track(run(), f"voip-refer-operation-{state.key.call_id}")
+            if client is not None:
+                client.observe_refer_operation(subscription.notify_task)
+            elif server is not None:
+                server.observe_refer_operation(target_dialog.call_id, subscription.notify_task)
 
         return SipRequestResult(to_tag=tag, follow_up_scheduler=start)
 

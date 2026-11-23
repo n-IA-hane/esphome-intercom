@@ -30,7 +30,7 @@ pytestmark = pytest.mark.ha
 
 @pytest.fixture
 async def browser_lab(lab, monkeypatch):
-    for name in ("sip:bedroom0", "sip:bedroom1"):
+    for name in ("bedroom0", "bedroom1"):
         lab.runtime.endpoints.update(name, availability="available")
     for name in ("browser", "kitchen"):
         lab.runtime.endpoints.register(PhoneEndpoint(
@@ -98,7 +98,7 @@ async def test_outgoing_browser_forward_preserves_caller_and_closes_old_sip_leg(
     if late_answer:
         assert first.bye.is_set()
     assert lab.runtime.endpoints.require("browser").active_call_id == session.call_id
-    assert lab.runtime.endpoints.require("sip:bedroom0").active_call_id == ""
+    assert lab.runtime.endpoints.require("bedroom0").active_call_id == ""
     assert lab.calls.sip_client_for(first.invites[0].header("Call-ID")) is None
     if destination == "Wakeup-Caller":
         app = automation_call(lab.hass, session.call_id)
@@ -163,9 +163,9 @@ async def test_two_no_answer_destinations_then_automation_keep_the_browser_calle
     from custom_components.voip_stack.websocket_api import CALL_EVENT
 
     lab = browser_lab
-    for index, target in ((0, "sip:bedroom1"), (1, "Wakeup-Caller")):
+    for index, target in ((0, "bedroom1"), (1, "Wakeup-Caller")):
         lab.phones[index].auto_answer = False
-        lab.runtime.endpoints.update(f"sip:bedroom{index}", policy=PhonePolicy.from_data({
+        lab.runtime.endpoints.update(f"bedroom{index}", policy=PhonePolicy.from_data({
             "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": target},
         }))
     ready = asyncio.Event()
@@ -279,7 +279,7 @@ async def test_forward_preserves_explicit_browser_camera_intent(browser_lab, des
 
     lab = browser_lab
     lab.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
-    for name in ("browser", "kitchen", "sip:bedroom0", "sip:bedroom1"):
+    for name in ("browser", "kitchen", "bedroom0", "bedroom1"):
         lab.runtime.endpoints.update(name, capabilities=frozenset({"audio", "video", "dtmf"}))
     for entry in lab.roster:
         if entry.id.startswith("bedroom"):
@@ -327,7 +327,7 @@ async def test_native_unanswered_action_can_speak_to_outgoing_browser_caller(bro
         assert execution.ringing_guard is None
         assert any(request.method == "CANCEL" for request in lab.phones[0].requests)
         assert lab.runtime.endpoints.require("browser").active_call_id == session.call_id
-        assert not lab.runtime.endpoints.require("sip:bedroom0").active_call_id
+        assert not lab.runtime.endpoints.require("bedroom0").active_call_id
         await voip_stack._handle_sip_hangup_service(automation_context.bind_call_action(
             ServiceCall(lab.hass, "voip_stack", "hangup", {}),
         ))

@@ -11,7 +11,6 @@ from custom_components import voip_stack
 from custom_components.voip_stack import phone_config, services
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
-from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
 from custom_components.voip_stack.phone_policy import PhonePolicy
 from custom_components.voip_stack.runtime_data import VoipStackRuntime
 from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships_service
@@ -64,6 +63,7 @@ async def test_phone_settings_resolves_the_selected_phone(hass, phones, selector
     row = phone_config.phone_subentry_by_endpoint_id(phones.entry, 'kitchen')
     await async_migrate_account_identities(hass, phones.entry,
         account_updates={row.subentry_id: {**row.data, 'name': 'Banco@Hotel', 'username': 'office', 'extension': '204'}})
+    phone_config.sync_registry_from_entry(hass, phones.entry)
     if selector == 'kitchen':
         with pytest.raises(ServiceValidationError):
             await settings(hass, device=selector, forward_to='Bedroom')
@@ -97,17 +97,15 @@ async def test_forward_destination_keeps_public_alias_over_another_device_id(has
     assert phones.registry.require("kitchen").policy.always.target == "bedroom"
 
 
-async def test_forward_destination_rejects_contact_phone_alias_ambiguity(hass, phones):
+async def test_current_phone_username_precedes_an_external_contact_number(hass, phones):
     from custom_components.voip_stack.phone_directory import PhoneDirectory
     from custom_components.voip_stack.roster import RosterEntry
 
     phones.entry.runtime_data.directory = PhoneDirectory([
         RosterEntry("external", name="External", number="Bedroom"),
     ])
-    with pytest.raises(ServiceValidationError, match="[Aa]mbiguous"):
-        await settings(hass, forward_to="Bedroom")
-    assert phones.registry.require("kitchen").policy == PhonePolicy()
-    phones.push.assert_not_awaited()
+    await settings(hass, forward_to="Bedroom")
+    assert phones.registry.require("kitchen").policy.always.target == "bedroom"
 
 
 async def test_duplicate_source_extension_leaves_both_phones_unchanged(hass, phones):

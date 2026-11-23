@@ -1093,6 +1093,27 @@ class SipUdpEndpoint(SipIncomingInvites, SipServerDialogs, SipServerOffers, asyn
         dialog = self.active_dialogs.get(call_id)
         return DialogKey.for_uas_dialog(dialog.request, local_tag=dialog.to_tag) if dialog is not None else None
 
+    def refer_operation_for(self, call_id: str):
+        """Observe the accepted event usage which still owns a transfer decision."""
+        dialog = self.active_dialogs.get(call_id) or self._event_dialogs.get(call_id)
+        task = dialog.refer_task if dialog is not None else None
+        return task if task is not None and not task.done() else None
+
+    def observe_refer_operation(self, call_id: str, task) -> bool:
+        """Delay dialog termination for an accepted REFER owned by the event layer."""
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None or self.refer_operation_for(call_id) is not None:
+            return False
+        dialog.refer_task = task
+
+        def settled(completed):
+            if dialog.refer_task is completed:
+                dialog.refer_task = None
+            self._release_event_dialog(call_id, dialog)
+
+        task.add_done_callback(settled)
+        return True
+
     def local_uri_for_call(self, call_id: str) -> str:
         dialog = self.active_dialogs.get(call_id)
         return _uri_text_from_header(dialog.request.header("To")) if dialog is not None else ""

@@ -575,6 +575,14 @@ class SipEndpointManager:
                 return key
         return None
 
+    def refer_operation_for(self, call_id):
+        return next((task for endpoint in self._dialog_endpoints()
+                     if (task := endpoint.refer_operation_for(call_id)) is not None), None)
+
+    def observe_refer_operation(self, call_id, task):
+        owners = [endpoint for endpoint in self._dialog_endpoints() if endpoint.dialog_key(call_id) is not None]
+        return len(owners) == 1 and owners[0].observe_refer_operation(call_id, task)
+
     def local_uri_for_call(self, call_id: str) -> str:
         for endpoint in self._dialog_endpoints():
             if uri := endpoint.local_uri_for_call(call_id):

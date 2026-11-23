@@ -373,6 +373,8 @@ async def test_released_caller_leg_keeps_the_connected_party(hass, phones):
                                callee="Casa", connected_party="Mario Rossi",
                                source_endpoint_id="office", endpoint_id="office")
         calls.claim_endpoint(session.call_id, "office", role="source")
+        calls.observe_leg(session.call_id, "browser:office", role="ha_softphone",
+                          endpoint_id="office", state="in_call")
     await hass.async_block_till_done()
     assert _ha_softphone_state(hass, "office")["peer_name"] == "Mario Rossi"
 
@@ -395,9 +397,13 @@ async def test_registry_commit_updates_card_and_releases_losing_browser_without_
                                caller='Office', callee='Kitchen',
                                dest_endpoint_id='kitchen', endpoint_id='kitchen')
         calls.claim_endpoint(session.call_id, 'kitchen', role='destination')
+        calls.observe_leg(session.call_id, 'browser:kitchen', role='ha_softphone',
+                          endpoint_id='kitchen', state='ringing')
     await hass.async_block_till_done()
     assert _ha_softphone_state(hass, 'kitchen')['state'] == 'ringing'
     calls.transition(session.call_id, state='in_call', expected_generation=session.generation)
+    calls.observe_leg(session.call_id, 'browser:kitchen', role='ha_softphone',
+                      endpoint_id='kitchen', state='in_call')
     await hass.async_block_till_done()
     assert _ha_softphone_state(hass, 'kitchen')['state'] == 'in_call'
     assert phone_states(hass)['kitchen']['state'] == 'in_call'

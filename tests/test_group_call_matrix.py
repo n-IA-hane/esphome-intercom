@@ -63,6 +63,9 @@ def _install_ha_fakes() -> None:
         core.callback = lambda fn: fn
         sys.modules["homeassistant.core"] = core
     core = sys.modules["homeassistant.core"]
+    core.HomeAssistant = getattr(core, "HomeAssistant", object)
+    core.ServiceCall = getattr(core, "ServiceCall", object)
+    core.callback = getattr(core, "callback", lambda fn: fn)
     core.Context = getattr(core, "Context", _FakeContext)
     if "homeassistant.helpers" not in sys.modules:
         helpers = types.ModuleType("homeassistant.helpers")

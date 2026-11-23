@@ -506,6 +506,7 @@ class ForwardGroup:
         )
 
         self.operation.client = winner.client
+        self.operation.claimed_endpoint_id = winner.endpoint_id
         self.operation.destination_call_id = self.operation.client.dialog_ids.call_id
         dest_relay_port = winner.ports.ports[1]
         source_ports = self.operation.reservation.ports

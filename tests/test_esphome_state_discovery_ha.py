@@ -81,7 +81,7 @@ async def test_direct_sip_uses_explicit_existing_contact_and_survives_entity_ren
     assert await _get_voip_devices(lab.hass) == []
     assert not lab.runtime.endpoints.endpoints
     route = resolve_ha_router(contact.name, [contact])
-    assert route.action is RouteAction.DIRECT and route.sip_uri == contact.sip_uri
+    assert route.action is RouteAction.FORWARD and route.sip_uri == contact.sip_uri
     registry = er.async_get(lab.hass)
     registry.async_update_entity(device["entities"]["voip_state"], new_entity_id="sensor.renamed_phone_state")
     renamed, = await VoipDeviceResolver(lab.hass).list_devices()

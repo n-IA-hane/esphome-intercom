@@ -2541,6 +2541,15 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         task = self._incoming_refer_task
         return self._incoming_refer_dialog if task is not None and not task.done() else None
 
+    def observe_refer_operation(self, task) -> bool:
+        """Keep this dialog's lifetime tied to an accepted external event usage."""
+        if self.dialog is None or self.incoming_refer_dialog is not None:
+            return False
+        self._incoming_refer_dialog = replace(self.dialog)
+        self._incoming_refer_task = task
+        task.add_done_callback(self._incoming_refer_done)
+        return True
+
     def _incoming_refer_done(self, task: asyncio.Task[None], usage_id: str = "") -> None:
         if self._incoming_refer_task is task:
             self._incoming_refer_task = None

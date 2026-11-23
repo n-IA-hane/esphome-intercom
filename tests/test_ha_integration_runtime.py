@@ -504,7 +504,8 @@ async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(managed
     await lab.controller.async_sync()
     current,=await async_build_peer_snapshot(lab.hass)
     assert current.endpoint_id==original.endpoint_id and current.extension=='669'
-    for contact in lab.registrar.registered_contacts(phone.username): lab.registrar.remove_contact(contact.flow_key)
+    for contact in lab.registrar.registered_contacts(phone.username):
+        lab.registrar.remove_contact(contact.flow_key)
     assert await async_build_peer_snapshot(lab.hass)==[]
     lab.native.runtime_data.available=True
     lab.native.runtime_data.client.is_connected=True

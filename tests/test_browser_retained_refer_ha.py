@@ -311,8 +311,7 @@ async def test_blind_refer_preserves_active_browser_audio_socket_and_duplex_pcm(
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_overlapping_route_publication_coalesces_without_cancelling_browser_media(trunks, monkeypatch):
-    from types import SimpleNamespace
-    from custom_components.voip_stack import audio_ws_view, call_projection, device_resolver, esphome_actions
+    from custom_components.voip_stack import audio_ws_view, call_projection
     from .test_browser_paging_ha import Browser
 
     lab = trunks
@@ -322,45 +321,26 @@ async def test_overlapping_route_publication_coalesces_without_cancelling_browse
     client.audio_rtp_socket = None
     browser = Browser()
     media = asyncio.create_task(audio_ws_view._run_audio_session(lab.hass, browser, active, endpoint_id="retained"))
-    entered, old_cancelled, release = asyncio.Queue(), asyncio.Event(), asyncio.Event()
-    sent = []
-    async def devices():
-        entered.put_nowait(True)
-        try:
-            await release.wait()
-        except asyncio.CancelledError:
-            old_cancelled.set()
-            raise
-        return [{"device_id": "device-bedroom0"}]
-    async def deliver(hass, device, action, data):
-        sent.append((device["device_id"], action, data))
-    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(list_devices=devices))
-    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
-    monkeypatch.setattr(esphome_actions, "async_call_action", deliver)
     try:
         await wait_for(lambda: bool(browser.contracts))
-        # The initial attachment can publish the same route too; wait for its
-        # real notification, then supersede it while discovery is still pending.
-        await asyncio.wait_for(entered.get(), 2)
-        first = lab.calls.task_for(session.call_id, f"voip-media-route-{session.call_id}")
-        call_projection.publish_esp_media_route(lab.hass, session.call_id, "ha_transcoding")
-        latest = lab.calls.task_for(session.call_id, f"voip-media-route-{session.call_id}")
-        await asyncio.wait_for(entered.get(), 2)
-        await asyncio.wait_for(old_cancelled.wait(), 2)
-        assert first is not latest and first.cancelled()
-        assert not media.done() and client.dialog is not None
-        release.set()
-        await asyncio.wait_for(latest, 2)
-        assert sent == [("device-bedroom0", "set_media_route", {"call_id": session.call_id, "route": "ha_transcoding"})]
+        dialog = client.dialog
+        # Route telemetry is local PBX state. Consecutive publications retain
+        # the existing RTP owner and the latest committed diagnostic value.
+        call_projection.publish_media_route(lab.hass, session.call_id, "direct")
+        call_projection.publish_media_route(lab.hass, session.call_id, "ha_transcoding")
+        assert session.metadata["committed_media_route"] == "ha_transcoding"
+        assert not media.done() and client.dialog is dialog
+        assert lab.calls.task_for(session.call_id, f"voip-media-route-{session.call_id}") is None
+        with pytest.raises(ValueError, match="invalid committed media route"):
+            call_projection.publish_media_route(lab.hass, session.call_id, "invalid-route")
+        assert session.metadata["committed_media_route"] == "ha_transcoding" and not media.done()
         assert lab.runtime.media.sessions_for("audio")[(session.call_id, "retained")] is active
         await lab.hass.services.async_call("voip_stack", "hangup", {
             "device_id": "device-retained", "call_id": session.call_id,
         }, blocking=True)
         await asyncio.wait_for(media, 2)
         assert_call_resources_released(lab)
-        assert first.done() and latest.done()
     finally:
-        release.set()
         browser.force_close()
         media.cancel()
         await asyncio.gather(media, return_exceptions=True)

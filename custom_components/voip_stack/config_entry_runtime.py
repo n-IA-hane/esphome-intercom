@@ -97,29 +97,38 @@ def _only_browser_camera_send_changed(previous: tuple, current: tuple) -> bool:
 
 
 async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Apply native config/subentry changes as soon as HA persists them."""
-
+    """Serialize native updates through the existing group/configuration owner."""
     runtime = runtime_data(hass)
     if runtime is None:
         return
+    async with runtime.group_update_lock:
+        if runtime_data(hass) is not runtime:
+            return
+        reload_required = await _async_apply_config_entry_update(hass, entry, runtime)
+    # Reload closes this runtime and must run after releasing its update lock.
+    if reload_required and runtime_data(hass) is runtime:
+        await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def _async_apply_config_entry_update(hass, entry, runtime) -> bool:
+    """Apply one current snapshot before another native update reads its baseline."""
     if runtime.ha_bindings is not None:
         runtime.ha_bindings.refresh_config()
     from .group_config import async_apply_group_updates, group_records, membership_signature
     from .paging_config import paging_group_configs
-    async with runtime.group_update_lock:
-        await async_apply_group_updates(hass, entry, runtime.entry_group_records)
-        groups_now = group_records(entry)
-        groups_changed = groups_now != runtime.entry_group_records
-        runtime.entry_group_records = groups_now
-        paging_now = paging_group_configs(entry)
-        memberships_now = membership_signature(hass, entry)
-        groups_changed = (groups_changed or paging_now != runtime.entry_paging_records
-                          or (runtime.entry_membership_signature is not None
-                              and memberships_now != runtime.entry_membership_signature))
-        runtime.entry_paging_records = paging_now
-        runtime.entry_membership_signature = memberships_now
-        if runtime.queues is not None:
-            runtime.queues.refresh()
+    await async_apply_group_updates(hass, entry, runtime.entry_group_records)
+    groups_now = group_records(entry)
+    groups_changed = groups_now != runtime.entry_group_records
+    runtime.entry_group_records = groups_now
+    paging_now = paging_group_configs(entry)
+    memberships_now = membership_signature(hass, entry)
+    groups_changed = (groups_changed or paging_now != runtime.entry_paging_records
+                      or (runtime.entry_membership_signature is not None
+                          and memberships_now != runtime.entry_membership_signature))
+    runtime.entry_paging_records = paging_now
+    runtime.entry_membership_signature = memberships_now
+    if runtime.queues is not None:
+        runtime.queues.refresh()
     runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = tuple(
         entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
     )
@@ -134,8 +143,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     previous_runtime = runtime.entry_runtime_signature
 
     if previous_runtime is not None and previous_runtime != runtime_signature:
-        await hass.config_entries.async_reload(entry.entry_id)
-        return
+        return True
 
     from .repairs import async_sync_pbx_configuration_issues
     async_sync_pbx_configuration_issues(hass)
@@ -221,3 +229,4 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     await async_refresh_mailbox_state(hass)
     from .physical_phone_runtime import async_reconcile_physical_phone_runtime
     await async_reconcile_physical_phone_runtime(hass, entry)
+    return False

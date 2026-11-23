@@ -75,6 +75,37 @@ class _EntityPermissions:
         return (entity_id, policy) in self.allowed
 
 
+class _Registry:
+    """Spy for the session lookup and sticky controller storage contract."""
+
+    def __init__(self, controller_user_id=""):
+        self.session = types.SimpleNamespace(metadata={"controller_user_id": controller_user_id})
+        self.sessions = {"call-1": self.session}
+        self.bound = []
+
+    def resolve_session_id(self, call_id):
+        return call_id
+
+    def bind_controller(self, call_id, *, user_id, endpoint_id=""):
+        metadata = self.sessions[call_id].metadata
+        if endpoint_id:
+            controllers = metadata.setdefault("controller_user_ids", {})
+            if controllers.get(endpoint_id) not in {None, "", user_id}:
+                raise ValueError("Controller is already bound")
+            controllers[endpoint_id] = user_id
+        else:
+            if metadata.get("controller_user_id") not in {None, "", user_id}:
+                raise ValueError("Controller is already bound")
+            metadata["controller_user_id"] = user_id
+        self.bound.append(user_id)
+
+
+class _ScopedRegistry(_Registry):
+    def __init__(self, controllers):
+        super().__init__()
+        self.session.metadata.update(local_bridge=True, controller_user_ids=dict(controllers))
+
+
 def _service_call(user_id: str | None):
     return types.SimpleNamespace(context=types.SimpleNamespace(user_id=user_id))
 

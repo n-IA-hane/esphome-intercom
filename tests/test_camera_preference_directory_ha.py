@@ -24,6 +24,9 @@ async def camera(hass, phones, monkeypatch):
     from custom_components.voip_stack.contact_config import contact_dicts
 
     runtime = phones.entry.runtime_data
+    from custom_components.voip_stack.endpoint_lifecycle import call_registry
+    owner = call_registry(hass)
+    owner.activate()
     runtime.transport_config.update(
         sip_port=5099, rtp_port=40000, advertise_host="127.0.0.1"
     )
@@ -66,6 +69,7 @@ async def camera(hass, phones, monkeypatch):
             )
         )
         await asyncio.wait_for(completed.wait(), 1)
+        await hass.async_block_till_done(wait_background_tasks=True)
 
     yield SimpleNamespace(
         **vars(phones),
@@ -77,7 +81,9 @@ async def camera(hass, phones, monkeypatch):
         intent=intent,
         send=send,
     )
+    await hass.async_block_till_done(wait_background_tasks=True)
     remove()
+    await owner.shutdown()
 
 
 async def test_camera_service_persists_publishes_and_keeps_live_intent_without_directory_scan(
@@ -132,6 +138,7 @@ async def test_routing_and_mixed_phone_changes_still_refresh(
         return
     phone_config.update_phone_subentry(hass, camera.entry, "kitchen", values)
     await asyncio.wait_for(camera.completed.wait(), 1)
+    await hass.async_block_till_done(wait_background_tasks=True)
     camera.refresh.assert_awaited_once_with(hass)
 
 
@@ -216,6 +223,7 @@ async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_doe
         title="Desk",
     )
     await asyncio.wait_for(camera.completed.wait(), 1)
+    await hass.async_block_till_done(wait_background_tasks=True)
     camera.completed.clear()
     camera.refresh.reset_mock()
     if 'username' in change:
@@ -226,6 +234,7 @@ async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_doe
     else:
         phone_config.update_phone_subentry(hass, camera.entry, 'desk', change)
     await asyncio.wait_for(camera.completed.wait(), 1)
+    await hass.async_block_till_done(wait_background_tasks=True)
     if set(change) == {"send_video"}:
         camera.refresh.assert_not_awaited()
     else:
