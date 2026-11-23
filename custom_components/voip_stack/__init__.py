@@ -21,8 +21,8 @@ from .config import (
 )
 from .config_entry_runtime import (
     async_config_entry_updated as _async_config_entry_updated,
-    async_deferred_phonebook_sync as _deferred_phonebook_sync,
-    async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
+    async_initialize_directory as _initialize_directory,
+    async_refresh_directory as _refresh_directory,
     entry_phone_signature as _entry_phone_signature,
     entry_runtime_signature as _entry_runtime_signature,
 )
@@ -395,7 +395,7 @@ async def _handle_set_ha_softphone_settings_service(call: ServiceCall) -> None:
         auto_answer=call.data.get("auto_answer"),
         send_video=call.data.get("send_video"),
     )
-    await _refresh_and_push_phonebook(hass)
+    await _refresh_directory(hass)
 
 
 async def _handle_set_phone_settings_service(call: ServiceCall) -> None:
@@ -600,8 +600,8 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     from .phonebook_services import build_phonebook_service_handlers
     from .services import async_register_services
 
-    account_handlers = build_account_service_handlers(_refresh_and_push_phonebook)
-    phonebook_handlers = build_phonebook_service_handlers(_refresh_and_push_phonebook)
+    account_handlers = build_account_service_handlers(_refresh_directory)
+    phonebook_handlers = build_phonebook_service_handlers(_refresh_directory)
     from .automation_call import async_play_media, async_tts_say, async_wait_for_dtmf, async_wait_unanswered
     from .external_call_access import async_set_external_call_access
     from .mailbox import async_set_voicemail_settings
@@ -906,7 +906,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     from .logbook import async_setup_account_activity
     async_setup_account_activity(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
-    entry.async_create_background_task(hass, _deferred_phonebook_sync(coordinator), "voip-phonebook-startup-sync")
+    entry.async_create_background_task(hass, _initialize_directory(coordinator), "voip-directory-initialize")
     # Platforms can now serve fresh snapshots after an entry reload.
     hass.bus.async_fire(f"{DOMAIN}.runtime_ready")
     return True

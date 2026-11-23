@@ -207,6 +207,7 @@ class QueueManager:
                 if item.data.get("group_id") == queue.queue_id:
                     saved_policy = asdict(updated)
                     saved_policy.pop("agent_order", None)
+                    saved_policy.pop("enabled", None)
                     self.hass.config_entries.async_update_subentry(self.entry, item,
                         data={**item.data, "members": list(ordered),
                               "policy": saved_policy, "enabled": updated.enabled})
@@ -659,8 +660,11 @@ async def async_setup_queues(hass, entry):
                 policy = QueuePolicy.from_data(policies[legacy])
             except (ValueError, TypeError):
                 continue
+            saved_policy = asdict(policy)
+            saved_policy.pop("agent_order", None)
+            saved_policy.pop("enabled", None)
             hass.config_entries.async_update_subentry(entry, item,
-                data={**item.data, "policy": asdict(policy), "enabled": policy.enabled})
+                data={**item.data, "policy": saved_policy, "enabled": policy.enabled})
     manager = QueueManager(hass, entry, store=store)
     for key, value in policies.items():
         try:

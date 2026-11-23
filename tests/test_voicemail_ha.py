@@ -576,7 +576,7 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
             "endpoint_id": endpoint.endpoint_id, "name": endpoint.name,
             "kind": endpoint.kind.value, "username": endpoint.username,
         })
-    monkeypatch.setattr(voip_stack, "_refresh_and_push_phonebook", AsyncMock())
+    monkeypatch.setattr(voip_stack, "_refresh_directory", AsyncMock())
     await lab.hass.services.async_call("voip_stack", "set_phone_settings", {
         "device_id": "device-bedroom0", "ringing_timeout": 1,
         "no_answer_action": "voicemail", "no_answer_to": "kitchen",

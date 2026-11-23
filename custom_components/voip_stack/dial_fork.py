@@ -94,8 +94,6 @@ def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
             488,
             "Not Acceptable Here",
         )
-    if all(item is DialDisposition.TIMEOUT for item in dispositions):
-        return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
     return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
 
 
@@ -114,6 +112,7 @@ class DialCandidate:
     endpoint_id: str = ""
     control: bool = False
     confirm: Callable[[], Awaitable[bool]] | None = None
+    before_close: Callable[[LegCloseMode], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,6 +431,9 @@ class DialForkController:
                 for candidate, outcome in batch:
                     if outcome.answered:
                         if candidate.confirm is None or await self._confirm_candidate(candidate, deadline):
+                            for loser in candidates:
+                                if loser is not candidate and loser.before_close is not None:
+                                    loser.before_close(LegCloseMode.ANSWERED_ELSEWHERE)
                             return candidate, outcome, failures
                         await self._close_candidates((candidate,), LegCloseMode.CLOSE)
                         outcome = DialOutcome(DialDisposition.CANCELLED, 487, "Answer preparation failed")

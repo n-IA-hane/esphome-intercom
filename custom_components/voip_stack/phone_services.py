@@ -87,6 +87,7 @@ class PhoneServices:
     @callback
     def _directory_changed(self):
         if self._owned() and self.runtime.ldap_server is not None:
+            self.runtime.ldap_server.validate_records()
             self.controller.schedule()
 
     @callback
@@ -158,6 +159,7 @@ class PhoneServices:
                     base_dn=config["base_dn"], allow_anonymous=config["allow_anonymous"],
                     authorize_callback=self.auth.valid,
                     owner_callback=self._owned,
+                    fault_callback=lambda generation, faults: self._record_faults(generation, faults),
                     uri_for=lambda row: directory_uri(self.hass, row))
                 await self._close_listener()
                 if not self._owned(revision):
@@ -177,10 +179,16 @@ class PhoneServices:
                 await server.async_close()
                 return
             self.runtime.ldap_server = server
+            server.validate_records()
             ir.async_delete_issue(self.hass, DOMAIN, "phone_service_ldap")
             self.controller.configure_directory_service({**config, "ldap_port": server.port}, epoch=uuid.uuid4().hex)
             self.controller.start()
             self._failed = False
+
+    def _record_faults(self, generation, faults):
+        if self._owned():
+            from .repairs import async_sync_ldap_record_issue
+            async_sync_ldap_record_issue(self.hass, self.entry, faults)
 
     async def _close_listener(self):
         server, self.runtime.ldap_server = self.runtime.ldap_server, None

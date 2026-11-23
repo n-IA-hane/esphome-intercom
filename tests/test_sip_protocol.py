@@ -32,6 +32,72 @@ from .voip_phase1_support import (
 )
 
 
+class SipRegisteredTcpRecoveryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_complete_bad_frame_preserves_authenticated_registration_and_flow(self):
+        registrar_module = _load_intercom_module("sip_registrar")
+        registrar = registrar_module.SipRegistrar(enabled=True,
+            accounts=[registrar_module.SipAccount("desk", "Desk", "test-only-password")],
+            local_ip="127.0.0.1", local_sip_port=5060)
+        server = sip_listener.SipTcpServer(host="127.0.0.1", port=0,
+            local_ip="127.0.0.1", local_rtp_port=35000,
+            supported_formats=[audio_format.AudioFormat(16000)],
+            on_invite=unittest.mock.AsyncMock(), on_register=registrar.handle_register,
+            on_flow_closed=registrar.remove_flow)
+        writer = None
+        try:
+            self.assertTrue(await server.start())
+            port = server.server.sockets[0].getsockname()[1]
+            registrar.local_sip_port = server.endpoint.local_sip_port = port
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            client_port = writer.get_extra_info("sockname")[1]
+            uri = f"sip:127.0.0.1:{port}"
+
+            async def receive():
+                raw = await asyncio.wait_for(sip_tcp_io.read_sip_stream_message(reader), 2)
+                self.assertIsNotNone(raw)
+                return sip.parse_message(raw)
+
+            def request(method, sequence, identity, authorization=""):
+                headers = [
+                    ("Via", f"SIP/2.0/TCP 127.0.0.1:{client_port};branch=z9hG4bK-{identity}-{sequence};rport"),
+                    ("From", "<sip:desk@127.0.0.1>;tag=desk"),
+                    ("To", "<sip:desk@127.0.0.1>"), ("Call-ID", identity),
+                    ("CSeq", f"{sequence} {method}"),
+                ]
+                if method == "REGISTER":
+                    headers.extend((("Contact", f"<sip:desk@127.0.0.1:{client_port};transport=tcp>"),
+                                    ("Expires", "120")))
+                if authorization:
+                    headers.append(("Authorization", authorization))
+                return sip.build_request(method, uri, headers)
+
+            writer.write(request("REGISTER", 1, "tcp-recovery"))
+            await writer.drain()
+            challenge = await receive()
+            self.assertEqual(challenge.status_code, 401)
+            authorization = sip_auth.build_digest_authorization(
+                challenge_header=challenge.header("WWW-Authenticate"), username="desk",
+                password="test-only-password", method="REGISTER", uri=uri)
+            writer.write(request("REGISTER", 2, "tcp-recovery", authorization))
+            await writer.drain()
+            self.assertEqual((await receive()).status_code, 200)
+            binding = registrar.registered_contacts("desk")[0]
+
+            writer.write(f"OPTIONS {uri} SIP/2.0\r\nBroken header\r\nContent-Length: 0\r\n\r\n".encode()
+                         + request("OPTIONS", 1, "after-bad-frame"))
+            await writer.drain()
+            response = await receive()
+            self.assertEqual((response.status_code, response.header("Call-ID")), (200, "after-bad-frame"))
+            self.assertIs(registrar.registered_contacts("desk")[0], binding)
+            self.assertFalse(writer.is_closing())
+        finally:
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+            await server.stop()
+        self.assertFalse(registrar.registered_contacts("desk"))
+
+
 class SipProtocolBugFixTest(unittest.TestCase):
     def test_combined_via_keeps_the_first_transaction_branch(self):
         message = sip.parse_message(

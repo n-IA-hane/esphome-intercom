@@ -72,7 +72,7 @@ def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
         out[1::3] = data[1::4]
         out[2::3] = data[0::4]
         return bytes(out)
-    raise ValueError(f"{fmt.pcm_format.value} has no phase-1 RTP mapping")
+    raise ValueError(f"{fmt.pcm_format.value} has no RTP mapping")
 
 
 def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes:
@@ -121,7 +121,7 @@ def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | RtpPcmFormat) -> bytes
         out[2::4] = payload[0::3]
         out[3::4] = payload[0::3].translate(_S24_SIGN_EXTENSION)
         return bytes(out)
-    raise ValueError(f"{fmt.pcm_format.value} has no phase-1 RTP mapping")
+    raise ValueError(f"{fmt.pcm_format.value} has no RTP mapping")
 
 
 class RtpPayloadDecoder:

@@ -384,6 +384,7 @@ class SipEndpointManager:
         decline_reason: str = "",
         connected_identity_name: str = "",
         connected_identity_user: str = "",
+        media_contract=None,
     ) -> bool:
         preferred = self.server_for_pending_call(call_id)
         candidates = [preferred] if preferred is not None else self.servers
@@ -397,6 +398,7 @@ class SipEndpointManager:
                 decline_reason=decline_reason,
                 connected_identity_name=connected_identity_name,
                 connected_identity_user=connected_identity_user,
+                media_contract=media_contract,
             ):
                 return True
         return False
@@ -542,14 +544,14 @@ class SipEndpointManager:
             headers=(("Event", "check-sync;reboot=false"), ("Subscription-State", "terminated")),
             timeout=timeout, active=active, on_sent=on_sent)
 
-    async def async_send_dtmf_info(self, call_id: str, digit: str) -> bool:
+    async def async_send_dtmf_info(self, call_id: str, digit: str, *, duration_ms=160) -> bool:
         """Send DTMF INFO through the transport owning an inbound dialog."""
 
         for endpoint in self._dialog_endpoints():
             if call_id not in endpoint.active_dialogs:
                 continue
             send = getattr(endpoint, "send_dtmf_info", None)
-            return bool(callable(send) and await send(call_id, digit))
+            return bool(callable(send) and await send(call_id, digit, duration_ms=duration_ms))
         return False
 
     async def acquire_replacement_dialog(self, replaces):

@@ -164,7 +164,10 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         uas = next(server.active_dialogs[session.call_id] for server in
             endpoint._dialog_endpoints() if session.call_id in server.active_dialogs)
         assert uas.invite.send_format.sample_rate == caller.dialog.recv_format.sample_rate
-        assert uas.invite.recv_format.sample_rate == caller.dialog.send_format.sample_rate
+        assert any((fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels) ==
+            (caller.dialog.send_format.payload_type, caller.dialog.send_format.encoding,
+             caller.dialog.send_format.sample_rate, caller.dialog.send_format.channels)
+            for fmt in uas.invite.recv_formats)
         if caller_discovery is not None:
             assert caller.dialog.send_format.frame_ms == 20
             assert caller.dialog.recv_format.frame_ms == 10
@@ -186,12 +189,31 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
         target_samples = observed["send"].sample_rate // 100
         target_payload = struct.pack(f"!{target_samples}h", *([3000] * target_samples))
         target_port = int(re.search(rb"m=audio (\d+)", observed["offer"])[1])
-        for index in range(1):
+        decoder, converter = relay.right_decoder, relay.right_to_left
+        actual = decoder.format_for(observed["send"].payload_type) if decoder is not None else relay.right.inbound_rtp_format
+        quantum_ms = actual.frame_ms if decoder is not None and decoder.requires_fixed_input(actual) else 10
+        if converter is not None and converter.requires_fixed_input:
+            quantum_ms = max(quantum_ms, decoder.output_pcm.frame_ms)
+        back_count = max(1, (int(quantum_ms) + 9) // 10)
+        for index in range(back_count):
             await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
                 observed["send"].payload_type, index, index * target_samples, 902, target_payload)),
                 ("127.0.0.1", target_port))
+            if index == 0 and back_count > 1:
+                await wait_until(lambda: decoder.has_pending_pcm)
+                with pytest.raises(BlockingIOError):
+                    audio.recv(4096)
+        expected_bytes = expected_return_rate * back_count * 10 * 2 // 1000
+        returned_packets, received_bytes = [], 0
         async with asyncio.timeout(3):
-            returned = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+            while received_bytes < expected_bytes:
+                value = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
+                returned_packets.append(value)
+                received_bytes += len(value.payload)
+        assert received_bytes == expected_bytes
+        returned = returned_packets[0]
+        for first, second in zip(returned_packets, returned_packets[1:]):
+            assert (second.timestamp - first.timestamp) & 0xFFFFFFFF == expected_return_rate // 100
         assert returned.payload_type == caller.dialog.recv_format.payload_type
         assert len(returned.payload) == expected_return_rate // 100 * 2
         assert relay.right_to_left_passthrough == (expected_return_rate == target_rate)
@@ -201,7 +223,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             assert max(struct.unpack(f"!{len(returned.payload)//2}h", returned.payload)) >= 2900
         if not known:
             await lab.hass.loop.sock_sendto(target.rtp_socket, rtp.build_packet(rtp.RtpPacket(
-                observed["send"].payload_type, 1, target_samples, 902, target_payload * 2)),
+                observed["send"].payload_type, back_count, back_count * target_samples, 902, target_payload * 2)),
                 ("127.0.0.1", target_port))
             # A receive preference of 10 ms is not a hard packet limit.
             # Accumulate exactly the sent 20 ms, preserving sample and clock
@@ -298,7 +320,7 @@ async def restore_managed_caller(lab, caller, discovery):
     if discovery == "no-ptime":
         assert entry.metadata["sip_audio_tx_formats"] == entry.metadata["sip_audio_rx_formats"] == ["L16/48000/1", "L16/16000/1"]
         assert "sdp_features" not in entry.metadata
-        assert entry.metadata["sip_audio_rx_geometry_complete"]
+        assert "sip_audio_rx_geometry_complete" not in entry.metadata
     peers = await build_real_peer_snapshot(lab.hass)
     peer = next(item for item in peers if item.endpoint_id == restored.endpoint_id)
     assert peer.host == "127.0.0.2" and peer.sip_uri_user == restored.username

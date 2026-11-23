@@ -622,12 +622,15 @@ class _ForwardAdmission:
         self.check_external_route(decision)
         from .account_dialing import account_call_plan, account_dial_decision
 
-        decision = account_dial_decision(hass, decision)
+        decision = account_dial_decision(hass, decision, all_transports=True)
         account_plan = (
             account_call_plan(decision.entry)
             if decision.action is RouteAction.GROUP
             else None
         )
+        account_endpoint = endpoint_directory(hass).get(account_plan.endpoint_id) if account_plan else None
+        if account_plan is not None:
+            account_plan = replace(account_plan, route_kind="transfer")
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = self.runtime.route_resolver.logical_endpoint(
                 decision.target or destination,
@@ -694,7 +697,10 @@ class _ForwardAdmission:
             browser_endpoint=target_browser_endpoint,
             initial_selection=self.request.initial_selection,
             preselected=self.request.resolved_decision is not None,
-            ring_timeout=self.request.ring_timeout,
+            ring_timeout=(self.request.ring_timeout if self.request.ring_timeout is not None
+                          else account_endpoint.policy.ringing_timeout if account_endpoint is not None
+                          else target_browser_endpoint.policy.ringing_timeout
+                          if target_browser_endpoint is not None else None),
             on_failure=self.request.on_failure,
         )
 

@@ -57,13 +57,15 @@ When the native API is present, `voip_stack` creates **VoIP State**,
 Reason** and **VoIP Contacts** entities. It also exposes
 extension, ring/conference groups and the conference-ring switch.
 
-The HA integration identifies a phone by the presence of `voip_state` on its
-ESPHome device, including while offline. No long public **VoIP Endpoint** sensor
-is generated. ESPHome DeviceInfo and the device registry supply identity;
-authenticated SIP Contact bindings supply registered routes, and OPTIONS/SDP
-supply codec, rate, packet-time and video capabilities. Current managed
-profiles enable automatic enrollment: the existing private API provisions the
-phone's named HA account and, when selected, its LDAP directory configuration.
+The HA integration uses `voip_state` to discover the associated ESPHome hardware,
+including while offline. The configured SIP account supplies phone identity;
+hardware discovery alone does not create a callable route. Authenticated SIP
+Contact bindings supply registered routes, and OPTIONS/SDP supply codec, rate,
+packet-time and video capabilities. Managed profiles enable automatic enrollment:
+the native API privately provisions the account credentials and, when selected,
+its LDAP directory configuration. Native friendly name initializes the account
+only during creation or a proven initial migration. Later hardware renaming
+changes neither the account username nor its display name.
 LDAP then refreshes contacts. Standard SIP BLF/presence and MWI subscriptions
 provide live phone and message state independently of those records.
 
@@ -95,56 +97,44 @@ No second SIP connection, audio pipeline or polling task is added for this
 interface. ESPHome supplies retained entity states when an API client connects;
 IP changes are reflected by the ESPHome owner and current SIP Contact bindings.
 
-For a direct phone without REGISTER, configure its SIP listener explicitly in
-an existing HA phonebook contact. Associate it with the ESPHome device using
-`metadata.device_id` (the HA device ID), or `metadata.endpoint_id` equal to
-`esphome:<device_id>`. For example, the existing `voip_stack.set_contacts`
-action accepts this document in its `roster_json` field (replace the device ID
-and retain the other contacts when replacing the manual contact list):
+A VoIP Stack account uses its literal SIP username. Its ESPHome hardware device
+is an association for provisioning and native controls, not another SIP
+identity. Hardware names do not rename the associated account after enrollment.
+
+A phone registered only with another PBX remains an external SIP contact unless
+an account is explicitly configured for it in VoIP Stack. For an explicit
+contact, use its actual SIP URI. Optional `metadata.device_id` associates the
+contact with native HA hardware for display and controls; it never becomes the
+SIP user. The administrator `voip_stack.set_contacts` import accepts this document
+in `roster_json` (retain the other contacts when replacing the manual list):
 
 ```json
-{"contacts":[{"id":"phone_node","name":"Entrance","sip_uri":"sip:phone_node@192.0.2.10:5077;transport=tcp","metadata":{"device_id":"<HA device ID>"}}]}
+{"contacts":[{"id":"entrance-contact","name":"Entrance","sip_uri":"sip:entrance@192.0.2.10:5077;transport=tcp","metadata":{"device_id":"<HA device ID>"}}]}
 ```
 
-The API address alone does not establish a SIP port or transport. A discovered
-device without a Contact or explicit direct route remains visible but is not
-advertised as a routable peer. RTP ports and actual formats come from the call's
-SDP. Unknown capabilities stay unknown. HA retains the legacy endpoint reader
-for older firmware, but that sensor is never a discovery prerequisite. Update
-HA before the firmware, and preserve an old direct route as explicit contact
-configuration before removing its legacy sensor.
-
-An older ESPHome entity-registry entry can remain `unavailable` after updated
-firmware stops advertising the endpoint sensor. VoIP Stack does not delete
-entities owned by the ESPHome integration. Before any manual cleanup, verify
-that the updated device's native API entity inventory omits the old endpoint
-sensor and that discovery through `voip_state`, calling and contact delivery
-work. In Home Assistant's **Settings > Devices & services > Entities**, locate
-the obsolete entity by its exact ESPHome device and original unique ID
-(`voip_endpoint` role), then use the supported UI removal if offered. Keep the
-device's `voip_state` and the VoIP Stack integration's own entities. Canonical
-`endpoint_id` values and the card's `voip_endpoint` URL parameter are phone
-identifiers and must remain unchanged.
+The native API address does not establish a SIP route, transport, RTP port or
+media format. SIP registration or an explicit contact supplies the signaling
+route; the actual call's SDP supplies its media contract. LDAP distributes the
+phone directory, independently of the administrator import above.
 
 ## Customize an entity
 
-The generated entities accept their usual ESPHome options under
+Generated entities accept their normal ESPHome options under
 `voip_stack.ha_integration`. For example:
 
 ```yaml
 voip_stack:
   ha_integration:
-    media_route:
+    state:
       on_value:
         - logger.log:
-            format: "Call media route: %s"
+            format: "Call state: %s"
             args: ['x.c_str()']
 ```
 
-Use this location instead of declaring another `text_sensor` for a managed
-role or extending an entity inside a retired package. Leave the default names
-unless your HA discovery setup has been checked with custom names. Optional
-buttons, volume controls and diagnostic sensors remain explicit declarations.
+Optional buttons, volume controls and diagnostic sensors remain explicit
+configuration. Keep the existing hardware and application owners for those
+controls.
 
 ## Standalone SIP
 
@@ -158,44 +148,30 @@ voip_stack:
 
 Static contacts, direct SIP calling and manually configured registered
 accounts remain available when compiled. Disabling this interface does not
-disable SIP or RTP. Conversely, enabling it does not force
-calls through HA: `use_ha_as_first_contact` remains a separate routing choice.
+disable SIP or RTP. Enabling it does not force calls through HA:
+`use_ha_as_first_contact` remains a separate routing preference.
 
-Current device packages select optional `directory`, `blf` and `mwi` features
-separately. They require VoIP, while the basic native control interface does
-not require all three. For manual account capacity, line selection and saved
-overrides, see [registered ESP accounts](ESP_REGISTRATION.md).
-
-For a standalone profile, also remove managed `directory`, `blf` and `mwi`
-features when their HA account is not wanted. To use equivalent services on a
-manual PBX account, configure their account/provider explicitly; disabling the
-HA adapter alone does not reconfigure independent LDAP or SIP subscriptions.
+Device packages select optional `directory`, `blf` and `mwi` features separately.
+For manual account capacity, line selection and saved overrides, see
+[registered ESP accounts](ESP_REGISTRATION.md). Configure the LDAP and SIP
+subscription providers explicitly when using another PBX; disabling the HA
+adapter does not reconfigure those independent providers.
 
 ## Migrating an existing phone
 
-Start from an updated [maintained device YAML](../yamls) and reapply your board
-settings, or migrate your existing configuration as follows.
+Update the Home Assistant integration and rebuild the ESP with the coordinated
+maintained firmware. Start from an updated [maintained device YAML](../yamls)
+and retain the board, audio, display and ringtone configuration. Remove any
+include of the deleted `voip/phonebook_subscribe.yaml` package.
 
-Comment out or remove the package entries for `voip/ha_phone.yaml`, `voip/ha_integration.yaml`,
-`voip/ha_actions.yaml`, `voip/ha_api.yaml` and
-`voip/phonebook_subscribe.yaml`. These paths now fail validation with migration
-instructions. Remove copied definitions of the native phone actions and managed
-entities as well; duplicates are rejected before compilation.
+Native phone controls require `custom_services: true` in the existing `api:`
+block. Maintained profiles already select the native interface. Full-profile
+runtime connectivity uses `runtime/ha_connectivity.yaml`; optional diagnostic
+API actions use `diagnostics/runtime.yaml`.
 
-Full profiles replace `voip/ha_api_runtime.yaml` with
-`runtime/ha_connectivity.yaml` for their runtime connectivity events. Runtime
-diagnostic API actions are selected separately with `diagnostics/runtime.yaml`.
-This connectivity replacement is not needed by a basic phone.
-Keep unrelated hardware, display, ringtone and audio packages.
-
-Add `custom_services: true` to the existing `api:` block. If you previously
-used `phonebook_subscribe.yaml` or `ha_phone.yaml` and want to preserve their
-routing preference, keep `use_ha_as_first_contact: true` in `voip_stack`.
-Maintained profiles already include these migration changes.
-
-After upload, check the available **VoIP State**, delivery of contacts,
-calling and hangup. Updating the HACS integration alone does not recompile the
-firmware or migrate a custom device YAML.
+After rebuilding and installing the coordinated firmware, verify the native
+account association, SIP registration, LDAP contacts, calling and hangup.
+Updating HACS alone does not rebuild or install ESP firmware.
 
 ## Dashboard controls
 

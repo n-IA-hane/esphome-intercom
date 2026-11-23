@@ -182,6 +182,7 @@ class EndpointRegistry:
                     policy = replace(policy, **{field: replace(destination, target=mapping[destination.target])})
             candidate = replace(endpoint, endpoint_id=identity, username=identity,
                                 kind=EndpointKind.SIP_ACCOUNT, policy=policy,
+                                availability='offline' if endpoint.kind is EndpointKind.ESPHOME else endpoint.availability,
                                 offline_forward_target=mapping.get(endpoint.offline_forward_target, endpoint.offline_forward_target)
                                 ) if endpoint.endpoint_id in mapping else replace(endpoint, policy=policy)
             if candidate != endpoint:

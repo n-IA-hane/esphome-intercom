@@ -24,7 +24,8 @@ def test_options_retains_video_and_advisory_receiver_hints():
     assert caps["audio_mode"] == "full_duplex"
     assert "sdp_features" not in caps
     assert "sip_audio_capabilities_complete" not in caps
-    assert caps["sip_audio_tx_geometry_complete"] and caps["sip_audio_rx_geometry_complete"]
+    assert "sip_audio_tx_geometry_complete" not in caps
+    assert "sip_audio_rx_geometry_complete" not in caps
     video = sdp.parse_video_sdp(NATIVE_OPTIONS, capabilities=True)
     assert video["media_port"] == video["rtcp_port"] == 0
     assert video["direction"] == "recvonly" and video["framerate"] == 10

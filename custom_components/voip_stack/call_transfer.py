@@ -14,6 +14,7 @@ from .sip_client import SipCallClient, SipTransferResult
 from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
 from .trunk_policy import call_external_call_denied
 from .endpoint_session import LegPhase
+from .forward_plan import await_forward_result
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,21 +242,21 @@ async def _transfer_local_source(
     registry.set_pending_invite(session.call_id, source.invite)
     task = None
     try:
-        await registry.forward_call(
+        task = await registry.forward_call(
             call_id=session.call_id,
             destination=destination,
             on_failure="resume",
             expected_state="in_call",
         )
-        task = registry.task_for(session.call_id, "forward")
-        if task is not None:
-            await asyncio.shield(task)
-        success = source.committed and session.live and session.state == "in_call"
+        if task is None:
+            task = registry.task_for(session.call_id, "forward")
+        outcome = await await_forward_result(task) if task is not None else None
+        success = outcome is not None and outcome.committed_for(session)
         return SipTransferResult(
             success,
             200 if success else 480,
             "completed" if success else "transfer_failed",
-            retained_call=success,
+            retained_call=success and session.live,
         )
     except BaseException:
         if task is not None and not task.done() and not source.committed:
@@ -290,16 +291,15 @@ async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wi
             destination=uri.user, on_failure="resume", expected_state=operation.session.state)
         if task is None:
             task = runtime.sip.task_for(operation.session.call_id, "forward")
-        if task is not None:
-            outcome = await asyncio.shield(task)
-            reason = str(getattr(outcome, "reason", "") or "transfer_failed")
-        success = (operation.session.live and operation.session.state == "in_call"
-                   and runtime.sip.bridge_link_for(operation.session.call_id) not in {"", operation.destination_id})
+        outcome = await await_forward_result(task) if task is not None else None
+        reason = str(getattr(outcome, "reason", "") or "transfer_failed")
+        success = outcome is not None and outcome.committed_for(operation.session)
         if not success:
             await operation.restore(runtime)
         from .fsm import sip_failure_response
         status = 200 if success else sip_failure_response(reason)[0]
-        return SipTransferResult(success, status, "completed" if success else reason, retained_call=success)
+        return SipTransferResult(success, status, "completed" if success else reason,
+                                 retained_call=success and operation.session.live)
     except BaseException:
         if task is not None and not task.done():
             task.cancel()

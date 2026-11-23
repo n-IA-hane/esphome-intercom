@@ -21,7 +21,8 @@ def group_records(entry, kind=None):
             continue
         data = dict(item.data)
         if data.get("kind") == "queue" and "members" in data:
-            data["policy"] = {**data.get("policy", {}), "agent_order": list(data["members"])}
+            data["policy"] = {**data.get("policy", {}), 'enabled': bool(data.get('enabled', True)),
+                              "agent_order": list(data["members"])}
         records[str(data.get("group_id") or item.subentry_id)] = data
     return records
 
@@ -44,11 +45,13 @@ def normalize_group_data(data, *, identity=""):
     if len(members) > 128 or any(len(value.encode()) > 2048 or any(ord(char) < 32 or ord(char) == 127 for char in value) for value in members):
         raise ValueError("Group destinations exceed the supported limits")
     policy = dict(data.get("policy") or {})
+    enabled = bool(data.get('enabled', policy.get('enabled', True)))
     if kind == "queue":
         from .queue_policy import QueuePolicy
         from dataclasses import asdict
-        policy = asdict(QueuePolicy.from_data({**policy, "agent_order": members}))
+        policy = asdict(QueuePolicy.from_data({**policy, 'enabled': enabled, "agent_order": members}))
         policy.pop("agent_order", None)
+        policy.pop('enabled', None)
     else:
         from .dial_plan import RingPolicy
         from dataclasses import asdict
@@ -59,7 +62,7 @@ def normalize_group_data(data, *, identity=""):
     return {"group_id": identity or str(data.get("group_id") or uuid4().hex),
             "kind": kind, "name": name, "extension": extension,
             "origin": "auto" if data.get("origin") == "auto" else "manual",
-            "enabled": bool(data.get("enabled", True)), "policy": policy, "members": members,
+            "enabled": enabled, "policy": policy, "members": members,
             **({"fallback": fallback} if kind == "ring" else {})}
 
 

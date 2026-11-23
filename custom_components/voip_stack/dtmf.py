@@ -60,6 +60,15 @@ def telephone_event_code(digit: str) -> int | None:
     return _DIGIT_EVENT_CODES.get(str(digit or "").strip().upper())
 
 
+def parse_sip_info_duration(body: bytes) -> int:
+    """Preserve the stated press duration, using the legacy default if absent."""
+    match = re.search(r"^Duration\s*=\s*(\d+)\s*$", body.decode("ascii", errors="ignore"), re.I | re.M)
+    if match is None:
+        return 160
+    value = match[1].lstrip("0") or "0"
+    return 5000 if len(value) > 4 else max(40, min(5000, int(value)))
+
+
 def build_sip_info_dtmf_body(digit: str, *, duration_ms: int = 160) -> bytes:
     """Build one legacy application/dtmf-relay body for an active dialog."""
 

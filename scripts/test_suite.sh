@@ -132,6 +132,9 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_blind_transfer_voicemail_audio_ha.py
+  tests/test_identity_audit_regressions_ha.py
+  tests/test_media_continuity_contract_ha.py
   tests/test_browser_pcm_edge_ha.py
   tests/test_browser_replacement_media_chromium_ha.py
   tests/test_call_account_filters_ha.py

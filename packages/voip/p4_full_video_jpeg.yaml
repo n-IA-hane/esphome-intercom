@@ -1,6 +1,5 @@
 # P4 JPEG video. Camera/rendering retain their original owners and frame gates.
 packages:
-  call_media_route: !include '../lvgl/p4_call_media_route.yaml'
   video_entities: !include 'video_entities.yaml'
   wake_word: ${ _p4_video_wake_word_hooks if _p4_video_has_wake_word else {} }
 substitutions:
@@ -80,16 +79,6 @@ lvgl:
             text: Video call
             text_color: 16777215
             text_font: font_ui_medium
-            long_mode: DOT
-        - label:
-            id: p4_video_media_route_label
-            align: LEFT_MID
-            x: 24
-            y: 15
-            width: 900
-            text: ''
-            text_color: 9741240
-            text_font: font_body
             long_mode: DOT
         - button:
             align: RIGHT_MID

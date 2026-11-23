@@ -509,7 +509,9 @@ class EndpointCallSession:
         if clean_name:
             current = self.named_tasks.get(clean_name)
             if current is not None and current is not task:
-                raise ValueError(f"duplicate task name {clean_name!r}")
+                if not current.done():
+                    raise ValueError(f"duplicate task name {clean_name!r}")
+                self.tasks.discard(current)
             self.named_tasks[clean_name] = task
         self.tasks.add(task)
         # Child cleanup tasks inherit this context. Weak references keep an

@@ -291,7 +291,7 @@ async def _prepare_bridge_video_contract_change(
             next_left.inbound_rtp_format,
             recv_formats=next_left.inbound_rtp_formats,
             dtmf=first_offered_dtmf_format(updated.remote_sdp),
-            remote_sdp=updated.remote_sdp,
+            remote_sdp=updated.remote_sdp, dtmf_direction=getattr(updated, "dtmf_direction", None),
             audio_direction=constrained_media_direction(
                 updated.remote_audio_direction,
                 allow_send=(
@@ -411,7 +411,7 @@ async def _prepare_bridge_video_contract_change(
         result = SipInviteResult(
             200,
             "OK",
-            answer_sdp=answer,
+            answer_sdp=answer, media_contract=updated,
             commit=commit,
             rollback=rollback,
             dialog_identity=identity,
@@ -520,7 +520,7 @@ async def async_prepare_media_update(
             updated.recv_format,
             recv_formats=updated.recv_formats,
             dtmf=first_offered_dtmf_format(updated.remote_sdp),
-            remote_sdp=updated.remote_sdp,
+            remote_sdp=updated.remote_sdp, dtmf_direction=getattr(updated, "dtmf_direction", None),
             video_port=local_video_rtp_port,
             video_format=updated.answer_video_format,
             video_direction=video_direction,
@@ -566,7 +566,7 @@ async def async_prepare_media_update(
         return SipInviteResult(
             200,
             "OK",
-            answer_sdp=answer,
+            answer_sdp=answer, media_contract=updated,
             commit=_commit_preanswered_update,
             rollback=_rollback_preanswered_update,
         )
@@ -694,7 +694,7 @@ async def async_prepare_media_update(
                 updated.recv_format,
                 recv_formats=updated.recv_formats,
                 dtmf=first_offered_dtmf_format(updated.remote_sdp),
-                remote_sdp=updated.remote_sdp,
+                remote_sdp=updated.remote_sdp, dtmf_direction=getattr(updated, "dtmf_direction", None),
                 video_port=local_video_rtp_port,
                 video_format=updated.answer_video_format,
                 video_direction=video_direction,
@@ -798,7 +798,7 @@ async def async_prepare_media_update(
         return SipInviteResult(
             200,
             "OK",
-            answer_sdp=answer,
+            answer_sdp=answer, media_contract=updated,
             commit=_commit_softphone_update,
             rollback=_rollback_softphone_update,
         )
@@ -842,7 +842,7 @@ async def async_prepare_media_update(
                 updated.recv_format,
                 recv_formats=updated.recv_formats,
                 dtmf=first_offered_dtmf_format(updated.remote_sdp),
-                remote_sdp=updated.remote_sdp,
+                remote_sdp=updated.remote_sdp, dtmf_direction=getattr(updated, "dtmf_direction", None),
                 audio_direction=updated.local_audio_direction,
                 video_port=(video_update.answer_video_rtp_port if video_update is not None else 0),
                 video_format=updated.answer_video_format,
@@ -898,7 +898,7 @@ async def async_prepare_media_update(
         return SipInviteResult(
             200,
             "OK",
-            answer_sdp=answer,
+            answer_sdp=answer, media_contract=updated,
             commit=_commit_assist_update,
             rollback=(video_update.rollback if video_update is not None else None),
         )
@@ -1008,7 +1008,7 @@ async def async_prepare_media_update(
         next_audio_peer.inbound_rtp_format,
         recv_formats=next_audio_peer.inbound_rtp_formats,
         dtmf=first_offered_dtmf_format(updated.remote_sdp),
-        remote_sdp=updated.remote_sdp,
+        remote_sdp=updated.remote_sdp, dtmf_direction=getattr(updated, "dtmf_direction", None),
         audio_direction=audio_direction,
         video_port=local_video_port,
         video_format=updated.answer_video_format,
@@ -1086,5 +1086,5 @@ async def async_prepare_media_update(
                 audio_committed = False
 
     return SipInviteResult(
-        200, "OK", answer_sdp=answer, commit=_commit_relay_update, rollback=_rollback_relay_update
+        200, "OK", answer_sdp=answer, media_contract=updated, commit=_commit_relay_update, rollback=_rollback_relay_update
     )

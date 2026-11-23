@@ -192,6 +192,7 @@ class SipInviteTransactions:
                 )
             else:
                 prack_response = await async_run_dialog_request_transaction(
+                    method="PRACK",
                     send=lambda: self._send_dialog_request(
                         request.raw, next_host, next_port
                     ),
@@ -543,7 +544,8 @@ class SipInviteTransactions:
     def _new_initial_transaction(
         self, timeout: float,
     ) -> SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]]:
-        transaction = SipClientTransaction(transport=self.signaling_transport, timeout=timeout, t1=SIP_T1, t2=SIP_T2)
+        transaction = SipClientTransaction(transport=self.signaling_transport, timeout=timeout,
+                                           method="INVITE", t1=SIP_T1, t2=SIP_T2)
         self._invite_transaction = transaction
         return transaction
 
@@ -670,7 +672,9 @@ class SipInviteTransactions:
         async def retransmit() -> None:
             raw = self._pending_cancel_request if self._cancel_transaction is not None else exchange.request
             await self._send_raw(raw, exchange.host, exchange.port)
-            _LOGGER.debug("SIP UDP retransmit INVITE #%d %s@%s:%s", transaction.retransmissions + 1,
+            request_method = "CANCEL" if self._cancel_transaction is not None else "INVITE"
+            _LOGGER.debug("SIP UDP retransmit %s #%d %s@%s:%s", request_method,
+                          (self._cancel_transaction or transaction).retransmissions + 1,
                           exchange.target, exchange.host, exchange.port)
 
         while True:
@@ -685,12 +689,20 @@ class SipInviteTransactions:
                 if received is None:
                     if response_timer is transaction and self._cancel_transaction is not None:
                         continue
+                    if self._cancel_requested:
+                        self._invite_transaction_active = False
+                        self._cancel_transaction = None
+                        return "cancelled"
                     transaction = await self._failover_initial_transaction(exchange, timeout)
                     if transaction is None:
                         return "timeout"
                     continue
                 msg, addr = received
             except (ConnectionError, OSError, RuntimeError) as err:
+                if self._cancel_requested:
+                    self._invite_transaction_active = False
+                    self._cancel_transaction = None
+                    return "cancelled"
                 transaction = await self._failover_initial_transaction(exchange, timeout)
                 if transaction is None:
                     return self._transport_failure(err, exchange.target, exchange.host, exchange.port)

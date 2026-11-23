@@ -8,17 +8,51 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ..sdp_parser import local_direction_for_offer, parse_sdp
+from ..sdp_parser import local_direction_for_offer, parse_sdp, fmtp_parameters
 from ..sdp_types import RtpPcmDirection
+from ..sdp_types import SdpError
+from ..sdp_audio_facts import offered_pcm_formats, offered_dtmf_formats
 from ..codec_policy import DEFAULT_AUDIO_CODECS
 from . import leg
 from .capability import PeerEvidence, resolve_peer_media_profile
 from .payload_map import PayloadMap, PayloadConflict, TELEPHONE_EVENT
+from .codecs import DEFAULT_OPUS_RECEIVE_FMTP
 
 LegContract = leg.LegContract
 Refusal = leg.Refusal
 OfferPlan = leg.OfferPlan
 negotiate_dtmf = leg.negotiate_dtmf
+
+
+def validate_answer_contract(audio, answer_sdp, *, events=None, dahua=False):
+    """Validate serialization of an already chosen answer without selecting again."""
+    section = parse_sdp(answer_sdp)
+    expected = (audio.send_formats or (audio.send,)) if section["direction"] == "sendonly" else (
+        audio.recv_formats or (audio.recv,))
+    if section["direction"] == "inactive":
+        expected = tuple(dict.fromkeys((*expected, *(audio.send_formats or (audio.send,)))))
+    def key(fmt):
+        return fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels
+    actual = offered_pcm_formats(answer_sdp, allow_dahua_pcm=dahua, include_auxiliary=True)
+    advertised_events = offered_dtmf_formats(answer_sdp)
+    if set(section["payload_order"]) != {fmt.payload_type for fmt in (*actual, *advertised_events)}:
+        raise SdpError("answer advertised a mapping absent from the media backend")
+    if {key(fmt) for fmt in actual} != {key(fmt) for fmt in expected}:
+        raise SdpError("answer changed accepted mappings without the matching media contract")
+    receivers = {key(fmt): fmt for fmt in expected}
+    for fmt in actual:
+        if fmt.encoding == "OPUS" and fmtp_parameters(fmt.fmtp) != fmtp_parameters(
+                receivers[key(fmt)].fmtp or DEFAULT_OPUS_RECEIVE_FMTP):
+            raise SdpError("answer changed the chosen Opus receiver parameters")
+    if section["direction"] != "sendonly" and section["ptime"] and section["ptime"] != audio.recv.frame_ms:
+        raise SdpError("answer changed receive packet time without the matching media contract")
+    expected_events = ((events.recv_formats or ((events.recv,) if events.recv is not None else ()))
+                       if events is not None else ())
+    if set(advertised_events) != set(expected_events):
+        raise SdpError("answer changed telephone-event mappings without the matching media contract")
+    bounds = [fmt.max_frame_ms for fmt in expected if fmt.max_frame_ms]
+    if section["direction"] != "sendonly" and bounds and section["maxptime"] != min(bounds):
+        raise SdpError("answer changed the chosen receiver envelope")
 
 
 def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabilities=None) -> leg.LegPolicy:
@@ -118,15 +152,28 @@ def sip_offer_plan(evidence=None, *, codec_policy=None, peer_metadata=None,
                    match_received_codec=profile.match_received_codec)
 
 
-def browser_rtp_format():
-    """Describe the real browser adapter through the ordinary RTP offer planner."""
+def browser_media_contract():
+    """Describe the browser loopback through the ordinary media planner."""
     from ..audio_capabilities import HA_AUDIO_CAPABILITIES
     from ..audio_format import HA_SIP_PCM_TX_FORMATS
     from ..codec_policy import CodecPolicy
 
     plan = create_offer(HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_TX_FORMATS,
         codec_policy=CodecPolicy(audio=("L16",)), capabilities=HA_AUDIO_CAPABILITIES)
-    return plan.send_formats[0]
+    fmt = plan.send_formats[0]
+    receive = next(value for value in plan.receive_formats if
+        (value.payload_type, value.encoding, value.sample_rate, value.channels) ==
+        (fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels))
+    from ..sdp_types import RtpDtmfDirection
+    primary = next(event for event in plan.events if event.sample_rate == fmt.sample_rate)
+    events = RtpDtmfDirection(primary, primary, plan.events, plan.events)
+    audio = RtpPcmDirection(fmt, receive, (receive,), (fmt,), dtmf_direction=events)
+    return replace(audio, payloads=payload_history(PayloadMap(), audio, events))
+
+
+def browser_rtp_format():
+    """Expose the selected browser mapping to existing local adapters."""
+    return browser_media_contract().send
 
 
 def as_direction(result, remote_sdp) -> RtpPcmDirection | None:
@@ -140,4 +187,5 @@ def as_direction(result, remote_sdp) -> RtpPcmDirection | None:
     return RtpPcmDirection(result.send, result.receive,
         recv_formats=receives if direction in {"recvonly", "sendrecv"} else (),
         send_formats=(result.send_accept or (result.send,))
-        if direction in {"sendonly", "sendrecv"} else (), payloads=result.payloads)
+        if direction in {"sendonly", "sendrecv"} else (), payloads=result.payloads,
+        dtmf_direction=result.dtmf_direction)

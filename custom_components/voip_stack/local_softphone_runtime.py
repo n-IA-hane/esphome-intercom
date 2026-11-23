@@ -16,7 +16,7 @@ from .call_projection import (
     stage_phone_termination_projection,
 )
 from .core.audio_format import HA_SIP_PCM_FORMATS
-from .core.media.negotiator import browser_rtp_format
+from .core.media.negotiator import browser_media_contract
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
@@ -510,7 +510,8 @@ class PendingLocalSource:
         callee = _endpoint(hass, self.call.callee_endpoint_id)
         if caller is None or (callee is None and not self.outgoing):
             raise RuntimeError("local phone disappeared during forwarding")
-        rtp_format = browser_rtp_format()
+        audio = browser_media_contract()
+        rtp_format = audio.send
         local_video_offer = (sdp.RtpVideoFormat(payload_type=103, encoding="VP8", direction=local_video_direction)
                              if not self.outgoing and self.established and self.video_requested else None)
         if (video_peer_format is not None and not self.outgoing and not self.established
@@ -527,7 +528,9 @@ class PendingLocalSource:
             caller_uri=sip.SipUri(caller.sip_uri_user, local_ip, sip_port),
             target=callee.name if callee else session.callee, caller=caller.name, call_id=session.call_id,
             cseq="1 INVITE", remote_sdp=b"",
-            send_format=rtp_format, recv_format=rtp_format,
+            send_format=rtp_format, recv_format=audio.recv,
+            send_formats=audio.send_formats, recv_formats=audio.recv_formats,
+            audio_payloads=audio.payloads, dtmf_direction=audio.dtmf_direction,
             remote_rtp_host=local_ip, remote_rtp_port=0,
             video_format=(replace(accepted_dialog.send_video_format, direction=local_video_direction)
                           if self.outgoing and accepted_dialog is not None and accepted_dialog.send_video_format is not None

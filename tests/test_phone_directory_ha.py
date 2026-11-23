@@ -231,7 +231,7 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
     from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
     from custom_components.voip_stack.sensor import VoipPhonebookSensor
     from custom_components.voip_stack.directory_runtime import directory_uri
-    from custom_components.voip_stack.config_entry_runtime import async_refresh_and_push_phonebook
+    from custom_components.voip_stack.config_entry_runtime import async_refresh_directory
     from custom_components.voip_stack.const import CONF_ASSIST_ENDPOINT_ENABLED, CONF_ASSIST_EXTENSION
     lab = managed
     await lab.controller.async_sync()
@@ -261,7 +261,7 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
             config_entry=lab.entry, disabled_by=er.RegistryEntryDisabler.USER)
     await platform.async_add_entities([sensor])
     try:
-        await async_refresh_and_push_phonebook(lab.hass)
+        await async_refresh_directory(lab.hass)
         state = lab.hass.states.get(sensor.entity_id)
         if publish_sensor:
             assert state is not None

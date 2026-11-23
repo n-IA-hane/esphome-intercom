@@ -190,7 +190,7 @@ async def test_native_group_flow_updates_canonical_membership_rename_and_empty_l
     prepare_frontend_dependency(lab.hass)
     reload_entry = AsyncMock()
     monkeypatch.setattr(lab.hass.config_entries, "async_reload", reload_entry)
-    monkeypatch.setattr(config_entry_runtime, "async_refresh_and_push_phonebook", AsyncMock())
+    monkeypatch.setattr(config_entry_runtime, "async_refresh_directory", AsyncMock())
     monkeypatch.setattr(trunk_runtime, "async_reconcile_trunks", AsyncMock())
     monkeypatch.setattr(phone_services, "async_reconcile_phone_services", AsyncMock())
     lab.runtime.entry_runtime_signature = config_entry_runtime.entry_runtime_signature(lab.entry)

@@ -254,6 +254,34 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "already active"):
             runtime.create_session("same")
 
+    async def test_completed_named_task_can_be_reused_before_its_forget_callback(self):
+        runtime = SipEndpointRuntime()
+        runtime.activate()
+        runtime.create_session("call-1")
+        result = asyncio.get_running_loop().create_future()
+        stop = asyncio.Event()
+
+        async def continue_route():
+            replacement = asyncio.create_task(stop.wait())
+            try:
+                result.set_result(runtime.own_task("call-1", replacement, name="forward"))
+            except Exception as error:
+                replacement.cancel()
+                result.set_exception(error)
+
+        async def first_route():
+            runtime.own_task("call-1", asyncio.create_task(continue_route()))
+
+        first = asyncio.create_task(first_route())
+        runtime.own_task("call-1", first, name="forward")
+        try:
+            self.assertTrue(await asyncio.wait_for(result, 1))
+            self.assertTrue(first.done())
+            self.assertIsNot(runtime.task_for("call-1", "forward"), first)
+            self.assertEqual(runtime.named_task_count("forward"), 1)
+        finally:
+            await runtime.shutdown()
+
     async def test_named_call_task_replacement_has_one_authoritative_owner(
         self,
     ) -> None:
@@ -263,8 +291,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         first = asyncio.create_task(asyncio.sleep(10))
         second = asyncio.create_task(asyncio.sleep(10))
 
-        self.assertTrue(runtime.replace_task("call-1", first, name="deadline"))
-        self.assertTrue(runtime.replace_task("call-1", second, name="deadline"))
+        self.assertTrue(runtime.own_task("call-1", first, name="deadline"))
+        self.assertIs(runtime.cancel_task("call-1", "deadline"), first)
+        self.assertTrue(runtime.own_task("call-1", second, name="deadline"))
         await asyncio.sleep(0)
 
         self.assertTrue(first.cancelled())

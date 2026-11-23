@@ -1,6 +1,6 @@
 """Leg negotiation: the single owner of the media contract of one SIP leg.
 
-Implements the selection rules S1 to S4, R1 and P5 of docs/MEDIA_NEGOTIATION_CONTRACT.md on top
+Owns directional selection and negotiated receiver contracts on top
 of the packet time and payload primitives. Pure functions over a parsed description: no sockets,
 no ports, no dialog state. The result uses the wire value types the rest of the integration
 already consumes, so switching an entry point to this engine changes nothing downstream.
@@ -16,6 +16,7 @@ from ..codec_capabilities import codec_available
 from ..sdp_audio_facts import is_rtp_pcm_mappable, offered_dtmf_formats, offered_pcm_formats
 from ..sdp_parser import parse_sdp
 from ..sdp_types import RtpDtmfDirection, RtpDtmfFormat, RtpPcmFormat
+from .codecs import DEFAULT_OPUS_RECEIVE_FMTP
 from .codecs import CODECS
 from .packet_time import PacketTimes, ReceiverBounds, choose_transmit_packet_ms
 from .payload_map import TELEPHONE_EVENT, RtpMapping, PayloadMap
@@ -61,9 +62,9 @@ class LegContract:
     receive: RtpPcmFormat
     dtmf: RtpDtmfFormat | None
     trace: tuple[str, ...] = field(default=())
-    # S5: every mapping accepted on receive, numbered as this side declared them.
+    # Accepted receive mappings use the payload numbers declared locally.
     receive_accept: tuple[RtpPcmFormat, ...] = field(default=())
-    # S5: feasible peer receive mappings, numbered as the peer declared them.
+    # Feasible transmit mappings use the payload numbers declared by the peer.
     send_accept: tuple[RtpPcmFormat, ...] = field(default=())
     dtmf_direction: RtpDtmfDirection | None = None
     payloads: PayloadMap | None = None
@@ -81,7 +82,7 @@ def _geometry(fmt: RtpPcmFormat) -> Geometry:
 
 
 def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool, send=True, receive=True) -> bool:
-    """S1: enabled by policy, with a working adapter, and a mapping the adapter implements."""
+    """Require enabled policy, a working adapter and a supported wire mapping."""
     name = fmt.encoding
     if name not in CODECS or (policy.encodings is not None and name not in policy.encodings):
         return False
@@ -150,7 +151,7 @@ def _choose_local_time(fmt: RtpPcmFormat, policy: LegPolicy, bounds: ReceiverBou
 
 
 def _receivable_as_offered(fmt: RtpPcmFormat, policy: LegPolicy) -> bool:
-    """Validate the receiver already advertised without replacing its packet time (R1)."""
+    """Validate the receiver already advertised without replacing its packet time."""
     fixed = _fixed_times(fmt, policy.receive_capabilities)
     return ((fixed is None or fmt.frame_ms in fixed.explicit)
             and (not fmt.max_frame_ms or fmt.frame_ms <= fmt.max_frame_ms)
@@ -175,14 +176,14 @@ def _receive_maximum(fmt: RtpPcmFormat, policy: LegPolicy) -> float:
 
 
 def _local_receiver(fmt: RtpPcmFormat, packet_ms: float, policy: LegPolicy) -> RtpPcmFormat:
-    """Describe this side's receiver for one mapping (R1, R2, P6).
+    """Describe this side's receiver for one mapping.
 
     The packet time is the one this side asks for. The maximum is what the receiver really
     holds. Format parameters are this side's own: the peer's are never carried over, because in
     an answer they would tell the peer its own limits as if they were ours.
     """
     asked = replace(fmt, frame_ms=packet_ms, min_frame_ms=0, max_frame_ms=0,
-        fmtp="stereo=0;sprop-stereo=0;maxaveragebitrate=28000" if fmt.encoding == "OPUS" else "")
+        fmtp=DEFAULT_OPUS_RECEIVE_FMTP if fmt.encoding == "OPUS" else "")
     return replace(asked, max_frame_ms=_receive_maximum(asked, policy))
 
 
@@ -251,7 +252,7 @@ def answer_offer(
 ) -> LegContract | Refusal:
     """Answer a remote audio offer.
 
-    With ``established`` this is a re-offer inside a dialog (rule N1): the mapping in use is kept
+    With ``established`` this is a re-offer inside a dialog: the mapping in use is kept
     for each direction while the new offer still lists it on the same payload number. Its packet
     time is kept too unless the new offer states another one or no longer allows it, so new
     limits of the peer always reach the sender.
@@ -439,7 +440,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
                     receiver = replace(candidate, frame_ms=transmit.packet_ms)
             else:
                 own = (local_receive if needs_receive else local)[_mapping(receive_from)]
-                # R1: the receiver already advertised stands; the answer does not change it.
+                # The answer cannot rewrite the receiver already advertised in the offer.
                 if needs_receive:
                     if not _receivable_as_offered(own, policy):
                         continue
@@ -488,7 +489,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
                 dtmf_direction=events,
                 trace=tuple(trace),
                 send_accept=send_accept,
-                # P3: exact answers retain the offer's PT; capability-only callers have no history.
+                # Exact answers retain local receive numbers; capability-only calls have no history.
                 receive_accept=receive_accept,
             )
     return Refusal("no answered codec has a feasible packet time", tuple(trace))

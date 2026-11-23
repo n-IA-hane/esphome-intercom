@@ -211,46 +211,6 @@ class VoipDeviceResolver:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
 
-    def route_id_for_host(self, host: str) -> str:
-        """ESPHome node_name slug for `host`, used as ESPHome service prefix."""
-        entry = _esphome_entry_for_host(self.hass, host)
-        if entry is None:
-            # Fallback: hostname (.local) in entry.data["host"] vs IP from
-            # device_registry. Walk device_registry for any device whose
-            # connections include this IP, then walk its config_entries.
-            entry = self._esphome_entry_via_device(host)
-            if entry is None:
-                return ""
-        raw = entry.data.get("device_name") or entry.title or ""
-        return slugify_route_id(raw)
-
-    def sip_uri_user_for_host(self, host: str, device=None) -> str:
-        """Return the stable ESPHome node name used as the SIP URI user."""
-
-        entry = _esphome_entry_for_host(self.hass, host)
-        if entry is None and device is not None:
-            entry_id = str(device.config_entry_id or "")
-            candidate = self.hass.config_entries.async_get_entry(entry_id)
-            if candidate is not None and candidate.domain == "esphome":
-                entry = candidate
-        if entry is None:
-            return ""
-        return str(entry.data.get("device_name") or "").strip()
-
-    def _esphome_entry_via_device(self, host: str):
-        device_registry = dr.async_get(self.hass)
-        for device in device_registry.devices.values():
-            for conn_type, conn_value in device.connections:
-                if conn_value != host:
-                    continue
-                if 'ip' not in conn_type.lower() and conn_type != 'network_ip':
-                    continue
-                entry_id = str(device.config_entry_id or "")
-                entry = self.hass.config_entries.async_get_entry(entry_id)
-                if entry and entry.domain == "esphome":
-                    return entry
-        return None
-
     def _configured_sip_endpoint(self, device_id: str) -> dict:
         """Read an explicit direct route from the existing contact owner.
 
@@ -393,7 +353,7 @@ class VoipDeviceResolver:
                                 ring_group=str(saved.get("ring_group") or ""))
         if entry is None:
             return out
-        from .managed_phones import managed_phone_mode, managed_records
+        from .managed_phones import managed_records
         records = managed_records(entry)
         if not records:
             return out
@@ -408,11 +368,6 @@ class VoipDeviceResolver:
                     or phone.device_id not in voip_device_ids):
                 continue
             previous = current.get(phone.device_id, {})
-            if not phone.active or managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is False:
-                if previous:
-                    previous.update(endpoint_id=phone.endpoint_id, endpoint_username=phone.username,
-                        name=device.name_by_user or phone.display_name)
-                continue
             bindings = registrar.registered_contacts(phone.username) if registrar is not None else ()
             binding = bindings[0] if bindings else None
             uri = sip.parse_sip_uri(binding.contact_uri) if binding is not None else None

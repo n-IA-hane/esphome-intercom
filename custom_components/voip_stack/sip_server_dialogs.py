@@ -254,6 +254,7 @@ class SipServerDialogs:
 
         try:
             return await async_run_dialog_request_transaction(
+                method=method,
                 send=send,
                 read=read_response if response_addr is not None else responses.receive,
                 matches=lambda response: sip.response_matches_dialog_transaction(
@@ -890,6 +891,19 @@ class SipServerDialogs:
         status = int(result.status)
         reason = str(result.reason)
         answer_sdp = str(result.answer_sdp or "")
+        updated_invite = result.media_contract or updated_invite
+        if 200 <= status < 300 and answer_sdp:
+            from .core.media.negotiator import validate_answer_contract
+            try:
+                if updated_invite is None or updated_invite.call_id != call_id:
+                    raise sdp.SdpError("answer has no matching committed media contract")
+                sdp.validate_sdp_answer(request.body, answer_sdp)
+                validate_answer_contract(sdp.RtpPcmDirection(updated_invite.send_format,
+                    updated_invite.recv_format, updated_invite.recv_formats, updated_invite.send_formats),
+                    answer_sdp, events=updated_invite.dtmf_direction,
+                    dahua=updated_invite.peer_profile == "dahua")
+            except (ValueError, sdp.SdpError):
+                status, reason = 488, "Not Acceptable Here"
         next_sdp_version = int(dialog.local_sdp_session_version)
         if answer_sdp:
             answer_sdp = sdp.rewrite_sdp_origin(

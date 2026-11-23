@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 
 from .assist_endpoint import AssistEndpoint
-from .config_entry_runtime import async_refresh_and_push_phonebook as _refresh_and_push_phonebook
+from .config_entry_runtime import async_refresh_directory as _refresh_directory
 from .codec_settings import effective_codec_policy
 from .const import CONF_REGISTRAR_ENABLED, CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND, CONF_VIDEO_TRANSCODING
 from .core.audio_format import HA_SIP_PCM_FORMATS, HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
@@ -90,7 +90,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         endpoint = endpoint_registry.by_username(username)
         if endpoint is not None:
             recompute_account_availability(hass, endpoint.endpoint_id)
-        create_runtime_task(hass, _refresh_and_push_phonebook(hass))
+        create_runtime_task(hass, _refresh_directory(hass))
 
     accounts = _sip_accounts(hass)
     entry = config_entry(hass)
@@ -147,7 +147,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         if not registrar.remove_flow(host, port, transport):
             return
         registrar_expiry.reschedule()
-        create_runtime_task(hass, _refresh_and_push_phonebook(hass))
+        create_runtime_task(hass, _refresh_directory(hass))
 
     _on_info = partial(handle_sip_info, hass)
 

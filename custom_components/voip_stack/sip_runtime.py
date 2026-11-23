@@ -86,10 +86,14 @@ def send_final_response(
     connected_identity_name: str = "",
     connected_identity_user: str = "",
     expected_generation: int | None = None,
+    media_contract=None,
 ) -> bool:
     """Send a final response through the endpoint owning ``call_id``."""
+    if media_contract is not None and answer_sdp:
+        from .sip_server_state import answered_media_contract
+        media_contract = answered_media_contract(media_contract, answer_sdp)
+    calls = call_projection(hass)
     if 200 <= int(status) < 300:
-        calls = call_projection(hass)
         session_id = calls.resolve_session_id(call_id) if calls is not None else ""
         session = calls.sessions.get(session_id) if calls is not None else None
         if (
@@ -120,6 +124,7 @@ def send_final_response(
             decline_reason=decline_reason,
             connected_identity_name=connected_identity_name,
             connected_identity_user=connected_identity_user,
+            media_contract=media_contract,
         ):
             return True
     return False

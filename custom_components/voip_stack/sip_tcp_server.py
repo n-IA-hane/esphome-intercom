@@ -258,7 +258,12 @@ class SipTcpServer:
                 try:
                     msg = sip.parse_message(raw)
                 except sip.SipError:
-                    break
+                    # Framing is complete; a bad request need not retire the flow.
+                    envelope = sip.oversized_request_envelope(raw, 400)
+                    if envelope is not None:
+                        request, status = envelope
+                        await tx.send(sip.build_uas_response(request, status, "Bad Request"))
+                    continue
                 first_message = False
                 if msg is not None:
                     queue = self._dialog_queues.get((addr, msg.header("Call-ID")))
@@ -273,8 +278,7 @@ class SipTcpServer:
                 request, status = oversized
                 response = sip.build_uas_response(request, status,
                     "Request Entity Too Large" if status == 413 else "Message Too Large")
-                writer.write(response)
-                await writer.drain()
+                await tx.send(response)
         except ConnectionError as err:
             flow_error = err
             _LOGGER.debug("SIP TCP peer disconnected %s:%s: %s", addr[0], addr[1], err)
@@ -349,6 +353,7 @@ class SipTcpServer:
         decline_reason: str = "",
         connected_identity_name: str = "",
         connected_identity_user: str = "",
+        media_contract=None,
     ) -> bool:
         for endpoint in tuple(self.endpoints):
             if endpoint.send_final_response(
@@ -359,6 +364,7 @@ class SipTcpServer:
                 decline_reason=decline_reason,
                 connected_identity_name=connected_identity_name,
                 connected_identity_user=connected_identity_user,
+                media_contract=media_contract,
             ):
                 return True
         return False

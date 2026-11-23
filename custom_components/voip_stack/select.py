@@ -26,13 +26,27 @@ async def async_setup_entry(
 
     async def remove(entity):
         entity_id = entity.entity_id
-        await entity.async_remove(force_remove=True)
         registry = er.async_get(hass)
-        if entity_id and registry.async_get(entity_id) is not None:
+        record = registry.async_get(entity_id) if entity_id else None
+        if record is not None and record.unique_id != entity.unique_id:
+            return
+        await entity.async_remove(force_remove=True)
+        record = registry.async_get(entity_id) if entity_id else None
+        if record is not None and record.unique_id == entity.unique_id:
             registry.async_remove(entity_id)
 
     @callback
     def reconcile():
+        registry = er.async_get(hass)
+        for identity, entity in tuple(entities.items()):
+            record = registry.async_get(entity.entity_id) if entity.entity_id else None
+            prefix = f'queue_agent:{entity.queue_id}:'
+            if record is not None and record.unique_id.startswith(prefix) and record.unique_id[len(prefix):] != entity.endpoint_id:
+                endpoint_id = record.unique_id[len(prefix):]
+                entities.pop(identity)
+                entity.endpoint_id = endpoint_id
+                entity._attr_unique_id = record.unique_id
+                entities[(entity.queue_id, endpoint_id)] = entity
         wanted = {(queue.queue_id, member) for queue in manager.definitions.values() for member in queue.members}
         for identity in entities.keys() - wanted:
             entity = entities.pop(identity)

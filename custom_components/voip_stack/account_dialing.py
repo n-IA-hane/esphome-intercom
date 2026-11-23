@@ -43,7 +43,7 @@ def account_uses_ha_only(hass, endpoint):
     return not (registrar and registrar.registered_contacts(endpoint.username))
 
 
-def account_fork_entry(hass, endpoint, entry):
+def account_fork_entry(hass, endpoint, entry, *, all_transports=False):
     """Describe one account's mixed offer without creating another endpoint.
 
     A saved HA association contributes one logical browser candidate. Physical
@@ -55,7 +55,8 @@ def account_fork_entry(hass, endpoint, entry):
     contacts = entry.metadata.get("sip_contacts") or ()
     browser = (getattr(endpoint, "supports_ha_client", False)
                and account_has_ha_binding(hass, endpoint.endpoint_id))
-    if not contacts or (len(contacts) == 1 and not browser):
+    if (not contacts and not (all_transports and browser)) or (
+            len(contacts) == 1 and not browser and not all_transports):
         return None
     return replace(entry, metadata={
         **entry.metadata,
@@ -66,7 +67,7 @@ def account_fork_entry(hass, endpoint, entry):
     })
 
 
-def account_dial_decision(hass, decision):
+def account_dial_decision(hass, decision, *, all_transports=False):
     """Select the existing multi-transport fork after account policy resolution."""
     row = decision.entry
     identity = str((row.metadata if row else {}).get("endpoint_id") or "")
@@ -75,8 +76,11 @@ def account_dial_decision(hass, decision):
     from .router import RouteAction
     from .runtime_data import endpoint_directory
 
-    if decision.action not in {RouteAction.DIRECT, RouteAction.FORWARD, RouteAction.BRIDGE}:
+    allowed = {RouteAction.DIRECT, RouteAction.FORWARD, RouteAction.BRIDGE}
+    if all_transports:
+        allowed.add(RouteAction.ANSWER_HA)
+    if decision.action not in allowed:
         return decision
     endpoint = endpoint_directory(hass).get(identity)
-    fork = account_fork_entry(hass, endpoint, row)
+    fork = account_fork_entry(hass, endpoint, row, all_transports=all_transports)
     return replace(decision, action=RouteAction.GROUP, entry=fork) if fork else decision

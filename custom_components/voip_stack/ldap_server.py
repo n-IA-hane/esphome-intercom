@@ -160,11 +160,15 @@ class LdapDirectoryServer:
     def __init__(self, directory: PhoneDirectory, authenticate_callback: Authenticate, *,
                  base_dn: str = DEFAULT_BASE_DN, allow_anonymous: bool = False,
                  uri_for: Callable[[RosterEntry], str] | None = None, limits: Limits | None = None,
-                 authorize_callback=None, owner_callback=None) -> None:
+                 authorize_callback=None, owner_callback=None, fault_callback=None) -> None:
         self.directory = directory
         self.authenticate = authenticate_callback
         self.authorize = authorize_callback
         self.owner_current = owner_callback
+        self.fault_callback = fault_callback
+        self._record_generation = None
+        self._directory_records = ()
+        self.record_faults = {}
         self.base_dn = base_dn
         self._base_key = _dn_key(base_dn)
         if not self._base_key:
@@ -243,6 +247,7 @@ class LdapDirectoryServer:
         return groups[0][0][1]
 
     def records(self) -> Iterable[tuple[str, dict[str, tuple[bytes, ...]]]]:
+        self.validate_records()
         base_attributes = {"objectclass": (b"top", b"organizationalUnit")}
         for attribute, value in _dn(self.base_dn)[0]:
             if attribute == "ou":
@@ -250,16 +255,30 @@ class LdapDirectoryServer:
         yield self.base_dn, base_attributes
         for category in _CATEGORIES:
             yield f"ou={category},{self.base_dn}", {"objectclass": (b"top", b"organizationalUnit"), "ou": (category.encode(),)}
+        yield from self._directory_records
+
+    def validate_records(self):
+        """Validate one immutable directory generation and notify its HA owner once."""
+        generation = self.directory.generation
+        if self._record_generation == generation:
+            return self.record_faults
+        records, faults = [], {}
         for entry in self.directory.snapshot():
             if not entry.enabled:
                 continue
             try:
                 record = self._record(entry)
             except (ValueError, UnicodeError, LDAPInvalidDnError):
-                _LOGGER.debug("Skipping an invalid LDAP directory record")
+                faults[entry.metadata.get('endpoint_id') or entry.id] = entry.display_name
                 continue
             if record is not None:
-                yield record
+                records.append(record)
+        self._directory_records = tuple(records)
+        self._record_generation = generation
+        self.record_faults = faults
+        if self.fault_callback is not None:
+            self.fault_callback(generation, faults)
+        return faults
 
     def _record(self, entry):
         """Bound one derived record without interrupting an unrelated search."""
@@ -274,7 +293,7 @@ class LdapDirectoryServer:
         from .directory_runtime import directory_user
         identity = directory_user(self.directory, entry)
         if not identity or any(ord(char) < 32 or ord(char) == 127 for char in identity):
-            return None
+            raise ValueError('Invalid directory identity')
         attributes = {"objectclass": (b"top", b"organizationalRole", b"uidObject", b"labeledURIObject"),
                       "uid": (identity.encode(),), "cn": (entry.display_name.encode(),),
                       "displayname": (entry.display_name.encode(),), "ou": (kind.encode(),)}
@@ -293,8 +312,7 @@ class LdapDirectoryServer:
                 or sum(map(len, value_bytes)) + len(dn.encode()) + 1024 > codec.MAX_PDU_BYTES):
             # One invalid configured contact cannot poison a different
             # filtered search. Config editors reject these bounds too.
-            _LOGGER.debug("Skipping an LDAP record exceeding its byte budget")
-            return None
+            raise ValueError('Directory record exceeds its byte budget')
         return dn, attributes
 
     @staticmethod

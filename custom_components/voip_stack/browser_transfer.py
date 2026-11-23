@@ -8,6 +8,7 @@ from .local_call_media import LocalAudioContract
 from .media_session_updates import commit_audio_session_update, commit_video_session_update
 from .runtime_data import require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
+from .forward_plan import await_forward_result
 
 
 class RetainedBrowserSource(PendingLocalSource):
@@ -64,6 +65,8 @@ class RetainedBrowserSource(PendingLocalSource):
                 setattr(self.previous_client, name, None)
         self.previous_client.on_media_update = None
         self.previous_client.on_info_dtmf = None
+        self.previous_client.on_info_dtmf_event = None
+        self.previous_client.on_info_video = None
         self.retired = True
         super().commit(keep_media=keep_media)
 
@@ -157,7 +160,7 @@ class RetainedBrowserSource(PendingLocalSource):
         self.registry.claim_endpoint(session.call_id, endpoint.endpoint_id, role="group_candidate")
         self.registry.set_pending_route(session.call_id, {"future": future, "invite": self.invite,
             "ring_group_endpoint_ids": (endpoint.endpoint_id,), "declined_endpoint_ids": set()})
-        runtime.publish_pending_ringing(self.invite, route_kind="group", endpoint_id=endpoint.endpoint_id,
+        runtime.publish_pending_ringing(self.invite, route_kind="transfer", endpoint_id=endpoint.endpoint_id,
             endpoint_device_id=endpoint.device_id, callee=endpoint.name, last_sip_event="REFER")
         try:
             async with asyncio.timeout(timeout):
@@ -268,13 +271,14 @@ async def transfer_browser_target(hass, runtime, session, referrer, target):
             from .browser_transfer_handoff import adopt_consultation
             return await adopt_consultation(hass, runtime, source, grant)
         runtime.sip.set_pending_invite(session.call_id, source.invite)
-        await runtime.sip.forward_call(call_id=session.call_id,
+        task = await runtime.sip.forward_call(call_id=session.call_id,
             destination=uri.user if local else target.uri, on_failure="resume", expected_state=session.state)
-        task = runtime.sip.task_for(session.call_id, "forward")
-        if task is not None:
-            await asyncio.shield(task)
-        return SipTransferResult(source.committed, 200 if source.committed else 480,
-                                 "completed" if source.committed else "transfer_failed", retained_call=source.committed)
+        if task is None:
+            task = runtime.sip.task_for(session.call_id, "forward")
+        outcome = await await_forward_result(task) if task is not None else None
+        success = outcome is not None and outcome.committed_for(session)
+        return SipTransferResult(success, 200 if success else 480,
+                                 "completed" if success else "transfer_failed", retained_call=success and session.live)
     except BaseException:
         if task is not None and not task.done() and not source.committed:
             task.cancel()

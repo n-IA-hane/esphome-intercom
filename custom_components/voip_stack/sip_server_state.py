@@ -5,7 +5,7 @@ from __future__ import annotations
 from .core.media.payload_map import PayloadMap
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import secrets
 from typing import Any, Awaitable, Callable, Protocol
 from .sip_listener_request import SipRequestResult
@@ -91,6 +91,7 @@ class SipInvite:
     local_send_capabilities: tuple[AudioFormat, ...] = ()
     local_audio_capabilities: AudioCapabilities | None = None
     recv_formats: tuple[sdp.RtpPcmFormat, ...] = ()
+    send_formats: tuple[sdp.RtpPcmFormat, ...] = ()
     dtmf_direction: sdp.RtpDtmfDirection | None = None
     audio_payloads: PayloadMap | None = None
 
@@ -99,11 +100,7 @@ class SipInvite:
         return self.recv_format
 
     def _events(self):
-        if self.dtmf_direction is not None or not self.remote_sdp:
-            return self.dtmf_direction
-        from .core.media.negotiator import negotiate_dtmf
-        return negotiate_dtmf(self.remote_sdp,
-            audio=sdp.RtpPcmDirection(self.send_format, self.recv_format))
+        return self.dtmf_direction
 
     @property
     def recv_dtmf_format(self):
@@ -148,6 +145,34 @@ class SipInvite:
     @property
     def routing_target(self) -> str:
         return str(self.target_route or self.target or self.request_uri.user).strip()
+
+
+def answered_media_contract(invite: SipInvite, answer_sdp: str | bytes) -> SipInvite:
+    """Project the chosen local video answer before sending, without codec selection.
+
+    Audio is retained verbatim. Ports and direction come from the owner's
+    generated answer, never hardware metadata or another negotiation pass.
+    """
+    if not answer_sdp:
+        return invite
+    _connection, _direction, sections = sdp.parse_media_sections(answer_sdp)
+    section = next((value for value in sections if value["media"] == "video"), None)
+    if section is None or not section["port"]:
+        if invite.video_format is None and invite.local_video_format is None:
+            return invite
+        return replace(invite, video_format=None, local_video_format=None, video_answer_format=None)
+    selected = invite.answer_video_format
+    if selected is None:
+        raise sdp.SdpError("active video answer requires its chosen media contract")
+    actual = next((value for value in sdp.offered_video_formats(answer_sdp)
+                   if (value.payload_type, value.encoding, value.clock_rate) ==
+                      (selected.payload_type, selected.encoding, selected.clock_rate)), None)
+    if actual is None:
+        raise sdp.SdpError("video answer changed the chosen codec mapping")
+    remote_direction = sdp.local_direction_for_remote(section["direction"])
+    send = replace(invite.send_video_format, direction=remote_direction) if invite.send_video_format else None
+    receive = replace(actual, direction=remote_direction)
+    return replace(invite, video_format=send, local_video_format=receive, video_answer_format=actual)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +227,10 @@ class SipInviteResult:
     mutations of the active media contract to ``commit``.  ``rollback`` must
     release every prepared resource when signaling fails, the dialog ends, or
     the commit cannot complete.
+
+    Changed answers carry ``media_contract`` from their preparing owner. A
+    legacy handler may omit it only for an unchanged compatible answer; the
+    server validates that description and never reconstructs a ranked choice.
     """
 
     status: int
@@ -217,6 +246,12 @@ class SipInviteResult:
     connected_identity_name: str = ""
     connected_identity_user: str = ""
     on_committed: Callable[[SipInvite], None] | None = None
+    media_contract: SipInvite | None = None
+
+    def __post_init__(self):
+        if self.media_contract is not None and self.answer_sdp:
+            object.__setattr__(self, "media_contract",
+                answered_media_contract(self.media_contract, self.answer_sdp))
 
 
 DelayedOfferAnswer = Callable[[SipInvite], Awaitable[SipInviteResult]]
@@ -252,6 +287,7 @@ class _PendingInvite:
     connected_identity_user: str = ""
     delayed_offer_plan: UasDelayedOfferPlan | None = None
     identity: SipInvite | SipInitialInvite | None = None
+    media_contract: SipInvite | None = None
     codec_policy: CodecPolicy = CodecPolicy()
 
 
@@ -357,11 +393,9 @@ class _ActiveDialog(DialogSignalingState):
         """Commit one media generation without retiring its payload meanings."""
         from .core.media.negotiator import payload_history
 
-        candidate = invite.audio_payloads
-        if candidate is None:
-            candidate = payload_history(self.audio_payloads,
-                sdp.RtpPcmDirection(invite.send_format, invite.recv_format, invite.recv_formats),
-                invite._events())
+        candidate = payload_history(invite.audio_payloads or self.audio_payloads,
+            sdp.RtpPcmDirection(invite.send_format, invite.recv_format, invite.recv_formats, invite.send_formats),
+            invite._events())
         history = self.audio_payloads.with_mappings(
             receive=candidate.receive_history, send=candidate.send_history)
         self.audio_payloads = history.with_mappings(receive=candidate.receive, send=candidate.send)

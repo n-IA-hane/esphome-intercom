@@ -231,16 +231,19 @@ async def test_trunk_423_retry_uses_owned_contact_expiry_and_keeps_udp_owner(soc
         trunk._ensure_receive_task()
         original_transport, original_reader = trunk.transport, trunk._receive_task
         for attempt in range(2):
+            first_request = len(requests)
             before = time.time()
             assert await trunk.register(timeout=2) == "registered", errors
             after = time.time()
             assert not errors
             assert before + 180 <= trunk.expires_at <= after + 180
             assert trunk.ready and trunk.transport is original_transport and trunk._receive_task is original_reader
-            current = requests[attempt * 3:(attempt + 1) * 3]
-            assert [int(message.header("Expires")) for message in current] == [60, 300, 300]
-            assert not current[0].header("Authorization") and not current[1].header("Authorization")
-            assert current[2].header("Authorization")
+            current = requests[first_request:]
+            expected = [60, 300, 300] if attempt == 0 else [300, 300]
+            assert [int(message.header("Expires")) for message in current] == expected
+            assert all(not message.header("Authorization") for message in current[:-1])
+            assert current[-1].header("Authorization")
+        assert sum(int(message.header("Expires")) < 300 for message in requests) == 1
         assert {message.header("Call-ID") for message in requests} == {trunk.call_id}
         assert len({message.header("From") for message in requests}) == 1
         sequences = [sip.parse_cseq(message.header("CSeq")).number for message in requests]

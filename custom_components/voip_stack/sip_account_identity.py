@@ -47,11 +47,13 @@ def _account_username_update(hass, entry, row):
     """Recognize historical automatic logins from their persisted owner evidence."""
     data = row.data
     source = str(data.get('username_source') or '')
-    if source == 'user':
+    if source in {'user', 'existing'}:
         return None
     username = normalize_username(str(data.get('username') or ''))
     identity = phone_endpoint_id(row)
-    if _historical_ha_origins(data, identity, username) or source == 'ha_name':
+    if source in {'ha_name', 'esphome'} and data.get('kind') == 'sip_account' and identity == username:
+        return None
+    if _historical_ha_origins(data, identity, username):
         return {'username': normalize_username(str(data.get('name') or row.title)), 'username_source': 'ha_name'}
     managed = data.get('kind') == 'esphome' or (data.get('managed_esphome') and data.get('managed_exclusive', True))
     if not managed:
@@ -78,8 +80,8 @@ def _account_username_update(hass, entry, row):
     desired = validate_managed_username(info.friendly_name or info.name)
     anchors = {'esp_' + mac, str(origin.data.get('device_name') or ''), str(info.name), desired}
     if source not in {'esphome', 'esphome_pending'} and username not in anchors:
-        raise PhoneIdentityConflict(row.title, desired, username, subentry_id=row.subentry_id)
-    return {'username': desired, 'username_source': 'esphome'}
+        return {'username': username, 'username_source': 'existing'}
+    return {'username': desired, 'username_source': 'esphome', 'name': desired, 'display_name': desired}
 
 
 def managed_account_name_updates(hass, entry):
@@ -94,12 +96,73 @@ def managed_account_name_updates(hass, entry):
     return updates
 
 
+def _stored_esphome_references(value):
+    """Read exact old HA references from existing integration-owned snapshots."""
+    if isinstance(value, str):
+        return {value} if value.startswith('esphome:') else set()
+    if isinstance(value, Mapping):
+        return set().union(*(_stored_esphome_references(item) for pair in value.items() for item in pair)) if value else set()
+    if isinstance(value, (list, tuple)):
+        return set().union(*map(_stored_esphome_references, value)) if value else set()
+    return set()
+
+
+def _runtime_legacy_references(entry):
+    runtime = getattr(entry, 'runtime_data', None)
+    if runtime is None:
+        return set()
+    values = []
+    if runtime.queues is not None:
+        values.append(runtime.queues._snapshot())
+    if runtime.ha_bindings is not None:
+        values.extend((runtime.ha_bindings._dashboards, runtime.ha_bindings._popups))
+    if runtime.physical_phones is not None:
+        values.append(runtime.physical_phones.states)
+    archive = runtime.sip.component('media_archive') if runtime.sip is not None else None
+    if archive is not None:
+        values.append(archive.mailbox_owners)
+    return _stored_esphome_references(values)
+
+
+def legacy_esphome_references(hass, entry, *, stored_references=()):
+    """Find native phones whose saved HA-owned references predate SIP accounts."""
+    devices, entities = dr.async_get(hass), er.async_get(hass)
+    managed = {str(row.data.get('device_id') or '') for row in entry.subentries.values()
+               if row.subentry_type == 'phone'}
+    managed.update(entry.data.get('managed_esphome_phones', {}))
+    retained = set(stored_references) | _runtime_legacy_references(entry)
+    for origin in hass.config_entries.async_entries('esphome'):
+        for device in dr.async_entries_for_config_entry(devices, origin.entry_id):
+            if device.id in managed:
+                continue
+            old = 'esphome:' + device.id
+            owned = old in retained or any(old in entry.data.get(field, {}) for field in
+                ('esphome_phone_policies', 'esphome_mailboxes', 'esphome_phone_memberships'))
+            owned |= old in entry.data.get('external_call_blocked_endpoints', ())
+            owned |= entry.data.get('parking', {}).get('return_destination') == old
+            owned |= any(_typed_data(row.data, row.subentry_type, {old: ''}) != dict(row.data)
+                         for row in entry.subentries.values())
+            owned |= devices.async_get_device_by_identifier((DOMAIN, 'phone_endpoint:' + old), entry.entry_id) is not None
+            owned |= any(row.unique_id.startswith('phone_endpoint_' + old + '_')
+                         for row in er.async_entries_for_config_entry(entities, entry.entry_id))
+            if owned:
+                yield origin, device, old
+
+
 def resolve_ha_endpoint(registry, selector, *, entry=None):
     """Adapt saved HA references without adding aliases to SIP or the directory."""
     identity = str(selector or "").strip()
+    if current := registry.by_username(identity) or registry.get(identity):
+        return current
     mapping = getattr(entry, "data", {}).get("legacy_phone_references", {})
-    identity = mapping.get(identity, identity)
-    return registry.get(identity)
+    return registry.get(mapping[identity]) if _typed_ha_reference(identity, mapping) else None
+
+
+def _typed_ha_reference(identity, mapping):
+    """Recognize saved HA identity fields, never a previous plain SIP login."""
+    from .const import HA_SOFTPHONE_DEVICE_ID
+    return identity in mapping and (identity in {'default', HA_SOFTPHONE_DEVICE_ID}
+                                    or identity.startswith(('browser:', 'sip:', 'esphome:')))
 
 
 def ha_account_username(hass, device_id):
@@ -141,13 +204,15 @@ def canonical_ha_destination(hass, value, *, device_selector=False):
     if len(matching) == 1:
         return matching[0]
     aliases = entry.data.get('legacy_phone_references', {})
+    if '@' in text or text.casefold().startswith(('sips:', 'tel:')):
+        return value
     if device_selector and text in aliases:
         return aliases[text]
     if '@' in text or text.casefold().startswith(('sip:', 'sips:', 'tel:')):
         return value
     if username := ha_account_username(hass, text):
         return username
-    return aliases.get(text, value)
+    return aliases[text] if _typed_ha_reference(text, aliases) else value
 
 
 def is_legacy_default_ha_account(hass, endpoint):
@@ -210,10 +275,14 @@ def ha_event_payload(hass, payload):
     from .store import config_entry
 
     entry = config_entry(hass)
+    runtime = getattr(entry, 'runtime_data', None)
     mapping = getattr(entry, "data", {}).get("legacy_phone_references", {})
+    current_usernames = {str(row.data.get('username') or '').casefold(): str(row.data.get('username') or '')
+                         for row in getattr(entry, 'subentries', {}).values() if row.subentry_type == 'phone'}
     reverse = {}
     for legacy, username in mapping.items():
-        if legacy != username:
+        current = current_usernames.get(legacy.casefold())
+        if legacy != username and _typed_ha_reference(legacy, mapping) and (current is None or current.casefold() == username.casefold()):
             reverse.setdefault(username, legacy)
     result = dict(payload)
     for prefix in ("", "source_", "dest_", "target_", "peer_"):
@@ -224,11 +293,23 @@ def ha_event_payload(hass, payload):
                          else canonical_ha_destination(hass, identity, device_selector=True))
             result[prefix + "account_username"] = canonical
             result[field] = reverse.get(canonical, identity)
+            endpoint = runtime.endpoints.by_username(canonical) if runtime is not None else None
+            if endpoint is not None:
+                result.update({prefix + key: value for key, value in ha_phone_device_fields(endpoint).items()})
     if isinstance(result.get("participant_endpoint_ids"), (list, tuple)):
-        usernames = [mapping.get(value, value) for value in result["participant_endpoint_ids"]]
+        usernames = (list(result['participant_account_usernames'])
+                     if isinstance(result.get('participant_account_usernames'), (list, tuple)) else
+                     [canonical_ha_destination(hass, value) for value in result["participant_endpoint_ids"]])
         result["participant_account_usernames"] = usernames
         result["participant_endpoint_ids"] = [reverse.get(value, value) for value in usernames]
     return result
+
+
+def ha_phone_device_fields(endpoint):
+    """Keep the established device field and name the account/hardware associations."""
+    return {'device_id': endpoint.device_id, 'account_device_id': endpoint.ha_device_id,
+            'hardware_device_id': endpoint.device_id if endpoint.account_device_id
+                or str(endpoint.kind) == 'esphome' else ''}
 
 
 def _reference(value, mapping):
@@ -303,6 +384,9 @@ class AccountIdentityMigrationPlan:
     entities: tuple
     creations: tuple = ()
     original_state: tuple = ()
+    invalid_managed: tuple = ()
+    pending_esphome: tuple = ()
+    activate_registrar: bool = False
 
     def commit(self):
         """Commit through native HA owners without yielding between records."""
@@ -311,18 +395,30 @@ class AccountIdentityMigrationPlan:
                    {key: row.as_dict() for key, row in self.entry.subentries.items()})
         if self.original_state and current != self.original_state:
             raise PhoneIdentityConflict(self.entry.title, 'unchanged native configuration', 'concurrent account change')
-        snapshots = [(row, dict(row.data), row.unique_id) for row, _data, _identity in self.subentries]
-        old_devices = [(identity, devices.async_get(identity).identifiers) for identity, _values in self.devices]
-        old_entities = [(identity, entities.async_get(identity).unique_id) for identity, _value in self.entities]
+        snapshots = [(row, dict(row.data), row.unique_id, row.title) for row, _data, _identity in self.subentries]
+        old_devices = [(identity, devices.async_get(identity).identifiers, devices.async_get(identity).config_subentry_id)
+                       for identity, _values in self.devices]
+        old_entities = [(identity, entities.async_get(identity).unique_id, entities.async_get(identity).config_subentry_id)
+                        for identity, _value in self.entities]
         try:
             for row in self.creations:
                 self.hass.config_entries.async_add_subentry(self.entry, row)
             for row, data, unique_id in self.subentries:
-                self.hass.config_entries.async_update_subentry(self.entry, row, data=data, unique_id=unique_id)
+                title = str(data['name']) if data.get('name') and data.get('name') != row.data.get('name') else row.title
+                self.hass.config_entries.async_update_subentry(self.entry, row, data=data, unique_id=unique_id, title=title)
+            account_owners = {(DOMAIN, 'phone_endpoint:' + phone_endpoint_id(row)): row.subentry_id
+                              for row in self.entry.subentries.values() if row.subentry_type == 'phone'}
             for identity, identifiers in self.devices:
-                devices.async_update_device(identity, new_identifiers=identifiers)
+                candidates = {account_owners[value] for value in identifiers if value in account_owners}
+                ownership = ({'new_config_subentry_id': next(iter(candidates))}
+                             if len(candidates) == 1 and devices.async_get(identity).config_subentry_id is None else {})
+                devices.async_update_device(identity, new_identifiers=identifiers, **ownership)
             for identity, unique_id in self.entities:
-                entities.async_update_entity(identity, new_unique_id=unique_id)
+                record = entities.async_get(identity)
+                device = devices.async_get(record.device_id) if record.device_id else None
+                ownership = ({'config_subentry_id': device.config_subentry_id} if device is not None
+                             and device.config_subentry_id and record.config_subentry_id is None else {})
+                entities.async_update_entity(identity, new_unique_id=unique_id, **ownership)
             self.hass.config_entries.async_update_entry(self.entry, data=self.data, options=self.options)
         except BaseException as error:
             failures = []
@@ -331,14 +427,26 @@ class AccountIdentityMigrationPlan:
                     callback()
                 except BaseException as rollback_error:
                     failures.append(rollback_error)
-            for identity, unique_id in reversed(old_entities):
-                if entities.async_get(identity).unique_id != unique_id:
-                    restore(lambda: entities.async_update_entity(identity, new_unique_id=unique_id))
-            for identity, identifiers in reversed(old_devices):
-                if devices.async_get(identity).identifiers != identifiers:
-                    restore(lambda: devices.async_update_device(identity, new_identifiers=identifiers))
-            for row, data, unique_id in reversed(snapshots):
-                restore(lambda: self.hass.config_entries.async_update_subentry(self.entry, row, data=data, unique_id=unique_id))
+            for identity, unique_id, subentry_id in reversed(old_entities):
+                record = entities.async_get(identity)
+                changes = {}
+                if record.unique_id != unique_id:
+                    changes['new_unique_id'] = unique_id
+                if record.config_subentry_id != subentry_id:
+                    changes['config_subentry_id'] = subentry_id
+                if changes:
+                    restore(lambda: entities.async_update_entity(identity, **changes))
+            for identity, identifiers, subentry_id in reversed(old_devices):
+                record = devices.async_get(identity)
+                changes = {}
+                if record.identifiers != identifiers:
+                    changes['new_identifiers'] = identifiers
+                if record.config_subentry_id != subentry_id:
+                    changes['new_config_subentry_id'] = subentry_id
+                if changes:
+                    restore(lambda: devices.async_update_device(identity, **changes))
+            for row, data, unique_id, title in reversed(snapshots):
+                restore(lambda: self.hass.config_entries.async_update_subentry(self.entry, row, data=data, unique_id=unique_id, title=title))
             for row in self.creations:
                 if row.subentry_id in self.entry.subentries:
                     restore(lambda: self.hass.config_entries.async_remove_subentry(self.entry, row.subentry_id))
@@ -347,15 +455,25 @@ class AccountIdentityMigrationPlan:
                 raise BaseExceptionGroup('Account identity rollback could not restore every native record', [error, *failures])
             raise
         runtime = getattr(self.entry, 'runtime_data', None)
+        if self.activate_registrar:
+            from .phone_config import async_enable_registrar_for_new_account
+            async_enable_registrar_for_new_account(self.hass, self.entry)
         if runtime is not None and getattr(runtime, 'endpoints', None) is not None:
+            runtime.endpoints.subentry_ids = {phone_endpoint_id(row): row.subentry_id
+                for row in self.entry.subentries.values() if row.subentry_type == 'phone'}
             runtime.softphones = {self.mapping.get(key, key): {**value, 'endpoint_id': self.mapping.get(key, key)}
                                   for key, value in runtime.softphones.items()}
             runtime.softphone_presence = {self.mapping.get(key, key): value
                                          for key, value in runtime.softphone_presence.items()}
             runtime.endpoints.rekey_accounts(self.mapping)
+        from .repairs import async_sync_managed_record_issues
+        async_sync_managed_record_issues(self.hass, self.entry, dict(self.invalid_managed))
+        from .repairs import async_sync_esphome_account_setup_issue
+        for device_id in self.pending_esphome:
+            async_sync_esphome_account_setup_issue(self.hass, self.entry, device_id, pending=True)
 
 
-def account_identity_migration_plan(hass, entry, *, account_updates=None):
+def account_identity_migration_plan(hass, entry, *, account_updates=None, stored_references=()):
     """Resolve exact old keys from configured accounts, never from a label."""
     mapping, owners = {}, {}
     accounts = []
@@ -365,12 +483,20 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
         if row.subentry_type != 'phone':
             raise PhoneIdentityConflict(row.title, 'phone', row.subentry_type)
         rows[identity] = replace(row, data=MappingProxyType(dict(updates)))
-    creations, legacy_keys = set(), {}
+    creations, legacy_keys, invalid_managed = set(), {}, {}
     for hardware, raw in entry.data.get('managed_esphome_phones', {}).items():
         from homeassistant.config_entries import ConfigSubentry
         from .managed_phones import ManagedPhone
 
-        phone = ManagedPhone(**{key: value for key, value in raw.items() if key in ManagedPhone.__dataclass_fields__})
+        try:
+            if not isinstance(raw, Mapping):
+                raise ValueError('The saved account record is not an object')
+            phone = ManagedPhone(**{key: value for key, value in raw.items() if key in ManagedPhone.__dataclass_fields__})
+            if phone.device_id != hardware:
+                raise ValueError('The saved hardware association does not match the record')
+        except (ValueError, TypeError) as error:
+            invalid_managed[hardware] = type(error).__name__
+            continue
         existing = next((row for row in rows.values() if row.subentry_type == 'phone'
                          and str(row.data.get('username') or '').casefold() == phone.username.casefold()), None)
         old = str(raw.get('endpoint_id') or 'esphome:' + hardware)
@@ -386,30 +512,70 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
                 'managed_esphome': True, 'managed_exclusive': bool(existing.data.get('managed_esphome'))}))
         else:
             row = ConfigSubentry(subentry_type='phone', title=phone.display_name or phone.username,
-                unique_id='phone:' + old, data=MappingProxyType({**phone.record(), 'endpoint_id': old, 'kind': 'esphome'}))
+                unique_id='phone:' + old, data=MappingProxyType({**raw, **phone.record(), 'endpoint_id': old, 'kind': 'esphome',
+                    **({'username_source': raw['username_source']} if raw.get('username_source') == 'user' else {})}))
             rows[row.subentry_id] = row
             creations.add(row.subentry_id)
-    account_sources = {}
+    pending_esphome, legacy_memberships = [], {}
+    from .esphome_native import device_info, normalize_mac, runtime_for_entry
+    from .managed_phones import ManagedPhone, managed_device_username, managed_phone_mode
+    from .sip_registrar import generate_password
+    from homeassistant.config_entries import ConfigSubentry
+    for origin, device, old in legacy_esphome_references(hass, entry, stored_references=stored_references):
+        native = runtime_for_entry(origin)
+        info = device_info(native)
+        try:
+            mac = normalize_mac(info.mac_address if info is not None else '')
+            if not any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(value) == mac for kind, value in device.connections):
+                raise ValueError('The native phone MAC is not verified')
+            username = managed_device_username(native)
+        except (ValueError, TypeError):
+            pending_esphome.append(device.id)
+            continue
+        membership = entry.data.get('esphome_phone_memberships', {}).get(old, {})
+        membership = membership if isinstance(membership, Mapping) else {}
+        phone = ManagedPhone(device_id=device.id, origin_entry_id=origin.entry_id, mac=mac,
+            username=username, password=generate_password(), endpoint_id=old, display_name=username,
+            route_id=str(info.name), api_host=str(origin.data.get('host') or ''),
+            queues=membership.get('queues', ()), ring_group=str(membership.get('ring_group') or ''),
+            membership_pending=membership.get('membership_pending', {}), membership_observed=membership.get('membership_observed', {}),
+            active=managed_phone_mode(hass, origin, device.id, mac) is True)
+        legacy_memberships[username] = {field: membership[field] for field in ('queues', 'ring_group') if field in membership}
+        row = ConfigSubentry(subentry_type='phone', title=username, unique_id='phone:' + old,
+            data=MappingProxyType({**membership, **phone.record(), 'kind': 'esphome', 'username_source': 'esphome'}))
+        rows[row.subentry_id] = row
+        creations.add(row.subentry_id)
+    account_sources, account_overrides = {}, {}
     for row in rows.values():
         if row.subentry_type != 'phone' or row.data.get('kind') not in {'sip_account', 'browser', 'esphome'}:
             continue
         old = phone_endpoint_id(row)
         previous_username = normalize_username(str(row.data.get('username') or ''))
         update = _account_username_update(hass, entry, row)
+        if update is not None:
+            account_overrides[row.subentry_id] = update
         username = update['username'] if update is not None else previous_username
         account_sources[row.subentry_id] = update.get('username_source') if update is not None else row.data.get('username_source', 'user')
         owner = owners.get(username.casefold())
         if owner is not None and owner.subentry_id != row.subentry_id:
             raise PhoneIdentityConflict(row.title, username, phone_endpoint_id(owner), subentry_id=row.subentry_id)
         owners[username.casefold()] = row
+        accounts.append((row, old, username))
+    for row, old, username in accounts:
+        previous_username = normalize_username(str(row.data.get('username') or ''))
+        original = entry.subentries.get(row.subentry_id)
+        original_username = str(original.data.get('username') or '') if original is not None else ''
         references = (old, *_ha_reference_origins(row.data),
-                      *((previous_username,) if previous_username != username else ()))
+                      *((previous_username,) if previous_username != username else ()),
+                      *((original_username,) if original_username and original_username != username else ()))
         for legacy in references:
+            current_owner = owners.get(legacy.casefold())
+            if current_owner is not None and current_owner.subentry_id != row.subentry_id:
+                continue
             existing = mapping.get(legacy)
             if existing is not None and existing != username:
                 raise PhoneIdentityConflict(row.title, username, legacy, subentry_id=row.subentry_id)
             mapping[legacy] = username
-        accounts.append((row, old, username))
     for old, username in legacy_keys.items():
         target = mapping.get(username, username)
         if old in mapping and mapping[old] != target:
@@ -447,13 +613,12 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
                 if identity in future and future[identity] != value:
                     raise PhoneIdentityConflict(entry.title, identity, old)
                 future[identity] = value
-    # A username cannot also be another old account key: that would make an
-    # exact persisted reference ambiguous during this upgrade.
-    for old, username in mapping.items():
-        if username in mapping and mapping[username] != username:
-            raise PhoneIdentityConflict(username, username, old)
     data = deepcopy(dict(entry.data))
-    data.pop('managed_esphome_phones', None)
+    if invalid_managed:
+        data['managed_esphome_phones'] = {key: deepcopy(value) for key, value in
+            data.get('managed_esphome_phones', {}).items() if key in invalid_managed}
+    else:
+        data.pop('managed_esphome_phones', None)
     if isinstance(data.get('external_call_blocked_endpoints'), (list, tuple)):
         data['external_call_blocked_endpoints'] = [_reference(value, mapping)
                                                   for value in data['external_call_blocked_endpoints']]
@@ -461,11 +626,29 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
     # rename updates destinations, never creates a public SIP alias.
     aliases = {old: _reference(username, mapping) for old, username in
                data.get('legacy_phone_references', {}).items()}
+    persistent_references = set(legacy_keys)
+    for row, old, username in accounts:
+        original = entry.subentries.get(row.subentry_id)
+        original_username = str(original.data.get('username') or '') if original is not None else str(row.data.get('username') or '')
+        origins = _ha_reference_origins(row.data)
+        persistent_references.update(origins)
+        if old != original_username or old in origins or row.data.get('kind') in {'browser', 'esphome'}:
+            persistent_references.add(old)
+        elif original_username != username:
+            aliases.pop(original_username, None)
+        previous_username = str(row.data.get('username') or '')
+        if previous_username != username and account_sources[row.subentry_id] in {'ha_name', 'esphome'}:
+            persistent_references.add(previous_username)
     for old, username in mapping.items():
-        if old != username:
+        if old != username and old in persistent_references:
             aliases.setdefault(old, username)
+    if 'default' in aliases:
+        from .const import HA_SOFTPHONE_DEVICE_ID
+        aliases[HA_SOFTPHONE_DEVICE_ID] = aliases['default']
     if aliases:
         data['legacy_phone_references'] = aliases
+    else:
+        data.pop('legacy_phone_references', None)
     if isinstance(data.get('parking'), dict):
         parking = data['parking']
         parking['return_destination'] = _reference(parking.get('return_destination', ''), mapping)
@@ -476,13 +659,16 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
         data['phonebook_contacts'] = [_typed_data(row, 'contact', mapping)
                                      for row in data['phonebook_contacts']]
     options = deepcopy(dict(entry.options))
-    if entry.version == 7 and entry.minor_version < 4 and any(
+    activate_registrar = any(row.subentry_id in creations and row.data.get('enabled', True)
+                             for row, _old, _user in accounts)
+    activate_registrar |= entry.version == 7 and entry.minor_version < 4 and any(
             row.data.get('enabled', True) and (
                 row.data.get('kind') in {'browser', 'esphome'}
                 or row.data.get('managed_esphome') and row.data.get('active', True)
                 or row.data.get('username_source') == 'ha_name'
                 or any(isinstance(binding, Mapping) and binding.get('source') == 'migration'
-                       for binding in row.data.get('ha_bindings') or ())) for row, _old, _user in accounts):
+                       for binding in row.data.get('ha_bindings') or ())) for row, _old, _user in accounts)
+    if activate_registrar:
         from .const import CONF_REGISTRAR_ENABLED
         data[CONF_REGISTRAR_ENABLED] = True
         if CONF_REGISTRAR_ENABLED in options:
@@ -512,6 +698,7 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
     final_rows = {}
     for row in rows.values():
         future = _typed_data(row.data, row.subentry_type, mapping)
+        future.update(account_overrides.get(row.subentry_id, {}))
         if row.subentry_type == 'phone' and data.get('group_membership_version') == 1:
             future.pop('queues', None)
             future.pop('ring_group', None)
@@ -548,6 +735,22 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
         if row.subentry_id not in creations and dict(row.data) != dict(entry.subentries[row.subentry_id].data):
             if not any(record[0].subentry_id == row.subentry_id for record in updates):
                 updates.append((entry.subentries[row.subentry_id], future, unique_id))
+    from .phone_queue_membership import GROUP_MEMBERSHIP_VERSION, _membership_update_plan
+    if data.get(GROUP_MEMBERSHIP_VERSION) == 1 and legacy_memberships:
+        prospective = SimpleNamespace(data=data, options=options, subentries=final_rows, runtime_data=None)
+        group_creations, group_updates = _membership_update_plan(hass, prospective, legacy_memberships, reconcile=False)
+        for group in group_creations:
+            row = ConfigSubentry(subentry_type='group', title=group['name'], unique_id='group:' + group['group_id'], data=group)
+            final_rows[row.subentry_id] = row
+            creations.add(row.subentry_id)
+        for identity, row in tuple(final_rows.items()):
+            if row.subentry_type == 'group' and row.data.get('group_id') in group_updates:
+                values = group_updates[row.data['group_id']]
+                final_rows[identity] = replace(row, data=MappingProxyType(values))
+                updates = [record for record in updates if record[0].subentry_id != identity]
+                updates.append((entry.subentries[identity], values, row.unique_id))
+    for username in legacy_memberships:
+        data.get('esphome_phone_memberships', {}).pop(username, None)
     from .phone_config import phone_subentries, phone_subentry_data, validate_sip_account_namespace
     prospective = SimpleNamespace(data=data, options=options, subentries=final_rows, runtime_data=None)
     validate_sip_account_namespace(prospective, [phone_subentry_data(row) for row in phone_subentries(prospective)])
@@ -564,6 +767,26 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
         if identifiers != device.identifiers:
             device_updates.append((device.id, identifiers))
     for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
+        if entity.unique_id.startswith('queue_agent:'):
+            device = devices.async_get(entity.device_id) if entity.device_id else None
+            queue_ids = {value.removeprefix('group:') for domain, value in device.identifiers
+                         if domain == DOMAIN and value.startswith('group:')} if device is not None else set()
+            row = entry.subentries.get(entity.config_subentry_id)
+            if row is not None and row.subentry_type == 'group':
+                queue_ids.add(str(row.data.get('group_id') or row.subentry_id))
+            for queue_id in queue_ids:
+                prefix = f'queue_agent:{queue_id}:'
+                if not entity.unique_id.startswith(prefix):
+                    continue
+                old = entity.unique_id[len(prefix):]
+                unique_id = prefix + mapping.get(old, old)
+                existing = entities.async_get_entity_id(entity.domain, entity.platform, unique_id)
+                if existing is not None and existing != entity.entity_id:
+                    raise PhoneIdentityConflict(entity.entity_id, unique_id, entity.unique_id)
+                if unique_id != entity.unique_id:
+                    entity_updates.append((entity.entity_id, unique_id))
+                break
+            continue
         if entity.unique_id == legacy_state_id:
             unique_id = 'phone_endpoint_' + mapping['default'] + '_call_state'
             existing = entities.async_get_entity_id(entity.domain, entity.platform, unique_id)
@@ -587,7 +810,8 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None):
     original = (deepcopy(dict(entry.data)), deepcopy(dict(entry.options)),
                 {key: deepcopy(row.as_dict()) for key, row in entry.subentries.items()})
     return AccountIdentityMigrationPlan(hass, entry, mapping, data, options, tuple(updates), tuple(device_updates),
-                                        tuple(entity_updates), tuple(final_rows[key] for key in sorted(creations)), original)
+                                        tuple(entity_updates), tuple(final_rows[key] for key in sorted(creations)), original,
+                                        tuple(invalid_managed.items()), tuple(pending_esphome), activate_registrar)
 
 
 async def async_migrate_account_identities(hass, entry, *, account_updates=None):
@@ -600,7 +824,23 @@ async def async_migrate_account_identities(hass, entry, *, account_updates=None)
 
 async def _async_migrate_account_identities(hass, entry, *, account_updates=None):
     """Finish the owned batch or all of its rollback before a caller can leave."""
-    plan = account_identity_migration_plan(hass, entry, account_updates=account_updates)
+    from homeassistant.helpers.storage import Store
+    from homeassistant.helpers import issue_registry as ir
+    fault_prefix = 'archive_record_' + entry.entry_id + '_'
+    quarantined = {issue_id[len(fault_prefix):].removesuffix('.json').removesuffix('.pending')
+                   for domain, issue_id in ir.async_get(hass).issues if domain == DOMAIN and issue_id.startswith(fault_prefix)}
+    references = _runtime_legacy_references(entry)
+    for name in ('queues', 'ha_bindings', 'physical_phones'):
+        value = await Store(hass, 1, f'voip_stack.{name}.{entry.entry_id}').async_load()
+        references.update(_stored_esphome_references(value))
+    from .mailbox import archive_path
+    from .core.media_archive import _account_rebind_entries
+    path = archive_path(hass)
+    if path is not None:
+        entries, _faults = await hass.async_add_executor_job(_account_rebind_entries, path, {})
+        references.update(_stored_esphome_references([row['mailbox_id'] for identity, row in entries.items()
+                                                     if identity not in quarantined]))
+    plan = account_identity_migration_plan(hass, entry, account_updates=account_updates, stored_references=references)
     resources = [await _async_prepare_account_queue_migration(hass, entry, plan.mapping),
                  await _async_prepare_account_binding_migration(hass, entry, plan.mapping),
                  await _async_prepare_physical_phone_migration(hass, entry, plan.mapping)]
@@ -614,9 +854,9 @@ async def _async_migrate_account_identities(hass, entry, *, account_updates=None
         archive = owner.component('media_archive') if owner is not None else None
         if archive is None:
             archive = MediaArchive(path, hass.async_add_executor_job)
-            resources.append(await archive.prepare_account_rebind(plan.mapping, load_from_storage=True))
+            resources.append(await archive.prepare_account_rebind(plan.mapping, load_from_storage=True, exclude_ids=quarantined))
         else:
-            resources.append(await archive.prepare_account_rebind(plan.mapping))
+            resources.append(await archive.prepare_account_rebind(plan.mapping, exclude_ids=quarantined))
     committed = []
     try:
         for resource in resources:
@@ -633,6 +873,9 @@ async def _async_migrate_account_identities(hass, entry, *, account_updates=None
         if failures:
             raise BaseExceptionGroup('Account storage rollback could not restore every owner', [error, *failures])
         raise
+    from .repairs import async_sync_archive_record_issues
+    faults = {filename: reason for resource in resources for filename, reason in getattr(resource, 'faults', {}).items()}
+    async_sync_archive_record_issues(hass, entry, faults)
     return plan.mapping
 
 

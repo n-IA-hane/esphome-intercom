@@ -1,6 +1,6 @@
 """Payload numbers: the single owner of which RTP payload number means which codec.
 
-Implements rules P1 to P4 of docs/MEDIA_NEGOTIATION_CONTRACT.md. One map belongs to one media
+One map belongs to one media
 stream of one dialog. It is immutable: every operation returns a new map, so a renegotiation can
 be prepared beside the active one and dropped if the exchange fails.
 """
@@ -19,7 +19,7 @@ RtpMapping = tuple[str, int, int]
 TELEPHONE_EVENT = "TELEPHONE-EVENT"
 FIRST_DYNAMIC = 96
 LAST_DYNAMIC = 127
-# P2: the number most phones expect for telephone events at 8000 Hz.
+# Conventional telephone-event payload number at 8000 Hz.
 TELEPHONE_EVENT_8000 = 101
 
 
@@ -92,7 +92,7 @@ class PayloadMap:
     @classmethod
     def for_offer(cls, mappings: Iterable[RtpMapping], previous: PayloadMap | None = None,
                   *, preferences: Mapping[RtpMapping, int] | None = None) -> PayloadMap:
-        """Number the mappings of a local offer (P2)."""
+        """Number the mappings of a local offer without reusing retired meanings."""
         from ..sdp_video import video_static_rtp_payload
         history = dict(previous.receive_history) if previous else {}
         used = dict(history)
@@ -140,8 +140,8 @@ class PayloadMap:
 
     def answering(self, offer: Mapping[int, RtpMapping], accepted: Iterable[RtpMapping]) -> PayloadMap:
         """This side answers ``offer`` and accepts ``accepted``: both directions use the numbers
-        of the offer (P1). A number that meant something else before, for either receiver, is a
-        conflict (P4)."""
+        of the offer. A number that meant something else before, for either receiver, is a
+        conflict."""
         chosen = set(accepted)
         numbers = {number: mapping for number, mapping in offer.items() if mapping in chosen}
         return PayloadMap(
@@ -150,7 +150,7 @@ class PayloadMap:
             send_history=_extended(self.send_history, numbers, "remote receive"))
 
     def with_answer(self, answer: Mapping[int, RtpMapping]) -> PayloadMap:
-        """The peer answered the local offer. It may have renumbered a codec (P3): its number is
+        """The peer answered the local offer. It may have renumbered a codec: its number is
         used to send, the number of the offer stays the one to receive on. Mappings that were
         not offered are ignored. The peer's numbers are checked against its own history."""
         offered = set(self.receive.values())

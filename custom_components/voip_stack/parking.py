@@ -669,7 +669,7 @@ async def prepare_parking_pickup(hass, invite, slot, local_ip):
         if not claim.current:
             raise ParkingError("The parked call ended")
         answer = build_answer_directional(local_ip, local_ip, prepared.relay.right_port,
-            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, dtmf=first_offered_dtmf_format(invite.remote_sdp), remote_sdp=invite.remote_sdp,
+            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, dtmf=first_offered_dtmf_format(invite.remote_sdp), remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             **({"video_port": prepared.video_update.answer_video_rtp_port,
                 "video_format": prepared.video_update.answer_video_format,
                 "video_direction": local_direction_for_remote(prepared.video_update.answer_video_format.direction)}
@@ -721,7 +721,7 @@ async def prepare_parking_pickup(hass, invite, slot, local_ip):
         application.media = None
         await old_media.stop()
         registry.release_resource(session.call_id, retired_name, value=old_media)
-    return SipInviteResult(200, "OK", answer_sdp=answer, commit=commit, rollback=rollback)
+    return SipInviteResult(200, "OK", answer_sdp=answer, commit=commit, rollback=rollback, media_contract=invite)
 
 
 async def pickup_phone_call(call, endpoint, slot):

@@ -50,6 +50,52 @@ sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_invite_provisional_stops_retransmission_while_waiting_for_final(self):
+        responses = asyncio.Queue()
+        sends = 0
+        sip = sip_transaction.sip
+        final_task = None
+
+        async def final_response():
+            await asyncio.sleep(0.03)
+            responses.put_nowait((sip.parse_message(sip.build_response(200, "OK", [])), None))
+
+        def send():
+            nonlocal sends, final_task
+            sends += 1
+            if sends == 1:
+                responses.put_nowait((sip.parse_message(sip.build_response(180, "Ringing", [])), None))
+                final_task = asyncio.create_task(final_response())
+            return True
+
+        async def read(timeout):
+            try:
+                return await asyncio.wait_for(responses.get(), timeout)
+            except TimeoutError:
+                return None
+
+        transaction_type = sip_transaction.SipClientTransaction
+
+        class FastTransaction(transaction_type):
+            @classmethod
+            def __class_getitem__(cls, item):
+                return cls
+
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs, t1=0.001, t2=0.005)
+
+        try:
+            with patch.object(sip_transaction, "SipClientTransaction", FastTransaction):
+                response = await sip_transaction.async_run_dialog_request_transaction(
+                    send=send, read=read, matches=lambda message: True, active=lambda: True,
+                    transport="UDP", timeout=0.2, method="INVITE",
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(sends, 1)
+        finally:
+            if final_task is not None:
+                await asyncio.gather(final_task, return_exceptions=True)
+
     async def test_non_invite_keeps_retrying_after_a_provisional_response(self):
         responses = asyncio.Queue()
         sends = 0

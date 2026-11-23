@@ -1368,6 +1368,7 @@ class SipUdpServer:
         decline_reason: str = "",
         connected_identity_name: str = "",
         connected_identity_user: str = "",
+        media_contract=None,
     ) -> bool:
         return self.endpoint is not None and self.endpoint.send_final_response(
             call_id,
@@ -1377,6 +1378,7 @@ class SipUdpServer:
             decline_reason=decline_reason,
             connected_identity_name=connected_identity_name,
             connected_identity_user=connected_identity_user,
+            media_contract=media_contract,
         )
 
     def send_bye(self, call_id: str = "") -> bool:

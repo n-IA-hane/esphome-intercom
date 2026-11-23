@@ -31,7 +31,7 @@ class PeerEvidence:
 
     ``sends`` is what the peer transmits, ``receives`` what it accepts. ``complete`` is true only
     when the declaration is known to be whole, current and specific to the contact binding in
-    use; only then may it narrow an offer (rule X4). Otherwise it can only rank.
+    use; only an explicitly exhaustive declaration may narrow an offer. OPTIONS can rank.
     """
 
     sends: tuple[DirectionCapability, ...] = ()
@@ -61,8 +61,6 @@ class PeerEvidence:
             return cls(
                 sends=tuple(replace(item, times=PacketTimes()) for item in sends),
                 receives=tuple(replace(item, times=PacketTimes(maximum_ms=maximum or 1000)) for item in receives),
-                send_geometry_complete=bool(capabilities.get("sip_audio_tx_geometry_complete")),
-                receive_geometry_complete=bool(capabilities.get("sip_audio_rx_geometry_complete")),
             )
         except (TypeError, ValueError):
             return cls()

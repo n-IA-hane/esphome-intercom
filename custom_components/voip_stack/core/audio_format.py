@@ -163,18 +163,3 @@ def parse_audio_format_list(value: str | None) -> list[AudioFormat]:
     if len(formats) > 8:
         raise ValueError("too many audio formats (max 8)")
     return formats
-
-
-def choose_common_frame_ms(*format_lists: list[AudioFormat]) -> int | float | None:
-    available: set[int | float] | None = None
-    for formats in format_lists:
-        frames = {fmt.frame_ms for fmt in formats}
-        if not frames:
-            return None
-        available = frames if available is None else available & frames
-    if not available:
-        return None
-    for frame_ms in PREFERRED_FRAME_MS:
-        if frame_ms in available:
-            return frame_ms
-    return min(available)

@@ -32,7 +32,6 @@ packages:
     file: ../visibility.yaml
     vars:
       _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
-  call_media_route: ${ _p4_phone_route if _p4_phone_has_video else {} }
 phone_list_view:
 - id: !extend contacts_list_view
   text_font: videophone_small_font
@@ -189,16 +188,6 @@ defaults:
             text_color: 16777215
             text_font: videophone_small_font
             long_mode: DOT
-        - label:
-            id: p4_video_media_route_label
-            align: LEFT_MID
-            x: 28
-            y: 15
-            width: 840
-            text: ''
-            text_color: 9741240
-            text_font: videophone_small_font
-            long_mode: DOT
         - button:
             align: RIGHT_MID
             x: -28
@@ -235,15 +224,6 @@ defaults:
         text_color: 9741240
         text_font: videophone_body_font
         long_mode: DOT
-    - label:
-        id: p4_call_media_route_label
-        align: TOP_MID
-        y: 190
-        width: 1000
-        text: ''
-        text_align: CENTER
-        text_color: 9741240
-        text_font: videophone_small_font
     - label:
         id: videophone_peer_label
         align: CENTER
@@ -591,6 +571,3 @@ defaults:
     - lambda: !lambda |-
         id(videophone_terminal_notice).clear();
     - script.execute: update_status
-  _p4_phone_route:
-    packages:
-      route: !include '../../../lvgl/p4_call_media_route.yaml'

@@ -49,10 +49,10 @@ def _pcm_wire_bytes(fmt: AudioFormat) -> int:
 
 def audio_format_to_rtp(fmt: AudioFormat, payload_type: int) -> RtpPcmFormat:
     if not 96 <= int(payload_type) <= 127:
-        raise SdpError("phase-1 PCM uses dynamic RTP payload types 96-127")
+        raise SdpError("PCM format construction requires dynamic RTP payload types 96-127")
     if _pcm_wire_bytes(fmt) > UDP_SAFE_PAYLOAD_BYTES:
         raise SdpError(
-            f"RTP PCM frame too large for voip-pcm/1: "
+            f"RTP PCM transmit frame exceeds payload budget: "
             f"{fmt.wire_token()} is {fmt.nominal_frame_bytes} bytes; "
             f"max is {UDP_SAFE_PAYLOAD_BYTES}"
         )
@@ -61,7 +61,7 @@ def audio_format_to_rtp(fmt: AudioFormat, payload_type: int) -> RtpPcmFormat:
     elif fmt.pcm_format in (PcmFormat.S24LE, PcmFormat.S24LE_IN_S32):
         encoding = "L24"
     else:
-        raise SdpError(f"{fmt.pcm_format.value} has no phase-1 RTP PCM mapping")
+        raise SdpError(f"{fmt.pcm_format.value} has no RTP PCM mapping")
     return RtpPcmFormat(
         int(payload_type), encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms
     )

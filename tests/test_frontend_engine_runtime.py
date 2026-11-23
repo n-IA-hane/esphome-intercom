@@ -1631,6 +1631,24 @@ assert.ok(Date.now() - stuckCloseStarted < 1500);
 assert.equal(stuckClose._callId, "");
 assert.equal(stuckClose._audioSession.audioContext, null);
 
+// A Replaces successor may expose G722 decoded PCM16 in SIP state while
+// its actual browser WebSocket still owns capture/playback PCM48.
+const pcmSuccessor = new Engine();
+pcmSuccessor._callId = "pcm-successor";
+pcmSuccessor._ensureVideo = async () => false;
+const websocketPcm = {{call_id:"pcm-successor",audio_direction:"sendrecv",
+  tx_format:"48000:s16le:1:20",rx_format:"48000:s16le:1:20",
+  selected_tx_format:"48000:s16le:1:20",selected_rx_format:"48000:s16le:1:20"}};
+pcmSuccessor._lastSessionPayload = websocketPcm;
+await pcmSuccessor._setupAudio({{audio_mode:"full_duplex"}}, websocketPcm);
+await pcmSuccessor.reconcileSession({{call_id:"pcm-successor",state:"in_call",
+  audio_direction:"sendrecv",selected_tx_format:"16000:s16le:1:20",
+  selected_rx_format:"16000:s16le:1:20",selected_tx_rtp_format:"pt=9:G722/8000/1/20ms"}});
+assert.equal(pcmSuccessor._audioSession.captureNode.options.processorOptions.format.sampleRate,48000);
+assert.equal(pcmSuccessor._audioSession.playbackNode.options.processorOptions.format.sampleRate,48000);
+assert.equal(pcmSuccessor._lastSessionPayload.selected_tx_format,"48000:s16le:1:20");
+await pcmSuccessor.close("test");
+
 // Incoming codec/rate changes must never become the microphone TX contract.
 const asymmetric = new Engine();
 asymmetric._callId = "asymmetric";

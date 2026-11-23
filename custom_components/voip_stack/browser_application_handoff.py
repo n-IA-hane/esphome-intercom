@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from .browser_playback import BrowserPlayback
 from .call_projection import publish_phone_projection
-from .core.sdp import RtpPcmFormat
+from .core.media.negotiator import browser_media_contract
 from .endpoint_session import CleanupStage
 from .local_media_bridge import LocalMediaBridge
 from .media_ports import RtpPortReservation
@@ -34,7 +34,7 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
     registry.set_pending_route(call_id, {"future": future, "invite": invite,
         "ring_group_endpoint_ids": (endpoint.endpoint_id,), "declined_endpoint_ids": set()})
     if accepted_decision is None:
-        runtime.publish_pending_ringing(invite, route_kind="group", endpoint_id=endpoint.endpoint_id,
+        runtime.publish_pending_ringing(invite, route_kind="transfer", endpoint_id=endpoint.endpoint_id,
             endpoint_device_id=endpoint.device_id, callee=endpoint.name, last_sip_event="ROUTE_FORWARD")
     else:
         future.set_result(accepted_decision)
@@ -48,8 +48,11 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
             if registry.resource_for(call_id, "relay") is not media:
                 raise RuntimeError("The source media owner changed")
             reservation = RtpPortReservation.allocate(runtime.hass)
-            fmt = RtpPcmFormat(96, "L16", 16000, 1, 20)
-            browser_invite = replace(invite, send_format=fmt, recv_format=fmt,
+            audio = browser_media_contract()
+            fmt = audio.send
+            browser_invite = replace(invite, send_format=audio.send, recv_format=audio.recv,
+                send_formats=audio.send_formats, recv_formats=audio.recv_formats,
+                audio_payloads=audio.payloads, dtmf_direction=audio.dtmf_direction, remote_sdp=b"",
                 local_send_capabilities=(fmt.audio_format,), local_recv_capabilities=(fmt.audio_format,),
                 remote_rtp_host=runtime.local_ip, remote_rtp_port=reservation.ports[0],
                 local_audio_direction="sendrecv", remote_audio_connection_held=False,

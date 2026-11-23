@@ -133,10 +133,10 @@ class ForwardGroup:
                 ring_policy=(
                     RingPolicy(
                         overall_timeout=self.operation.plan.ring_timeout,
-                        step_timeout=self.operation.plan.ring_timeout,
+                        step_timeout=(account_plan.ring_policy.step_timeout if account_plan
+                                      else self.operation.plan.ring_timeout),
                     )
-                    if self.operation.plan.preselected
-                    and self.operation.plan.ring_timeout is not None
+                    if self.operation.plan.ring_timeout is not None
                     else account_plan.ring_policy
                     if account_plan
                     else None

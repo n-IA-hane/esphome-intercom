@@ -315,7 +315,7 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
         watcher = asyncio.create_task(watch(), name=f"voip-bridge-destination-{destination_id}")
         try:
             with SessionHandoff(calls, old, new) as handoff:
-                handoff.preserve(client, "on_refer", "on_media_update", "on_info_dtmf")
+                handoff.preserve(client, "on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
                 handoff.preserve(relay, "on_dtmf", "on_dtmf_fallback", "on_media_route_changed")
                 calls.remove_leg(old.call_id, destination_id)
                 old.release_resource(f"relay:{old.call_id}", value=relay)
@@ -355,4 +355,5 @@ async def _prepare_replacement_locked(hass, invite, local_ip, previous):
         if retired is not None:
             await asyncio.gather(retired, return_exceptions=True)
 
-    return SipInviteResult(200, "OK", answer_sdp=prepared.answer_sdp, commit=commit, rollback=rollback)
+    return SipInviteResult(200, "OK", answer_sdp=prepared.answer_sdp, commit=commit, rollback=rollback,
+                           media_contract=invite)

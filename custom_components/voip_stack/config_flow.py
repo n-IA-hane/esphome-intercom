@@ -1062,7 +1062,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         row = self._get_reconfigure_subentry()
         return project_phone_memberships(self._get_entry(), phone_endpoint_id(row), phone_subentry_data(row))
 
-    def _common_schema(self, *, sip_account: bool) -> vol.Schema:
+    def _common_schema(self) -> vol.Schema:
         from .group_flow import destination_options
         from .group_config import group_records
         from .phone_queue_membership import membership_names, normalize_phone_queues
@@ -1124,51 +1124,49 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                 default=bool(current.get(CONF_PHONE_VIDEO_ENABLED, True)),
             ): BooleanSelector(),
         }
-        if sip_account:
-            for field, slot in (('forward', 'always'), ('busy', 'busy'), ('unavailable', 'unavailable')):
-                destination = getattr(policy, slot)
-                fields[vol.Optional(field + '_action', default=action(destination))] = SelectSelector({
-                    'options': ['none', 'forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
-                fields[vol.Optional(field + '_to', default=target(destination))] = destination_selector()
-            fields[vol.Optional('ringing_timeout', default=policy.ringing_timeout or 0)] = NumberSelector({
-                'min': 0, 'max': 3600, 'step': 0.1, 'unit_of_measurement': 's', 'mode': 'box'})
-            fields[vol.Optional('no_answer_action', default=action(policy.no_answer) if policy.no_answer else 'forward')] = SelectSelector({
-                'options': ['forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
-            fields[vol.Optional('no_answer_to', default=target(policy.no_answer))] = destination_selector()
-            if not self._suggested_password:
-                self._suggested_password = str(
-                    current.get(CONF_PHONE_PASSWORD) or generate_password()
-                )
-            fields.update(
-                {
-                    vol.Optional(
-                        CONF_PHONE_USERNAME,
-                        default=str(current.get(CONF_PHONE_USERNAME) or ""),
-                    ): TextSelector(),
-                    vol.Required(
-                        CONF_PHONE_PASSWORD,
-                        default=self._suggested_password,
-                    ): TextSelector(
-                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
-                    ),
-                }
+        for field, slot in (('forward', 'always'), ('busy', 'busy'), ('unavailable', 'unavailable')):
+            destination = getattr(policy, slot)
+            fields[vol.Optional(field + '_action', default=action(destination))] = SelectSelector({
+                'options': ['none', 'forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
+            fields[vol.Optional(field + '_to', default=target(destination))] = destination_selector()
+        fields[vol.Optional('ringing_timeout', default=policy.ringing_timeout or 0)] = NumberSelector({
+            'min': 0, 'max': 3600, 'step': 0.1, 'unit_of_measurement': 's', 'mode': 'box'})
+        fields[vol.Optional('no_answer_action', default=action(policy.no_answer) if policy.no_answer else 'forward')] = SelectSelector({
+            'options': ['forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
+        fields[vol.Optional('no_answer_to', default=target(policy.no_answer))] = destination_selector()
+        if not self._suggested_password:
+            self._suggested_password = str(
+                current.get(CONF_PHONE_PASSWORD) or generate_password()
             )
+        fields.update(
+            {
+                vol.Optional(
+                    CONF_PHONE_USERNAME,
+                    default=str(current.get(CONF_PHONE_USERNAME) or ""),
+                ): TextSelector(),
+                vol.Required(
+                    CONF_PHONE_PASSWORD,
+                    default=self._suggested_password,
+                ): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
+            }
+        )
         fields.update({
             vol.Required(CONF_PHONE_AUTO_ANSWER, default=bool(current.get(CONF_PHONE_AUTO_ANSWER, False))): BooleanSelector(),
             visible_required(CONF_PHONE_SEND_VIDEO, default=bool(current.get(CONF_PHONE_SEND_VIDEO, False)),
                 visible={"field": CONF_PHONE_VIDEO_ENABLED, "value": True}): BooleanSelector(),
         })
         fields.update(codec_form_fields(current, inherit=True, parent=self._get_entry().data))
-        if sip_account:
-            from .physical_phone import (
-                account_physical_bindings, account_physical_bindings_form_rows,
-                account_physical_bindings_selector,
-            )
-            current_bindings = account_physical_bindings(
-                self._get_entry(), str(current.get(CONF_PHONE_ENDPOINT_ID) or ""))
-            fields[vol.Optional("physical_bindings", default=account_physical_bindings_form_rows(
-                current_bindings))] = account_physical_bindings_selector(
-                    self._get_entry(), options=self._physical_binding_options)
+        from .physical_phone import (
+            account_physical_bindings, account_physical_bindings_form_rows,
+            account_physical_bindings_selector,
+        )
+        current_bindings = account_physical_bindings(
+            self._get_entry(), str(current.get(CONF_PHONE_ENDPOINT_ID) or ""))
+        fields[vol.Optional("physical_bindings", default=account_physical_bindings_form_rows(
+            current_bindings))] = account_physical_bindings_selector(
+                self._get_entry(), options=self._physical_binding_options)
         fields[vol.Optional("voicemail_enabled", default=bool(current.get("voicemail", {}).get("enabled")))] = BooleanSelector()
         return vol.Schema(fields)
 
@@ -1388,12 +1386,12 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                 prepared = await async_prepare_account_bindings(self.hass, self._get_entry(),
                     data[CONF_PHONE_ENDPOINT_ID], account_physical_bindings_from_form(physical_bindings), account_data=data)
             except (ValueError, ServiceValidationError) as error:
-                return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
+                return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(),
                     errors={"base": str(error)})
         try:
             validate_phone_subentry_data(self._get_entry(), data)
         except ValueError as error:
-            return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
+            return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(),
                                         errors={"base": "phone_forward_loop" if str(error) == 'phone_forward_loop' else "phone_alias_conflict"})
         if self._reconfigure:
             if remove_mailbox and self._current_data().get("voicemail", {}).get("enabled"):
@@ -1403,10 +1401,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                 try:
                     await async_remove_mailbox(self.hass, data[CONF_PHONE_ENDPOINT_ID])
                 except ServiceValidationError:
-                    is_sip = self._kind is EndpointKind.SIP_ACCOUNT
                     return self.async_show_form(
-                        step_id="sip_account" if is_sip else "browser",
-                        data_schema=self._common_schema(sip_account=is_sip),
+                        step_id="sip_account",
+                        data_schema=self._common_schema(),
                         errors={"base": "mailbox_removal_failed"},
                     )
                 data["voicemail"] = {}
@@ -1415,7 +1412,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             try:
                 validate_phone_subentry_data(self._get_entry(), data)
             except ValueError as error:
-                return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
+                return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(),
                                             errors={"base": "phone_forward_loop" if str(error) == 'phone_forward_loop' else "phone_alias_conflict"})
             current = self._get_reconfigure_subentry()
             if data.get(CONF_PHONE_USERNAME) and data[CONF_PHONE_USERNAME] != phone_endpoint_id(current):
@@ -1425,7 +1422,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                     mapping = await async_migrate_account_identities(self.hass, self._get_entry(),
                         account_updates={current.subentry_id: data})
                 except ValueError:
-                    return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(sip_account=True),
+                    return self.async_show_form(step_id="sip_account", data_schema=self._common_schema(),
                                                 errors={"base": "phone_alias_conflict"})
                 prepared = tuple((row, _typed_data(values, 'physical_phone', mapping)) for row, values in prepared)
                 apply_memberships(data[CONF_PHONE_USERNAME])
@@ -1470,12 +1467,12 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                     physical_bindings=user_input.get("physical_bindings"))
             return self.async_show_form(
                 step_id="sip_account",
-                data_schema=self._common_schema(sip_account=True),
+                data_schema=self._common_schema(),
                 errors=errors,
             )
         return self.async_show_form(
             step_id="sip_account",
-            data_schema=self._common_schema(sip_account=True),
+            data_schema=self._common_schema(),
         )
 
     async def async_step_reconfigure(self, user_input=None):

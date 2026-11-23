@@ -13,12 +13,11 @@ from xml.etree import ElementTree
 
 import pytest
 
-from custom_components.voip_stack.core import rtp, sdp
+from custom_components.voip_stack.core import rtp, sdp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
-from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+from homeassistant.config_entries import ConfigSubentry
 from custom_components.voip_stack.phone_profile import render_phone_bundle, resolve_phone_keys
 from custom_components.voip_stack.phone_profile_catalog import decode_profile_bundle
-from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 from custom_components.voip_stack.sip_client import SipCallClient
 from custom_components.voip_stack.sip_udp_io import SipDatagramQueueProtocol
 from custom_components.voip_stack.store import config_entry
@@ -48,24 +47,35 @@ def _power(samples, rate, frequency):
 @pytest.mark.parametrize('registered_phones', [{'manual': 'transfer_b'}], indirect=True)
 @pytest.mark.parametrize('hangup_side', ['p4', 'fanvil'])
 async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_cleanup(
-    trunks, registered_phones, tmp_path, caplog, hangup_side,
+    trunks, registered_phones, tmp_path, caplog, hangup_side, hass_admin_user,
 ):
     profile, templates = _catalog()
     lab = trunks
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
-    casa = PhoneEndpoint(endpoint_id='browser:casa-fixture', name='Casa', device_id='casa-device',
-        kind=EndpointKind.BROWSER, availability='available', capabilities=frozenset({'audio', 'dtmf'}))
-    p4 = PhoneEndpoint(endpoint_id='esphome:p4-fixture', name='Waveshare P4 Touch', username='waveshare-p4-touch',
-        kind=EndpointKind.ESPHOME, availability='available', capabilities=frozenset({'audio', 'dtmf'}))
-    lab.runtime.endpoints.register(casa)
-    lab.runtime.endpoints.register(p4)
-    lab.roster.extend([
-        RosterEntry('ha_browser_casa_fixture', name='Casa', metadata={'local_ha': True, 'endpoint_id': casa.endpoint_id}),
-        RosterEntry(p4.username, name=p4.name, address='127.0.0.2', metadata={'endpoint_id': p4.endpoint_id}),
-    ])
-    lab.hass.states.async_set('sensor.voip_phonebook', 'ready', {'roster_json': dump_roster_json(lab.roster)})
-    lab.runtime.endpoints.update('transfer_c', name='Fanvil X3U Pro')
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True},
+        'sip_registrar_enabled': True})
+    lab.runtime.transport_config['sip_registrar_enabled'] = True
+    from custom_components.voip_stack.account_runtime import recompute_account_availability
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
+    from custom_components.voip_stack.sip_registrar import SipAccount
+    for username in ('transfer_a', 'transfer_b', 'transfer_c', 'Casa', 'P4'):
+        name = {'P4': 'Waveshare P4 Touch'}.get(username, username)
+        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type='phone', title=name,
+            unique_id='phone:' + username, data={'kind': 'sip_account', 'name': name, 'username': username,
+                'password': 'isolated-test-only', 'username_source': 'user'}))
+    sync_registry_from_entry(lab.hass, entry)
+    casa, p4 = lab.runtime.endpoints.require('Casa'), lab.runtime.endpoints.require('P4')
+    registrar = lab.calls.component('registrar')
+    registrar.update_accounts([SipAccount(row.data['username'], row.data['name'], row.data['password'])
+        for row in entry.subentries.values() if row.subentry_type == 'phone'])
+    registrar.enabled = True
+    created_bindings = lab.runtime.ha_bindings is None
+    if created_bindings:
+        lab.runtime.ha_bindings = HaCardBindings(lab.hass, entry, lab.runtime,
+            lambda identities: recompute_account_availability(lab.hass, identities))
+    bindings = lab.runtime.ha_bindings
     physical = {'lines': [{'slot': '1', 'endpoint_id': 'transfer_c'}], 'keys': [
         {'slot': '3', 'line': '1', 'function': 'blf', 'target': casa.endpoint_id, 'label': 'Casa'}]}
     context = {'physical': {'name': 'Fanvil fixture', 'mac': '020000000003'},
@@ -94,7 +104,32 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
     media_task = final = dialog_reader = None
     original = None
     try:
-        assert await caller.invite(target='ha_browser_casa_fixture', remote_host='127.0.0.1',
+        if created_bindings:
+            await bindings.async_start()
+        await bindings.async_set_popup_binding(hass_admin_user.id, 'fanvil-casa', casa.endpoint_id, True)
+        from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+        registrar_uri = f"sip:127.0.0.1:{lab.runtime.transport_config['sip_port']}"
+        async def register(cseq, authorization=''):
+            headers = [('Via', f'SIP/2.0/UDP 127.0.0.2:{caller.local_sip_port};branch=z9hG4bK-p4-register-{cseq};rport'),
+                ('From', '<sip:P4@127.0.0.1>;tag=p4-register'), ('To', '<sip:P4@127.0.0.1>'),
+                ('Call-ID', 'fanvil-p4-registration'), ('CSeq', f'{cseq} REGISTER'),
+                ('Contact', f'<sip:P4@127.0.0.2:{caller.local_sip_port}>'), ('Expires', '120')]
+            if authorization:
+                headers.append(('Authorization', authorization))
+            caller.transport.sendto(sip.build_request('REGISTER', registrar_uri, headers),
+                ('127.0.0.1', lab.runtime.transport_config['sip_port']))
+            raw, _address = await asyncio.wait_for(caller.queue.get(), 2)
+            return sip.parse_message(raw)
+        challenge = await register(1)
+        assert challenge.status_code == 401
+        authorization = build_digest_authorization(challenge_header=challenge.header('WWW-Authenticate'),
+            username='P4', password=account.password, method='REGISTER', uri=registrar_uri)
+        assert (await register(2, authorization)).status_code == 200
+        assert registrar.registered_contacts('P4')
+        lab.roster[:] = compose_directory_entries(lab.hass, [], registrar.registered_roster_entries())
+        lab.runtime.directory.replace(lab.roster)
+        assert bindings.has_binding('Casa')
+        assert await caller.invite(target='Casa', remote_host='127.0.0.1',
             remote_sip_port=lab.runtime.transport_config['sip_port'], timeout=3) == 'ringing'
         original = next(iter(lab.calls.sessions.values()))
         assert original.owner == 'ha_softphone' and original.state == 'ringing'
@@ -163,6 +198,11 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
             await caller.terminate(timeout=1)
         await caller.close()
         audio.close()
+        if created_bindings:
+            await bindings.async_close()
+            lab.runtime.ha_bindings = None
+        else:
+            await bindings.async_set_popup_binding(hass_admin_user.id, 'fanvil-casa', casa.endpoint_id, False)
         if original is not None and original.live:
             from custom_components.voip_stack.endpoint_session import TerminationIntent
             await lab.calls.request_termination(original.call_id, TerminationIntent('test_done'))

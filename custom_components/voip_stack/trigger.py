@@ -393,10 +393,12 @@ class PhoneStateTrigger(Trigger):
                 call = after["calls"][0]
             execution = None
             if call is not None and call.get("call_id") and call.get("generation"):
+                from .sip_account_identity import ha_phone_device_fields
                 snapshot = {
                     **call,
                     "endpoint_id": endpoint.endpoint_id,
-                    "device_id": endpoint.ha_device_id,
+                    **ha_phone_device_fields(endpoint),
+                    'account_username': endpoint.username,
                 }
                 execution = CallExecution(
                     CallToken(call["call_id"], call["generation"]), snapshot

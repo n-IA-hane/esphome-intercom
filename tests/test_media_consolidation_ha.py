@@ -123,7 +123,8 @@ def test_options_receiver_preference_is_not_a_complete_transmit_catalog():
     assert evidence["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
     assert evidence["sip_audio_rx_formats"] == ["L16/48000/1/10", "L16/16000/1/10"]
     assert "sip_audio_capabilities_complete" not in evidence
-    assert evidence["sip_audio_tx_geometry_complete"] and evidence["sip_audio_rx_geometry_complete"]
+    assert "sip_audio_tx_geometry_complete" not in evidence
+    assert "sip_audio_rx_geometry_complete" not in evidence
 
 
 @pytest.mark.parametrize("toc,duration", [(0xF8, 20), (0xF9, 40), (0xFB, 60), (0x80, 2.5)])

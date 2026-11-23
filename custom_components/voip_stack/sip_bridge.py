@@ -27,17 +27,18 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
     from .core.media.bridge import plan_caller_audio
 
     plan = plan_caller_audio(invite.remote_sdp,
-        sdp.RtpPcmDirection(invite.send_format, invite.recv_format, invite.recv_formats),
+        sdp.RtpPcmDirection(invite.send_format, invite.recv_format, invite.recv_formats, invite.send_formats),
         sdp.RtpPcmDirection(destination.send_format, destination.recv_format),
         frozen=invite.initial_response_sent, codec_policy=invite.codec_policy,
         send_capabilities=invite.local_send_capabilities,
         receive_capabilities=invite.local_recv_capabilities,
         capabilities=invite.local_audio_capabilities, dahua=invite.peer_profile == "dahua")
     if (plan.caller.send == invite.send_format and plan.caller.recv == invite.recv_format
-            and plan.caller.recv_formats == invite.recv_formats):
+            and plan.caller.recv_formats == invite.recv_formats and plan.caller.send_formats == invite.send_formats):
         return invite
     return replace(invite, send_format=plan.caller.send, recv_format=plan.caller.recv,
-                   recv_formats=plan.caller.recv_formats)
+                   recv_formats=plan.caller.recv_formats, send_formats=plan.caller.send_formats,
+                   dtmf_direction=plan.caller.dtmf_direction or invite.dtmf_direction)
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,6 +355,7 @@ def invite_rtp_peer(
         audio_format=invite.recv_format.audio_format,
         rtp_format=invite.recv_format,
         inbound_rtp_formats=tuple(getattr(invite, "recv_formats", ())),
+        outbound_rtp_formats=tuple(invite.send_formats),
         send_payload_type=invite.send_format.payload_type,
         send_audio_format=invite.send_format.audio_format,
         send_rtp_format=invite.send_format,

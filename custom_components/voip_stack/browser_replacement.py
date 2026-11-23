@@ -66,7 +66,7 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
         descriptor.update(local_rtp_port=local_port, local_video_rtp_port=video_port,
                           video_direction=video_direction)
         answer = build_answer_directional(local_ip, local_ip, local_port, invite.send_format,
-            invite.recv_format, recv_formats=invite.recv_formats, remote_sdp=invite.remote_sdp,
+            invite.recv_format, recv_formats=invite.recv_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             dtmf=invite.recv_dtmf_format, video_port=video_port,
             video_format=invite.answer_video_format if video_port else None,
             video_direction=video_direction)
@@ -120,12 +120,14 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
                 media_client_id=descriptor["media_client_id"], session_device_id=endpoint.device_id)
         committed = True
         grant.release()
+        from .core.media.bridge import plan_browser_audio
+        browser_audio = plan_browser_audio(invite.send_format, invite.recv_format)
         publish_phone_projection(hass, new, endpoint_id, peer_name=invite.caller, direction="incoming",
             event_type="transferred", last_sip_event="REPLACES",
             audio_direction=invite.local_audio_direction,
             audio_connection_held=invite.remote_audio_connection_held,
-            selected_tx_format=invite.send_format.audio_format.wire_token(),
-            selected_rx_format=invite.recv_format.audio_format.wire_token(),
+            selected_tx_format=browser_audio.microphone.wire_token(),
+            selected_rx_format=browser_audio.speaker.wire_token(),
             selected_tx_rtp_format=invite.send_format.wire_token(),
             selected_rx_rtp_format=invite.recv_format.wire_token(),
             video_requested=invite.video_format is not None,
@@ -145,4 +147,5 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
         else:
             retire()
 
-    return SipInviteResult(200, "OK", answer_sdp=answer, commit=commit, rollback=rollback)
+    return SipInviteResult(200, "OK", answer_sdp=answer, commit=commit, rollback=rollback,
+                           media_contract=invite)

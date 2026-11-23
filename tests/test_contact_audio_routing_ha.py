@@ -103,7 +103,7 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         bindings = registrar.registered_contacts("caps")
         assert len(bindings) == 2
         assert "sdp_features" not in bindings[0].capabilities
-        assert bindings[0].capabilities["sip_audio_tx_geometry_complete"]
+        assert "sip_audio_tx_geometry_complete" not in bindings[0].capabilities
         assert bindings[1].capabilities is None
         runtime.roster.extend(roster_from_peers(runtime.hass, [], registrar.registered_roster_entries()))
         runtime.roster.append(RosterEntry("ContactGroup", metadata={"group_type": "ring", "members": ["caps"]}))

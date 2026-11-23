@@ -349,7 +349,7 @@ async def test_registrar_activation_is_immediate_and_later_global_off_uses_same_
     assert lab.runtime.transport_config[key] is True and lab.registrar.enabled is True
     reload_entry = AsyncMock()
     monkeypatch.setattr(lab.hass.config_entries, 'async_reload', reload_entry)
-    monkeypatch.setattr(config_entry_runtime, 'async_refresh_and_push_phonebook', AsyncMock())
+    monkeypatch.setattr(config_entry_runtime, 'async_refresh_directory', AsyncMock())
     monkeypatch.setattr(trunk_runtime, 'async_reconcile_trunks', AsyncMock())
     monkeypatch.setattr(phone_services, 'async_reconcile_phone_services', AsyncMock())
     lab.runtime.entry_runtime_signature = config_entry_runtime.entry_runtime_signature(lab.entry)

@@ -477,7 +477,8 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
             assert row.metadata['sip_audio_tx_formats'] == row.metadata['sip_audio_rx_formats'] == [
                 'L16/48000/1', 'L16/16000/1']
             assert row.metadata['sip_audio_receiver_ptime'] == 0
-        assert row.metadata['sip_audio_tx_geometry_complete'] and row.metadata['sip_audio_rx_geometry_complete']
+        assert 'sip_audio_tx_geometry_complete' not in row.metadata
+        assert 'sip_audio_rx_geometry_complete' not in row.metadata
         assert row.metadata['sip_audio_receiver_maxptime'] == 10
         assert 'sdp_features' not in row.metadata
         expected_contract = '' if policy == 'observed_audio_only' else ('jpeg' if known_jpeg else None)

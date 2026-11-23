@@ -248,15 +248,17 @@ class RtpReceiveState:
     """Bound duplicate history and validate a source change with two packets.
 
     Callers validate the negotiated origin, payload mapping and media envelope
-    before admission. A source change needs consecutive sequence numbers;
-    retired sources cannot displace the current source with delayed packets.
+    before admission. Returning sources need fresh consecutive packets, checked
+    against a bounded history rather than permanently banning a previous SSRC.
     """
 
     def __init__(self, *, window: int = 128) -> None:
         self.ssrc: int | None = None
         self.highest: int | None = None
         self._seen: set[int] = set()
-        self._retired: set[int] = set()
+        self._retired: dict[int, tuple[int | None, int | None]] = {}
+        self._timestamp: int | None = None
+        self._source_floor: int | None = None
         self._candidate: tuple[int, int] | None = None
         self._restart: int | None = None
         self.window = window
@@ -267,18 +269,27 @@ class RtpReceiveState:
         if self.ssrc is None:
             self.ssrc = packet.ssrc
         elif packet.ssrc != self.ssrc:
-            if packet.ssrc in self._retired:
-                return False
+            previous = self._retired.get(packet.ssrc)
+            if previous is not None:
+                highest, timestamp = previous
+                if highest is not None and (packet.sequence - highest + 32768) % 65536 - 32768 <= 0:
+                    return False
+                if timestamp is not None and (packet.timestamp - timestamp + 0x80000000) % 0x100000000 - 0x80000000 < 0:
+                    return False
             if self._candidate != (packet.ssrc, (packet.sequence - 1) & 65535):
                 self._candidate = (packet.ssrc, packet.sequence)
                 return False
-            self._retired.add(self.ssrc)
+            self._retired[self.ssrc] = (self.highest, self._timestamp)
+            self._retired.pop(packet.ssrc, None)
             if len(self._retired) > 8:
-                self._retired.pop()
+                del self._retired[next(iter(self._retired))]
             self.ssrc = packet.ssrc
-            self.highest = None
+            self.highest = previous[0] if previous is not None else None
+            self._source_floor = self.highest
             self._seen.clear()
             self._candidate = None
+            self._restart = None
+            self._timestamp = None
             self.changed = True
         sequence = packet.sequence
         extended = sequence if self.highest is None else self.highest + (
@@ -291,8 +302,13 @@ class RtpReceiveState:
             self._seen.clear()
             self._restart = None
             self.changed = True
+            self._source_floor = None
+        if self._source_floor is not None and extended <= self._source_floor:
+            return False
         if extended in self._seen or (self.highest is not None and extended <= self.highest - self.window):
             return False
+        if self.highest is None or extended >= self.highest:
+            self._timestamp = packet.timestamp
         self.highest = max(extended, self.highest if self.highest is not None else extended)
         self._seen.add(extended)
         self._seen = {value for value in self._seen if value > self.highest - self.window}

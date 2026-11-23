@@ -56,6 +56,7 @@ def phone_state_dto(phone, *, peer_readable):
             "schema_version", "endpoint_id", "device_id", "name", "extension",
             "kind", "availability", "dnd", "state",
         )},
+        **{key: phone.get(key, '') for key in ('account_device_id', 'hardware_device_id', 'account_username')},
         "calls": calls,
         "queues": list(phone.get("queues", ())),
         "ring_group": str(phone.get("ring_group") or ""),
@@ -130,10 +131,12 @@ def phone_states(hass, *, dialogs=None):
                 item.state == "early" and item.direction == "recipient"
             )
             calls.append(value)
+        from .sip_account_identity import ha_phone_device_fields
         result[endpoint.endpoint_id] = {
             "schema_version": 1,
             "endpoint_id": endpoint.endpoint_id,
-            "device_id": endpoint.ha_device_id,
+            **ha_phone_device_fields(endpoint),
+            'account_username': endpoint.username,
             "name": endpoint.name,
             "extension": endpoint.extension,
             "kind": endpoint.kind.value,
@@ -346,9 +349,12 @@ class PhoneStateObserver:
                     and session.committed_state is not None else dict(event_data)
                 )
                 phone_context = runtime.sip.ha_context(selected_id)
-            self.hass.bus.async_fire(
-                PHONE_STATE_CHANGED, deepcopy(payload), context=phone_context
-            )
+            from .sip_account_identity import ha_event_payload
+            projected = ha_event_payload(self.hass, payload)
+            for field in ('phone', 'call'):
+                if isinstance(projected.get(field), dict):
+                    projected[field] = ha_event_payload(self.hass, projected[field])
+            self.hass.bus.async_fire(PHONE_STATE_CHANGED, deepcopy(projected), context=phone_context)
             self._deliver(self.listeners, payload, phone_context)
         if changed or removed or call_endpoints:
             # Closing a losing HA leg changes its account's media/control view

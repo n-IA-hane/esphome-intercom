@@ -71,6 +71,7 @@ class RtpAudioReceiver:
         self._ordered: dict[int, tuple[rtp.RtpPacket, bool, bool]] = {}
         self._next_sequence: int | None = None
         self._next_timestamp: int | None = None
+        self._synthetic_ms = 0.0
         self._timestamp_rate = 0
         self.last_gap_ms = 0.0
         self.last_packet_accepted = False
@@ -101,6 +102,7 @@ class RtpAudioReceiver:
         self._ordered.clear()
         self._next_sequence = self._next_timestamp = None
         self._timestamp_rate = 0
+        self._synthetic_ms = 0.0
 
     def observe_non_audio_sequence(self, sequence):
         """An admitted shared-SSRC event consumes an RTP sequence number."""
@@ -224,10 +226,13 @@ class RtpAudioReceiver:
                 if self._next_timestamp is not None:
                     gap = (current.timestamp - self._next_timestamp + 0x80000000) % 0x100000000 - 0x80000000
                     if gap > 0:
-                        self.last_gap_ms += gap * 1000 / current_format.rtp_clock_rate
+                        gap_ms = gap * 1000 / current_format.rtp_clock_rate
+                        if deliver_frames:
+                            self.last_gap_ms += max(0.0, gap_ms - self._synthetic_ms)
                         self._pending.clear()
                         self._converter = None
                         self._active_format = None
+                self._synthetic_ms = 0.0
                 native, selected = current_format.audio_format, self.output_pcm
                 if not deliver_frames:
                     decoded = [self.decode_packet(current.payload_type, current.payload)]
@@ -261,7 +266,7 @@ class RtpAudioReceiver:
         self._expire_retired()
         return self._formats.get(payload_type) or self._retired.get(payload_type)
 
-    def observe_payload(self, payload_type: int) -> None:
+    def observe_payload(self, payload_type: int, *, preserve_pcm=False) -> None:
         """Observe a validated packet, including packets relayed without decode."""
         fmt = self.format_for(payload_type)
         if fmt is None:
@@ -272,8 +277,39 @@ class RtpAudioReceiver:
         if payload_type in self._new_payload_types:
             # A new mapping proves that the peer applied the new description.
             self._retired.clear()
-        if fmt != self._active_format:
+        if (self._active_format is not None
+                and not preserve_pcm
+                and not PcmFrameConverter.same_pcm_format(fmt.audio_format, self._active_format.audio_format)):
             self._pending.clear()
+            self._converter = None
+            self._active_format = None
+
+    def observe_rtp(self, packet):
+        """Advance the timeline for validated encoded copies without decoding."""
+        if self.has_pending_pcm or self.has_pending_media:
+            raise ValueError("encoded copy cannot bypass pending PCM or reordered media")
+        fmt = self.format_for(packet.payload_type)
+        if fmt is None:
+            raise ValueError("unnegotiated RTP payload mapping")
+        if self._next_sequence is None or (packet.sequence - self._next_sequence + 32768) % 65536 - 32768 >= 0:
+            self._next_sequence = rtp.next_sequence(packet.sequence)
+            self._timestamp_rate = fmt.rtp_clock_rate
+            self._next_timestamp = rtp.next_timestamp(packet.timestamp,
+                round(rtp.audio_payload_duration_ms(packet.payload, fmt) * fmt.rtp_clock_rate / 1000))
+            self._synthetic_ms = 0.0
+        self.observe_payload(packet.payload_type)
+
+    def unrendered_gap_ms(self, packet):
+        """Return only source time not already rendered by comfort-noise output."""
+        fmt = self.format_for(packet.payload_type)
+        if fmt is None or self._next_timestamp is None or self._timestamp_rate != fmt.rtp_clock_rate:
+            return 0.0
+        gap = (packet.timestamp - self._next_timestamp + 0x80000000) % 0x100000000 - 0x80000000
+        return max(0.0, gap * 1000 / fmt.rtp_clock_rate - self._synthetic_ms)
+
+    def resume_pcm(self):
+        """Retire stale filter history after encoded copies, preserving owed PCM."""
+        if not self.has_pending_pcm:
             self._converter = None
             self._active_format = None
 
@@ -335,6 +371,8 @@ class RtpAudioReceiver:
             self.end_comfort_noise()
             return []
         pcm = self._decoders[payload_type].generate_comfort_noise()
+        self._synthetic_ms += len(pcm) * 1000 / (
+            fmt.audio_format.sample_rate * fmt.audio_format.channels * fmt.audio_format.container_bytes_per_sample)
         return self._accept_decoded(fmt, pcm, normalize_frames=normalize_frames)
 
     def close(self):
@@ -363,7 +401,7 @@ class RtpAudioReceiver:
                 except Exception:
                     self._pcm_observers.pop(observer, None)
                     _LOGGER.debug("Decoded audio observer failed; call audio continues", exc_info=True)
-        self.observe_payload(fmt.payload_type)
+        self.observe_payload(fmt.payload_type, preserve_pcm=True)
 
     def _accept_decoded(self, fmt, pcm, *, normalize_frames):
         self._observe_decoded(fmt, pcm)
@@ -371,25 +409,41 @@ class RtpAudioReceiver:
 
     def _reframe_decoded(self, fmt, pcm, *, normalize_frames):
         source = fmt.audio_format
-        if fmt != self._active_format:
+        output = []
+        if (self._active_format is None
+                or not PcmFrameConverter.same_pcm_format(source, self._active_format.audio_format)):
+            carry = b""
+            if self._converter is not None:
+                if self._pending:
+                    output.extend(self._converter.convert(bytes(self._pending), final_fragment=True))
+                carry = self._converter.drain_pending_pcm()
+            elif self._pending:
+                carry = bytes(self._pending)
             self._pending.clear()
             self._converter = (
                     PcmFrameConverter(source, self.output_pcm)
-                    if source != self.output_pcm
+                    if source != self.output_pcm or carry
                 else None
             )
+            if carry:
+                self._converter.prepend_pending_pcm(carry)
             self._active_format = fmt
+        else:
+            # Payload aliases and packet quanta do not replace the processing
+            # quantum or discard a partially assembled frame of the same PCM.
+            source = self._active_format.audio_format
         if (self._converter is None and not self._pending
                 and len(pcm) <= source.nominal_frame_bytes
                 and (not normalize_frames or len(pcm) == source.nominal_frame_bytes)):
-            return [pcm]
+            return [*output, pcm]
+        if self._converter is not None and not self._converter.requires_fixed_input:
+            return [*output, *self._converter.convert(pcm)]
 
         # A valid RTP packet can be shorter than nominal ptime. The converter's
         # resampling filter consumes nominal input frames; retain at most one
         # incomplete frame, and emit as many destination frames as are ready.
         self._pending.extend(pcm)
         frame_bytes = source.nominal_frame_bytes
-        output: list[bytes] = []
         while len(self._pending) >= frame_bytes:
             frame = bytes(self._pending[:frame_bytes])
             del self._pending[:frame_bytes]

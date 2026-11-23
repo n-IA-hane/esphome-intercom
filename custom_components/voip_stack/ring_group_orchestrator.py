@@ -544,7 +544,7 @@ async def run_ring_group_call(
                 invite.recv_format,
                 recv_formats=invite.recv_formats,
                 dtmf=first_offered_dtmf_format(invite.remote_sdp),
-                remote_sdp=invite.remote_sdp,
+                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             )
             media = {
                 "invite": invite,

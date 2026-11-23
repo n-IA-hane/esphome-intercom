@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .core.media.bridge import plan_browser_audio
+
 import asyncio
 import logging
 
@@ -312,7 +314,7 @@ async def async_answer_browser_call(
                 invite.recv_format,
                 recv_formats=invite.recv_formats,
                 dtmf=dtmf_format,
-                remote_sdp=invite.remote_sdp,
+                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                 video_port=local_video_rtp_port,
                 video_format=(
                     invite.answer_video_format
@@ -356,7 +358,7 @@ async def async_answer_browser_call(
             invite.recv_format,
             recv_formats=invite.recv_formats,
             dtmf=dtmf_format,
-            remote_sdp=invite.remote_sdp,
+            remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             video_port=local_video_rtp_port,
             video_format=(
                 invite.answer_video_format if endpoint_video_enabled else None
@@ -400,6 +402,7 @@ async def async_answer_browser_call(
                 reason,
                 answer_sdp=sdp,
                 expected_generation=authoritative_session.generation,
+                media_contract=invite,
             )
         ),
     )
@@ -535,8 +538,8 @@ async def async_answer_browser_call(
             answered_by=invite.caller, direction="incoming",
             dialed_target=invite.target, sip_status_code=200,
             last_sip_event="SIP_RESPONSE",
-            selected_tx_format=invite.send_format.audio_format.wire_token(),
-            selected_rx_format=invite.recv_format.audio_format.wire_token(),
+            selected_tx_format=plan_browser_audio(invite.send_format, invite.recv_format).microphone.wire_token(),
+            selected_rx_format=plan_browser_audio(invite.send_format, invite.recv_format).speaker.wire_token(),
             selected_tx_rtp_format=invite.send_format.wire_token(),
             selected_rx_rtp_format=invite.recv_format.wire_token(),
             audio_direction=invite.local_audio_direction,

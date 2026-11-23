@@ -188,7 +188,7 @@ class EndpointCallRouting:
                 # A deferred bridge or fork already transferred the advertised
                 # pair into its asynchronous route owner. Its final answer is
                 # now signaling-only on the source dialog.
-                return SipInviteResult(200, "OK")
+                return SipInviteResult(200, "OK", media_contract=invite)
             registry.attach_media(
                 invite.call_id,
                 {
@@ -201,7 +201,7 @@ class EndpointCallRouting:
                 },
                 provisional=True,
             )
-            return SipInviteResult(200, "OK")
+            return SipInviteResult(200, "OK", media_contract=invite)
 
         return UasDelayedOfferPlan(offer_sdp, accept_answer, rollback)
 

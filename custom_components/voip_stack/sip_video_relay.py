@@ -418,6 +418,9 @@ class SipVideoRtpRelay:
         source, _destination = self._peers(side)
         if not set(source.recv_format.rtcp_feedback).intersection({"ccm fir", "nack pli"}):
             return False
+        previous = self._keyframe_attempts.get(side)
+        if previous is not None and previous[1] >= 3 and monotonic() - previous[2] >= 0.5:
+            self._keyframe_attempts[side] = (previous[0], 0, previous[2])
         self._keyframe_requests[side] = None
         self._send_armed_keyframe_request(side, source)
         return True
@@ -1279,13 +1282,24 @@ class SipVideoRtpRelay:
                 payload, count = packet.payload, packet.fmt
                 if packet.packet_type in {205, 206}:
                     if len(payload) < 8:
-                        raise ValueError("truncated RTCP feedback")
+                        self.dropped += 1
+                        continue
+                    if packet.packet_type != 206 or count not in {1, 4}:
+                        # Unsupported feedback does not invalidate reports or
+                        # supported feedback in the same compound datagram.
+                        self.transcode_rtcp_dropped += 1
+                        continue
+                    if ((count == 1 and len(payload) != 8)
+                            or (count == 4 and (len(payload) < 16 or (len(payload) - 8) % 8))):
+                        self.dropped += 1
+                        continue
                     targets = (tuple(struct.unpack_from("!I", payload, offset)[0]
                         for offset in range(8, len(payload), 8))
                         if packet.packet_type == 206 and count == 4 else
                         (struct.unpack_from("!I", payload, 4)[0],))
                     if expected is not None and any(target != expected for target in targets):
-                        raise ValueError("RTCP feedback targets an unexpected media SSRC")
+                        self.dropped += 1
+                        continue
                     if destination_transcoded:
                         # The encoder's output stream has a distinct SSRC and
                         # counters. It has periodic recovery, no live FFmpeg
@@ -1297,12 +1311,14 @@ class SipVideoRtpRelay:
                 elif packet.packet_type in {200, 201}:
                     base = 24 if packet.packet_type == 200 else 4
                     if len(payload) != base + count * 24:
-                        raise ValueError("invalid RTCP report length")
+                        self.dropped += 1
+                        continue
                     blocks = []
                     for offset in range(base, len(payload), 24):
                         target = struct.unpack_from("!I", payload, offset)[0]
                         if expected is not None and target != expected:
-                            raise ValueError("RTCP report targets an unexpected media SSRC")
+                            self.dropped += 1
+                            continue
                         if not destination_transcoded:
                             blocks.append(payload[offset:offset + 24])
                     if packet.packet_type == 200 and source_transcoded:

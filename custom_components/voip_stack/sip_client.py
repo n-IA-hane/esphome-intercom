@@ -231,6 +231,8 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self.early_dialogs: dict[str, SipDialog | None] = {}
         self._terminated_invite_branches: set[str] = set()
         self.on_info_dtmf: Callable[[str], None] | None = None
+        self.on_info_dtmf_event: Callable[[str, int], None] | None = None
+        self.on_info_video: Callable[[], Awaitable[None]] | None = None
         self.on_media_update: DialogMediaUpdateHandler | None = None
         self.on_provisional_media: Callable[[SipDialog], Awaitable[PreparedDialogMediaUpdate | None]] | None = None
         self.on_connected_identity: Callable[[str, str], None] | None = None
@@ -2056,7 +2058,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             response = await async_run_dialog_request_transaction(
                 send=lambda: self._send_dialog_request(request.raw, host, port),
                 read=mailbox.receive, matches=matches, active=active,
-                transport=self.signaling_transport, timeout=timeout,
+                transport=self.signaling_transport, timeout=timeout, method=method,
                 on_provisional=on_provisional, on_final=on_final,
                 on_sent=lambda: sip.mark_sip_event(self, method),
             )
@@ -2406,12 +2408,17 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 )
                 return None
             if msg.method == "INFO":
-                from .dtmf import parse_sip_info_digit
+                from .dtmf import parse_sip_info_digit, parse_sip_info_duration
 
+                if sip.is_picture_fast_update(msg.header("Content-Type"), msg.body) and self.on_info_video is not None:
+                    await self.on_info_video()
                 digit = parse_sip_info_digit(msg.header("Content-Type"), msg.body)
-                if digit and self.on_info_dtmf is not None:
+                if digit and (self.on_info_dtmf_event is not None or self.on_info_dtmf is not None):
                     try:
-                        self.on_info_dtmf(digit)
+                        if self.on_info_dtmf_event is not None:
+                            self.on_info_dtmf_event(digit, parse_sip_info_duration(msg.body))
+                        else:
+                            self.on_info_dtmf(digit)
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.warning("SIP INFO DTMF callback failed: %s", err)
             self._send_response_to_request(msg, addr[0], addr[1], 200, "OK")

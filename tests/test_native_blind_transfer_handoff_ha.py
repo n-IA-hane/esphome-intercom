@@ -16,6 +16,7 @@ from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 from custom_components.voip_stack.sip_client import SipCallClient, SipDatagramQueueProtocol
 from custom_components.voip_stack.sip_registrar import SipAccount
+from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
 from .test_udp_outbound_flow_ha import register_phone, PASSWORD
 
@@ -115,6 +116,8 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
     registrar.enabled = True
     account = SipAccount("native-source", "Native source", PASSWORD)
     registrar.update_accounts([*registrar.accounts.values(), account])
+    lab.runtime.endpoints.register(PhoneEndpoint(account.username, account.display_name,
+        EndpointKind.SIP_ACCOUNT, username=account.username))
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)

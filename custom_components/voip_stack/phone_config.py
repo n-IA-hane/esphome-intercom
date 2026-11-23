@@ -372,8 +372,24 @@ def _add_phone_subentry(
     draft: ConfigSubentry | None = None,
     activate_registrar: bool = True,
 ) -> ConfigSubentry:
-    subentry = draft_phone_subentry(data, previous=draft, title=title)
+    from .phone_queue_membership import _membership_update_plan, _apply_membership_updates
+    memberships = {field: data[field] for field in (CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES) if field in data}
+    legacy_identity = str(data.get(CONF_PHONE_ENDPOINT_ID) or '') if not activate_registrar else ''
+    if legacy_identity:
+        subentry = replace(draft or ConfigSubentry(subentry_type=PHONE_SUBENTRY_TYPE, title=title,
+            unique_id=None, data=MappingProxyType({})), title=title, unique_id='phone:' + legacy_identity,
+            data=MappingProxyType({key: value for key, value in data.items() if key != CONF_PHONE_ENDPOINT_ID}))
+    else:
+        subentry = draft_phone_subentry(data, previous=draft, title=title)
+    if activate_registrar and memberships:
+        identity = phone_endpoint_id(subentry)
+        validate_phone_subentry_data(entry, {**data, CONF_PHONE_ENDPOINT_ID: identity})
+        _membership_update_plan(hass, entry, {identity: memberships})
+        subentry = replace(subentry, data=MappingProxyType({key: value for key, value in subentry.data.items()
+            if key not in memberships}))
     hass.config_entries.async_add_subentry(entry, subentry)
+    if activate_registrar and memberships:
+        _apply_membership_updates(hass, entry, {phone_endpoint_id(subentry): memberships})
     if activate_registrar and data.get(CONF_PHONE_ENABLED, True):
         async_enable_registrar_for_new_account(hass, entry)
     return subentry
@@ -880,9 +896,13 @@ def replace_sip_account_subentries(
         if subentry.data.get(CONF_PHONE_KIND) == EndpointKind.SIP_ACCOUNT.value and not subentry.data.get("managed_esphome")
     }
     wanted: dict[str, dict[str, Any]] = {}
+    managed_usernames = {str(row.data.get(CONF_PHONE_USERNAME) or '').casefold()
+                         for row in phone_subentries(entry) if row.data.get('managed_esphome')}
     for raw in raw_accounts:
         data = sip_account_phone_data(raw)
         username = str(data[CONF_PHONE_USERNAME]).casefold()
+        if username in managed_usernames:
+            raise PhoneRouteConflict(str(data[CONF_PHONE_NAME]), str(data[CONF_PHONE_USERNAME]))
         previous = existing.get(username)
         if previous is not None:
             # Account APIs own credential/registrar fields, not unrelated
@@ -893,9 +913,8 @@ def replace_sip_account_subentries(
                 CONF_PHONE_PASSWORD, CONF_PHONE_ENABLED, CONF_PHONE_RING_GROUP,
                 CONF_PHONE_CONFERENCE_GROUP, CONF_PHONE_CONFERENCE_RING)}
             data = {**deepcopy(phone_subentry_data(previous)), **managed}
-            # A native subentry reconfigure may have changed the username
-            # while retaining the opaque endpoint identity. Legacy account
-            # services must never silently rename the HA device/entities.
+            # Credential updates retain the current account key and its
+            # native HA associations. Explicit renaming uses the migration owner.
             data[CONF_PHONE_ENDPOINT_ID] = str(
                 phone_endpoint_id(previous)
                 or data[CONF_PHONE_ENDPOINT_ID]
@@ -914,6 +933,10 @@ def replace_sip_account_subentries(
         wanted[username] = data
 
     validate_sip_account_namespace(entry, wanted.values())
+    from .phone_queue_membership import _membership_update_plan, _apply_membership_updates
+    memberships = {str(data[CONF_PHONE_USERNAME]): {field: data[field] for field in (CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES)
+        if field in data} for data in wanted.values()}
+    _membership_update_plan(hass, entry, memberships)
 
     for username, data in wanted.items():
         subentry = existing.get(username)
@@ -928,12 +951,14 @@ def replace_sip_account_subentries(
         hass.config_entries.async_update_subentry(
             entry=entry,
             subentry=subentry,
-            data=phone_subentry_storage_data(subentry, data),
+            data=phone_subentry_storage_data(subentry, {key: value for key, value in data.items()
+                if key not in {CONF_PHONE_RING_GROUP, CONF_PHONE_QUEUES}}),
             title=str(data[CONF_PHONE_NAME]),
         )
     for username, subentry in existing.items():
         if username not in wanted:
             hass.config_entries.async_remove_subentry(entry, subentry.subentry_id)
+    _apply_membership_updates(hass, entry, memberships)
     sync_registry_from_entry(hass, entry)
 
 

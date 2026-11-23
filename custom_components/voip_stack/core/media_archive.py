@@ -370,16 +370,48 @@ class ArchiveWriter:
         return await async_wait_for_cleanup(self._finish_task)
 
 
+def _account_rebind_entries(root, mapping):
+    """Read migration inputs without recovering, deleting or rewriting any file."""
+    entries, faults = {}, {}
+    for path in sorted(root.glob('*.json')):
+        identity = path.stem.removesuffix('.pending')
+        if not _IDENTITY.fullmatch(identity):
+            continue
+        try:
+            entry = _read_entry(path, identity)
+            if path.stem.endswith('.pending'):
+                if mapping.get(entry['mailbox_id'], entry['mailbox_id']) != entry['mailbox_id']:
+                    raise ArchiveError('interrupted_recording')
+                continue
+            for segment in entry['segments']:
+                if not _segment_path(root, identity, segment['file']).is_file():
+                    raise ArchiveError('missing_recording_segment')
+            entries[identity] = entry
+        except (OSError, ValueError, KeyError, TypeError, RecursionError, ArchiveError) as error:
+            faults[path.name] = (str(error) if isinstance(error, ArchiveError)
+                                 and str(error) in {'interrupted_recording', 'missing_recording_segment'}
+                                 else 'invalid_recording_metadata')
+    return entries, faults
+
+
 class _PreparedAccountRebind:
     """Commit only validated archive metadata while preserving every WAV segment."""
 
-    def __init__(self, owner, previous, future):
+    def __init__(self, owner, previous, future, *, faults=None, mailboxes=None):
         self.owner, self.previous, self.future = owner, previous, future
+        self.faults = faults or {}
+        self.mailboxes = mailboxes or {}
+        self.cache_previous = {key: deepcopy(owner._entries.get(key)) for key in previous}
         self.committed = False
+
+    def recording_mailbox(self, identity):
+        if identity not in self.mailboxes:
+            raise ArchiveError('Unknown recording')
+        return self.mailboxes[identity]
 
     async def commit(self):
         async with self.owner._lock:
-            if self.owner._active or any(self.owner._entries.get(key) != value for key, value in self.previous.items()):
+            if self.owner._active or any(self.owner._entries.get(key) != value for key, value in self.cache_previous.items()):
                 raise ArchiveError("Media archive changed during account migration")
             def write():
                 written = []
@@ -388,8 +420,9 @@ class _PreparedAccountRebind:
                         if _read_entry(self.owner.root / f"{identity}.json", identity) != data:
                             raise ArchiveError("Media archive metadata changed during account migration")
                     for identity, data in self.future.items():
-                        _atomic_json(self.owner.root / f"{identity}.json", data)
-                        written.append(identity)
+                        if data != self.previous[identity]:
+                            _atomic_json(self.owner.root / f"{identity}.json", data)
+                            written.append(identity)
                 except BaseException:
                     for identity in reversed(written):
                         _atomic_json(self.owner.root / f"{identity}.json", self.previous[identity])
@@ -409,7 +442,11 @@ class _PreparedAccountRebind:
                     _atomic_json(self.owner.root / f"{identity}.json", data)
             async def apply():
                 await self.owner.run_io(write)
-                self.owner._entries.update(deepcopy(self.previous))
+                for identity, value in self.cache_previous.items():
+                    if value is None:
+                        self.owner._entries.pop(identity, None)
+                    else:
+                        self.owner._entries[identity] = deepcopy(value)
                 self.committed = False
             await async_wait_for_cleanup(asyncio.create_task(apply(), name="voip-archive-account-rebind-rollback"))
 
@@ -422,6 +459,7 @@ class MediaArchive:
         self._used = self._reserved = self.recovery_errors = 0
         self._usage_dirty = False
         self._lock = asyncio.Lock()
+        self.recovery_faults = {}
 
     async def load(self):
         async with self._lock:
@@ -431,6 +469,7 @@ class MediaArchive:
                 return await self.run_io(_load, self.root, self.quota_bytes)
             loading = asyncio.create_task(read(), name="voip-archive-load")
             self._entries, self._used, self.recovery_errors = await async_wait_for_cleanup(loading)
+            _entries, self.recovery_faults = await self.run_io(_account_rebind_entries, self.root, {})
             self._usage_dirty = False
 
     async def _recount_usage(self, active):
@@ -442,38 +481,40 @@ class MediaArchive:
         self._used = used
         self._usage_dirty = False
 
-    async def prepare_account_rebind(self, mapping, *, load_from_storage=False):
+    @property
+    def mailbox_owners(self):
+        """Expose validated ownership references for the one account migration owner."""
+        return tuple(sorted({entry['mailbox_id'] for entry in self._entries.values()}))
+
+    def quarantine_records(self, identities):
+        """Keep restored-but-unconfirmed metadata out of mailbox views without deleting files."""
+        for identity in identities:
+            if identity not in self._active:
+                self._entries.pop(identity, None)
+
+    async def prepare_account_rebind(self, mapping, *, load_from_storage=False, record_ids=None, exclude_ids=()):
         """Prepare exact mailbox ownership updates using the existing archive owner."""
         async with self._lock:
             if self._active:
                 raise ArchiveError("Cannot migrate an active media archive")
+            entries = self._entries
             if load_from_storage:
-                def read():
-                    entries = {}
-                    for path in self.root.glob('*.json'):
-                        identity = path.stem.removesuffix('.pending')
-                        if not _IDENTITY.fullmatch(identity):
-                            continue
-                        entry = _read_entry(path, identity)
-                        if path.stem.endswith('.pending'):
-                            if mapping.get(entry['mailbox_id'], entry['mailbox_id']) != entry['mailbox_id']:
-                                raise ArchiveError("Recover the interrupted mailbox before account migration")
-                            continue
-                        for segment in entry['segments']:
-                            if not _segment_path(self.root, identity, segment['file']).is_file():
-                                raise ArchiveError("Missing recording segment during account migration")
-                        entries[identity] = entry
-                    return entries
-                self._entries = await self.run_io(read)
+                entries, self.recovery_faults = await self.run_io(_account_rebind_entries, self.root, mapping)
+                self._usage_dirty = True
             previous, future = {}, {}
-            for identity, entry in self._entries.items():
+            for identity, entry in entries.items():
+                if identity in exclude_ids:
+                    continue
+                if record_ids is not None and identity not in record_ids:
+                    continue
                 target = mapping.get(entry['mailbox_id'], entry['mailbox_id'])
                 if not isinstance(target, str) or not 1 <= len(target) <= 255:
                     raise ArchiveError("Invalid migrated mailbox identity")
-                if target != entry['mailbox_id']:
+                if target != entry['mailbox_id'] or (record_ids is not None and self._entries.get(identity) != entry):
                     previous[identity] = deepcopy(entry)
                     future[identity] = {**deepcopy(entry), 'mailbox_id': target}
-            return _PreparedAccountRebind(self, previous, future)
+            return _PreparedAccountRebind(self, previous, future, faults=dict(self.recovery_faults),
+                mailboxes={identity: row['mailbox_id'] for identity, row in entries.items()})
 
     def _reserve(self, count):
         if self._used + self._reserved + count > self.quota_bytes:

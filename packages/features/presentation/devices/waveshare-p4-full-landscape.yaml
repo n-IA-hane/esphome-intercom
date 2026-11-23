@@ -2214,16 +2214,6 @@ defaults:
               text_color: 2278750
               text_font: font_ui_medium
           - label:
-              id: p4_call_media_route_label
-              align: TOP_MID
-              y: 122
-              width: 90%
-              text: ''
-              text_color: 9741240
-              text_font: font_body
-              text_align: CENTER
-              long_mode: DOT
-          - label:
               id: call_in_call_peer_label
               align: CENTER
               y: -38

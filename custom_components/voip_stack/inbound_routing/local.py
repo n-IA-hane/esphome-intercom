@@ -157,9 +157,9 @@ async def route_local_assist(
         invite.send_format,
         invite.recv_format,
         recv_formats=invite.recv_formats,
-        remote_sdp=invite.remote_sdp,
+        remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
     )
-    return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
+    return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="", media_contract=invite)
 
 
 async def route_local_group(

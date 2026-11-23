@@ -89,6 +89,7 @@ class RtpPcmDirection:
     recv_formats: tuple[RtpPcmFormat, ...] = ()
     send_formats: tuple[RtpPcmFormat, ...] = ()
     payloads: PayloadMap | None = None
+    dtmf_direction: RtpDtmfDirection | None = None
 
     @property
     def selected_format(self) -> RtpPcmFormat:

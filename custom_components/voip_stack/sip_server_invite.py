@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 from .core.media.payload_map import PayloadMap
-from .core.media.negotiator import negotiate_dtmf, payload_history
 
 import asyncio
 from dataclasses import replace
@@ -24,6 +23,31 @@ _LOGGER = logging.getLogger(__name__)
 
 class SipIncomingInvites:
     """Use the endpoint-owned flows, locks, transactions and dialog records."""
+
+    def _stage_answer_contract(self, pending, answer_sdp, media_contract=None):
+        """Accept legacy unchanged answers; changed media requires its explicit DTO."""
+        if not answer_sdp or not pending.request.body:
+            return True
+        chosen = media_contract or pending.media_contract or pending.identity
+        if not isinstance(chosen, SipInvite) or chosen.call_id != pending.request.header("Call-ID"):
+            return False
+        from .core.media.negotiator import validate_answer_contract
+        try:
+            sdp.validate_sdp_answer(pending.request.body, answer_sdp)
+            if media_contract is None:
+                from .sip_server_state import answered_media_contract
+                video = answered_media_contract(chosen, answer_sdp)
+                if (video.video_format, video.local_video_format, video.video_answer_format) != (
+                        chosen.video_format, chosen.local_video_format, chosen.video_answer_format):
+                    raise sdp.SdpError("changed video requires an explicit media contract")
+            validate_answer_contract(sdp.RtpPcmDirection(chosen.send_format, chosen.recv_format,
+                chosen.recv_formats, chosen.send_formats), answer_sdp,
+                events=chosen.dtmf_direction, dahua=chosen.peer_profile == "dahua")
+        except (ValueError, sdp.SdpError) as error:
+            _LOGGER.error("SIP answer media contract rejected call_id=%s: %s", chosen.call_id, error)
+            return False
+        pending.media_contract = chosen
+        return True
 
     def _send_reliable_provisional(
         self,
@@ -99,30 +123,7 @@ class SipIncomingInvites:
     ) -> _ActiveDialog:
         """Build and activate one UAS dialog from its authoritative INVITE."""
 
-        invite = self._parse_invite(request, addr, codec_policy=pending.codec_policy) if request.body else None
-        if invite is not None and pending.answer_sdp:
-            # The routed answer may select a common codec with the other leg.
-            # Retain that accepted contract instead of repeating HA's initial
-            # preference over the caller's original offer.
-            accepted = sdp.negotiate_answer_directional(
-                pending.answer_sdp, self.supported_recv_formats, self.supported_send_formats,
-                local_offer_sdp=request.body, allow_dahua_pcm=invite.peer_profile == "dahua",
-                local_capabilities=HA_AUDIO_CAPABILITIES, codec_policy=pending.codec_policy,
-            )
-            if accepted is not None:
-                from .core.media.leg import receive_auxiliary_formats
-                from .core.media.negotiator import policy_for_leg
-                auxiliary = receive_auxiliary_formats(request.body, accepted.send,
-                    policy_for_leg(self.supported_send_formats, self.supported_recv_formats,
-                                   codec_policy=pending.codec_policy, capabilities=HA_AUDIO_CAPABILITIES),
-                    own_description=pending.answer_sdp)
-                audio = sdp.RtpPcmDirection(accepted.recv, accepted.send,
-                    tuple(dict.fromkeys((*(accepted.send_formats or (accepted.send,)), *auxiliary))),
-                    accepted.recv_formats)
-                events = negotiate_dtmf(request.body, pending.answer_sdp, audio=audio)
-                invite = replace(invite, send_format=audio.send, recv_format=audio.recv,
-                    recv_formats=audio.recv_formats, dtmf_direction=events,
-                    audio_payloads=payload_history(PayloadMap(), audio, events))
+        invite = pending.media_contract or (pending.identity if isinstance(pending.identity, SipInvite) else None)
         initial_invite = (
             self._parse_initial_invite(request, addr) if not request.body else None
         )
@@ -403,6 +404,9 @@ class SipIncomingInvites:
             )
             return
         if prack_result is not None and updated is not None:
+            pending = self.pending_invites.get(call_id)
+            if pending is not None:
+                pending.media_contract = updated
             notify_media_commit(prack_result.on_committed, updated)
         if reliable.deferred_progress is not None:
             progress = reliable.deferred_progress
@@ -631,6 +635,9 @@ class SipIncomingInvites:
     async def _finish_initial_invite(self, request, addr, call_id, pending, result) -> None:
         media_cleanup_owned = False
         try:
+            if result.answer_sdp and not self._stage_answer_contract(pending, result.answer_sdp, result.media_contract):
+                result = SipInviteResult(488, "Not Acceptable Here", rollback=result.rollback,
+                    decline_reason="media_contract_mismatch")
             to_tag = result.to_tag or pending.to_tag
             answer_sdp = (
                 sdp.rewrite_sdp_origin(
@@ -742,7 +749,11 @@ class SipIncomingInvites:
         decline_reason: str = "",
         connected_identity_name: str = "",
         connected_identity_user: str = "",
+        media_contract: SipInvite | None = None,
     ) -> bool:
+        pending = self.pending_invites.get(call_id)
+        if pending is not None and not self._stage_answer_contract(pending, answer_sdp, media_contract):
+            return False
         if int(status) < 200:
             pending = self.pending_invites.get(call_id)
             return pending is not None and self._send_pending_progress(call_id, pending, status, reason,
@@ -951,6 +962,7 @@ class SipIncomingInvites:
             current = current_dialog.invite if current_dialog is not None else None
             established = (sdp.RtpPcmDirection(
                 current.send_format, current.recv_format, recv_formats=current.recv_formats,
+                send_formats=current.send_formats,
             ) if current is not None else None)
             selected = (
                 sdp.negotiate_answer_directional(
@@ -1064,10 +1076,10 @@ class SipIncomingInvites:
                 send_format=selected.send,
                 recv_format=selected.recv,
                 recv_formats=selected.recv_formats,
+                send_formats=selected.send_formats,
+                max_forwards=initial.max_forwards,
                 audio_payloads=selected.payloads,
-                dtmf_direction=(sdp.negotiate_dtmf_answer_directional(
-                    request.body, local_offer_sdp, audio=selected) if local_offer_sdp
-                    else negotiate_dtmf(request.body, audio=selected)),
+                dtmf_direction=selected.dtmf_direction,
                 local_recv_capabilities=tuple(self.supported_recv_formats),
                 local_send_capabilities=tuple(self.supported_send_formats),
                 local_audio_capabilities=local_audio_capabilities,

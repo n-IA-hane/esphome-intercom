@@ -288,9 +288,24 @@
           "conference_group": "Gruppo conferenza",
           "conference_ring": "Squilla per le conferenze",
           "video_enabled": "Consenti negoziazione video",
-          "offline_policy": "Quando non registrato",
-          "offline_forward_target": "Destinazione inoltro",
-          "voicemail_enabled": "Abilita casella vocale"
+          "voicemail_enabled": "Abilita casella vocale",
+          "physical_bindings": "Telefoni fisici associati",
+          "auto_answer": "Risposta automatica nel browser",
+          "send_video": "Invia video dal browser",
+          "audio_codecs": "Preferenza codec audio",
+          "audio_codecs_inherit": "Usa i codec audio dell'integrazione",
+          "video_codecs": "Preferenza codec video",
+          "video_codecs_inherit": "Usa i codec video dell'integrazione",
+          "queues": "Queues",
+          "forward_action": "Always route calls",
+          "forward_to": "Always destination",
+          "busy_action": "When busy",
+          "busy_to": "Busy destination",
+          "unavailable_action": "When unavailable",
+          "unavailable_to": "Unavailable destination",
+          "ringing_timeout": "No-answer ringing limit",
+          "no_answer_action": "When unanswered",
+          "no_answer_to": "No-answer destination"
         },
         "data_description": {
           "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota."
@@ -836,9 +851,24 @@
             "conference_group": "Gruppo conferenza",
             "conference_ring": "Squilla per le conferenze",
             "video_enabled": "Consenti negoziazione video",
-            "offline_policy": "Quando non registrato",
-            "offline_forward_target": "Destinazione inoltro",
-            "voicemail_enabled": "Abilita casella vocale"
+            "voicemail_enabled": "Abilita casella vocale",
+            "physical_bindings": "Telefoni fisici associati",
+            "auto_answer": "Risposta automatica nel browser",
+            "send_video": "Invia video dal browser",
+            "audio_codecs": "Preferenza codec audio",
+            "audio_codecs_inherit": "Usa i codec audio dell'integrazione",
+            "video_codecs": "Preferenza codec video",
+            "video_codecs_inherit": "Usa i codec video dell'integrazione",
+            "queues": "Queues",
+            "forward_action": "Always route calls",
+            "forward_to": "Always destination",
+            "busy_action": "When busy",
+            "busy_to": "Busy destination",
+            "unavailable_action": "When unavailable",
+            "unavailable_to": "Unavailable destination",
+            "ringing_timeout": "No-answer ringing limit",
+            "no_answer_action": "When unanswered",
+            "no_answer_to": "No-answer destination"
           },
           "data_description": {
             "voicemail_enabled": "Disabilitando questa casella elimini definitivamente messaggi, file, PIN e impostazioni della casella. Riabilitandola crei una casella vuota."
@@ -1251,6 +1281,69 @@
     "group_membership_conflict": {
       "title": "Group membership needs a configuration change",
       "description": "These existing phone declarations overlap another configured destination: {groups}. Open VoIP Stack and correct the affected phone or group settings. Their existing declarations are retained until conversion can finish."
+    },
+    "managed_record_invalid": {
+      "title": "Saved phone account needs recovery",
+      "description": "The saved account associated with {phone} is malformed. Its original data has been retained. Correct the native hardware association and account fields to retry without affecting healthy accounts.",
+      "fix_flow": {
+        "step": {
+          "account": {
+            "title": "Recover the saved SIP account",
+            "description": "Choose its ESPHome hardware and correct its account fields. Leave the password empty to retain the saved credential, or provide a replacement when the saved credential is invalid.",
+            "data": {
+              "device_id": "ESPHome hardware",
+              "name": "Account name",
+              "username": "SIP username",
+              "password": "Replacement SIP password",
+              "queues": "Queues",
+              "ring_group": "Gruppo di chiamata",
+              "extension": "Interno",
+              "conference_group": "Gruppo conferenza",
+              "conference_ring": "Squilla per le conferenze"
+            }
+          }
+        },
+        "error": {
+          "migration_retry_failed": "The saved account still cannot be recovered. Correct the reported fields and retry."
+        }
+      }
+    },
+    "archive_record_invalid": {
+      "title": "Recording file needs recovery",
+      "description": "Recording file {filename} could not be read or references a missing WAV segment. Its files have been preserved. Restore the metadata and WAV files from a valid backup, then open the repair to select their SIP account and retry.",
+      "fix_flow": {
+        "step": {
+          "recording": {
+            "title": "Recover recording ownership",
+            "description": "Restore {filename} and its WAV segments before continuing. Select the account that owns this recording. Only this recording metadata is updated; audio files are preserved.",
+            "data": {
+              "account": "SIP account"
+            }
+          }
+        },
+        "error": {
+          "recording_recovery_failed": "The recording is still invalid, missing a WAV segment, or busy. Restore its files and retry when recording has stopped."
+        }
+      }
+    },
+    "directory_record_invalid": {
+      "title": "Directory configuration contains invalid records",
+      "description": "LDAP omitted {count} invalid configured records: {objects}. Other records remain searchable. Correct these accounts or contacts in the integration configuration, then retry.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Retry directory validation",
+            "description": "Correct the indicated account or contact in the integration configuration, then continue. Valid directory records remain available."
+          }
+        },
+        "error": {
+          "directory_record_invalid": "Some configured directory records are still invalid. Correct their names and dialable addresses, then retry."
+        }
+      }
+    },
+    "esphome_account_setup_required": {
+      "title": "ESPHome phone account needs native setup",
+      "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     }
   },
   "exceptions": {
@@ -1382,9 +1475,6 @@
     },
     "phone_unavailable": {
       "message": "{phone} non è attualmente disponibile."
-    },
-    "purge_devices_disabled": {
-      "message": "Questa azione è disabilitata perché VoIP Stack non possiede i dispositivi ESPHome e non può rimuoverli in sicurezza."
     },
     "transfer_destination_required": {
       "message": "È richiesta una destinazione o una chiamata sostitutiva per il trasferimento."
@@ -2467,6 +2557,10 @@
         },
         "ha_bridge": {
           "name": "Forza instradamento tramite HA"
+        },
+        "receive_video": {
+          "name": "Ricevi video",
+          "description": "Consente di ricevere video indipendentemente dalla videocamera locale."
         }
       },
       "sections": {

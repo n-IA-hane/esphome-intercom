@@ -40,7 +40,7 @@ async def test_startup_consumes_saved_membership_command_before_queue_reconcile(
     store = SimpleNamespace(async_load=AsyncMock(return_value={}), async_save=AsyncMock(), async_delay_save=Mock())
     monkeypatch.setattr(storage, "Store", lambda *args, **kwargs: store)
     for name in ("_async_setup_shared", "_async_apply_assist_intents", "_async_start_sip_trunk",
-                 "_deferred_phonebook_sync", "_async_load_ha_softphone_store"):
+                 "_initialize_directory", "_async_load_ha_softphone_store"):
         monkeypatch.setattr(voip_stack, name, AsyncMock())
     monkeypatch.setattr(mailbox, "async_setup_mailboxes", AsyncMock())
     monkeypatch.setattr(phone_services, "async_setup_phone_services", AsyncMock())

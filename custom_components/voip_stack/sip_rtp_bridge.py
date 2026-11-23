@@ -54,17 +54,19 @@ class _PayloadRelayClock:
     source_sequence: int | None = None
     destination_sequence: int = 0
     source_ssrc: int | None = None
+    highest_sequence: int | None = None
     insertions: list = field(default_factory=list)
 
     def reset(self):
         self.source_base = self.source_sequence = None
+        self.highest_sequence = None
         self.insertions.clear()
 
     def observe_format(self, fmt: RtpPcmFormat) -> None:
-        """Start a fresh timestamp mapping when the received codec changes."""
-        if fmt != self.source_format:
-            self.source_format = fmt
+        """Preserve the source timeline while its RTP clock remains unchanged."""
+        if self.source_format is None or fmt.rtp_clock_rate != self.source_format.rtp_clock_rate:
             self.source_base = None
+        self.source_format = fmt
 
     def map(self, source_timestamp: int, destination_timestamp: int) -> int:
         if self.source_base is None:
@@ -82,15 +84,23 @@ class _PayloadRelayClock:
             self.destination_sequence = destination_sequence
             self.source_base = None
             self.insertions.clear()
+            self.highest_sequence = packet.sequence
+        extended = self.highest_sequence + (
+            (packet.sequence - self.highest_sequence + 32768) % 65536 - 32768)
+        self.highest_sequence = max(extended, self.highest_sequence)
+        while self.insertions and self.insertions[0][0] <= self.highest_sequence - 128:
+            _boundary, count = self.insertions.pop(0)
+            self.destination_sequence += count
         added = sum(count for boundary, count in self.insertions
-            if (packet.sequence - boundary + 32768) % 65536 - 32768 >= 0)
-        return (self.destination_sequence + packet.sequence - self.source_sequence + added) & 65535
+            if extended >= boundary)
+        return (self.destination_sequence + extended - self.source_sequence + added) & 65535
 
     def inserted_after(self, sequence, count=1):
         """Keep audio mapping stable when this source also carries local events."""
         if self.source_sequence is None or not count:
             return
-        boundary = (sequence + 1) & 65535
+        boundary = self.highest_sequence + (
+            (sequence - self.highest_sequence + 32768) % 65536 - 32768) + 1
         if self.insertions and self.insertions[-1][0] == boundary:
             previous = self.insertions[-1]
             self.insertions[-1] = (boundary, previous[1] + count)
@@ -484,16 +494,17 @@ class SipRtpRelay:
     def _build_media_state(self, left: RtpPeer, right: RtpPeer) -> dict[str, Any]:
         """Prepare converters without changing the live relay."""
 
-        def receiver(side, peer):
+        def receiver(side, peer, target):
             previous = getattr(self, f"{side}_decoder", None)
             if previous is None and hasattr(self, "left_decoder"):
                 old_peer = getattr(self, side)
                 previous = RtpAudioReceiver(old_peer.inbound_rtp_format, old_peer.inbound_rtp_formats)
             return RtpAudioReceiver(peer.inbound_rtp_format, peer.inbound_rtp_formats,
-                previous=previous, receive_state=self._receive_states[side])
+                previous=previous, receive_state=self._receive_states[side],
+                output_pcm=target.outbound_rtp_format.audio_format)
 
-        left_receiver = receiver("left", left)
-        right_receiver = receiver("right", right)
+        left_receiver = receiver("left", left, right)
+        right_receiver = receiver("right", right, left)
         left_to_right_passthrough = bool(
             not self.debug_capture
             and not right.match_received_codec
@@ -519,10 +530,10 @@ class SipRtpRelay:
             "right_to_left_clock": _PayloadRelayClock(),
             "left_to_right": None
             if left_to_right_passthrough
-            else PcmFrameConverter(left.audio_format, right.outbound_audio_format),
+            else PcmFrameConverter(left_receiver.output_pcm, right.outbound_rtp_format.audio_format),
             "right_to_left": None
             if right_to_left_passthrough
-            else PcmFrameConverter(right.audio_format, left.outbound_audio_format),
+            else PcmFrameConverter(right_receiver.output_pcm, left.outbound_rtp_format.audio_format),
             "left_decoder": None
             if left_to_right_passthrough and not left_receiver.has_pcm_observers
             else left_receiver,
@@ -1167,7 +1178,7 @@ class SipRtpRelay:
             destination.outbound_dtmf_payload_type is None
             or event not in destination.outbound_dtmf_events
         ):
-            self._schedule_dtmf_fallback(source_side, digit)
+            self._schedule_dtmf_fallback(source_side, digit, duration_ms=duration_ms)
             _LOGGER.info(
                 "RTP DTMF unavailable; signaling fallback requested source=%s destination=%s digit=%s",
                 source_side,
@@ -1201,16 +1212,18 @@ class SipRtpRelay:
         task.add_done_callback(self._dtmf_tasks.discard)
         return True
 
-    def _schedule_dtmf_fallback(self, source_side: str, digit: str) -> None:
+    def _schedule_dtmf_fallback(self, source_side: str, digit: str, *, duration_ms=160) -> None:
         """Run one dialog-level fallback under the relay lifecycle owner."""
 
         callback = self.on_dtmf_fallback
-        if callback is None or self._stop_requested:
+        event_callback = getattr(self, "on_dtmf_fallback_event", None)
+        if (callback is None and event_callback is None) or self._stop_requested:
             return
 
         async def _run() -> None:
             try:
-                result = await callback(source_side, digit)
+                result = (await event_callback(source_side, digit, duration_ms)
+                          if event_callback is not None else await callback(source_side, digit))
                 if not result:
                     _LOGGER.info(
                         "SIP INFO DTMF fallback not accepted source=%s digit=%s",
@@ -1416,19 +1429,22 @@ class SipRtpRelay:
             if rtp.use_audio_clock(dest, wire_format.rtp_clock_rate):
                 (self.left_to_right_clock if side == "left" else self.right_to_left_clock).reset()
             converter = self.left_to_right if side == "left" else self.right_to_left
-            packet_size = (len(packet.payload) if decoder is not None and converter is not None
-                and not converter.requires_fixed_input
-                and not decoder.has_pending_pcm and not converter.has_pending_pcm else None)
+            pending_pcm = ((decoder is not None and decoder.has_pending_pcm)
+                           or (converter is not None and converter.has_pending_pcm))
+            packet_size = len(packet.payload) if not pending_pcm else None
             passthrough = not self.debug_capture and payload_relay_compatible(
                 received_format, wire_format, payload_size=packet_size
             )
-            if decoder is not None and decoder.has_pending_media:
+            if pending_pcm or (decoder is not None and decoder.has_pending_media):
                 passthrough = False
             clock = self.left_to_right_clock if side == "left" else self.right_to_left_clock
             clock.observe_format(received_format)
             if passthrough:
                 previous_passthrough = self.left_to_right_passthrough if side == "left" else self.right_to_left_passthrough
                 if not previous_passthrough:
+                    if decoder is not None:
+                        dest.timestamp = rtp.next_timestamp(dest.timestamp,
+                            round(decoder.unrendered_gap_ms(packet) * wire_format.rtp_clock_rate / 1000))
                     clock.reset()
                 rtp.validate_audio_payload_size(
                     packet.payload,
@@ -1444,7 +1460,7 @@ class SipRtpRelay:
                             if error is not None:
                                 error("decode_error")
                     else:
-                        decoder.observe_payload(packet.payload_type)
+                        decoder.observe_rtp(packet)
                 if source.rx_ssrc is None:
                     source.rx_ssrc = packet.ssrc
                     source.host = str(addr[0])
@@ -1483,6 +1499,9 @@ class SipRtpRelay:
                 converter = self.left_to_right if side == "left" else self.right_to_left
                 if converter is None:
                     raise RuntimeError("PCM converter missing for transcoding path")
+                previous_passthrough = self.left_to_right_passthrough if side == "left" else self.right_to_left_passthrough
+                if previous_passthrough:
+                    decoder.resume_pcm()
                 # Same-geometry reframers accept arbitrary sample-aligned input.
                 # Resamplers require nominal input quanta from this receiver.
                 pcm_frames = decoder.decode_rtp(packet, admitted=True,

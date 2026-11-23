@@ -87,6 +87,6 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
         current = target.policy.always
     update_phone_policy(call.hass, entry, endpoint, policy)
     # Use the established ESPHome API delivery path, including remote devices.
-    from . import _refresh_and_push_phonebook
+    from . import _refresh_directory
 
-    await _refresh_and_push_phonebook(call.hass)
+    await _refresh_directory(call.hass)

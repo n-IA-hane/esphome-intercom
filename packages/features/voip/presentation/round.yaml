@@ -1,7 +1,6 @@
 # Shared call-page ownership, navigation and content for round displays.
 packages:
   lifecycle: !include 'lifecycle.yaml'
-  route: !include '../../../lvgl/spotpear_call_media_route.yaml'
   navigation: !include '../../../lvgl/spotpear_voip/nav_full.yaml'
 globals:
 - id: previous_mode

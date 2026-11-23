@@ -10,7 +10,6 @@ from homeassistant.core import HomeAssistant
 from .trunk_policy import trunk_available
 from .core.audio_format import (
     AudioFormat,
-    parse_audio_format_list,
 )
 from .core.codec_policy import CodecPolicy
 from .core.media import negotiator
@@ -213,95 +212,15 @@ def peer_for_target(target: str, peers: list[Peer]) -> Peer | None:
     return peers[row.metadata["peer_index"]] if row is not None else None
 
 
-def peer_audio_formats(peer: Peer | None, key: str) -> list[AudioFormat]:
-    if peer is None:
-        return []
-    raw = ";".join(str(item) for item in (peer.tx_formats if key == "tx_formats" else peer.rx_formats) or [])
-    if not raw.strip():
-        return []
-    try:
-        return parse_audio_format_list(raw)
-    except ValueError as err:
-        _LOGGER.warning("Ignoring invalid peer %s on %s: %s", key, peer.name, err)
-        return []
-
-
 def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
-    """Return the destination video contract.
-
-    A codec names an explicitly video-capable peer, an empty string names a
-    known audio-only peer, and ``None`` preserves generic SIP negotiation when
-    the peer did not advertise capabilities.
-    """
-
-    metadata = (getattr(entry, "metadata", None) or {}) if entry is not None else {}
-    device = (peer.device or {}) if peer is not None else {}
-    for contract in (device, metadata):
-        value = contract.get("sip_video_codec")
-        if value is not None:
-            value = str(value).strip().casefold()
-            if value in {"", "h264", "jpeg"}:
-                return value
-    if any("sip_video_codec" in contract and contract["sip_video_codec"] is None
-           for contract in (device, metadata)):
-        # An incomplete discovery is not an audio-only endpoint declaration.
-        return None
-    capabilities = {
-        str(item).strip().casefold()
-        for item in (
-            (getattr(peer, "capabilities", ()) if peer is not None else ())
-            or metadata.get("capabilities")
-            or ()
-        )
-        if str(item).strip()
-    }
-    if capabilities:
-        return "" if "video" not in capabilities else None
+    """Use Contact SDP or explicit account policy, never hardware diagnostics."""
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    value = metadata.get("sip_video_codec")
+    if value is not None:
+        value = str(value).strip().casefold()
+        if value in {"", "h264", "jpeg"}:
+            return value
     return None
-
-
-def device_formats(device: dict | None, key: str) -> list[AudioFormat]:
-    if not device:
-        return []
-    value = device.get(key)
-    if value in (None, ""):
-        return []
-    raw = value if isinstance(value, str) else ";".join(value or [])
-    if not raw.strip():
-        return []
-    try:
-        return parse_audio_format_list(raw)
-    except ValueError as err:
-        _LOGGER.warning(
-            "Ignoring invalid %s on %s: %s",
-            key,
-            (device or {}).get("name") or (device or {}).get("device_id"),
-            err,
-        )
-        return []
-
-
-def roster_entry_formats(entry, key: str) -> list[AudioFormat]:
-    """Return audio formats from a canonical roster entry metadata field."""
-    if entry is None:
-        return []
-    metadata = getattr(entry, "metadata", {}) or {}
-    value = metadata.get(key)
-    if value in (None, ""):
-        return []
-    raw = ";".join(str(item) for item in value) if isinstance(value, list) else str(value or "")
-    if not raw.strip():
-        return []
-    try:
-        return parse_audio_format_list(raw)
-    except ValueError as err:
-        _LOGGER.warning(
-            "Ignoring invalid roster %s on %s: %s",
-            key,
-            getattr(entry, "display_name", None) or getattr(entry, "id", ""),
-            err,
-        )
-        return []
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
@@ -367,7 +286,6 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
                     "camera_entity_id": str(
                         (peer.device or {}).get("camera_entity_id") or ""
                     ),
-                    "sip_video_codec": peer_video_codec(peer),
                     "sip_transport": (
                         str((peer.device or {}).get("sip_transport") or "tcp").lower()
                         if peer.is_ha or peer.device is not None
@@ -376,10 +294,6 @@ def assemble_directory_entries(hass: HomeAssistant, peers: list[Peer], registere
                     "sip_port": peer.sip_port,
                     "rtp_port": peer.rtp_port,
                     "audio_mode": peer.audio_mode,
-                    "tx_formats": list(peer.tx_formats or []),
-                    "rx_formats": list(peer.rx_formats or []),
-                    "sip_audio_tx_formats": list(peer.sip_audio_tx_formats),
-                    "sip_audio_rx_formats": list(peer.sip_audio_rx_formats),
 
                     "conference_group": peer.conference_group,
                     "conference_ring": bool(peer.conference_ring),

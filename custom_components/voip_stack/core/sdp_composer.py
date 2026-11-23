@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ipaddress
+from dataclasses import replace
 
 from .audio_format import AudioFormat
+from .media.codecs import DEFAULT_OPUS_RECEIVE_FMTP
 from .imageattr import serialize_imageattr
 from .sdp_audio_facts import (
     _format_dtmf_events,
@@ -158,7 +160,7 @@ def _write_offer_plan(plan, origin_ip, media_ip, media_port, *, audio_direction,
         lines.append(f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}")
         parameters = str(fmt.fmtp or "").strip()
         if not parameters and fmt.encoding == "OPUS":
-            parameters = "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+            parameters = DEFAULT_OPUS_RECEIVE_FMTP
         if parameters:
             lines.append(f"a=fmtp:{fmt.payload_type} {parameters}")
     for event in plan.events:
@@ -414,8 +416,6 @@ def options_capabilities(body: str | bytes) -> dict:
     result = {
         "sip_audio_tx_formats": transmit_tokens,
         "sip_audio_rx_formats": receive_tokens,
-        "sip_audio_tx_geometry_complete": bool(transmit_tokens),
-        "sip_audio_rx_geometry_complete": bool(receive_tokens),
         "sip_audio_receiver_ptime": parsed["ptime"],
         "sip_audio_receiver_maxptime": parsed["maxptime"],
     }
@@ -450,6 +450,7 @@ def build_answer_directional(
     *,
     recv_formats: tuple[RtpPcmFormat, ...] = (),
     dtmf: RtpDtmfFormat | None = None,
+    dtmf_direction=None,
     audio_rtcp: bool = False,
     remote_sdp: str | bytes | None = None,
     video_port: int = 0,
@@ -461,7 +462,9 @@ def build_answer_directional(
     from .media.codecs import CODECS
 
     event_formats = (dtmf,) if dtmf is not None and dtmf.events else ()
-    if event_formats and remote_sdp:
+    if dtmf_direction is not None:
+        event_formats = dtmf_direction.recv_formats or ((dtmf_direction.recv,) if dtmf_direction.recv is not None else ())
+    elif event_formats and remote_sdp:
         events = negotiate_dtmf(remote_sdp, send_clock_rate=send.sample_rate,
                                 receive_clock_rate=recv.sample_rate)
         event_formats = events.recv_formats if events is not None else ()
@@ -509,6 +512,12 @@ def build_answer_directional(
                     and (offered is None or _rtp_contract_key(fmt)[:4] in offered)
                     and all(fmt.payload_type != item.payload_type for item in selected)):
                 selected.append(fmt)
+    if format_direction in {"recvonly", "sendrecv"}:
+        local_receivers = {fmt.payload_type: fmt for fmt in recv_formats}
+        local_receivers[recv.payload_type] = recv
+        selected = [local_receivers.get(fmt.payload_type,
+            replace(fmt, fmtp=DEFAULT_OPUS_RECEIVE_FMTP) if fmt.encoding == "OPUS" else fmt)
+            for fmt in selected]
     payload_values = [str(fmt.payload_type) for fmt in selected]
     for event in event_formats:
         if str(event.payload_type) not in payload_values:
@@ -523,7 +532,7 @@ def build_answer_directional(
         )
         if fmt.encoding == "OPUS":
             opus_fmtp = str(fmt.fmtp or "").strip() or (
-                "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+                DEFAULT_OPUS_RECEIVE_FMTP
             )
             audio_lines.append(f"a=fmtp:{fmt.payload_type} {opus_fmtp}")
     for event in event_formats:

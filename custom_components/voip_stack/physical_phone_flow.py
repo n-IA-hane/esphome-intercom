@@ -699,7 +699,7 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
                     return await self.async_step_account()
                 return await self.async_step_bindings()
         return self.async_show_form(step_id="account", errors=errors,
-            data_schema=self._account_flow._common_schema(sip_account=True))
+            data_schema=self._account_flow._common_schema())
 
 
 class DiscoveredPhoneEditor(PhysicalPhoneSubentryFlowHandler):

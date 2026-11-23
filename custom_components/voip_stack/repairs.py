@@ -10,7 +10,8 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, TextSelector
+from homeassistant.helpers.selector import (BooleanSelector, DeviceSelector, SelectSelector, SelectSelectorConfig,
+    TextSelector, TextSelectorConfig, TextSelectorType)
 
 from .const import DOMAIN
 from .runtime_data import runtime_data
@@ -184,9 +185,248 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
 
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
     """Create the native retry flow only for an account migration conflict."""
+    if issue_id.startswith('managed_record_') and data is not None:
+        return ManagedRecordRepairFlow(str(data['entry_id']), str(data['hardware']))
+    if issue_id.startswith('archive_record_') and data is not None:
+        return ArchiveRecordRepairFlow(str(data['entry_id']), str(data['filename']))
+    if issue_id.startswith('ldap_record_invalid_') and data is not None:
+        return LdapRecordRepairFlow(str(data['entry_id']))
     if issue_id.startswith(("account_route_conflict_", "phone_identity_conflict_")) and data is not None:
         return AccountMigrationRepairFlow(str(data["entry_id"]))
     return ConfirmRepairFlow()
+
+
+class ManagedRecordRepairFlow(RepairsFlow):
+    """Correct a retained malformed account through its native hardware association."""
+
+    def __init__(self, entry_id, hardware):
+        self.entry_id, self.hardware = entry_id, hardware
+
+    async def async_step_init(self, user_input=None):
+        return await self.async_step_account()
+
+    async def async_step_account(self, user_input=None):
+        from .esphome_native import device_info, normalize_mac, runtime_for_entry
+        from .sip_registrar import normalize_username
+        from homeassistant.helpers import device_registry as dr
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None or self.hardware not in entry.data.get('managed_esphome_phones', {}):
+            return self.async_create_entry(data={})
+        raw = entry.data['managed_esphome_phones'][self.hardware]
+        saved = dict(raw) if isinstance(raw, dict) else {}
+        from .phone_queue_membership import membership_names, normalize_phone_queues
+        try:
+            queues = list(normalize_phone_queues(saved.get('queues')))
+        except ValueError:
+            queues = []
+        try:
+            ring_groups = list(membership_names('ring_group', saved.get('ring_group')))
+        except ValueError:
+            ring_groups = []
+        try:
+            conference_groups = list(membership_names('ring_group', saved.get('conference_group')))
+        except ValueError:
+            conference_groups = []
+        saved_name = saved.get('display_name') or saved.get('name') or ''
+        saved_username = saved.get('username', '')
+        values = {'device_id': self.hardware, 'username': saved_username if isinstance(saved_username, str) else '',
+                  'name': saved_name if isinstance(saved_name, str) else '',
+                  'queues': queues, 'ring_group': ring_groups, 'conference_group': conference_groups,
+                  'conference_ring': saved.get('conference_ring') if isinstance(saved.get('conference_ring'), bool) else False,
+                  'extension': saved.get('extension') if isinstance(saved.get('extension'), str) else ''}
+        errors = {}
+        if user_input is not None:
+            values.update(user_input)
+            try:
+                device = dr.async_get(self.hass).async_get(values['device_id'])
+                original_device = dr.async_get(self.hass).async_get(self.hardware)
+                origin = self.hass.config_entries.async_get_entry(device.config_entry_id) if device is not None else None
+                info = device_info(runtime_for_entry(origin))
+                mac = normalize_mac(info.mac_address if info is not None else '')
+                if (origin is None or origin.domain != 'esphome' or (original_device is not None and device.id != self.hardware)
+                        or not any(kind == dr.CONNECTION_NETWORK_MAC and normalize_mac(value) == mac
+                                   for kind, value in device.connections)):
+                    raise ValueError('Choose the original native hardware owner')
+                from .device_resolver import slugify_route_id
+                password = user_input.get('password') or saved.get('password')
+                if not isinstance(password, str):
+                    raise ValueError('Provide a valid replacement credential')
+                old = saved.get('endpoint_id')
+                if (not isinstance(old, str) or not 1 <= len(old) <= 255 or old != old.strip()
+                        or any(ord(char) < 32 or ord(char) == 127 for char in old)):
+                    old = 'esphome:' + self.hardware
+                corrected = {**saved, 'device_id': device.id, 'origin_entry_id': origin.entry_id, 'mac': mac,
+                    'username': normalize_username(values['username']), 'username_source': 'user',
+                    'display_name': str(values['name']).strip() or normalize_username(values['username']),
+                    'password': password, 'endpoint_id': old, 'queues': list(normalize_phone_queues(values['queues'])),
+                    'ring_group': ', '.join(membership_names('ring_group', values['ring_group'])),
+                    'extension': str(values['extension']), 'route_id': slugify_route_id(info.name),
+                    'conference_group': ', '.join(membership_names('ring_group', values['conference_group'])),
+                    'conference_ring': bool(values['conference_ring']), 'membership_pending': {}, 'membership_observed': {},
+                    'api_host': str(origin.data.get('host') or '')}
+                from .managed_phones import ManagedPhone
+                ManagedPhone(**{key: value for key, value in corrected.items() if key in ManagedPhone.__dataclass_fields__})
+                records = {**entry.data['managed_esphome_phones']}
+                records.pop(self.hardware)
+                records[device.id] = corrected
+                self.hass.config_entries.async_update_entry(entry, data={**entry.data, 'managed_esphome_phones': records})
+                if entry.state is ConfigEntryState.MIGRATION_ERROR:
+                    await self.hass.config_entries.async_retry_migration(entry.entry_id)
+                else:
+                    from .sip_account_identity import async_migrate_account_identities
+                    await async_migrate_account_identities(self.hass, entry)
+                    if entry.state is ConfigEntryState.LOADED:
+                        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+            except (HomeAssistantError, ValueError, TypeError):
+                errors['base'] = 'migration_retry_failed'
+            else:
+                if self.hardware not in entry.data.get('managed_esphome_phones', {}):
+                    return self.async_create_entry(data={})
+                errors['base'] = 'migration_retry_failed'
+        return self.async_show_form(step_id='account', errors=errors, data_schema=vol.Schema({
+            vol.Required('device_id', default=values['device_id']): DeviceSelector({'integration': 'esphome'}),
+            vol.Required('name', default=values['name']): TextSelector(),
+            vol.Required('username', default=values['username']): TextSelector(),
+            vol.Optional('password'): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+            vol.Optional('queues', default=values['queues']): SelectSelector({'options': [], 'multiple': True, 'custom_value': True}),
+            vol.Optional('ring_group', default=values['ring_group']): SelectSelector({'options': [], 'multiple': True, 'custom_value': True}),
+            vol.Optional('extension', default=values['extension']): TextSelector(),
+            vol.Optional('conference_group', default=values['conference_group']): SelectSelector({'options': [], 'multiple': True, 'custom_value': True}),
+            vol.Optional('conference_ring', default=values['conference_ring']): BooleanSelector(),
+        }))
+
+
+def async_sync_managed_record_issues(hass, entry, invalid):
+    """Retain each damaged payload and expose its existing native object for repair."""
+    prefix = 'managed_record_' + entry.entry_id + '_'
+    registry = ir.async_get(hass)
+    from homeassistant.helpers import device_registry as dr
+    for domain, issue_id in tuple(registry.issues):
+        if domain == DOMAIN and issue_id.startswith(prefix) and issue_id[len(prefix):] not in invalid:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+    for hardware in invalid:
+        device = dr.async_get(hass).async_get(hardware)
+        ir.async_create_issue(hass, DOMAIN, prefix + hardware, config_entry_id=entry.entry_id,
+            is_fixable=True, is_persistent=False,
+            severity=ir.IssueSeverity.ERROR, translation_key='managed_record_invalid',
+            translation_placeholders={'phone': (device.name_by_user or device.name or 'Saved phone account')
+                if device is not None else 'Saved phone account'},
+            data={'entry_id': entry.entry_id, 'hardware': hardware})
+
+
+def async_sync_esphome_account_setup_issue(hass, entry, device_id, *, pending):
+    """Preserve a migrated account while its firmware cannot register it yet."""
+    issue_id = 'esphome_account_setup_' + entry.entry_id + '_' + device_id
+    if not pending:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    from homeassistant.helpers import device_registry as dr
+    device = dr.async_get(hass).async_get(device_id)
+    ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id, is_fixable=False, is_persistent=False,
+        severity=ir.IssueSeverity.ERROR, translation_key='esphome_account_setup_required',
+        translation_placeholders={'phone': device.name if device is not None and device.name else 'ESPHome phone'},
+        learn_more_url='/config/devices/device/' + device_id)
+
+
+class ArchiveRecordRepairFlow(RepairsFlow):
+    """Retry one restored recording with an explicitly selected native account."""
+
+    def __init__(self, entry_id, filename):
+        self.entry_id, self.filename = entry_id, filename
+
+    async def async_step_init(self, user_input=None):
+        return await self.async_step_recording()
+
+    async def async_step_recording(self, user_input=None):
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        errors = {}
+        if user_input is not None:
+            from .core.media_archive import ArchiveError, MediaArchive
+            from .mailbox import archive_path
+            from .sip_account_identity import ha_account_username
+            try:
+                username = ha_account_username(self.hass, user_input['account'])
+                path = archive_path(self.hass)
+                if not username or path is None:
+                    raise ValueError('Select an existing account and configured media archive')
+                runtime = getattr(entry, 'runtime_data', None)
+                owner = getattr(runtime, 'sip', None)
+                archive = owner.component('media_archive') if owner is not None else None
+                archive = archive or MediaArchive(path, self.hass.async_add_executor_job)
+                identity = self.filename.removesuffix('.json').removesuffix('.pending')
+                scan = await archive.prepare_account_rebind({}, load_from_storage=True, record_ids={identity})
+                if self.filename in scan.faults:
+                    raise ArchiveError('Restore the recording metadata and WAV segments before retrying')
+                prepared = await archive.prepare_account_rebind({scan.recording_mailbox(identity): username},
+                    load_from_storage=True, record_ids={identity})
+                if self.filename in prepared.faults:
+                    raise ArchiveError('Complete the interrupted recording recovery before retrying')
+                await prepared.commit()
+                ir.async_delete_issue(self.hass, DOMAIN, 'archive_record_' + entry.entry_id + '_' + self.filename)
+                async_sync_archive_record_issues(self.hass, entry, prepared.faults)
+            except (ArchiveError, HomeAssistantError, OSError, ValueError, TypeError):
+                errors['base'] = 'recording_recovery_failed'
+            else:
+                return self.async_create_entry(data={})
+        return self.async_show_form(step_id='recording', errors=errors,
+            description_placeholders={'filename': self.filename}, data_schema=vol.Schema({
+                vol.Required('account'): DeviceSelector({'filter': [{'integration': DOMAIN, 'model': 'SIP account'}]}),
+            }))
+
+
+def async_sync_archive_record_issues(hass, entry, faults):
+    """Report retained archive files without changing their payload or ownership."""
+    prefix = 'archive_record_' + entry.entry_id + '_'
+    registry = ir.async_get(hass)
+    for filename in faults:
+        ir.async_create_issue(hass, DOMAIN, prefix + filename, config_entry_id=entry.entry_id,
+            is_fixable=True, is_persistent=True,
+            severity=ir.IssueSeverity.ERROR, translation_key='archive_record_invalid',
+            translation_placeholders={'filename': filename}, data={'entry_id': entry.entry_id, 'filename': filename})
+    retained = {issue_id[len(prefix):].removesuffix('.json').removesuffix('.pending')
+                for domain, issue_id in registry.issues if domain == DOMAIN and issue_id.startswith(prefix)}
+    runtime = getattr(entry, 'runtime_data', None)
+    owner = getattr(runtime, 'sip', None)
+    archive = owner.component('media_archive') if owner is not None else None
+    if archive is not None:
+        archive.quarantine_records(retained)
+
+
+class LdapRecordRepairFlow(ConfirmRepairFlow):
+    """Keep invalid configured directory rows visible until their source is corrected."""
+
+    def __init__(self, entry_id):
+        self.entry_id = entry_id
+
+    async def async_step_confirm(self, user_input=None):
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        if user_input is not None:
+            server = getattr(getattr(entry, 'runtime_data', None), 'ldap_server', None)
+            if server is not None and not server.validate_records():
+                async_sync_ldap_record_issue(self.hass, entry, {})
+                return self.async_create_entry(data={})
+        result = await super().async_step_confirm()
+        if user_input is not None:
+            result['errors'] = {'base': 'directory_record_invalid'}
+        return result
+
+
+def async_sync_ldap_record_issue(hass, entry, faults):
+    """Publish one actionable configuration fault per directory generation."""
+    issue_id = 'ldap_record_invalid_' + entry.entry_id
+    if not faults:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    names = ', '.join(str(name)[:160] for name in list(faults.values())[:5])
+    ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id, is_fixable=True, is_persistent=False,
+        severity=ir.IssueSeverity.ERROR, translation_key='directory_record_invalid',
+        translation_placeholders={'objects': names, 'count': str(len(faults))},
+        learn_more_url='/config/integrations/integration/' + DOMAIN,
+        data={'entry_id': entry.entry_id})
 
 
 def async_sync_esphome_account_name_issue(hass, device_id, *, name="", error=None) -> None:

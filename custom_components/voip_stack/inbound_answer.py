@@ -39,6 +39,7 @@ def bind_final_response(
     send: Callable[..., bool],
     context: object,
     token: CallToken,
+    media_contract=None,
 ) -> SendFinalResponse:
     """Bind the common HA final-response adapter once."""
 
@@ -50,6 +51,7 @@ def bind_final_response(
             reason,
             answer_sdp=sdp,
             expected_generation=token.generation,
+            **({"media_contract": media_contract} if media_contract is not None else {}),
         )
     )
 
@@ -268,12 +270,15 @@ async def async_commit_runtime_answer(
     dest_endpoint_id: str = "",
     media_client_id: str = "",
     response_already_sent: bool = False,
+    media_contract=None,
 ) -> AnswerCommitResult:
     """Atomically publish and signal one ordinary runtime answer."""
 
     session = runtime.get_session(call_id)
     if session is None:
         return AnswerCommitResult(False, False, "stale_call")
+    if media_contract is None:
+        media_contract = runtime.artifact_for(call_id, "caller_invite")
     def claim() -> bool:
         claimed = runtime.transition(
             call_id,
@@ -301,6 +306,7 @@ async def async_commit_runtime_answer(
             send_final_response,
             response_context,
             session.token,
+            media_contract,
         ),
         response_already_sent=response_already_sent,
     )

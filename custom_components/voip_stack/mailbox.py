@@ -77,6 +77,10 @@ async def get_archive(hass) -> MediaArchive:
                 await archive.close()
                 raise ServiceValidationError("VoIP Stack stopped while opening the media archive")
             owner.adopt_component("media_archive", archive, closer=archive.close)
+            from .repairs import async_sync_archive_record_issues
+            from .store import config_entry
+
+            async_sync_archive_record_issues(hass, config_entry(hass), archive.recovery_faults)
         return archive
 
 

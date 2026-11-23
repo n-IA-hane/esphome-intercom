@@ -43,14 +43,14 @@ def test_hardware_kind_cannot_replace_standard_sip_media_policy():
     assert hardware.send_formats[0].sample_rate == 48000
 
 
-def test_contact_options_geometry_remains_constrained_in_the_real_wire_offer():
+def test_contact_options_geometry_is_advisory_in_the_real_wire_offer():
     body = ("v=0\r\no=- 1 1 IN IP4 192.0.2.2\r\ns=Capabilities\r\nc=IN IP4 192.0.2.2\r\n"
             "t=0 0\r\nm=audio 0 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000/1\r\na=ptime:20\r\na=sendrecv\r\n")
     metadata = {"sip_capabilities_known": True, **sdp.options_capabilities(body)}
     profile = sip_target_rtp_audio_profile(SimpleNamespace(metadata=metadata))
     client = writer(profile)
     client._prepare_initial_offer(delayed_offer=False, audio_direction="sendrecv")
-    assert {fmt.encoding for fmt in sdp.offered_pcm_formats(client._local_sdp_body)} == {"PCMA"}
+    assert {fmt.encoding for fmt in sdp.offered_pcm_formats(client._local_sdp_body)} >= {"PCMA", "PCMU", "L16"}
     assert all(not capability.times.fixed for capability in profile.evidence.sends)
 
 

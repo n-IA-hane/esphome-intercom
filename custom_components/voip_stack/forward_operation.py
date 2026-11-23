@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 
 from .call_projection import publish_bridge_projection
 from .config import (
@@ -380,7 +381,7 @@ class ForwardOperation:
             )
             if mailbox is None:
                 raise RuntimeError("The selected mailbox is no longer available")
-            await start_voicemail_application(
+            voicemail = await start_voicemail_application(
                 hass,
                 session,
                 invite,
@@ -389,7 +390,8 @@ class ForwardOperation:
                 previous=application,
                 local_source=local_source,
             )
-            return
+            await voicemail.answer()
+            return TransferResult("connected", self.plan.destination)
 
         if decision.action is RouteAction.AUTOMATION:
             from .automation_call import (
@@ -549,7 +551,7 @@ class ForwardOperation:
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats,
-                remote_sdp=invite.remote_sdp,
+                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             )
         registry.take_pending_invite(call_id)
         transferred_media = registry.take_media(call_id, provisional=True)
@@ -1018,12 +1020,16 @@ class ForwardOperation:
         try:
             result = await self._dispatch()
             if result is not None:
+                if result.status == "connected" and session is not None and session.live:
+                    return replace(result, committed=True, owner=session.owner,
+                                   generation=session.generation, call_id=session.call_id)
                 return result
             if session is None or not session.live:
                 return TransferResult("ended", destination)
             if session.state in {"ringing", "remote_ringing", "connecting", "calling"}:
                 return TransferResult("ringing", destination)
-            return TransferResult("connected", destination)
+            return TransferResult("connected", destination, committed=True,
+                                  owner=session.owner, generation=session.generation, call_id=session.call_id)
         except asyncio.CancelledError:
             await self.cleanup_failed_route(TerminalReason.CANCELLED.value)
             resumable_media = self.parked_media or (
@@ -1043,7 +1049,8 @@ class ForwardOperation:
                     return TransferResult("failed_resumed", destination, "cancelled")
             raise
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
-            reason = str(err or TerminalReason.TRANSPORT_UNREACHABLE.value)
+            reason = (TerminalReason.TIMEOUT.value if isinstance(err, TimeoutError) else
+                      str(err).strip() or TerminalReason.TRANSPORT_UNREACHABLE.value)
             sip_status = (
                 self.client.last_sip_status_code
                 if self.plan.initial_selection
@@ -1054,6 +1061,14 @@ class ForwardOperation:
                 else 0
             )
             failure_endpoint = failure_destination = None
+            if self.plan.account is not None:
+                from .phone_policy_runtime import phone_failure_destination
+                from .fsm import sip_failure_response
+
+                failure_endpoint = endpoint_directory(self.runtime.hass).get(self.plan.account.endpoint_id)
+                if failure_endpoint is not None:
+                    failure_destination = (failure_endpoint.policy.no_answer if reason == TerminalReason.TIMEOUT.value
+                        else phone_failure_destination(failure_endpoint, sip_failure_response(reason)[0]))
             if (
                 self.plan.decision.action is RouteAction.FORWARD
                 and self.client is not None
@@ -1072,18 +1087,21 @@ class ForwardOperation:
                 fallback = str(self.plan.decision.entry.metadata.get("fallback_destination") or "")
                 if fallback:
                     from .route_decisions import dispatch_route_fallback
-                    if dispatch_route_fallback(self.runtime.hass, session, fallback):
-                        return TransferResult("ringing", fallback, reason)
+                    continuation = dispatch_route_fallback(self.runtime.hass, session, fallback,
+                        on_failure=self.plan.on_failure)
+                    if continuation:
+                        return TransferResult("rerouted", fallback, reason, continuation=continuation)
             if failure_destination is not None:
                 from .phone_policy_runtime import dispatch_phone_failure
 
-                if dispatch_phone_failure(
-                    self.runtime.hass, session, failure_endpoint, failure_destination
-                ):
+                continuation = dispatch_phone_failure(
+                    self.runtime.hass, session, failure_endpoint, failure_destination,
+                    on_failure=self.plan.on_failure)
+                if continuation:
                     # The same session owns the next route. Return without an
                     # await so finally releases this attempt's forward claim
                     # before the new route task starts.
-                    return TransferResult("ringing", destination, reason)
+                    return TransferResult("rerouted", destination, reason, continuation=continuation)
             resumed = await async_abort_route(
                 self.abort,
                 RouteAbortIntent(

@@ -171,7 +171,7 @@ def prepare_trunk_preanswer(
         invite.recv_format,
         recv_formats=invite.recv_formats,
         dtmf=dtmf_format,
-        remote_sdp=invite.remote_sdp,
+        remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
         video_port=source_video_port,
         video_format=(invite.answer_video_format if source_video_port else None),
         # SDP advertises capability. Browser camera access remains gated by
@@ -231,11 +231,12 @@ def prepare_trunk_preanswer(
     ):
         route_task.cancel()
     if confirm_for_sip_info:
-        return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
+        return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="", media_contract=invite)
     return SipInviteResult(
         183,
         "Session Progress",
         answer_sdp=answer,
+        media_contract=invite,
         to_tag="",
         defer_final=True,
     )

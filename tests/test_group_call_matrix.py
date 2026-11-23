@@ -675,7 +675,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             **endpoint_routing.sdp.options_capabilities(body)})
         profile = endpoint_routing.sip_target_rtp_audio_profile(entry)
         for formats in (profile.send_rtp_formats, profile.recv_rtp_formats):
-            self.assertEqual({(fmt.encoding,fmt.sample_rate) for fmt in formats}, {("L16",48000),("L16",16000)})
+            self.assertTrue({("L16",48000),("L16",16000)} <= {(fmt.encoding,fmt.sample_rate) for fmt in formats})
         self.assertTrue(all(not item.times.fixed for item in profile.evidence.sends))
 
     def test_peer_lookup_accepts_standard_sip_routing_identities(self) -> None:

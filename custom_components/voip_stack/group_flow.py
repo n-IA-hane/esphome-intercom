@@ -46,8 +46,13 @@ def ordered_members_selector(hass, device_refs, options, *, allow_destinations, 
     missing = [value for value in previous if value not in set(device_refs.values())]
     choices = list(options) if allow_destinations else []
     present = {row["value"] for row in choices}
-    choices.extend({"value": value, "label": "Unavailable saved member"}
-                   for value in missing if value not in present)
+    from homeassistant.helpers import device_registry as dr
+    devices = dr.async_get(hass)
+    for value in missing:
+        if value in present:
+            continue
+        device = devices.async_get(value.removeprefix('esphome:')) if value.startswith('esphome:') else None
+        choices.append({'value': value, 'label': (device.name_by_user or device.name or value) if device is not None else value})
     if allow_destinations or choices:
         fields["destination"] = {"selector": SelectSelector({"options": choices, "custom_value": allow_destinations,
                                                               "mode": "dropdown"})}
@@ -110,7 +115,7 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
         eligible = dict(iter_phone_memberships(self.hass, entry, self._kind))
         device_refs = selection_device_refs(self.hass, entry, eligible)
         options = destination_options(self.hass, entry)
-        values = {**previous, **previous.get("policy", {})}
+        values = {**previous.get("policy", {}), **previous}
         errors = {}
         if user_input is not None:
             values.update(user_input)

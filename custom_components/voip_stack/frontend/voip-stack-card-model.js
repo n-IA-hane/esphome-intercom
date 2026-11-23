@@ -17,8 +17,14 @@ export function publicDialTarget(entry) {
   if (typeof entry === "string") return entry.trim();
   const kind = String(entry?.metadata?.endpoint_kind || entry?.endpoint_kind || entry?.kind || "").trim().toLowerCase();
   const phone = ["esphome", "sip_account", "browser", "ha_softphone"].includes(kind);
-  for (const value of [entry?.extension, entry?.number, entry?.username, entry?.sip_uri_user,
-    phone ? entry?.id : "", entry?.sip_uri, entry?.name]) {
+  const id = String(entry?.id || "").trim();
+  const deviceId = String(entry?.device_id || entry?.metadata?.device_id || "").trim();
+  const username = id !== deviceId && /^[a-zA-Z0-9_.-]+$/.test(id) ? id : "";
+  const preferred = phone
+    ? [entry?.username || entry?.metadata?.username, entry?.sip_uri_user || entry?.metadata?.sip_uri_user,
+      username, entry?.extension, entry?.number, entry?.sip_uri, entry?.name]
+    : [entry?.extension, entry?.number, entry?.sip_uri, entry?.name];
+  for (const value of preferred) {
     const address = String(value ?? "").trim();
     if (address) return address;
   }
@@ -35,6 +41,8 @@ export function targetFromRosterEntry(entry) {
   const signaling = metadata.sip_transport || metadata.signaling_transport || "";
   return {
     id: entry?.id || "",
+    username: entry?.username || metadata.username || "",
+    sip_uri_user: entry?.sip_uri_user || metadata.sip_uri_user || "",
     endpoint_id: metadata.endpoint_id || "",
     device_id: metadata.device_id || "",
     name: publicDisplayName(entry),

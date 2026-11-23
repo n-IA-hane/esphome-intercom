@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import asyncio
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, ClassVar
 
 from homeassistant.core import HomeAssistant
@@ -48,6 +49,7 @@ class LocalCallApplication:
     local_source: PendingLocalSource | None = None
     source_client: object | None = None
     resource_key: str = ""
+    _answer_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     @property
     def ref(self):
@@ -102,6 +104,11 @@ class LocalCallApplication:
         self.media = None
 
     async def answer(self) -> None:
+        """Commit one media adoption when the runner and forwarder both await it."""
+        async with self._answer_lock:
+            await self._answer_media()
+
+    async def _answer_media(self) -> None:
         self.require_current()
         if self.answered and self.media is not None:
             return
@@ -163,7 +170,7 @@ class LocalCallApplication:
                 self.invite.recv_format,
                 recv_formats=self.invite.recv_formats,
                 dtmf=dtmf,
-                remote_sdp=self.invite.remote_sdp,
+                remote_sdp=self.invite.remote_sdp, dtmf_direction=getattr(self.invite, "dtmf_direction", None),
             )
             result = await async_commit_runtime_answer(
                 registry,
@@ -176,6 +183,7 @@ class LocalCallApplication:
                 callee=self.contact.display_name,
                 route_kind=self.owner,
                 response_already_sent=self.answered or self.local_source is not None,
+                media_contract=self.invite,
                 **({
                     "endpoint_id": self.local_source.call.caller_endpoint_id,
                     "source_endpoint_id": self.local_source.call.caller_endpoint_id,
@@ -361,7 +369,8 @@ def bind_application_source_dialog(application):
                 answer_video_rtp_port=video_update.answer_video_rtp_port)
         return commit
     client.on_media_update = prepare
-    def on_info(digit):
+    def on_info(digit, _duration_ms=160):
         if registry.resource_for(session.call_id, "relay") is media and media.on_dtmf is not None:
             media.on_dtmf("left", digit, "sip_info")
     client.on_info_dtmf = on_info
+    client.on_info_dtmf_event = None

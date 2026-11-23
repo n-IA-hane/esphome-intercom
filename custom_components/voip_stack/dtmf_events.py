@@ -7,7 +7,8 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION, canonical_call_origin
-from .dtmf import parse_sip_info_digit
+from .dtmf import parse_sip_info_digit, parse_sip_info_duration
+from .core.sip import is_picture_fast_update
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
 from .runtime_data import call_runtime_artifacts, sip_endpoint_manager
@@ -17,6 +18,28 @@ from .const import SIP_DTMF_EVENT
 _LOGGER = logging.getLogger(__name__)
 
 
+async def _request_video_refresh(hass, call_id):
+    """Use the existing opposite media/signaling owner for one refresh request."""
+    registry = call_registry(hass)
+    session_id = registry.resolve_session_id(call_id)
+    side = "right" if session_id != call_id else "left"
+    relay = registry.resource_for(session_id, "relay")
+    video = getattr(relay, "video_relay", None)
+    if video is None:
+        return
+    destination = "left" if side == "right" else "right"
+    if video is not None and video.request_keyframe(destination):
+        return
+    target = session_id if destination == "left" else registry.bridge_link_for(session_id)
+    client = registry.sip_client_for(target)
+    if client is not None:
+        await client.request_video_keyframe()
+    else:
+        manager = sip_endpoint_manager(hass)
+        if manager is not None:
+            await manager.async_request_video_keyframe(target)
+
+
 async def handle_sip_info(
     hass: HomeAssistant,
     request,
@@ -24,6 +47,10 @@ async def handle_sip_info(
     transport,
 ) -> None:
     """Route one in-dialog SIP INFO digit to its active media owner."""
+
+    if is_picture_fast_update(request.header("Content-Type"), request.body):
+        await _request_video_refresh(hass, request.header("Call-ID"))
+        return
 
     digit = parse_sip_info_digit(request.header("Content-Type"), request.body)
     if not digit:
@@ -43,9 +70,14 @@ async def handle_sip_info(
         relay = registry.resource_for(session_id, "relay")
         callback = getattr(relay, "on_dtmf", None)
         if callback is not None:
-            callback(side, digit, "sip_info")
             if getattr(relay, "private_dtmf", False):
+                callback(side, digit, "sip_info")
                 return
+            event = getattr(relay, "on_info_dtmf_event", None)
+            if event is not None:
+                event(side, digit, parse_sip_info_duration(request.body))
+            else:
+                callback(side, digit, "sip_info")
             _LOGGER.info(
                 "SIP in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
                 call_id,
@@ -161,7 +193,7 @@ def attach_dtmf_event_bridge(
 ) -> None:
     """Publish negotiated DTMF and translate legacy SIP INFO to RFC 4733."""
 
-    def _emit(side: str, digit: str, transport: str) -> None:
+    def _emit(side: str, digit: str, transport: str, *, duration_ms=160) -> None:
         publish_dtmf_event(
             hass,
             call_id=call_id,
@@ -175,32 +207,39 @@ def attach_dtmf_event_bridge(
         if transport == "sip_info":
             # SIP INFO is accepted as an ingress compatibility format. The
             # opposite leg still receives the negotiated RFC 4733 RTP event.
-            relay.relay_dtmf(side, digit)
+            relay.relay_dtmf(side, digit, duration_ms=duration_ms)
 
     relay.on_dtmf = _emit
+    relay.on_info_dtmf_event = lambda side, digit, duration_ms: _emit(
+        side, digit, "sip_info", duration_ms=duration_ms)
 
-    async def _fallback(source_side: str, digit: str) -> bool:
+    async def _fallback(source_side: str, digit: str, duration_ms=160) -> bool:
         if source_side == "left" and client is not None:
             send = getattr(client, "send_dtmf_info", None)
-            return bool(callable(send) and await send(digit))
+            return bool(callable(send) and await send(digit, duration_ms=duration_ms))
         if source_side == "left" and dest_call_id:
             endpoint = sip_endpoint_manager(hass)
-            return bool(endpoint is not None and await endpoint.async_send_dtmf_info(dest_call_id, digit))
+            return bool(endpoint is not None and await endpoint.async_send_dtmf_info(dest_call_id, digit, duration_ms=duration_ms))
         if source_side == "right":
             if source_client is not None:
-                return bool(await source_client.send_dtmf_info(digit))
+                return bool(await source_client.send_dtmf_info(digit, duration_ms=duration_ms))
             endpoint = sip_endpoint_manager(hass)
             return bool(
                 endpoint is not None
-                and await endpoint.async_send_dtmf_info(call_id, digit)
+                and await endpoint.async_send_dtmf_info(call_id, digit, duration_ms=duration_ms)
             )
         return False
 
     relay.on_dtmf_fallback = _fallback
+    relay.on_dtmf_fallback_event = _fallback
     if client is not None:
-        client.on_info_dtmf = lambda digit: _emit("right", digit, "sip_info")
+        client.on_info_dtmf = None
+        client.on_info_video = lambda: _request_video_refresh(hass, dest_call_id)
+        client.on_info_dtmf_event = lambda digit, duration_ms=160: _emit("right", digit, "sip_info", duration_ms=duration_ms)
     if source_client is not None:
-        source_client.on_info_dtmf = lambda digit: _emit("left", digit, "sip_info")
+        source_client.on_info_dtmf = None
+        source_client.on_info_video = lambda: _request_video_refresh(hass, call_id)
+        source_client.on_info_dtmf_event = lambda digit, duration_ms=160: _emit("left", digit, "sip_info", duration_ms=duration_ms)
 
 
 def attach_direct_client_dtmf_events(
@@ -213,7 +252,7 @@ def attach_direct_client_dtmf_events(
 ) -> None:
     """Project SIP INFO received by a direct outbound softphone dialog."""
 
-    client.on_info_dtmf = lambda digit: publish_dtmf_event(
+    client.on_info_dtmf_event = lambda digit, _duration_ms=160: publish_dtmf_event(
         hass,
         call_id=call_id,
         dest_call_id="",

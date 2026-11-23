@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
@@ -48,6 +49,30 @@ class TransferResult:
     status: str
     destination: str = ""
     reason: str = ""
+    committed: bool = False
+    owner: str = ""
+    generation: int = 0
+    call_id: str = ""
+    continuation: asyncio.Task[TransferResult | None] | None = field(default=None, repr=False, compare=False)
+
+    def committed_for(self, session) -> bool:
+        """Match the committed receipt, even after a later application transition."""
+        return bool(self.committed and self.owner and session is not None
+                    and session.call_id == self.call_id and session.generation == self.generation)
+
+
+async def await_forward_result(task: asyncio.Task[TransferResult | None]) -> TransferResult | None:
+    """Await the same session's configured route chain, including its fallback."""
+    visited = set()
+    while task is not None:
+        if task in visited:
+            raise RuntimeError("Forward continuation cycle")
+        visited.add(task)
+        result = await asyncio.shield(task)
+        if result is None or result.continuation is None:
+            return result
+        task = result.continuation
+    return None
 
 
 @dataclass(frozen=True, slots=True)

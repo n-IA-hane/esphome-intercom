@@ -178,13 +178,13 @@ def sync_group_membership_projection(hass, entry):
         controller.schedule()
 
 
-def _apply_membership_updates(hass, entry, updates):
-    """Apply phone-level edits through the native group membership owner."""
-    from homeassistant.config_entries import ConfigSubentry
+def _membership_update_plan(hass, entry, updates, *, reconcile=True):
+    """Preflight the complete command before any membership is persisted."""
     from .group_config import group_records, normalize_group_data, reconcile_group_records, validate_group_namespace
     from .roster import normalize_roster_key
 
-    reconcile_group_records(hass, entry)
+    if reconcile:
+        reconcile_group_records(hass, entry)
     proposals = {}
     creations = []
     for endpoint_id, fields in updates.items():
@@ -217,6 +217,13 @@ def _apply_membership_updates(hass, entry, updates):
                     "extension": name if name.isascii() and name.isdigit() else ""})
                 validate_group_namespace(hass, entry, record)
                 creations.append(record)
+    return creations, proposals
+
+
+def _apply_membership_updates(hass, entry, updates):
+    """Apply phone-level edits through the native group membership owner."""
+    from homeassistant.config_entries import ConfigSubentry
+    creations, proposals = _membership_update_plan(hass, entry, updates)
     for record in creations:
         hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="group", title=record["name"],
             unique_id=f"group:{record['group_id']}", data=record))

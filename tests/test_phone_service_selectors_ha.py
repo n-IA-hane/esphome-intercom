@@ -26,7 +26,7 @@ async def register_actions(hass):
     async def handler(call):
         return None
 
-    for name in ('call', 'forward', 'transfer', 'pickup', 'set_phone_queues', 'provision_phone', 'purge_devices'):
+    for name in ('call', 'forward', 'transfer', 'pickup', 'set_phone_queues', 'provision_phone'):
         hass.services.async_register('voip_stack', name, handler)
 
 
@@ -56,9 +56,9 @@ async def test_action_selectors_save_public_strings_and_allow_manual_number(phon
     assert 'device' in source
     assert destination['options'] == [
         {'value': 'Assistenza', 'label': 'Assistenza'},
-        {'value': '101', 'label': 'Casa'},
+        {'value': 'Casa', 'label': 'Casa'},
         {'value': '7998', 'label': 'Citofono'},
-        {'value': '102', 'label': 'Ws3'},
+        {'value': 'Ws3', 'label': 'Ws3'},
     ]
     assert SelectSelector(destination)('Casa') == 'Casa'
     assert SelectSelector(destination)('101') == '101'
@@ -68,7 +68,8 @@ async def test_action_selectors_save_public_strings_and_allow_manual_number(phon
     advanced = actions['transfer']['fields']['advanced']['fields']
     assert 'device' in advanced['device_id']['selector']
     assert 'device' in actions['provision_phone']['fields']['device_id']['selector']
-    assert 'device' in actions['purge_devices']['fields']['device_id']['selector']
+    assert 'purge_devices' not in actions
+    assert not lab.hass.services.has_service('voip_stack', 'purge_devices')
 
 
 async def test_directory_changes_refresh_current_service_choices(phone_lab):
@@ -112,7 +113,7 @@ async def test_selected_addresses_keep_duplicate_labels_distinct_and_use_known_r
     actions = await descriptions(lab)
     selector = actions['call']['fields']['destination']['selector']['select']
     options = selector['options']
-    assert sorted(option['value'] for option in options if option['label'] == 'Kitchen') == ['201', '202', 'charlie']
+    assert sorted(option['value'] for option in options if option['label'] == 'Kitchen') == ['alice', 'bob', 'charlie']
     assert sorted(option['value'] for option in options if option['label'] == 'Supplier') == ['+12025550123', '+12025550124']
     assert 'device' in actions['call']['fields']['device_id']['selector']
     assert 'device' in actions['pickup']['fields']['target_device_id']['selector']
@@ -124,7 +125,7 @@ async def test_selected_addresses_keep_duplicate_labels_distinct_and_use_known_r
     )
     result = subprocess.run(['node', '--input-type=module', '-e', script], check=True, capture_output=True, text=True)
     addresses = json.loads(result.stdout)
-    assert addresses == ['201', '202', 'charlie', '+12025550123', '+12025550124', '601', 'Reception', 'Conference']
+    assert addresses == ['alice', 'bob', 'charlie', '+12025550123', '+12025550124', '601', 'Reception', 'Conference']
     assert set(addresses) == {option['value'] for option in options}
     for row, destination in zip(rows, addresses, strict=True):
         assert SelectSelector(selector)(destination) == destination
@@ -184,7 +185,7 @@ def phone_field(actions, service, path):
 async def test_native_phone_action_selectors_filter_account_models(phone_lab, service, path):
     from homeassistant.helpers.selector import DeviceSelector
     from custom_components.voip_stack.endpoint_device import (
-        BROWSER_PHONE_DEVICE_MODEL, SIP_ACCOUNT_DEVICE_MODEL,
+        SIP_ACCOUNT_DEVICE_MODEL,
     )
     lab = phone_lab
     async def handler(call):
@@ -197,7 +198,6 @@ async def test_native_phone_action_selectors_filter_account_models(phone_lab, se
     selector = DeviceSelector(config)
     assert selector.config['filter'] == [
         {'integration': 'voip_stack', 'model': SIP_ACCOUNT_DEVICE_MODEL},
-        {'integration': 'voip_stack', 'model': BROWSER_PHONE_DEVICE_MODEL},
     ]
 
 
@@ -240,15 +240,15 @@ async def test_provisioning_admin_and_trunk_selectors_keep_their_existing_scope(
     lab = phone_lab
     async def handler(call):
         return None
-    for service in ('purge_devices', 'provision_phone', 'get_phone_provisioning_state',
+    for service in ('provision_phone', 'get_phone_provisioning_state',
                     'rotate_phone_provisioning_token', 'call', 'send_to_voicemail'):
         lab.hass.services.async_register('voip_stack', service, handler)
     actions = (await async_get_all_descriptions(lab.hass))['voip_stack']
-    assert phone_field(actions, 'purge_devices', ('device_id',))['selector']['device'] == {
-        'filter': [{'integration': 'esphome'}], 'multiple': False}
+    assert 'purge_devices' not in actions
+    assert not lab.hass.services.has_service('voip_stack', 'purge_devices')
     for service in ('provision_phone', 'get_phone_provisioning_state', 'rotate_phone_provisioning_token'):
         assert phone_field(actions, service, ('device_id',))['selector']['device'] == {'integration': 'voip_stack', 'multiple': False}
     assert phone_field(actions, 'call', ('trunk_id',))['selector']['device'] == {
         'filter': [{'integration': 'voip_stack', 'model': 'SIP trunk'}], 'multiple': False}
     assert phone_field(actions, 'send_to_voicemail', ('advanced', 'device_id'))['selector']['device'] == {
-        'filter': [{'integration': 'voip_stack', 'model': 'Home Assistant softphone'}], 'multiple': False}
+        'filter': [{'integration': 'voip_stack', 'model': 'SIP account'}], 'multiple': False}

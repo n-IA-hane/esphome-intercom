@@ -302,7 +302,7 @@ async def test_entry_reload_announces_ready_after_new_runtime_can_snapshot(
     hass.data["voip_stack"] = {}
     monkeypatch.setattr(voip_stack, "_async_setup_shared", AsyncMock())
     monkeypatch.setattr(voip_stack, "_async_start_sip_trunk", AsyncMock())
-    monkeypatch.setattr(voip_stack, "_deferred_phonebook_sync", AsyncMock())
+    monkeypatch.setattr(voip_stack, "_initialize_directory", AsyncMock())
     monkeypatch.setattr(phone_services, "async_setup_phone_services", AsyncMock())
     installed_phonebooks = []
     async def forward_platforms(entry, platforms):

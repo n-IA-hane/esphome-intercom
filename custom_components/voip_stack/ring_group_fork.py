@@ -194,6 +194,10 @@ def build_ring_group_fork(
                 if on_leg_state is not None:
                     on_leg_state(outbound, "closed")
 
+        def _prepare_close(mode: LegCloseMode, outbound: OutboundLeg = attempt) -> None:
+            if mode is LegCloseMode.ANSWERED_ELSEWHERE:
+                outbound.client.cancel_reason = "answered_elsewhere"
+
         fork_candidates.append(
             DialCandidate(
                 candidate_id,
@@ -202,6 +206,7 @@ def build_ring_group_fork(
                 tier=attempt.tier,
                 order=attempt.order,
                 endpoint_id=attempt.endpoint_id,
+                before_close=_prepare_close,
             )
         )
 

@@ -104,6 +104,8 @@ async def phone_lab(hass):
     owner = getattr(entry.runtime_data, "phone_provisioning", None)
     if owner is not None:
         await owner.async_close()
+    if entry.runtime_data.sip is not None:
+        await entry.runtime_data.sip.async_shutdown()
     from custom_components.voip_stack.endpoint_lifecycle import cancel_runtime_tasks
     await cancel_runtime_tasks(hass)
     unsub()
@@ -118,13 +120,17 @@ async def test_setup_entry_provisions_device_name_on_existing_native_owner(phone
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
         "phone_services": {"listen_host": "127.0.0.1", "ldap_port": 0}})
     for name in ("_async_setup_shared", "_async_apply_assist_intents", "_async_start_sip_trunk",
-                 "_deferred_phonebook_sync"):
+                 "_initialize_directory"):
         monkeypatch.setattr(voip_stack, name, AsyncMock())
     monkeypatch.setattr(mailbox, "async_setup_mailboxes", AsyncMock())
     monkeypatch.setattr(lab.hass.config_entries, "async_forward_entry_setups", AsyncMock())
 
     async def start(_hass):
-        lab.entry.runtime_data.sip = lab.runtime.sip
+        from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+        owner = SipEndpointRuntime(allow_dark_sessions=True)
+        owner.attach_component('registrar', lab.registrar)
+        owner.activate()
+        lab.entry.runtime_data.sip = owner
         return True
 
     monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", start)
@@ -310,10 +316,10 @@ async def test_name_node_and_address_changes_keep_commissioned_credential_and_en
     assert renamed.username == phone.username and renamed.password == phone.password
     assert renamed.endpoint_id == phone.endpoint_id
     account = phone_subentry(lab)
-    assert account.subentry_id == subentry_id and account.title == "Camera"
-    assert account_service_device(lab).name == "Camera"
+    assert account.subentry_id == subentry_id and account.title == phone.display_name
+    assert account_service_device(lab).name == phone.display_name
     assert renamed.route_id == "renamed_node" and renamed.api_host == "127.0.0.3"
-    assert lab.sent[3:] == [("set_ha_display_name", {"name": "Camera"})]
+    assert lab.sent[3:] == []
     assert len(lab.runtime.endpoints.endpoints) == 1
 
 
@@ -341,18 +347,19 @@ async def test_managed_account_in_native_list_links_to_device_and_delete_revokes
     assert response["success"] and response["result"] == [{
         "subentry_id": row.subentry_id, "subentry_type": "phone", "title": "Ingresso", "unique_id": row.unique_id}]
     assert row.unique_id == "phone:" + phone.endpoint_id
-    assert row.data["kind"] == "esphome" and row.data["device_id"] == lab.device.id
+    assert row.data["kind"] == "sip_account" and row.data["managed_esphome"] and row.data["device_id"] == lab.device.id
     assert (row.data["username"], row.data["password"]) == (phone.username, phone.password)
     assert "endpoint_id" not in row.data and "account_subentry_id" not in row.data
     assert "managed_esphome_phones" not in lab.entry.data
     assert phone.password not in str(response)
-    assert not phone_subentries(lab.entry)
+    assert phone_subentries(lab.entry) == [row]
     service = account_service_device(lab)
     assert len(dr.async_get(lab.hass).devices) == 2
     result = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"),
         context={"source": "reconfigure", "subentry_id": row.subentry_id})
-    assert result["reason"] == "managed_esphome_account"
-    assert result["description_placeholders"] == {"device_id": lab.device.id, "username": phone.username}
+    assert result["type"] == "form" and result["step_id"] == "sip_account"
+    assert result["data_schema"]({"name": "Ingresso", "password": phone.password})["username"] == phone.username
+    lab.hass.config_entries.subentries.async_abort(result['flow_id'])
     await bind_account(lab, phone)
     await client.send_json({"id": 2, "type": "config_entries/subentries/delete", "entry_id": lab.entry.entry_id,
                             "subentry_id": row.subentry_id})
@@ -380,6 +387,8 @@ async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(ma
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source",
                                        "network", "stream", "web_rtc", "stt", "tts", "voip_stack"})
     prepare_frontend_dependency(lab.hass)
+    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
+    entry_phonebook(lab.hass, lab.runtime)
     lab.entry.mock_state(lab.hass, ConfigEntryState.LOADED)
     platforms = ["sensor", "binary_sensor", "event", "switch"]
     await lab.hass.config_entries.async_forward_entry_setups(lab.entry, platforms)
@@ -390,11 +399,11 @@ async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(ma
         phone = phone_record(lab)
         entities = er.async_get(lab.hass)
         account_entities = {e.domain: e for e in er.async_entries_for_device(entities, service.id)}
-        assert set(account_entities) == {"sensor", "binary_sensor", "event"}
+        assert set(account_entities) == {"sensor", "binary_sensor", "event", "switch"}
         assert all(e.platform == "voip_stack" and e.config_subentry_id == service.config_subentry_id
                    for e in account_entities.values())
         assert all(e.platform == "esphome" for e in er.async_entries_for_device(entities, lab.device.id))
-        assert not _ha_softphone_devices(lab.hass)
+        assert [row['endpoint_id'] for row in _ha_softphone_devices(lab.hass)] == [phone.endpoint_id]
         assert lab.hass.states.get(account_entities["binary_sensor"].entity_id).state == "off"
         await bind_account(lab, phone)
         hardware, = await _get_voip_devices(lab.hass)
@@ -410,6 +419,7 @@ async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(ma
         with calls.state_operation():
             session = calls.upsert("incoming-esp-line", state="ringing", owner="router", caller="Office",
                 callee="Ingresso", dest_endpoint_id=phone.endpoint_id)
+            calls.add_leg(session.call_id, 'managed-callee', role='callee', state='ringing', endpoint_id=phone.endpoint_id)
             calls.claim_endpoint(session.call_id, phone.endpoint_id, role="destination")
         assert lab.hass.states.get(state_id).state == "ringing"
         assert lab.hass.states.get(state_id).attributes["call_id"] == session.call_id
@@ -455,7 +465,8 @@ async def test_old_offline_managed_account_migrates_to_native_subentry_without_r
     await lab.controller.async_sync()
     await lab.controller.async_sync()
     phone = phone_record(lab)
-    assert phone.password == old["password"] and phone.username == old["username"]
+    assert phone.password == old["password"] and phone.username == "Ingresso"
+    assert lab.entry.data['legacy_phone_references'][old['username']] == phone.username
     row = phone_subentry(lab)
     assert list(lab.entry.subentries) == [row.subentry_id] and not lab.sent
     account_service_device(lab)
@@ -518,8 +529,15 @@ async def test_manual_account_cannot_take_a_persisted_managed_username(managed):
 
 async def test_live_settings_owner_retains_unknown_but_clears_explicit_empty(managed):
     from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.phone_config import update_phone_subentry
+    from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships
     from custom_components.voip_stack.websocket_api import _get_voip_devices
     lab = managed
+    await lab.controller.async_sync()
+    account = phone_record(lab)
+    update_phone_subentry(lab.hass, lab.entry, account.endpoint_id,
+        {'extension': '301', 'conference_group': 'Famiglia', 'conference_ring': True})
+    await async_set_phone_memberships(lab.hass, lab.entry, account.endpoint_id, 'ring_group', ['Casa'])
     entities = {}
     for domain, role, value in (("text", "voip_extension", "301"),
             ("text", "voip_ring_groups", "Casa"), ("text", "voip_conference_groups", "Famiglia"),
@@ -538,12 +556,18 @@ async def test_live_settings_owner_retains_unknown_but_clears_explicit_empty(man
         lab.hass.states.async_set(entity_id, "unavailable")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab) == phone
-    # Reconnect snapshots retain HA authority; a subsequent live edit may clear it.
+    # Firmware fields project the account; clearing them cannot change HA policy.
     lab.hass.states.async_set(entities["voip_ring_groups"], "Casa")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     lab.hass.states.async_set(entities["voip_ring_groups"], "")
     lab.hass.states.async_set(entities["voip_conference_groups"], "")
     lab.hass.states.async_set(entities["voip_ring_on_conference"], "off")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    endpoint = lab.runtime.endpoints.get(phone.endpoint_id)
+    assert (endpoint.ring_group, endpoint.conference_group, endpoint.conference_ring) == ('Casa', 'Famiglia', True)
+    update_phone_subentry(lab.hass, lab.entry, phone.endpoint_id,
+        {'conference_group': '', 'conference_ring': False})
+    await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'ring_group', [])
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     device, = await _get_voip_devices(lab.hass)
     endpoint = lab.runtime.endpoints.get(phone.endpoint_id)
@@ -552,8 +576,10 @@ async def test_live_settings_owner_retains_unknown_but_clears_explicit_empty(man
 
 
 async def test_queue_declaration_changes_preserve_native_delivery_and_unknown_cache(managed):
-    from custom_components.voip_stack.phone_queue_membership import iter_phone_queue_memberships
+    from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships, iter_phone_queue_memberships
     lab = managed
+    await lab.controller.async_sync()
+    await async_set_phone_memberships(lab.hass, lab.entry, phone_record(lab).endpoint_id, 'queues', ['Support', '700'])
     entity = er.async_get(lab.hass).async_get_or_create("text", "esphome",
         "84c7bb000001-voip_queues", config_entry=lab.native,
         device_id=lab.device.id, suggested_object_id="voip_queues")
@@ -572,8 +598,14 @@ async def test_queue_declaration_changes_preserve_native_delivery_and_unknown_ca
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     lab.hass.states.async_set(entity.entity_id, "700, New queue")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab).queues == phone.queues
+    await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'queues', ['700', 'New queue'])
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == ("700", "New queue")
     lab.hass.states.async_set(entity.entity_id, "")
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab).queues == ('700', 'New queue')
+    await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'queues', [])
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == ()
     assert lab.runtime.endpoints.get(phone.endpoint_id).queues == ()
@@ -583,6 +615,8 @@ async def test_queue_declaration_changes_preserve_native_delivery_and_unknown_ca
 async def test_offline_desired_membership_survives_stale_reconnect_and_accepts_live_edits(managed):
     from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships
     lab = managed
+    await lab.controller.async_sync()
+    await async_set_phone_memberships(lab.hass, lab.entry, phone_record(lab).endpoint_id, 'queues', ['Old'])
     entity = er.async_get(lab.hass).async_get_or_create("text", "esphome",
         "84c7bb000001-voip_queues", config_entry=lab.native,
         device_id=lab.device.id, suggested_object_id="voip_queues")
@@ -602,7 +636,7 @@ async def test_offline_desired_membership_survives_stale_reconnect_and_accepts_l
     await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, "queues", [])
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == ()
-    assert phone_record(lab).membership_pending == {"queues": ""}
+    assert phone_record(lab).membership_pending == {}
     assert not delivered
     lab.native.runtime_data.available = True
     lab.native.runtime_data.client.is_connected = True
@@ -623,6 +657,9 @@ async def test_offline_desired_membership_survives_stale_reconnect_and_accepts_l
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     lab.hass.states.async_set(entity.entity_id, "New local")
     await lab.hass.async_block_till_done(wait_background_tasks=True)
+    assert phone_record(lab).queues == ()
+    await async_set_phone_memberships(lab.hass, lab.entry, phone.endpoint_id, 'queues', ['New local'])
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert phone_record(lab).queues == ("New local",)
     assert phone_record(lab).membership_pending == {}
     assert lab.sent == sent
@@ -630,55 +667,70 @@ async def test_offline_desired_membership_survives_stale_reconnect_and_accepts_l
 
 async def test_central_group_batch_updates_browser_sip_and_offline_esp_atomically(managed):
     from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
-    from custom_components.voip_stack.phone_queue_membership import async_update_group_members
+    from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships, async_update_group_members
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
-    for endpoint_id, kind in (("browser:desk", "browser"), ("sip:desk", "sip_account")):
+    for endpoint_id, kind in (("browser_desk", "sip_account"), ("sip_desk", "sip_account")):
         _add_phone_subentry(lab.hass, lab.entry, data={"endpoint_id": endpoint_id,
-            "kind": kind, "name": endpoint_id, "username": endpoint_id.replace(":", "_"),
+            "kind": kind, "name": endpoint_id, "username": endpoint_id,
             "queues": ["Old", "Keep"], "ring_group": "Old ring, Keep ring"}, title=endpoint_id)
+        await async_set_phone_memberships(lab.hass, lab.entry, endpoint_id, 'queues', ['Old', 'Keep'])
+        await async_set_phone_memberships(lab.hass, lab.entry, endpoint_id, 'ring_group', ['Old ring', 'Keep ring'])
     sync_registry_from_entry(lab.hass, lab.entry)
     lab.native.runtime_data.available = False
     lab.native.runtime_data.client.is_connected = False
-    selected = ["browser:desk", "sip:desk", phone.endpoint_id]
+    selected = ["browser_desk", "sip_desk", phone.endpoint_id]
     await async_update_group_members(lab.hass, lab.entry, "queue", "Renamed", selected, old_name="Old")
     await async_update_group_members(lab.hass, lab.entry, "ring", "Renamed ring", selected, old_name="Old ring")
-    assert lab.runtime.endpoints.get("browser:desk").queues == ("Keep", "Renamed")
-    assert lab.runtime.endpoints.get("sip:desk").queues == ("Keep", "Renamed")
+    assert lab.runtime.endpoints.get("browser_desk").queues == ("Keep", "Renamed")
+    assert lab.runtime.endpoints.get("sip_desk").queues == ("Keep", "Renamed")
     assert phone_record(lab).queues == ("Renamed",)
-    assert phone_record(lab).membership_pending == {"queues": "Renamed", "ring_group": "Renamed ring"}
-    assert lab.runtime.endpoints.get("browser:desk").ring_group == "Keep ring, Renamed ring"
+    assert phone_record(lab).membership_pending == {}
+    assert lab.runtime.endpoints.get("browser_desk").ring_group == "Keep ring, Renamed ring"
     before = dict(lab.entry.data)
-    with pytest.raises(ValueError, match="existing VoIP phones"):
+    with pytest.raises(ValueError, match="configuration owner"):
         await async_update_group_members(lab.hass, lab.entry, "queue", "Renamed", selected + ["unknown"])
     assert dict(lab.entry.data) == before
     await async_update_group_members(lab.hass, lab.entry, "queue", "Renamed", [])
-    assert lab.runtime.endpoints.get("browser:desk").queues == ("Keep",)
+    assert lab.runtime.endpoints.get("browser_desk").queues == ("Keep",)
     assert phone_record(lab).queues == ()
     assert len(lab.sent) == 3
 
 
 async def test_legacy_direct_phone_uses_membership_only_record_and_removal_cleanup(managed):
+    """A saved direct-phone association upgrades to an ordinary offline SIP account."""
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
     from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships, iter_phone_memberships
+    from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
+    from custom_components.voip_stack.group_config import reconcile_group_records
+    from homeassistant.helpers import issue_registry as ir
     lab = managed
-    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="direct:desk", name="Direct", kind=EndpointKind.ESPHOME,
-        device_id=lab.device.id, queues=["Old"], ring_group="Old ring"))
+    old = 'esphome:' + lab.device.id
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=old, username='phone_node', name="Direct",
+        kind=EndpointKind.ESPHOME, device_id=lab.device.id, queues=["Old"], ring_group="Old ring"))
+    lab.hass.config_entries.async_update_entry(lab.entry, version=7, minor_version=3, data={**lab.entry.data,
+        'esphome_phone_memberships': {old: {'device_id': lab.device.id, 'queues': ['Old'], 'ring_group': 'Old ring'}}})
     lab.native.runtime_data.services = {}
     lab.native.runtime_data.available = False
-    await async_set_phone_memberships(lab.hass, lab.entry, "direct:desk", "queues", ["New"])
-    record = lab.entry.data["esphome_phone_memberships"]["direct:desk"]
-    assert record["membership_pending"] == {"queues": "New"}
-    assert "password" not in record
-    assert dict(iter_phone_memberships(lab.hass, lab.entry, "queue"))["direct:desk"] == ("New",)
-    lab.hass.states.async_set("text.direct_voip_queues", "Old")
-    lab.native.runtime_data.available = True
+    await async_migrate_account_identities(lab.hass, lab.entry)
+    reconcile_group_records(lab.hass, lab.entry)
     await lab.controller.async_sync()
-    assert lab.runtime.endpoints.get("direct:desk").queues == ("New",)
+    phone = phone_record(lab)
+    assert phone.username == phone.endpoint_id == 'Ingresso'
+    assert phone_subentry(lab).data['kind'] == 'sip_account'
+    assert not lab.entry.data['esphome_phone_memberships']
+    assert lab.runtime.endpoints.get(old) is None
+    assert lab.runtime.endpoints.require(phone.username).availability.value == 'offline'
+    assert not lab.sent
+    issue = ir.async_get(lab.hass).async_get_issue('voip_stack', 'esphome_account_setup_' + lab.entry.entry_id + '_' + lab.device.id)
+    assert issue.translation_key == 'esphome_account_setup_required'
+    await async_set_phone_memberships(lab.hass, lab.entry, phone.username, "queues", ["New"])
+    assert dict(iter_phone_memberships(lab.hass, lab.entry, "queue"))[phone.username] == ("New",)
     dr.async_get(lab.hass).async_remove_device(lab.device.id)
     await lab.controller.async_sync()
-    assert lab.entry.data["esphome_phone_memberships"] == {}
+    assert not lab.entry.data['esphome_phone_memberships']
+    assert not lab.registrar.accounts and not lab.runtime.endpoints.endpoints
 
 
 @pytest.mark.parametrize("replacement", ["native", "client", "inventory", "runtime", "close"])
@@ -707,7 +759,6 @@ async def test_api_await_cannot_commit_into_replaced_owner(managed, replacement)
 
 
 async def test_offline_and_legacy_suspend_without_mailbox_or_credential_purge(managed):
-    from homeassistant.helpers import entity_registry as er
     from custom_components.voip_stack.websocket_api import _get_voip_devices
     from custom_components.voip_stack.store import sip_accounts
     lab = managed
@@ -724,23 +775,20 @@ async def test_offline_and_legacy_suspend_without_mailbox_or_credential_purge(ma
     assert lab.registrar.registered_contacts(phone.username)
     native.available = True
     native.client.is_connected = True
-    entity = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "84c7bb000001-voip_endpoint",
-        config_entry=lab.native, device_id=lab.device.id, suggested_object_id="legacy_voip_endpoint")
-    lab.hass.states.async_set(entity.entity_id,
-        "Legacy|127.0.0.2|5060|40000|full_duplex|16000:s16le:1:20|16000:s16le:1:20|sip_udp|301")
     native.services = {}
     await lab.controller.async_sync()
     suspended = phone_record(lab)
     assert not suspended.active and suspended.password == phone.password
     assert lab.entry.data["esphome_mailboxes"][phone.endpoint_id]["enabled"]
-    assert not sip_accounts(lab.hass) and not lab.registrar.registered_contacts(phone.username)
+    assert [account.username for account in sip_accounts(lab.hass)] == [phone.username]
+    assert lab.registrar.registered_contacts(phone.username)
     device, = await _get_voip_devices(lab.hass)
-    assert not device.get("managed") and device["host"] == "127.0.0.2"
+    assert device.get("managed") and device['registered'] and device["host"] == "127.0.0.2"
     assert lab.runtime.endpoints.get(phone.endpoint_id).username == phone.username
-    # Restart/bootstrap with an incomplete API inventory cannot reactivate it.
+    # An incomplete API inventory cannot revoke a standard SIP account.
     native.first_connect_done.clear()
     native.services = native_services()
-    assert not sip_accounts(lab.hass)
+    assert [account.username for account in sip_accounts(lab.hass)] == [phone.username]
     native.first_connect_done.set()
     await lab.controller.async_sync()
     assert phone_record(lab).active and phone_record(lab).password == phone.password
@@ -815,7 +863,7 @@ async def test_private_native_rpc_uses_real_api_client_and_protobuf_wire(managed
         await asyncio.wait_for(completed.wait(), 2)
         assert client.is_connected and len(messages) == 3
         phone = phone_record(lab)
-        assert [message.key for message in messages] == [1, 2, 3]
+        assert [message.key for message in messages] == [1, 2, 4]
         account = {arg.name: value for arg, value in zip(native_services()[2].args, messages[1].args, strict=True)}
         assert account["account_id"].string_ == "ha"
         assert account["username"].string_ == phone.username
@@ -831,10 +879,11 @@ async def test_private_native_rpc_uses_real_api_client_and_protobuf_wire(managed
 
 
 async def test_managed_default_does_not_replace_multiple_manual_qa_accounts(managed):
+    from custom_components.voip_stack.store import update_sip_accounts
     lab = managed
     manual = [{"username": f"qa_{index}", "display_name": f"QA {index}", "password": "fixture-only"}
               for index in range(2)]
-    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "sip_accounts": manual})
+    update_sip_accounts(lab.hass, manual)
     await lab.controller.async_sync()
     phone = phone_record(lab)
     assert set(lab.registrar.accounts) == {phone.username.casefold(), "qa_0", "qa_1"}
@@ -892,12 +941,14 @@ async def test_quarantine_record_migration_preserves_matching_mac_origin_identit
         username=username, name="Ingresso", kind=EndpointKind.ESPHOME))
     await lab.controller.async_sync()
     migrated = phone_record(lab)
-    assert migrated.username == username
+    expected = username if username == 'Caffè' else 'Ingresso'
+    assert migrated.username == expected
     assert migrated.password == "synthetic-retained-password"
-    assert migrated.endpoint_id == historical_id
-    assert list(lab.registrar.accounts) == [username.casefold()]
+    assert migrated.endpoint_id == expected
+    assert lab.entry.data['legacy_phone_references'][historical_id] == expected
+    assert list(lab.registrar.accounts) == [expected.casefold()]
     assert len(lab.runtime.endpoints.endpoints) == 1
-    assert lab.sent[1][1]["username"] == username
+    assert lab.sent[1][1]["username"] == expected
     assert lab.sent[1][1]["password"] == "synthetic-retained-password"
 
 
@@ -916,15 +967,29 @@ async def test_native_name_selection_is_exact_and_independent_of_ha(managed, nod
     dr.async_get(lab.hass).async_update_device(lab.device.id, name_by_user="My HA label")
     await lab.controller.async_sync()
     phone = phone_record(lab)
-    assert phone.username == expected and phone.display_name == "My HA label"
+    assert phone.username == expected and phone.display_name == expected
     assert lab.sent[1][1]["username"] == lab.sent[1][1]["auth_username"] == expected
     assert lab.sent[2] == ("register_ha_account", {})
     await bind_account(lab, phone)
     assert lab.registrar.registered_contacts(expected)
+    from .test_sip_account_username_identity_ha import register_client
+    await register_client(lab, phone, host='127.0.0.9', port=42001)
+    account_device = account_service_device(lab)
+    dr.async_get(lab.hass).async_update_device(account_device.id, name_by_user='Chosen account caption')
+    native_id, subentry_id = account_device.id, phone_subentry(lab).subentry_id
+    contacts = {row.flow_key for row in lab.registrar.registered_contacts(expected)}
+    assert len(contacts) == 2
     native.device_info = replace(native.device_info, name="new_node", friendly_name="New friendly name")
     await lab.controller.async_sync()
-    assert phone_record(lab).username == "New friendly name"
-    assert lab.sent[-2][1]["username"] == "New friendly name"
+    assert phone_record(lab).username == expected
+    assert phone_record(lab).display_name == expected
+    assert phone_subentry(lab).data['name'] == expected
+    assert phone_record(lab).password == phone.password
+    assert {row.flow_key for row in lab.registrar.registered_contacts(expected)} == contacts
+    assert phone_subentry(lab).subentry_id == subentry_id
+    assert account_service_device(lab).id == native_id
+    assert dr.async_get(lab.hass).async_get(native_id).name_by_user == 'Chosen account caption'
+    assert len(lab.sent) == 3
 
 
 @pytest.mark.parametrize(("node", "friendly"), [("door-000001", "Desk"), ("door", "Piano Terra")])
@@ -957,14 +1022,15 @@ async def test_name_limit_repairs_and_native_named_account_recovers_after_unavai
     assert issue not in ir.async_get(lab.hass).issues
     native.services = native_services(managed=False)
     await lab.controller.async_sync()
-    assert phone_record(lab) == commissioned and len(lab.sent) == 3
+    assert phone_record(lab) == replace(commissioned, active=False) and len(lab.sent) == 3
+    assert lab.registrar.accounts[commissioned.username.casefold()].password == commissioned.password
     native.services = native_services()
     native.device_info = replace(native.device_info, friendly_name="Renamed")
     await lab.controller.async_sync()
     renamed = phone_record(lab)
-    assert renamed.username == "Renamed" and renamed.password == commissioned.password
+    assert renamed.username == commissioned.username and renamed.password == commissioned.password
     assert renamed.device_id == commissioned.device_id and renamed.origin_entry_id == commissioned.origin_entry_id
-    assert lab.sent[-2][1]["username"] == "Renamed"
+    assert lab.sent[-2][1]["username"] == commissioned.username
     assert issue not in ir.async_get(lab.hass).issues
 
 
@@ -1108,7 +1174,7 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     original = phone_record(lab)
     original_account = phone_subentry(lab)
     original_service = account_service_device(lab)
-    assert original.username == legacy
+    assert original.username == 'Ingresso'
     await bind_account(lab, original)
     if delete_account:
         lab.hass.config_entries.async_remove_subentry(lab.entry, original_account.subentry_id)
@@ -1141,14 +1207,14 @@ async def test_readding_same_mac_enrolls_restored_device_with_new_entry_and_logi
     await lab.hass.async_block_till_done(wait_background_tasks=True)
 
     phone = phone_record(lab)
-    assert phone.endpoint_id == original.endpoint_id and phone.origin_entry_id == new.entry_id
+    assert phone.endpoint_id == new.title and phone.origin_entry_id == new.entry_id
     assert phone.username == new.title and phone.password != original.password
     account = phone_subentry(lab)
     service = account_service_device(lab)
     assert len(dr.async_get(lab.hass).devices) == 2
     assert lab.runtime.endpoints.by_device_id(service.id) is lab.runtime.endpoints.by_device_id(restored.id)
     assert account.subentry_id != original_account.subentry_id
-    assert account.unique_id == original_account.unique_id
+    assert account.unique_id == 'phone:' + new.title and account.unique_id != original_account.unique_id
     assert list(lab.entry.subentries) == [account.subentry_id]
     assert "managed_esphome_phones" not in lab.entry.data
     assert len(lab.sent) == old_rpc_count
@@ -1210,9 +1276,18 @@ async def test_managed_register_uses_generated_secret_on_real_udp_then_legacy_re
         assert lab.registrar.registered_contacts(phone.username)
         lab.native.runtime_data.services = {}
         await lab.controller.async_sync()
-        assert not lab.registrar.registered_contacts(phone.username)
-        assert (await send(3, authorization)).status_code == refused
-        assert statuses == [401, 200, refused]
+        assert lab.registrar.registered_contacts(phone.username)
+        authorization = build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+            username=phone.username, password=phone.password, method="REGISTER", uri=uri, nonce_count=2)
+        assert (await send(3, authorization)).status_code == 200
+        if global_registrar:
+            lab.hass.config_entries.async_remove_subentry(lab.entry, phone_subentry(lab).subentry_id)
+            await lab.controller.async_sync()
+        else:
+            lab.runtime.transport_config[CONF_REGISTRAR_ENABLED] = False
+            lab.registrar.enabled = False
+        assert (await send(4, authorization)).status_code == refused
+        assert statuses == [401, 200, 200, refused]
     finally:
         peer.close()
         await server.stop()

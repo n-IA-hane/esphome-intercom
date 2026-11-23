@@ -38,7 +38,7 @@ def isolate_listener_integrations(monkeypatch):
         config_entry_runtime, mailbox, phone_services, physical_phone_runtime,
     )
 
-    monkeypatch.setattr(config_entry_runtime, "async_refresh_and_push_phonebook", AsyncMock())
+    monkeypatch.setattr(config_entry_runtime, "async_refresh_directory", AsyncMock())
     monkeypatch.setattr(mailbox, "async_refresh_mailbox_state", AsyncMock())
     monkeypatch.setattr(phone_services, "async_reconcile_phone_services", AsyncMock())
     monkeypatch.setattr(physical_phone_runtime, "async_reconcile_physical_phone_runtime", AsyncMock())

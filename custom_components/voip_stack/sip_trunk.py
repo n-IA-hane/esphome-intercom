@@ -154,6 +154,7 @@ class SipTrunkClient:
         self.status_reason = ""
         self.last_sip_event = ""
         self.expires_at = 0.0
+        self._minimum_registration_expires = 0
         self._refresh_task: asyncio.Task | None = None
         self._receive_task: asyncio.Task | None = None
         self._stopped = False
@@ -508,7 +509,7 @@ class SipTrunkClient:
         while not self._stopped:
             if self.registered and self.expires_at > 0:
                 delay = _registration_refresh_delay(
-                    self.config.expires,
+                    max(self.config.expires, self._minimum_registration_expires),
                     self.expires_at,
                     time.time(),
                 )
@@ -1121,6 +1122,8 @@ class SipTrunkClient:
         if not self.config.register:
             return "registration_disabled"
         expires_value = int(self.config.expires if expires is None else expires)
+        if expires_value > 0:
+            expires_value = max(expires_value, self._minimum_registration_expires)
         auth_values: dict[str, str] = {}
         auth_challenges = DigestChallengeTracker()
         register_challenges: dict[str, tuple[str, int]] = {}
@@ -1238,6 +1241,7 @@ class SipTrunkClient:
                 if expires_value < minimum <= 86400:
                     interval_retried = True
                     expires_value = minimum
+                    self._minimum_registration_expires = minimum
                     for header, (challenge, count) in tuple(register_challenges.items()):
                         auth_values[header] = build_digest_authorization(
                             challenge_header=challenge, username=self.config.username,

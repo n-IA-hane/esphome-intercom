@@ -164,11 +164,14 @@ class PcmFrameConverter:
     def has_pending_pcm(self) -> bool:
         return bool(self._pending.shape[1])
 
-    def convert(self, data: bytes) -> list[bytes]:
-        variable_packet = not self.requires_fixed_input
+    def convert(self, data: bytes, *, final_fragment=False) -> list[bytes]:
+        """Convert a quantum; retirement may supply one aligned final fragment."""
+        variable_packet = not self.requires_fixed_input or final_fragment
         if variable_packet:
             stride = self.src.container_bytes_per_sample * self.src.channels
             valid_length = bool(data) and len(data) % stride == 0
+            if final_fragment:
+                valid_length = valid_length and len(data) <= self.src.nominal_frame_bytes
         else:
             valid_length = len(data) == self.src.nominal_frame_bytes
         if not valid_length:
@@ -191,3 +194,17 @@ class PcmFrameConverter:
             out.append(_encode_frame(self._pending[:, :frame_samples], self.dst))
             self._pending = self._pending[:, frame_samples:]
         return out
+
+    def drain_pending_pcm(self) -> bytes:
+        """Retire only converted samples, without zero padding or filter flushing."""
+        data = _encode_frame(self._pending, self.dst)
+        self._pending = np.empty((self.dst.channels, 0), dtype=np.float64)
+        return data
+
+    def prepend_pending_pcm(self, data: bytes) -> None:
+        """Carry a retired converter's target fragment into the same target FIFO."""
+        stride = self.dst.container_bytes_per_sample * self.dst.channels
+        if len(data) % stride or len(data) >= self.dst.nominal_frame_bytes:
+            raise ValueError("retired target fragment must fit below one complete output quantum")
+        if data:
+            self._pending = np.concatenate([_decode_frame(data, self.dst), self._pending], axis=1)

@@ -288,7 +288,7 @@ async def test_immediate_browser_call_and_unregister_use_current_binding_owner(w
         # Keep the old public projection deliberately unchanged. The actual
         # REGISTER owner still authenticates and commits the removal normally.
         lab.runtime.directory.replace(routing_snapshot(lab.runtime))
-        monkeypatch.setattr(endpoint_runtime, "_refresh_and_push_phonebook", AsyncMock())
+        monkeypatch.setattr(endpoint_runtime, "_refresh_directory", AsyncMock())
         await register_phone(wire, outbound=False, discover=False, cseq=3, expires=0)
         row = next(row for row in routing_snapshot(lab.runtime) if row.metadata.get("endpoint_id") == endpoint.endpoint_id)
         assert not row.metadata.get("sip_contacts") and not row.sip_uri

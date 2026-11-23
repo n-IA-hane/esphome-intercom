@@ -42,7 +42,6 @@ packages:
     file: ../visibility.yaml
     vars:
       _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if 'mwi' in firmware_features else '' }
-  call_media_route: !include '../../../lvgl/spotpear_call_media_route.yaml'
   lvgl_settings_nav: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   lvgl_settings_sync_volumes: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'
   lvgl_settings_sync_mute: !include '../../../lvgl/lvgl_settings_sync_mute.yaml'

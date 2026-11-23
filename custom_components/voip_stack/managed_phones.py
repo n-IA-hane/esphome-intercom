@@ -61,6 +61,12 @@ class ManagedPhone:
         mac = normalize_mac(self.mac)
         username = validate_managed_username(self.username)
         endpoint_id = self.endpoint_id or username
+        if (not all(isinstance(value, str) for value in (self.display_name, self.extension, self.route_id,
+                self.api_host, self.ring_group, self.conference_group))
+                or len(self.display_name.encode()) > 1024
+                or len(self.extension.encode()) > 1024
+                or any(ord(char) < 32 or ord(char) == 127 for char in self.display_name + self.extension)):
+            raise ValueError('Invalid managed phone settings')
         if (not isinstance(self.device_id, str) or not self.device_id
                 or not isinstance(self.origin_entry_id, str) or not self.origin_entry_id
                 or not isinstance(self.password, str) or not 1 <= len(self.password) <= 128
@@ -160,15 +166,15 @@ def save_managed_account(hass, entry, phone, *, username_source=None):
 def managed_phone_mode(_hass, origin, device_id: str, mac: str) -> bool | None:
     """Only a complete, MAC-verified native inventory can change firmware mode.
 
-    ESPHome retains this inventory on disconnect. A replacement API owner with
-    an incomplete inventory cannot silently reactivate a suspended credential.
+    ESPHome retains this inventory on disconnect. An incomplete replacement
+    inventory cannot authorize provisioning RPC; SIP accounts remain independent.
     """
     actions = verified_action_names(origin, mac)
     return MANAGED_ACTIONS <= actions if actions is not None else None
 
 
 def active_managed_accounts(hass, entry) -> list[SipAccount]:
-    """A suspended or permanently removed owner cannot regain SIP access."""
+    """Read retained upgrade input until canonical account subentries replace it."""
     records = managed_records(entry)
     if not records:
         return []

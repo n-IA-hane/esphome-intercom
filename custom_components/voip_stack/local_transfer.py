@@ -96,6 +96,8 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
                 raise RuntimeError("transfer participant changed before retirement")
             referrer.on_media_update = None
             referrer.on_info_dtmf = None
+            referrer.on_info_dtmf_event = None
+            referrer.on_info_video = None
         else:
             calls.remove_leg(original.call_id, old_destination)
             calls.forget_bridge_link(original.call_id)
@@ -135,7 +137,7 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
                 handoff.preserve(old_leg, "phase", "endpoint_id")
                 for value in (client, source_client, referrer):
                     if value is not None:
-                        handoff.preserve(value, "on_refer", "on_media_update", "on_info_dtmf")
+                        handoff.preserve(value, "on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
                 relay = SipRtpRelay.splice_audio(
                     source_relay, "left" if from_callee else "right", destination_relay, "right",
                     merge_reservations=merge_reservations, commit_owner=commit_owner,

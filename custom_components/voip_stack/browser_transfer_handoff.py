@@ -152,7 +152,7 @@ async def adopt_consultation(hass, runtime, source, grant):
                 with SessionHandoff(calls, original, consultation) as handoff:
                     source.preserve_handoff(handoff)
                     handoff.preserve(video, "adopted")
-                    handoff.preserve(client, "on_refer", "on_media_update", "on_info_dtmf")
+                    handoff.preserve(client, "on_refer", "on_media_update", "on_info_dtmf", "on_info_dtmf_event", "on_info_video")
                     handoff.preserve(relay, "on_dtmf", "on_dtmf_fallback", "on_media_route_changed", "video_relay")
                     source.commit()
                     relay.video_relay = video.relay

@@ -263,7 +263,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
         )
 
 
-def dispatch_route_fallback(hass, session, destination):
+def dispatch_route_fallback(hass, session, destination, *, on_failure="terminate"):
     """Continue a failed group in its existing call after branch cleanup."""
     registry = call_registry(hass)
     if not session.live or registry.forward_call is None or not destination:
@@ -278,9 +278,10 @@ def dispatch_route_fallback(hass, session, destination):
             context = registry.event_context(token.call_id)
             task = await registry.forward_call(call_id=token.call_id, destination=destination,
                 expected_state=context.state if context else "",
-                expected_sequence=context.sequence if context else 0, on_failure="terminate")
+                expected_sequence=context.sequence if context else 0, on_failure=on_failure)
             if isinstance(task, asyncio.Task) and task is not asyncio.current_task():
-                await task
+                from .forward_plan import await_forward_result
+                return await await_forward_result(task)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -290,5 +291,4 @@ def dispatch_route_fallback(hass, session, destination):
             if registry.is_generation_current(token.call_id, token.generation):
                 registry.request_termination(token.call_id, TerminationIntent("route_failed"), generation=token.generation)
 
-    session.create_task(forward(), name="group-fallback")
-    return True
+    return session.create_task(forward(), name=f"group-fallback:{session.revision}")

@@ -255,4 +255,4 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
         # and accepted mappings; a genuinely new alias must reach the owner.
         trace.append("B2 same wire choices and no new receive mapping; preserve the admitted contract")
         return result(caller)
-    return result(RtpPcmDirection(send, selected.recv, selected.recv_formats, selected.send_formats))
+    return result(replace(selected, send=send))

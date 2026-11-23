@@ -33,7 +33,7 @@ async def test_public_entry_setup_starts_ldap_and_privately_configures_native(ph
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
         "phone_services": {"listen_host": "127.0.0.1", "ldap_port": 0}})
     for name in ("_async_setup_shared", "_async_apply_assist_intents", "_async_start_sip_trunk",
-                 "_deferred_phonebook_sync"):
+                 "_initialize_directory"):
         monkeypatch.setattr(voip_stack, name, AsyncMock())
     monkeypatch.setattr(mailbox, "async_setup_mailboxes", AsyncMock())
     monkeypatch.setattr(lab.hass.config_entries, "async_forward_entry_setups", AsyncMock())

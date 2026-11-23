@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..core.media.bridge import plan_browser_audio
+
 from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Any, Callable
@@ -270,7 +272,7 @@ def answer_inbound_ha_softphone(
         invite.recv_format,
         recv_formats=invite.recv_formats,
         dtmf=dtmf_format,
-        remote_sdp=invite.remote_sdp,
+        remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
         video_port=local_video_rtp_port,
         video_format=(
             invite.answer_video_format if endpoint_video_enabled else None
@@ -309,8 +311,8 @@ def answer_inbound_ha_softphone(
         hass,
         session,
         target.endpoint_id, peer_name=invite.caller, direction="incoming",
-        selected_tx_format=invite.send_format.audio_format.wire_token(),
-        selected_rx_format=invite.recv_format.audio_format.wire_token(),
+        selected_tx_format=plan_browser_audio(invite.send_format, invite.recv_format).microphone.wire_token(),
+        selected_rx_format=plan_browser_audio(invite.send_format, invite.recv_format).speaker.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
         selected_rx_rtp_format=invite.recv_format.wire_token(),
         audio_direction=invite.local_audio_direction,
@@ -354,7 +356,7 @@ def answer_inbound_ha_softphone(
         sip_status_code=200,
         last_sip_event="SIP_RESPONSE",
     )
-    return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
+    return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="", media_contract=invite)
 
 
 def publish_pending_ringing(
@@ -387,8 +389,8 @@ def publish_pending_ringing(
         leg_id=f"browser:{endpoint_id}",
         peer_name=invite.caller, direction="incoming",
         dialed_target=invite.target,
-        selected_tx_format=invite.send_format.audio_format.wire_token(),
-        selected_rx_format=invite.recv_format.audio_format.wire_token(),
+        selected_tx_format=plan_browser_audio(invite.send_format, invite.recv_format).microphone.wire_token(),
+        selected_rx_format=plan_browser_audio(invite.send_format, invite.recv_format).speaker.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
         selected_rx_rtp_format=invite.recv_format.wire_token(),
         audio_mode="full_duplex",

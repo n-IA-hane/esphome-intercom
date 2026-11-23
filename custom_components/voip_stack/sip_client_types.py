@@ -101,6 +101,21 @@ class SipDialog(DialogSignalingState):
                      if encoding != "TELEPHONE-EVENT")
 
     @property
+    def dtmf_direction(self):
+        """Project committed fields without parsing or selecting another SDP contract."""
+        receive = (sdp.RtpDtmfFormat(self.dtmf_payload_type, self.dtmf_clock_rate, self.dtmf_events)
+                   if self.dtmf_payload_type is not None else None)
+        send = (sdp.RtpDtmfFormat(self.send_dtmf_payload_type,
+                self.send_dtmf_clock_rate or self.dtmf_clock_rate,
+                self.send_dtmf_events if self.send_dtmf_events is not None else self.dtmf_events)
+                if self.send_dtmf_payload_type is not None else None)
+        if send is None and receive is None:
+            return None
+        return sdp.RtpDtmfDirection(send, receive,
+            self.send_dtmf_formats or ((send,) if send is not None else ()),
+            self.recv_dtmf_formats or ((receive,) if receive is not None else ()))
+
+    @property
     def selected_format(self) -> sdp.RtpPcmFormat:
         return self.send_format
 

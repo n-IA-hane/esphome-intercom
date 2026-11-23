@@ -138,8 +138,12 @@ async def test_bridge_keeps_each_legs_own_negotiated_audio(
         # Rate conversion consumes complete negotiated input frames. Supply
         # consecutive short packets until one is complete, retaining the10ms
         # wire case rather than silently replacing it with a20ms packet.
-        quantum = observed["source"].recv_format.audio_format.nominal_frame_samples
-        packet_count = max(1, (quantum + samples - 1) // samples)
+        decoder, converter = relay.left_decoder, relay.left_to_right
+        actual = decoder.format_for(caller.dialog.send_format.payload_type) if decoder is not None else relay.left.inbound_rtp_format
+        quantum_ms = actual.frame_ms if decoder is not None and decoder.requires_fixed_input(actual) else source_ms
+        if converter is not None and converter.requires_fixed_input:
+            quantum_ms = max(quantum_ms, decoder.output_pcm.frame_ms)
+        packet_count = max(1, (int(quantum_ms) + source_ms - 1) // source_ms)
         total_samples = samples * packet_count
         forward = struct.pack(f"!{total_samples}h", *(index - 300 for index in range(total_samples)))
         for index in range(packet_count):

@@ -2069,7 +2069,9 @@ class VoipStackEngine extends EventTarget {
       connected = true;
       await this._setupAudio(
         deviceInfo,
-        { ...(reply || {}), ...(negotiated || {}) },
+        { ...(reply || {}), ...(negotiated || {}),
+          selected_tx_format: negotiated?.selected_tx_format || negotiated?.tx_format,
+          selected_rx_format: negotiated?.selected_rx_format || negotiated?.rx_format },
         attachKey,
       );
       if (attachKey && this._sessionAttachKey !== attachKey) {
@@ -2275,9 +2277,15 @@ class VoipStackEngine extends EventTarget {
       this._callId !== callId
     ) return;
     if (statePayload.audio_direction) {
-      this._lastSessionPayload = { ...(this._lastSessionPayload || {}), ...statePayload };
-      if (this._audioSession.ready) await this._reconcileAudioMedia(statePayload);
-      else this._audioDirection = normaliseAudioDirection(statePayload.audio_direction);
+      // SIP projections can describe the codec's decoded PCM. Only this
+      // WebSocket's negotiation may configure its capture/playback worklets.
+      const control = { ...statePayload };
+      for (const key of ["tx_format", "rx_format", "selected_tx_format", "selected_rx_format"]) {
+        delete control[key];
+      }
+      this._lastSessionPayload = { ...(this._lastSessionPayload || {}), ...control };
+      if (this._audioSession.ready) await this._reconcileAudioMedia(control);
+      else this._audioDirection = normaliseAudioDirection(control.audio_direction);
     }
     await this._ensureVideo(statePayload);
   }

@@ -352,7 +352,7 @@ async def test_late_discovery_publishes_only_to_its_current_binding_lifetime(mon
     monkeypatch.setattr(module, "sip_registrar", lambda _hass: current["registrar"])
     monkeypatch.setattr(module, "sip_endpoint_manager", lambda _hass: current["manager"])
     refresh = AsyncMock()
-    monkeypatch.setattr(config_entry_runtime, "async_refresh_and_push_phonebook", refresh)
+    monkeypatch.setattr(config_entry_runtime, "async_refresh_directory", refresh)
     task = asyncio.create_task(module.async_probe(object(), "caps"))
     await asyncio.sleep(0)
     if change in {"renewal", "contact", "flow", "call-id"}:
@@ -459,7 +459,7 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
         if outcome in {"known", "no-ptime"}:
             assert "sdp_features" not in binding.capabilities
             assert binding.capabilities["sip_audio_tx_formats"] == ["L16/48000/1", "L16/16000/1"]
-            assert binding.capabilities["sip_audio_tx_geometry_complete"]
+            assert "sip_audio_tx_geometry_complete" not in binding.capabilities
         else:
             assert binding.capabilities is None
         # Use the real registrar export as routing input; no manual capability
@@ -680,7 +680,8 @@ def test_options_receiver_envelope_does_not_invent_transmitter_quanta(receive_tw
     assert all(not item.times.fixed for item in profile.evidence.sends)
     assert (profile.send_rtp_formats[0].sample_rate, profile.send_rtp_formats[0].frame_ms) == (48000, 10)
     assert any((fmt.sample_rate, fmt.frame_ms) == (16000, 20) for fmt in profile.recv_rtp_formats)
-    assert profile.evidence.receive_geometry_complete and profile.evidence.send_geometry_complete
+    assert not profile.evidence.complete
+    assert not profile.evidence.receive_geometry_complete and not profile.evidence.send_geometry_complete
 
 
 def test_options_valid_packet_time_is_not_limited_by_offer_presets():

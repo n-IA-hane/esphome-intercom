@@ -1,6 +1,6 @@
 """Packet time: the single owner of how long one RTP audio packet is.
 
-Implements rules T1 to T5 of docs/MEDIA_NEGOTIATION_CONTRACT.md for the transmit direction.
+Selects producible packet durations within the receiver and payload bounds.
 Pure functions: no SDP, no sockets, no global tables of formats.
 """
 
@@ -12,7 +12,7 @@ from math import lcm
 
 from .codecs import CodecSpec
 
-# Longest first: the standard durations tried when the default of a codec is not feasible (T2).
+# Longest first: the standard durations tried when the default of a codec is not feasible.
 STANDARD_LADDER_MS: tuple[int, ...] = (60, 40, 30, 20, 10, 5)
 
 
@@ -53,7 +53,7 @@ class TransmitChoice:
     packet_ms: float
     rule: str
     # True when the receiver stated a minimum that no feasible duration of this codec meets.
-    # The choice stands: a bare minimum never demotes the codec (T4). The trace records it.
+    # The choice stands: a bare minimum never demotes the codec. The trace records it.
     below_minimum: bool = False
 
 
@@ -112,7 +112,7 @@ def choose_transmit_packet_ms(
     receiver: ReceiverBounds,
     budget: int,
 ) -> TransmitChoice | None:
-    """Choose the transmit packet time, or None when the codec is unusable on this leg (T3)."""
+    """Choose the transmit packet time, or None when the codec is unusable on this leg."""
     sized = spec.octets_per_sample is not None
 
     def feasible(packet_ms: float) -> bool:
@@ -140,7 +140,7 @@ def choose_transmit_packet_ms(
         return packet_ms if packet_ms >= max(at_least, MINIMUM_SEND_MS) else None
 
     def candidates(at_least: float = 0):
-        """Feasible durations in the order of T1 and T2, produced only as far as needed."""
+        """Try receiver preference, native default and feasible fallbacks only as needed."""
         seen: set[float] = set()
         ordered = ((receiver.ptime, "T1"), (default_ms, "T2"),
                    *((value, "T2") for value in STANDARD_LADDER_MS),

@@ -45,7 +45,7 @@ async def phones(hass, monkeypatch):
         entity_ids={"sensor.esp_state"},
     ))
     push = AsyncMock()
-    monkeypatch.setattr(voip_stack, "_refresh_and_push_phonebook", push)
+    monkeypatch.setattr(voip_stack, "_refresh_directory", push)
     await services.async_register_services(hass, {
         "set_phone_settings": voip_stack._handle_set_phone_settings_service,
         "set_phone_memberships": async_set_phone_memberships_service,
@@ -372,7 +372,7 @@ async def test_paging_batch_uses_one_native_directory_refresh(hass, phones, monk
     runtime.entry_paging_records = paging_group_configs(phones.entry)
     runtime.entry_membership_signature = membership_signature(hass, phones.entry)
     refresh = AsyncMock()
-    monkeypatch.setattr(updates, "async_refresh_and_push_phonebook", refresh)
+    monkeypatch.setattr(updates, "async_refresh_directory", refresh)
     for module, name in ((trunk_runtime, "async_reconcile_trunks"),
                          (phone_services, "async_reconcile_phone_services"),
                          (mailbox, "async_refresh_mailbox_state"),

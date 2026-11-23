@@ -89,10 +89,24 @@ def _has_s16le_mono_format(section: str, sample_rate: int, frame_ms: int) -> boo
 
 
 def test_retired_ha_packages_fail_validation_instead_of_registering_duplicates() -> None:
-    for name in ("ha_phone", "ha_integration", "ha_actions", "ha_api", "ha_api_runtime", "phonebook_subscribe"):
+    for name in ("ha_phone", "ha_integration", "ha_actions", "ha_api", "ha_api_runtime"):
         text = (ROOT / "packages/voip" / f"{name}.yaml").read_text()
         assert f"legacy_ha_package: {name}" in text
         assert "actions:" not in text
+
+
+def test_retired_directory_and_media_route_packages_are_removed() -> None:
+    for relative in ("packages/voip/phonebook_subscribe.yaml",
+                     "packages/lvgl/p4_call_media_route.yaml",
+                     "packages/lvgl/spotpear_call_media_route.yaml"):
+        assert not (ROOT / relative).exists()
+    for relative in ("packages/features/presentation/devices/waveshare-p4-phone.yaml",
+                     "packages/features/presentation/devices/waveshare-p4-full-landscape.yaml",
+                     "packages/features/presentation/devices/spotpear-ball-v2-phone.yaml",
+                     "packages/features/voip/presentation/round.yaml",
+                     "packages/voip/p4_full_video_jpeg.yaml"):
+        text = (ROOT / relative).read_text()
+        assert "call_media_route" not in text and "video_media_route_label" not in text
 
 
 def test_physical_phone_presets_use_native_ha_surface() -> None:
@@ -155,11 +169,18 @@ def test_full_profiles_declare_independent_pcm_preferences(relative: str) -> Non
     pcm = audio['codecs'][0]
     assert pcm['codec'] == 'pcm'
     assert [(f['sample_rate'], f['frame_ms']) for f in pcm['tx']] == [
-        (16000, 20), (16000, 10),
+        (16000, 20), (16000, 10), (48000, 10),
     ]
     assert [(f['sample_rate'], f['frame_ms']) for f in pcm['rx']] == [
-        (48000, 10), (16000, 20), (16000, 10),
+        (48000, 10), (48000, 20), (16000, 20), (16000, 10),
     ]
+
+
+def test_box_v1_retains_native_tx_and_real_48k_receive_envelope() -> None:
+    phone = profile('experimental/waveshare-s3-touch-lcd-1.85c/waveshare-s3-touch-lcd-1.85c-box-voip-only-afe.yaml')
+    pcm = next(codec for codec in phone['voip_stack']['audio']['codecs'] if codec['codec'] == 'pcm')
+    assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['tx']] == [(16000, 20), (16000, 10), (48000, 10)]
+    assert [(fmt['sample_rate'], fmt['frame_ms']) for fmt in pcm['rx']] == [(48000, 10), (48000, 20), (16000, 20), (16000, 10)]
 
 
 def test_physical_audio_stack_speakers_bound_silent_tx_lifecycle() -> None:

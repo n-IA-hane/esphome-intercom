@@ -380,7 +380,7 @@ async def async_commit_outbound_bridge(
                 invite.recv_format,
                 recv_formats=invite.recv_formats,
                 dtmf=first_offered_dtmf_format(invite.remote_sdp),
-                remote_sdp=invite.remote_sdp,
+                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                 video_port=(
                     relay.video_relay.left_port
                     if relay.video_relay is not None
@@ -410,6 +410,7 @@ async def async_commit_outbound_bridge(
             dest_endpoint_id=policy.dest_endpoint_id,
             media_client_id=policy.media_client_id,
             response_already_sent=policy.response_already_sent or policy.local_source,
+            media_contract=invite,
         )
         if not bool(getattr(committed, "committed", committed)):
             raise RuntimeError(str(getattr(committed, "reason", "answer_not_committed")))

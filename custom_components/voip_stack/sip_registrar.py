@@ -460,10 +460,6 @@ class SipRegistrar:
             except Exception:  # Keep registrar transactions independent of HA observers.
                 _LOGGER.exception("SIP Contact observer failed")
 
-    def _registration(self, username: str) -> SipRegistration | None:
-        registrations = self._registrations(username)
-        return registrations[0] if registrations else None
-
     def _registrations(self, username: str) -> list[SipRegistration]:
         wanted = str(username or "").casefold()
         return [

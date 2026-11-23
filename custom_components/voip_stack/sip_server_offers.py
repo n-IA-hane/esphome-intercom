@@ -159,8 +159,9 @@ class SipServerOffers:
                 send_format=audio.send,
                 recv_format=audio.recv,
                 recv_formats=audio.recv_formats,
+                send_formats=audio.send_formats,
                 audio_payloads=audio.payloads,
-                dtmf_direction=sdp.negotiate_dtmf_answer_directional(response.body, offer, audio=audio),
+                dtmf_direction=audio.dtmf_direction,
                 remote_rtp_host=str(parsed["connection_ip"]),
                 remote_rtp_port=int(parsed["media_port"]),
                 remote_audio_direction=str(parsed["direction"]),
@@ -303,6 +304,7 @@ class SipServerOffers:
         if updated_invite is not None and accept_answer is not None:
             try:
                 result = await accept_answer(updated_invite)
+                updated_invite = result.media_contract or updated_invite
             except asyncio.CancelledError:
                 raise
             except Exception:

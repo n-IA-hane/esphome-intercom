@@ -14,10 +14,22 @@ import ipaddress
 import re
 from secrets import token_hex
 from typing import Iterable
+from xml.etree import ElementTree
 from urllib.parse import quote, unquote
 
 
 CRLF = "\r\n"
+
+
+def is_picture_fast_update(content_type: str, body: bytes) -> bool:
+    """Recognize RFC 5168 without treating media control as a DTMF event."""
+    if content_type.split(";", 1)[0].strip().lower() != "application/media_control+xml":
+        return False
+    try:
+        root = ElementTree.fromstring(body)
+        return root.tag == "media_control" and root.find("./vc_primitive/to_encoder/picture_fast_update") is not None
+    except ElementTree.ParseError:
+        return False
 SIP_VERSION = "SIP/2.0"
 MAX_SIP_MESSAGE_BYTES = 8192
 MAX_SIP_BODY_BYTES = 4096
@@ -1145,7 +1157,7 @@ def dialog_headers(
     contact_display_name: str = "",
     via_sent_by: tuple[str, int | None] | None = None,
 ) -> list[tuple[str, str]]:
-    """Build the common headers used by the ESP/HA phase-1 profile."""
+    """Build standard request headers for the current SIP dialog."""
     contact = parse_sip_uri(contact_uri)
     via_host, via_port = via_sent_by or (contact.host, contact.port)
     sent_by = format_host_port(via_host, via_port)

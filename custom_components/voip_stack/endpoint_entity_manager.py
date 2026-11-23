@@ -139,11 +139,14 @@ class EndpointEntityManager(Generic[_EntityT]):
             permanent = (event_type == "removed" and (
                 endpoint_id in self.registry.pending_removals
                 or (subentry_id is not None and subentry_id not in self.entry.subentries)))
-            entity = self.entities.pop(endpoint_id, None) if permanent else self.entities.get(endpoint_id)
+            entity = self.entities.pop(endpoint_id, None) if event_type == 'removed' else self.entities.get(endpoint_id)
+            record = er.async_get(self.hass).async_get(entity.entity_id) if entity is not None and entity.hass is not None else None
+            permanent = permanent or bool(event_type == 'removed' and record is not None
+                and record.config_subentry_id and record.config_subentry_id not in self.entry.subentries)
             if permanent and entity is not None and entity.hass is not None:
-                record = er.async_get(self.hass).async_get(entity.entity_id)
                 if record is not None and (
-                    not record.config_subentry_id or record.config_subentry_id in self.entry.subentries
+                    record.unique_id == entity.unique_id
+                    and str(record.unique_id).startswith('phone_endpoint_' + endpoint_id + '_')
                 ):
                     self.entry.async_create_task(self.hass, self._async_remove_entity(entity),
                                                   f"voip-remove-entity-{endpoint_id}")

@@ -186,6 +186,7 @@ class SipClientTransaction(Generic[_T]):
         *,
         transport: str,
         timeout: float,
+        method: str = "OPTIONS",
         t1: float = SIP_T1,
         t2: float = SIP_T2,
     ) -> None:
@@ -193,6 +194,7 @@ class SipClientTransaction(Generic[_T]):
             raise ValueError("invalid SIP transaction timers")
         self.reliable = str(transport or "UDP").upper() in {"TCP", "TLS", "WS", "WSS"}
         self.timeout = float(timeout)
+        self.method = method
         self.t1 = float(t1)
         self.t2 = float(t2)
         loop = asyncio.get_running_loop()
@@ -270,7 +272,8 @@ class SipClientTransaction(Generic[_T]):
                 return None
             await retransmit()
             self.retransmissions += 1
-            self.interval = min(self.interval * 2.0, self.t2)
+            self.interval = (self.interval * 2.0 if self.method == "INVITE"
+                             else min(self.interval * 2.0, self.t2))
             self.next_retransmit = loop.time() + self.interval
 
 
@@ -286,17 +289,19 @@ async def async_run_dialog_request_transaction(
     active: Callable[[], bool],
     transport: str,
     timeout: float,
+    method: str = "OPTIONS",
     on_request: Callable[[sip.SipMessage, _C], Awaitable[None]] | None = None,
     on_provisional: Callable[[sip.SipMessage, _C], Awaitable[None]] | None = None,
     on_final: Callable[[sip.SipMessage, _C], None] | None = None,
     on_unmatched: Callable[[sip.SipMessage, _C], None] | None = None,
     on_sent: Callable[[], None] | None = None,
 ) -> sip.SipMessage | None:
-    """Run one non-INVITE dialog transaction for every SIP owner."""
+    """Run one owned transaction with method-specific provisional handling."""
 
     transaction = SipClientTransaction[tuple[sip.SipMessage, _C]](
         transport=transport,
         timeout=timeout,
+        method=method,
     )
 
     async def receive(read_timeout: float) -> tuple[sip.SipMessage, _C] | None:
@@ -329,12 +334,13 @@ async def async_run_dialog_request_transaction(
         return None
     if on_sent is not None:
         on_sent()
+    proceeding = False
     while active():
         try:
             received = await transaction.receive(
                 receive,
                 retransmit,
-                retransmit_enabled=True,
+                retransmit_enabled=not (method == "INVITE" and proceeding),
             )
         except _TransactionInactive:
             return None
@@ -345,8 +351,9 @@ async def async_run_dialog_request_transaction(
             if on_final is not None:
                 on_final(response, context)
             return response
-        # A non-INVITE transaction continues Timer E at T2 in Proceeding.
-        if not transaction.reliable:
+        proceeding = True
+        # Timer A stops in Proceeding; non-INVITE Timer E continues at T2.
+        if method != "INVITE" and not transaction.reliable:
             transaction.interval = transaction.t2
             transaction.next_retransmit = asyncio.get_running_loop().time() + transaction.t2
         if on_provisional is not None:

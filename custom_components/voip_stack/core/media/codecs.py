@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+DEFAULT_OPUS_RECEIVE_FMTP = "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+
 
 @dataclass(frozen=True, slots=True)
 class CodecSpec:

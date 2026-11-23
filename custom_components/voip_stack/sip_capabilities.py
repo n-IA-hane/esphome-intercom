@@ -95,6 +95,6 @@ async def async_probe(hass, username, generation=None):
     if current is None:
         return
     current.capabilities = capabilities
-    from .config_entry_runtime import async_refresh_and_push_phonebook
+    from .config_entry_runtime import async_refresh_directory
 
-    await async_refresh_and_push_phonebook(hass)
+    await async_refresh_directory(hass)

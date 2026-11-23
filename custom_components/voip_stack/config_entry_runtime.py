@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -33,19 +32,15 @@ from .browser_phone_runtime import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_refresh_and_push_phonebook(hass: HomeAssistant) -> None:
+async def async_refresh_directory(hass: HomeAssistant) -> None:
     runtime = runtime_data(hass)
     if runtime is not None:
         await entry_phonebook(hass, runtime).async_refresh(deliver=True)
 
 
-async def async_deferred_phonebook_sync(coordinator: PhonebookCoordinator) -> None:
-    """Push the canonical phonebook after entry setup/reload settles."""
-    for delay in (0.0, 2.0, 10.0):
-        if delay:
-            await asyncio.sleep(delay)
-        if coordinator.closed:
-            return
+async def async_initialize_directory(coordinator: PhonebookCoordinator) -> None:
+    """Initialize the directory once; its coordinator owns subsequent updates."""
+    if not coordinator.closed:
         await coordinator.async_refresh(deliver=True)
 
 
@@ -221,7 +216,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         previous_phones, phone_signature
     )
     if directory_phones_changed or contacts_changed or groups_changed:
-        await async_refresh_and_push_phonebook(hass)
+        await async_refresh_directory(hass)
     from .mailbox import async_refresh_mailbox_state
     await async_refresh_mailbox_state(hass)
     from .physical_phone_runtime import async_reconcile_physical_phone_runtime

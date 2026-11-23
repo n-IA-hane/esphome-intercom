@@ -432,26 +432,6 @@ class SipEndpointRuntime(CallRuntimeApi):
             task.cancel()
         return task
 
-    def replace_task(
-        self,
-        call_id: str,
-        task: asyncio.Task[Any],
-        *,
-        name: str,
-    ) -> bool:
-        """Replace one named call task without creating parallel ownership."""
-
-        session = self.get_session(call_id)
-        if session is None or not session.live:
-            return False
-        current = session.named_tasks.get(name)
-        if current is not None and current is not task:
-            session.release_task(current)
-            if not current.done():
-                current.cancel()
-        session.own_task(task, name=name)
-        return True
-
     def named_task_count(self, name: str) -> int:
         """Count unfinished tasks with one session-owned role."""
 

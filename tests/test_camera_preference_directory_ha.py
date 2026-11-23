@@ -47,10 +47,10 @@ async def camera(hass, phones, monkeypatch):
         completed.set()
 
     remove = phones.entry.add_update_listener(updated)
-    refresh = AsyncMock(wraps=updates.async_refresh_and_push_phonebook)
+    refresh = AsyncMock(wraps=updates.async_refresh_directory)
     publish = Mock(wraps=updates._publish_ha_softphone_state)
     intent = AsyncMock(return_value=True)
-    monkeypatch.setattr(updates, "async_refresh_and_push_phonebook", refresh)
+    monkeypatch.setattr(updates, "async_refresh_directory", refresh)
     monkeypatch.setattr(updates, "_publish_ha_softphone_state", publish)
     monkeypatch.setattr(softphone_video_intent, "async_apply_send_video_intent", intent)
 
