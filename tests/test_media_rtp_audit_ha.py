@@ -31,7 +31,7 @@ def udp_socket():
 async def audio_path(fmt, *, events=False):
     left, right, left_bound, right_bound = (udp_socket() for _ in range(4))
     peers = [RtpPeer("127.0.0.1", sock.getsockname()[1], fmt.payload_type,
-        fmt.audio_format, rtp_format=fmt, inbound_rtp_formats=(fmt,), outbound_rtp_formats=(fmt,),
+        fmt.audio_format, rtp_format=fmt, send_rtp_format=fmt, inbound_rtp_formats=(fmt,), outbound_rtp_formats=(fmt,),
         dtmf_payload_type=101 if events else None, dtmf_clock_rate=8000,
         send_dtmf_payload_type=110 if events else None) for sock in (left, right)]
     observed = []
@@ -142,7 +142,7 @@ async def test_adopted_compatible_encoded_payload_is_not_decoded_again(encoding,
 async def test_pure_video_udp_has_no_startup_feedback_and_forwards_receiver_pli():
     peers = [udp_socket() for _ in range(4)]
     bound = [udp_socket() for _ in range(4)]
-    formats = [sdp.RtpVideoFormat(pt, "H264", packetization_mode=1,
+    formats = [sdp.RtpVideoFormat(pt, encoding="H264", packetization_mode=1,
         rtcp_feedback=("nack pli", "ccm fir")) for pt in (96, 97)]
     relay = SipVideoRtpRelay(left=VideoRtpPeer("127.0.0.1", peers[0].getsockname()[1],
         peers[1].getsockname()[1], formats[0]), right=VideoRtpPeer("127.0.0.1",

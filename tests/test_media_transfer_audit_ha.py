@@ -103,7 +103,7 @@ async def incoming_card_call(runtime, card):
             "device_id": card.device_id, "call_id": call_id, "media_client_id": card.endpoint_id + "-owner"},
             blocking=True)
         assert await caller.wait_for_final(timeout=3) == "in_call"
-        watcher = asyncio.create_task(caller.watch_termination())
+        watcher = asyncio.create_task(caller.wait_for_dialog_termination())
         session = runtime.calls.get_session(call_id)
         assert session is not None and session.live
         yield caller, audio, session
