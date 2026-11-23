@@ -364,13 +364,16 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     from custom_components.voip_stack.core import rtp, sip, video_rtp
     from custom_components.voip_stack.core.audio_format import AudioFormat
     from custom_components.voip_stack.endpoint_session import TerminationIntent
-    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
+    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records, save_managed_account
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
     from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot
-    from custom_components.voip_stack.endpoint_routing import peer_video_codec, roster_from_peers
+    from custom_components.voip_stack.endpoint_routing import peer_video_codec, ha_router_decision
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
+    from custom_components.voip_stack.router import RouteAction, RouteReason
     from custom_components.voip_stack.runtime_data import sip_registrar
     from custom_components.voip_stack.sip_client import SipCallClient
-    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.store import config_entry, sip_accounts
     from tests.test_sip_capabilities_ha import RegisteredPeer, register_peer, wait_until
     import pytest_socket
 
@@ -398,10 +401,13 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     sink_audio = media_socket('127.0.0.3')
     sink_video = media_socket('127.0.0.3')
     jpeg = sdp.RtpVideoFormat(payload_type=26, encoding='JPEG')
-    lab.runtime.endpoints.register(PhoneEndpoint(
-        endpoint_id='caller', username='caller', name='Caller', kind=EndpointKind.SIP_ACCOUNT,
-        capabilities=frozenset({'audio', 'dtmf'}),
-    ))
+    entry = config_entry(lab.hass)
+    stale_static_roster = list(lab.roster)
+    _add_phone_subentry(lab.hass, entry, data={
+        'kind': 'sip_account', 'username': 'caller', 'name': 'Caller',
+        'password': 'fixture-only', 'username_source': 'user',
+        'enabled': True, 'video_enabled': True,
+    }, title='Caller')
     caller = SipCallClient(local_ip='127.0.0.2', local_name='caller', local_sip_port=0,
         local_uri_user='caller', username='caller', password='fixture-only',
         local_rtp_port=source_audio.getsockname()[1],
@@ -468,10 +474,16 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         connections={(dr.CONNECTION_NETWORK_MAC, '84:c7:bb:00:00:03')}, name='Managed sink')
     record = ManagedPhone(device.id, origin.entry_id, '84c7bb000003', 'fixture-only',
         username='managed_sink', display_name='Managed sink', api_host='127.0.0.3', extension='101')
-    entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
-        'managed_esphome_phones': {device.id: record.record()}})
+    target_account = save_managed_account(lab.hass, entry, record, username_source='user')
+    lab.hass.config_entries.async_update_subentry(entry, target_account,
+        data={**target_account.data, 'enabled': True, 'video_enabled': True})
+    sync_registry_from_entry(lab.hass, entry)
     restored = managed_records(entry)[device.id]
+    assert 'managed_esphome_phones' not in entry.data
+    assert lab.runtime.endpoints.by_username('caller').endpoint_id == 'caller'
+    target_endpoint = lab.runtime.endpoints.by_username(restored.username)
+    assert target_endpoint.endpoint_id == restored.username
+    assert target_endpoint.extension == '101' and target_endpoint.device_id == device.id
     state_entity = er.async_get(lab.hass).async_get_or_create('sensor', 'esphome', 'managed_sink_voip_state',
         device_id=device.id, config_entry=origin)
     lab.hass.states.async_set(state_entity.entity_id, 'idle')
@@ -485,8 +497,9 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
     lab.hass.states.async_set(entity.entity_id, state)
     registrar = sip_registrar(lab.hass)
     registrar.enabled = True
-    from custom_components.voip_stack.sip_registrar import SipAccount
-    registrar.update_accounts([restored.account(), SipAccount('caller', 'Caller', 'fixture-only')])
+    registrar.update_accounts(sip_accounts(lab.hass))
+    assert registrar.accounts['caller'].password == caller.password
+    assert registrar.accounts[restored.username].password == record.password
     call_id = ''
     try:
         await register_peer(lab, sink, restored.username,
@@ -496,8 +509,21 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
                                     for name in ['managed_sink', 'caller']))
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get('used')
         peers = await async_build_peer_snapshot(lab.hass)
-        rows = roster_from_peers(lab.hass, peers, registrar.registered_roster_entries())
-        row = next(row for row in rows if row.id == restored.username)
+        rows = compose_directory_entries(lab.hass, peers, registrar.registered_roster_entries())
+        # Reproduce the measured fixture defect without changing unknown-target policy.
+        stale = ha_router_decision(lab.hass, '101', stale_static_roster, source_endpoint_id='caller')
+        assert stale.entry is None and stale.action is RouteAction.REJECT
+        assert stale.status == 503 and stale.reason is RouteReason.TRUNK_UNAVAILABLE
+        # Both consumers receive the same production projection and registration facts.
+        lab.roster[:] = rows
+        lab.runtime.directory.replace(lab.roster)
+        route = ha_router_decision(lab.hass, '101', lab.roster, source_endpoint_id='caller')
+        assert route.action is RouteAction.DIRECT and route.entry.id == restored.username
+        row = lab.runtime.directory.resolve('101')
+        assert row.id == restored.username and row.extension == '101'
+        assert row.metadata['endpoint_id'] == restored.username
+        assert lab.runtime.endpoints.by_username('caller').availability.value == 'available'
+        assert lab.runtime.endpoints.by_username(restored.username).availability.value == 'available'
         assert row.metadata['sip_capabilities_known'] is True
         binding = registrar.registered_contacts(restored.username)[0]
         assert row.sip_uri == binding.contact_uri
