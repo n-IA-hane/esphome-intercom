@@ -85,5 +85,17 @@
   },
   "rotation_fix_commit": "e106b16b9adf5af60785a3ee8032cf6e877edfe4",
   "rotation_patch_file": "e106b16b.patch",
-  "rotation_patch_sha256": "bcb49e498c81c87a67609a7b988fdc8842b11edcde5e7fc7b0d6be0e7c82d031"
+  "rotation_patch_sha256": "bcb49e498c81c87a67609a7b988fdc8842b11edcde5e7fc7b0d6be0e7c82d031",
+  "known_fixed_sdks": {
+    "5.5.6": {
+      "commit": "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5",
+      "files": {
+        "components/esp_driver_ppa/src/ppa_core.c": "9d02eb17b356bd9945540add65fd1f3880892a1047acd39e3d4e6db9b1b036e3",
+        "components/esp_driver_ppa/src/ppa_blend.c": "246b1f79e233563a6b184e56688fdbc82e174266bd5e557229b1399a2be3f766",
+        "components/esp_driver_ppa/src/ppa_fill.c": "2af806c299786fbeec8303a29046fd727480c6058541ffcdae0b828cc980e7b4",
+        "components/esp_driver_ppa/src/ppa_priv.h": "e1988ad4382d524e97222fe5000f475f5518520618605b7af98456e00d7e9499",
+        "components/esp_driver_ppa/src/ppa_srm.c": "6421c730681f5114fa4f614d6d14e87f066b57459bb51bb250b8546798fe13e8"
+      }
+    }
+  }
 }

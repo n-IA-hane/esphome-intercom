@@ -23,18 +23,19 @@ def sdk_base(version):
 
 
 def configure(tmp_path, *, target="esp32p4", version="5.5.6", already_fixed=(),
-              corrupt=False, source_count=1, bootloader=False):
+              corrupt=False, source_count=1, bootloader=False, upstream_fixed=False):
     # Deliberately nest both SDK and build beneath a Git checkout. A git apply
     # accidentally using the parent's prefix must not silently skip this patch.
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     sdk = tmp_path / "sdk"
-    fixture = FIXTURE.with_name("esp-idf-6.0.3") if version == "6.0.3" else FIXTURE
+    fixture = (FIXTURE.with_name("esp-idf-5.5.6-dd47ea3") if upstream_fixed else
+               FIXTURE.with_name("esp-idf-6.0.3") if version == "6.0.3" else FIXTURE)
     shutil.copytree(fixture, sdk)
     for fix in already_fixed:
         patch = "9da8ff53.patch" if fix == "engine" else sdk_base(version)["rotation_patch_file"]
         subprocess.run(["git", "apply", str(COMPONENT / patch)], cwd=sdk,
                        env={**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp_path)}, check=True)
-    original = sdk / "components/esp_driver_ppa/src/ppa_core.c"
+    original = sdk / "components/esp_driver_ppa/src" / (corrupt if isinstance(corrupt, str) else "ppa_core.c")
     if corrupt:
         original.write_bytes(original.read_bytes() + b"\n/* unrecognized SDK */\n")
     version_file = sdk / "tools/cmake/version.cmake"
@@ -179,6 +180,36 @@ def test_other_targets_versions_and_existing_fix_make_no_copies(tmp_path, option
     assert str(sdk / "components/esp_driver_ppa/src/ppa_core.c") in (build / "sources.txt").read_text()
     if options.get("already_fixed"):
         assert "both official fixes already present" in result.stdout
+
+
+def test_later_official_sdk_uses_unchanged_sources_without_replacement(tmp_path):
+    fixed = MANIFEST["known_fixed_sdks"]["5.5.6"]
+    assert fixed["commit"] == "dd47ea3696b419fdb19cf747a6b96e2c4f6abcc5"
+    fixture = FIXTURE.with_name("esp-idf-5.5.6-dd47ea3")
+    for name, expected in fixed["files"].items():
+        assert hashlib.sha256((fixture / name).read_bytes()).hexdigest() == expected
+    result, sdk, build, _ = configure(tmp_path, upstream_fixed=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fixed["commit"] in result.stdout and "already contain both fixes" in result.stdout
+    assert not (build / "p4_ppa_backport").exists()
+    assert str(sdk / "components/esp_driver_ppa/src/ppa_core.c") in (build / "sources.txt").read_text()
+    for name, expected in fixed["files"].items():
+        assert hashlib.sha256((sdk / name).read_bytes()).hexdigest() == expected
+
+
+@pytest.mark.parametrize("name", ["ppa_core.c", "ppa_blend.c", "ppa_fill.c", "ppa_priv.h", "ppa_srm.c"])
+def test_later_official_sdk_rejects_any_changed_source_before_copy(tmp_path, name):
+    result, _, build, _ = configure(tmp_path, upstream_fixed=True, corrupt=name)
+    assert result.returncode != 0
+    assert "unrecognized SDK source" in result.stderr
+    assert not (build / "p4_ppa_backport").exists()
+
+
+def test_later_official_source_set_is_not_an_exception_for_other_versions(tmp_path):
+    result, _, build, _ = configure(tmp_path, version="6.0.3", upstream_fixed=True)
+    assert result.returncode != 0
+    assert "unrecognized SDK source" in result.stderr
+    assert not (build / "p4_ppa_backport").exists()
 
 
 @pytest.mark.parametrize("version", ["5.5.6", "6.0.3"])
