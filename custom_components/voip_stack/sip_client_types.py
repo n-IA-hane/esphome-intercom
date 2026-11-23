@@ -128,31 +128,6 @@ class SipDialog(DialogSignalingState):
         return self.local_video_format or self.video_format
 
 
-def _validate_receive_payload_update(
-    current: SipDialog | None, formats: tuple[sdp.RtpPcmFormat, ...]
-) -> tuple[sdp.RtpPcmFormat, ...]:
-    """Keep each receive PT's codec immutable for this dialog's lifetime."""
-    history = (
-        current.recv_payload_history or current.recv_formats or (current.recv_format,)
-        if current is not None else ()
-    )
-    mappings: dict[int, sdp.RtpPcmFormat] = {}
-    for fmt in (*history, *formats):
-        if not isinstance(fmt, sdp.RtpPcmFormat):
-            continue  # An initial delayed-offer seed has only decoded PCM.
-        if not 0 <= fmt.payload_type <= 127:
-            raise sdp.SdpError("SDP receive payload type is outside the RTP range")
-        previous = mappings.get(fmt.payload_type)
-        if previous is not None and (
-            previous.encoding, previous.sample_rate, previous.channels
-        ) != (fmt.encoding, fmt.sample_rate, fmt.channels):
-            raise sdp.SdpError("SDP update changed an existing receive payload codec")
-        mappings.setdefault(fmt.payload_type, fmt)
-    # At most 128 entries. History validates SDP; it does not keep decoders or
-    # retired receive formats active beyond their separate media grace period.
-    return tuple(mappings.values())
-
-
 def _payload_numbers(formats) -> dict[int, RtpMapping]:
     result = {}
     for fmt in formats:

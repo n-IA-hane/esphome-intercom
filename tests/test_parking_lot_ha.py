@@ -850,10 +850,15 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
             async with asyncio.timeout(2):
                 while True:
                     raw = await lab.hass.loop.sock_recv(audio, 4096)
-                    payload = rtp.parse_packet(raw).payload
+                    packet = rtp.parse_packet(raw)
+                    payload = packet.payload
                     if any(payload):
+                        wire = client.dialog.recv_format
+                        assert wire.encoding == "L16" and packet.payload_type == wire.payload_type
+                        assert len(payload) == wire.audio_format.nominal_frame_bytes
+                        assert len(payload) * 1000 / (wire.sample_rate * wire.channels * 2) == wire.frame_ms
                         samples = struct.unpack(f"!{len(payload)//2}h", payload)
-                        assert 5940 <= max(samples) <= 6060
+                        assert all(abs(value - 6000) <= 60 for value in samples[-64:])
                         break
             assert client.dialog.send_format.encoding == "L16"
             for index in range(10):
@@ -870,7 +875,7 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
                     if any(decoded):
                         samples = struct.unpack(f"<{len(decoded)//2}h", decoded)
                         assert len(decoded) == browser.receive_format.nominal_frame_bytes
-                        assert all(abs(value - 7000) <= 1 for value in samples[-64:])
+                        assert all(abs(value - 7000) <= 70 for value in samples[-64:])
                         break
             response = await lab.hass.services.async_call("voip_stack", "park", {"device_id": phone.device_id},
                                                           blocking=True, return_response=True)

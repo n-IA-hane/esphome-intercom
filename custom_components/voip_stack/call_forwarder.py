@@ -633,7 +633,10 @@ class _ForwardAdmission:
         self.check_external_route(decision)
         from .account_dialing import account_call_plan, account_dial_decision
 
-        decision = account_dial_decision(hass, decision, all_transports=True)
+        explicit_ha_pickup = (self.request.resolved_decision is not None
+            and self.pickup_claim is not None and decision.action is RouteAction.ANSWER_HA)
+        if not explicit_ha_pickup:
+            decision = account_dial_decision(hass, decision, all_transports=True)
         account_plan = (
             account_call_plan(decision.entry)
             if decision.action is RouteAction.GROUP

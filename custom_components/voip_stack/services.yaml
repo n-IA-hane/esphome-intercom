@@ -761,7 +761,7 @@ route:
         text: null
     decline_reason:
       name: Decline reason
-      description: Application terminal reason propagated in SIP Reason and X-Voip-Stack-Decline-Reason headers.
+      description: Application terminal reason represented by the standard SIP status and Reason header.
       required: false
       selector:
         text: null

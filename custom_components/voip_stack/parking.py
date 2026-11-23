@@ -612,8 +612,13 @@ async def pickup_phone_call(call, endpoint, slot):
     from .softphone_commands import async_resolve_browser_call_command
     from .browser_phone_runtime import _release_ha_softphone_claim
     from .forward_plan import await_forward_result
+    from .phone_endpoint import ha_client_endpoint
 
     hass = call.hass
+    if str(call.data.get("media_client_id") or "").strip():
+        endpoint = ha_client_endpoint(endpoint)
+        if endpoint is None:
+            raise ParkingError("The selected account cannot receive this call in Home Assistant")
     registry = call_registry(hass)
     lot = get_parking_lot(hass)
     claim = lot.claim(slot, f"browser:{call.context.id}:{endpoint.endpoint_id}",

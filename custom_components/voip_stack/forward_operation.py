@@ -757,6 +757,24 @@ class ForwardOperation:
             video_transcoding_enabled,
         )
 
+    def _prepare_parked_audio_socket(self):
+        """Keep the one spare receive fd under this forward operation."""
+        if self.parked_audio_socket is None:
+            self.parked_audio_socket = self.reservation.take_audio_socket(self.reservation.ports[1])
+            if self.parked_audio_socket is None:
+                from .media_ports import bind_sip_audio_socket
+
+                self.parked_audio_socket = bind_sip_audio_socket(self.reservation.ports[1])
+
+    def prepared_outbound_audio_socket(self):
+        """Read the still-owned parked receive socket without transferring it."""
+        if (self.parked_media is None or self.reservation is None or self.reservation.released
+                or self.registry.resource_for(self.source.call_id, "relay") is not self.parked_media
+                or self.parked_audio_socket is None or self.parked_audio_socket.fileno() < 0
+                or self.parked_audio_socket.getsockname()[1] != self.reservation.ports[1]):
+            raise RuntimeError("The prepared parked audio owner changed before dialing")
+        return self.parked_audio_socket
+
     async def _prepare_parked_socket(self, candidate):
         """Prepare a candidate against the single retained media reservation."""
         client, video = candidate.client, candidate.video_relay
@@ -779,16 +797,7 @@ class ForwardOperation:
                 self.video_relay = None
             client.local_video_rtp_port = self.parked_media.video_relay.right_port
             client.local_rtp_port = self.reservation.ports[1]
-            from .media_ports import bind_sip_audio_socket
-
-            if self.parked_audio_socket is None:
-                self.parked_audio_socket = self.reservation.take_audio_socket(
-                    self.reservation.ports[1]
-                )
-                if self.parked_audio_socket is None:
-                    self.parked_audio_socket = bind_sip_audio_socket(
-                        self.reservation.ports[1]
-                    )
+            self._prepare_parked_audio_socket()
         return True
 
     async def _invite_sip_target(self, direct_winner):

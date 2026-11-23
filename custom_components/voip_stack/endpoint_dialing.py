@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -34,6 +34,7 @@ from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_for
 from .sip_client import SipCallClient
 
 if TYPE_CHECKING:
+    from .forward_operation import ForwardOperation
     from .pending_sip_destination import RetainedSourceMedia
     from .peer import Peer
     from .roster import RosterEntry
@@ -58,6 +59,7 @@ class OutboundLegPolicy:
     allow_video: bool = True
     trunk_id: str = ""
     retained_source_media: RetainedSourceMedia | None = None
+    prepared_audio_owner: ForwardOperation | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -206,7 +208,13 @@ class EndpointDialer:
         ports = port_reservation or RtpPortReservation.allocate(self.hass)
         video_relay = None
         try:
-            if policy.retained_source_media is not None:
+            local_audio_port = ports.ports[local_rtp_port_index]
+            if policy.prepared_audio_owner is not None:
+                if policy.retained_source_media is not None:
+                    raise RuntimeError("Outbound audio has conflicting prepared owners")
+                owned_socket = policy.prepared_audio_owner.prepared_outbound_audio_socket()
+                local_audio_port = owned_socket.getsockname()[1]
+            elif policy.retained_source_media is not None:
                 from .endpoint_lifecycle import call_registry
                 policy.retained_source_media.validate(call_registry(self.hass))
                 if ports is not policy.retained_source_media.reservation:
@@ -293,7 +301,7 @@ class EndpointDialer:
                 ),
                 local_identity_uri=policy.local_identity_uri,
                 local_sip_port=int(self.config["sip_port"]),
-                local_rtp_port=ports.ports[local_rtp_port_index],
+                local_rtp_port=local_audio_port,
                 supported_send_formats=sip_send_formats,
                 supported_recv_formats=sip_recv_formats,
                 supported_send_rtp_formats=rtp_audio_profile.send_rtp_formats,

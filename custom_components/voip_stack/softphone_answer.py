@@ -255,9 +255,12 @@ async def async_answer_browser_call(
         and bool(transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False))
         and bool(call.data.get("send_video", False))
     )
+    remote_video_direction = invite.video_format.direction if invite.video_format is not None else "inactive"
+    if parked_media is not None and parking.video_source is not None:
+        remote_video_direction = parking.video_source.video_format.direction
     desired_video_direction = (
         constrained_video_direction(
-            invite.video_format.direction,
+            remote_video_direction,
             allow_send=(
                 camera_send_enabled
                 and browser_video_send_supported(invite.video_format)

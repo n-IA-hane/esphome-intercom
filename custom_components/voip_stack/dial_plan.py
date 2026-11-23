@@ -107,6 +107,8 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str, dict]]
                 }
             }
             metadata.update(raw)
+            if (entry.metadata or {}).get("configured_video_enabled") is False:
+                metadata.update(configured_video_enabled=False, sip_video_codec="")
             metadata["sip_transport"] = transport
             rows.append((str(parsed), transport, q, user_agent, metadata))
     elif entry.sip_uri:

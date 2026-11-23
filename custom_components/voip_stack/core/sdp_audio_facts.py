@@ -220,7 +220,7 @@ def first_offered_dtmf_format(
 
 
 def dtmf_format_for_clock(remote_sdp: str | bytes, clock_rate: int) -> RtpDtmfFormat | None:
-    """P5: prefer the active audio clock, then a negotiated 8000 Hz alternative."""
+    """Prefer the active audio clock, then a negotiated 8000 Hz alternative."""
     formats = offered_dtmf_formats(remote_sdp)
     for clock in dict.fromkeys((clock_rate, 8000)):
         for fmt in formats:

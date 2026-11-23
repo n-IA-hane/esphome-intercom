@@ -1,6 +1,7 @@
 """Immediate peer RTP is retained by one existing bridge socket owner."""
 import asyncio
 from dataclasses import replace
+from fractions import Fraction
 import re
 import socket
 import struct
@@ -313,11 +314,10 @@ async def test_browser_receiver_adopts_reserved_fd_and_first_packet(trunks, monk
     browser = Browser()
     worker = asyncio.create_task(view._run_audio_session(lab.hass, browser, session, endpoint_id="reservation-browser"))
     try:
-        # One 20 ms SIP frame becomes two native 10 ms, 48 kHz card frames.
-        async with asyncio.timeout(2):
-            frames = [audio_ws.decode_audio_frame(await browser.audio.get()) for _ in range(2)]
-        assert all(len(frame) == 480 * 2 for frame in frames)
-        samples = struct.unpack("<960h", b"".join(frames))
+        # Playback retains the SIP quantum at the card's native 48 kHz clock.
+        frame = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 2))
+        assert len(frame) == 960 * 2
+        samples = struct.unpack("<960h", frame)
         # Ignore only the resampler's startup response to the initial DC step.
         assert all(abs(value - 3456) <= 3 for value in samples[64:])
         assert adopted == [fd] and owner.audio_socket(owner.ports[0]) is None
@@ -408,6 +408,16 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
     monkeypatch.setattr(sip_rtp_bridge._RelayProtocol, "datagram_received", received_packet)
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(lambda: protocol, local_addr=("127.0.0.2", 0))
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
+    native_send = caller.transport.sendto
+
+    def capture_answer(raw, address=None):
+        native_send(raw, address)
+        if raw.startswith(b"ACK "):
+            answer = sip.parse_message(raw)
+            if answer.body:
+                observed["caller_answer"] = answer.body
+
+    monkeypatch.setattr(caller.transport, "sendto", capture_answer)
     try:
         result = await caller.invite(target=target, remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], delayed_offer=True, timeout=3)
         assert result == "in_call"
@@ -422,23 +432,46 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
         async def receive_destination():
             return (await phone.audio.get())[0]
 
-        async def receive_source():
-            raw = await lab.hass.loop.sock_recv(media, 4096)
-            packet = rtp.parse_packet(raw)
-            relay = lab.calls.resource_for(caller.dialog_ids.call_id, "relay")
-            assert packet.payload_type == caller.dialog.recv_format.payload_type, {
-                "payload_type": packet.payload_type,
-                "accepted_receive": caller.dialog.recv_formats,
-                "active_receive": caller.dialog.recv_format,
-                "relay_source": relay.left if relay is not None else None,
-            }
-            return raw
+        # The actual ACK advertises receive alternatives. SIP permits the peer
+        # to send any accepted mapping, not only our preferred primary codec.
+        section = next(block for block in re.split(rb"(?m)^m=", observed["caller_answer"])
+                       if block.startswith(b"audio "))
+        accepted_payloads = set(map(int, section.splitlines()[0].split()[3:]))
+        receive_mappings = {int(match[1]): (int(match[2]), int(match[3] or 1))
+            for match in re.finditer(rb"a=rtpmap:(\d+) L16/(\d+)(?:/(\d+))?\r?\n", section)
+            if int(match[1]) in accepted_payloads}
+
+        async def receive_source_frame():
+            elapsed, payloads, previous, geometry = Fraction(0), [], None, None
+            expected_duration = Fraction(len(destination_pcm) // 2, 16000)
+            while elapsed < expected_duration:
+                packet = rtp.parse_packet(await lab.hass.loop.sock_recv(media, 4096))
+                assert packet.payload_type in receive_mappings
+                rate, channels = receive_mappings[packet.payload_type]
+                assert packet.payload and len(packet.payload) % (2 * channels) == 0
+                if previous is not None:
+                    assert geometry == (rate, channels)
+                    assert packet.ssrc == previous.ssrc
+                    assert packet.sequence == (previous.sequence + 1) & 0xFFFF
+                    assert packet.timestamp == (previous.timestamp + len(previous.payload) // (2 * channels)) & 0xFFFFFFFF
+                geometry = rate, channels
+                elapsed += Fraction(len(packet.payload) // (2 * channels), rate)
+                payloads.append(packet.payload)
+                previous = packet
+            assert elapsed == expected_duration
+            data = b"".join(payloads)
+            samples = struct.unpack(f"!{len(data) // 2}h", data)
+            if geometry == (16000, 1):
+                assert data == destination_pcm
+            else:
+                assert all(abs(value + 3456) <= 3 for value in samples[64 * geometry[1]:])
+            return data
 
         destination_pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", phone.last_request.body)[1])
         async with asyncio.timeout(3):
             to_destination = await receive_l16_samples(receive_destination, len(source_pcm), destination_pt)
-            to_source = await receive_l16_samples(receive_source, len(destination_pcm), caller.dialog.recv_format.payload_type)
-        assert to_destination == source_pcm and to_source == destination_pcm
+            to_source = await receive_source_frame()
+        assert to_destination == source_pcm and to_source
         relay = lab.calls.resource_for(caller.dialog_ids.call_id, "relay")
         assert relay.left_port == observed["source_port"]
         assert relay.left_transport.get_extra_info("socket").fileno() == observed["source_fd"]

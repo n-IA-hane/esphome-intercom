@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING
 
@@ -118,6 +119,16 @@ class ForwardGroup:
             raise RuntimeError("account disappeared before forwarding")
         try:
             from .dial_plan import RingPolicy
+            from .endpoint_dialing import OutboundLegPolicy
+
+            if self.operation.parked_media is not None:
+                self.operation._prepare_parked_audio_socket()
+
+            def prepare_candidate(**kwargs):
+                if self.operation.parked_media is not None:
+                    kwargs["policy"] = replace(kwargs.get("policy") or OutboundLegPolicy(),
+                        prepared_audio_owner=self.operation)
+                return self.operation.runtime.prepare_outbound_leg(**kwargs)
 
             await async_prepare_group_candidates(
                 self.candidates,
@@ -125,7 +136,7 @@ class ForwardGroup:
                     registry=registry,
                     endpoint_registry=self.endpoints,
                     browser_leg_for_member=self.operation.runtime.browser_leg_for_member,
-                    prepare_outbound_leg=self.operation.runtime.prepare_outbound_leg,
+                    prepare_outbound_leg=prepare_candidate,
                     logical_endpoint_for_member=self.operation.runtime.route_resolver.logical_endpoint,
                 ),
                 invite=self.operation.invite,
