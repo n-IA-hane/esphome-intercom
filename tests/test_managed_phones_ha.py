@@ -63,7 +63,15 @@ async def phone_lab(hass):
     hass.data.setdefault("voip_stack", {})
     endpoints = EndpointRegistry()
     calls = SipEndpointRuntime(allow_dark_sessions=True)
-    registrar = SipRegistrar(enabled=False, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
+    def registration_changed(username, _registered):
+        from custom_components.voip_stack.account_runtime import recompute_account_availability
+
+        endpoint = endpoints.by_username(username)
+        if endpoint is not None:
+            recompute_account_availability(hass, endpoint.endpoint_id)
+
+    registrar = SipRegistrar(enabled=False, accounts=[], local_ip="127.0.0.1", local_sip_port=5060,
+        on_registration_change=registration_changed)
     calls.attach_component("registrar", registrar)
     calls.activate()
     entry.runtime_data = VoipStackRuntime(transport_config={"sip_port": 5060,
@@ -154,6 +162,16 @@ async def managed(phone_lab):
     lab.controller = EspHomeProvisioner(lab.hass, lab.entry)
     lab.runtime.phone_provisioning = lab.controller
     return lab
+
+
+async def drain_provisioning(lab, owner):
+    """Wait for the captured coordinator's scheduled continuation, without replacing it."""
+    assert lab.runtime.phone_provisioning is owner
+    task = owner._task
+    assert task is not None
+    await asyncio.wait_for(asyncio.shield(task), 2)
+    assert lab.runtime.phone_provisioning is owner and owner._task is task
+    assert task.done() and not task.cancelled()
 
 
 def phone_record(lab):
@@ -875,8 +893,10 @@ async def test_private_native_rpc_uses_real_api_client_and_protobuf_wire(managed
         await asyncio.wait_for(completed.wait(), 2)
         assert client.is_connected and len(messages) == 3
         phone = phone_record(lab)
-        assert [message.key for message in messages] == [1, 2, 4]
-        account = {arg.name: value for arg, value in zip(native_services()[2].args, messages[1].args, strict=True)}
+        services = {service.name: service for service in lab.native.runtime_data.services.values()}
+        assert [message.key for message in messages] == [services[name].key for name in (
+            "set_ha_display_name", "set_account", "register_ha_account")]
+        account = {arg.name: value for arg, value in zip(services["set_account"].args, messages[1].args, strict=True)}
         assert account["account_id"].string_ == "ha"
         assert account["username"].string_ == phone.username
         assert account["password"].string_ == phone.password
@@ -954,6 +974,7 @@ async def test_quarantine_record_migration_preserves_matching_mac_origin_identit
     lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=historical_id, device_id=lab.device.id,
         username=username, name="Ingresso", kind=EndpointKind.ESPHOME))
     await lab.controller.async_sync()
+    await drain_provisioning(lab, lab.controller)
     migrated = phone_record(lab)
     expected = username if username == 'Caffè' else 'Ingresso'
     assert migrated.username == expected
@@ -1087,15 +1108,17 @@ async def test_permanent_removal_drains_calls_subscriptions_and_media_before_for
     from custom_components.voip_stack.core.audio_format import AudioFormat
     from custom_components.voip_stack.core import sip
     from custom_components.voip_stack.endpoint_session import CleanupStage
-    from custom_components.voip_stack.mailbox import get_archive
+    from custom_components.voip_stack.mailbox import get_archive, mailbox_settings
+    from custom_components.voip_stack.phone_config import update_phone_subentry
     from custom_components.voip_stack.sip_application import SipApplicationMethods
     lab = managed
     await lab.controller.async_sync()
     phone = phone_record(lab)
     await bind_account(lab, phone)
     lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
-    lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
-        "esphome_mailboxes": {phone.endpoint_id: {"enabled": True}}})
+    assert update_phone_subentry(lab.hass, lab.entry, phone.endpoint_id,
+                                 {"voicemail": {"enabled": True}})
+    assert mailbox_settings(lab.hass, phone.endpoint_id) == {"enabled": True}
     archive = await get_archive(lab.hass)
     files = []
     for kind in ("voicemail", "recording"):
@@ -1148,7 +1171,7 @@ async def test_permanent_removal_drains_calls_subscriptions_and_media_before_for
     assert not methods.subscriptions and not methods.notifiers
     assert notify_cancelled.is_set()
     assert not lab.entry.subentries
-    assert not lab.entry.data.get("esphome_mailboxes")
+    assert mailbox_settings(lab.hass, phone.endpoint_id) == {}
     assert not lab.registrar.accounts and not lab.registrar.registrations
     assert not any(path.exists() for path in files)
     await methods.stop()

@@ -80,7 +80,7 @@ def test_empty_discovery_keeps_engine_preferences_and_truthful_alternatives():
     assert {fmt.sample_rate for fmt in profile.recv_rtp_formats} >= {16000, 48000}
 
 
-def test_esphome_extension_is_the_authoritative_request_uri_user(
+def test_account_username_remains_the_route_when_an_extension_is_also_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dialer, _created, _reused = _dialer(monkeypatch)
@@ -91,7 +91,7 @@ def test_esphome_extension_is_the_authoritative_request_uri_user(
             Peer(
                 name="Waveshare P4 Touch",
                 host="192.0.2.57",
-                endpoint_kind="esphome",
+                endpoint_kind="sip_account",
                 sip_port=5060,
                 extension="1000",
                 sip_uri_user="Waveshare P4 Touch",
@@ -100,7 +100,7 @@ def test_esphome_extension_is_the_authoritative_request_uri_user(
         [],
     )
 
-    assert str(uri) == "sip:1000@192.0.2.57:5060;transport=tcp"
+    assert str(uri) == "sip:Waveshare%20P4%20Touch@192.0.2.57:5060;transport=tcp"
     assert peer is not None
     assert entry is None
 

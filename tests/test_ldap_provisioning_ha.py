@@ -91,7 +91,10 @@ async def test_directory_configure_and_refresh_use_actual_private_api_client_pro
         lab.native.runtime_data.client = client
         owner = await start(lab)
         await asyncio.wait_for(completed.wait(), 2)
-        assert [message.key for message in messages] == [1, 2, 4, 10, 11]
+        services = {service.name: service for service in lab.native.runtime_data.services.values()}
+        assert [message.key for message in messages] == [services[name].key for name in (
+            "set_ha_display_name", "set_account", "register_ha_account",
+            "configure_directory", "refresh_ldap_directory")]
         configure = messages[3]
         assert [item.string_ for item in configure.args] == ["127.0.0.1", "", "ou=phonebook,dc=voip",
             "uid={username},ou=accounts,ou=phonebook,dc=voip", "ha", "", ""]

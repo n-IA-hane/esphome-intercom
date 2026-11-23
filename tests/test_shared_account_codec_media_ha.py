@@ -205,6 +205,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
         }
         await card.start(lab, hass_ws_client, tmp_path / "chromium", hass_admin_user)
         assert lab.runtime.sip is lab.calls
+        await until(lambda: lab.calls.component("phone_state") is not None)
         observer = lab.calls.component("phone_state")
         assert (
             observer is not None and observer._committed in lab.calls._state_listeners

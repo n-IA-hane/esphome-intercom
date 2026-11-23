@@ -11,7 +11,7 @@ from pytest_homeassistant.common import MockConfigEntry
 from .test_managed_phones_ha import (
     custom_integration_path as custom_integration_path,
     managed as managed, phone_lab as phone_lab, phone_record, phone_subentry,
-    bind_account,
+    bind_account, drain_provisioning,
 )
 
 pytestmark = pytest.mark.ha
@@ -580,6 +580,8 @@ async def test_managed_generated_login_uses_verified_native_name_or_defers_until
     controller = lab.runtime.phone_provisioning = EspHomeProvisioner(lab.hass, lab.entry)
     try:
         await controller.async_sync()
+        if offline:
+            await drain_provisioning(lab, controller)
         assert row.data['username'] == 'Ingresso' and row.data['username_source'] == 'esphome'
         assert row.data['password'] == 'fixture-kept-password'
         kept = devices.async_get_device_by_identifier(('voip_stack', 'phone_endpoint:Ingresso'), lab.entry.entry_id)

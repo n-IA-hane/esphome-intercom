@@ -1271,20 +1271,28 @@ async def test_removing_integration_deletes_its_mailboxes_after_shutdown(mailbox
 async def test_permanent_esphome_device_removal_purges_mailbox(mailbox_lab):
     from homeassistant.helpers import device_registry as dr
     from pytest_homeassistant.common import MockConfigEntry
-    from custom_components.voip_stack.mailbox import async_setup_mailboxes, EVENT_VOICEMAIL_CHANGED
+    from custom_components.voip_stack.mailbox import async_setup_mailboxes, EVENT_VOICEMAIL_CHANGED, mailbox_settings
     from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
 
     lab = mailbox_lab
     entry = config_entry(lab.hass)
     devices = dr.async_get(lab.hass)
     native = MockConfigEntry(domain="esphome")
     native.add_to_hass(lab.hass)
-    device = devices.async_get_or_create(config_entry_id=native.entry_id, identifiers={("esphome", "test-esp")})
-    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="esp-test", name="ESP", kind=EndpointKind.ESPHOME,
-                                               device_id=device.id, availability="offline"))
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
-        "esphome_mailboxes": {"esp-test": {"enabled": True, "pin_hash": "test-placeholder"}}})
+    device = devices.async_get_or_create(config_entry_id=native.entry_id,
+        identifiers={("esphome", "test-esp")}, connections={(dr.CONNECTION_NETWORK_MAC, "84:c7:bb:00:00:02")})
+    _add_phone_subentry(lab.hass, entry, title="ESP", data={
+        "kind": "sip_account", "name": "ESP", "username": "esp-test", "username_source": "user",
+        "password": PHONE_PASSWORD, "enabled": True, "device_id": device.id,
+        "origin_entry_id": native.entry_id, "mac": "84c7bb000002", "route_id": "test-esp",
+        "managed_esphome": True, "managed_exclusive": True,
+        "voicemail": {"enabled": True, "pin_hash": "test-placeholder"},
+    })
+    sync_registry_from_entry(lab.hass, entry)
+    assert mailbox_settings(lab.hass, "esp-test") == {"enabled": True, "pin_hash": "test-placeholder"}
     await async_setup_mailboxes(lab.hass, entry)
+    await lab.hass.async_block_till_done(wait_background_tasks=True)
     archive = await get_archive(lab.hass)
     writer = await archive.begin("esp-test")
     assert writer.offer(bytes(640), AudioFormat(16000, frame_ms=20))
@@ -1299,7 +1307,7 @@ async def test_permanent_esphome_device_removal_purges_mailbox(mailbox_lab):
         devices.async_remove_device(device.id)
         await asyncio.wait_for(deleted.wait(), 2)
         assert not archive.list("esp-test")
-        assert "esp-test" not in entry.data["esphome_mailboxes"]
+        assert mailbox_settings(lab.hass, "esp-test") == {}
     finally:
         remove()
 

@@ -431,7 +431,7 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
         registrar.update_accounts([*registrar.accounts.values(), SipAccount("legacy", "Legacy", "isolated-test-only")])
     if represented:
         lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="legacy", name="Legacy", username="legacy",
-                                                   kind="sip_account" if origin == "caller" else "esphome", availability="available"))
+                                                   kind="sip_account", availability="available"))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -443,9 +443,9 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
         from custom_components.voip_stack.peer import Peer
 
         monkeypatch.setattr(peer_snapshot.async_build_peer_snapshot, "return_value", [Peer(
-            name="legacy", host="127.0.0.1", endpoint_id="legacy", endpoint_kind="esphome",
+            name="legacy", host="127.0.0.1", endpoint_id="legacy", endpoint_kind="sip_account",
+            sip_uri_user="legacy",
             sip_port=port, rtp_port=media_port, device={"sip_transport": "udp"},
-            tx_formats=["16000:s16le:1:20"], rx_formats=["16000:s16le:1:20"],
         )])
     scenarios = Path(__file__).parent / "fixtures/sipp"
     peer_args = ["-i", "127.0.0.1", "-p", str(port), "-m", "1"]
