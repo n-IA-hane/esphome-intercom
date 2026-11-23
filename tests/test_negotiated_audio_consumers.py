@@ -141,6 +141,7 @@ async def test_local_assist_media_accepts_alternate_codec_without_new_transport(
     invite = SimpleNamespace(
         call_id="call", recv_format=pcmu, send_format=pcmu, recv_formats=(pcmu, pcm),
         remote_rtp_host="127.0.0.2", remote_rtp_port=40000,
+        source_host="127.0.0.2",
         local_audio_direction="sendrecv", remote_audio_connection_held=False,
         remote_sdp=None,
     )

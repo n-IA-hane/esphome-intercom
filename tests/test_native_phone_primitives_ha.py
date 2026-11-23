@@ -211,9 +211,12 @@ async def test_phonebook_close_cancels_active_refresh_and_queued_state_event(pho
 
 async def test_phonebook_tracks_availability_edges_without_sensor_or_call_state_refreshes(phone_lab, monkeypatch):
     from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
     from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
 
     lab = phone_lab
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="Board", kind="sip_account",
+        name="Board", username="Board"))
     state = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "board-voip_state")
     source = AsyncMock(return_value=[])
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
@@ -221,24 +224,35 @@ async def test_phonebook_tracks_availability_edges_without_sensor_or_call_state_
     await owner.async_start()
     try:
         source.reset_mock()
-        for status, expected in (("unknown", 0), ("unavailable", 0), ("idle", 1),
-                                 ("ringing", 1), ("in_call", 1), ("unavailable", 2)):
+        initial = owner.roster_json
+        for status in ("unknown", "unavailable", "idle", "ringing", "in_call", "unavailable"):
             lab.hass.states.async_set(state.entity_id, status)
             await lab.hass.async_block_till_done()
-            assert source.await_count == expected, status
+            source.assert_not_awaited()
+            assert owner.roster_json == initial, status
+        # SIP registration and HA bindings invalidate the canonical account
+        # snapshot; ESPHome sensor values do not own account availability.
+        lab.runtime.endpoints.update("Board", availability="available")
+        owner.request_refresh()
+        await lab.hass.async_block_till_done()
+        source.assert_awaited_once_with(lab.hass)
+        assert lab.runtime.directory.get("Board").metadata["availability"] == "available"
         assert lab.hass.states.get("sensor.voip_phonebook") is None
     finally:
         await owner.async_close()
     lab.hass.states.async_set(state.entity_id, "idle")
     await lab.hass.async_block_till_done()
-    assert source.await_count == 2
+    assert source.await_count == 1
 
 
 async def test_phonebook_recomputes_when_endpoint_metadata_changes(phone_lab, monkeypatch):
     from custom_components.voip_stack import peer_snapshot
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
     from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
 
     lab = phone_lab
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="Board", kind="sip_account",
+        name="Board", username="Board", extension="51"))
     state = er.async_get(lab.hass).async_get_or_create("sensor", "esphome", "board-voip_endpoint")
     source = AsyncMock(return_value=[])
     monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
@@ -253,6 +267,12 @@ async def test_phonebook_recomputes_when_endpoint_metadata_changes(phone_lab, mo
         source.assert_not_awaited()
         lab.hass.states.async_set(state.entity_id, "ready", {"endpoint": {"extension": "52"}})
         await lab.hass.async_block_till_done()
+        source.assert_not_awaited()
+        assert lab.runtime.directory.get("Board").extension == "51"
+        lab.runtime.endpoints.update("Board", extension="52")
+        owner.request_refresh()
+        await lab.hass.async_block_till_done()
         source.assert_awaited_once_with(lab.hass)
+        assert lab.runtime.directory.get("Board").extension == "52"
     finally:
         await owner.async_close()

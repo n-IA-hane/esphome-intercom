@@ -1,6 +1,6 @@
 """HA and the ESP must agree on how a registered ESP line is addressed.
 
-HA resolves a peer to a Request-URI user (extension, else SIP username, else
+HA resolves a peer to a Request-URI user (SIP username, else extension, else
 its text name). The ESP decides admission from that user and the registrar
 that owns the line. Each side was green alone while real calls were rejected,
 so this joins HA's actual URI builder to the ESP's actual registration engine.
@@ -32,14 +32,16 @@ def wire_user(**fields) -> str:
 
 
 HA_TARGETS = {
-    "extension": wire_user(name="Kitchen Panel", extension="101", sip_uri_user="kitchen-panel"),
+    "username-with-extension": wire_user(name="Kitchen Panel", extension="101", sip_uri_user="kitchen-panel"),
+    "extension": wire_user(name="Kitchen Panel", extension="101"),
     "username": wire_user(name="Kitchen Panel", sip_uri_user="kitchen-panel"),
     "text-name": wire_user(name="Kitchen Panel"),
 }
 
 
 def test_ha_serializes_each_addressing_layer():
-    assert HA_TARGETS == {"extension": "101", "username": "kitchen-panel", "text-name": "Kitchen%20Panel"}
+    assert HA_TARGETS == {"username-with-extension": "kitchen-panel", "extension": "101",
+                         "username": "kitchen-panel", "text-name": "Kitchen%20Panel"}
 
 
 @pytest.fixture(scope="module")

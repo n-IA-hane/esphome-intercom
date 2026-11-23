@@ -30,11 +30,24 @@ def test_queue_declarations_reject_unbounded_or_ambiguous_names(value):
 
 def test_managed_queue_record_is_serializable_and_never_changes_sip_account():
     managed = _load("managed_phones")
+    config = _load("phone_config")
+    registrar = _load("sip_registrar")
     phone = managed.ManagedPhone(device_id="esp", origin_entry_id="native",
         mac="84c7bb000001", username="phone", password="test-password", queues="Support, 700")
     assert phone.record()["queues"] == ["Support", "700"]
-    assert not hasattr(phone.account(), "queues")
     assert managed.ManagedPhone(**phone.record()) == phone
+    row = config.draft_phone_subentry({**phone.record(), "kind": "sip_account",
+        "name": "Phone", "managed_esphome": True})
+    entry = SimpleNamespace(data={}, subentries={row.subentry_id: row})
+    original, = config.sip_account_dicts_from_subentries(entry)
+    account = registrar.account_from_mapping(original)
+    assert (account.username, account.password) == ("phone", "test-password")
+    assert not hasattr(account, "queues")
+    updated = config.draft_phone_subentry({**row.data, "queues": ["Sales"]}, previous=row)
+    entry.subentries[row.subentry_id] = updated
+    changed, = config.sip_account_dicts_from_subentries(entry)
+    assert changed["queues"] == ["Sales"]
+    assert registrar.account_from_mapping(changed) == account
 
 
 def test_memberships_include_offline_phones_and_retained_native_config(monkeypatch):

@@ -748,15 +748,17 @@ def test_card_camera_intent_preserves_unknown_destination_video_contract():
 
     async def check(context, base):
         scenarios = [
-            (None, ["audio", "dtmf"], True, True),
-            (None, ["audio", "dtmf"], False, False),
-            ("", ["audio", "dtmf"], True, False),
-            ("jpeg", ["audio", "dtmf"], True, True),
-            (None, ["audio", "dtmf", "video"], True, True),
-            ("__absent__", ["audio", "video"], True, True),
-            ("", ["audio", "video"], True, False),
+            (None, ["audio", "dtmf"], True, True, True),
+            (None, ["audio", "dtmf"], False, True, False),
+            ("", ["audio", "dtmf"], True, False, False),
+            ("", ["audio", "dtmf"], True, True, True),
+            ("jpeg", ["audio", "dtmf"], True, True, True),
+            (None, ["audio", "dtmf", "video"], True, True, True),
+            ("__absent__", ["audio", "video"], True, True, True),
+            ("", ["audio", "video"], True, False, False),
+            ("", ["audio", "video"], True, True, True),
         ]
-        for codec, capabilities, camera_intent, expected in scenarios:
+        for codec, capabilities, camera_intent, video_call, expected in scenarios:
             page = await open_engine(context, base)
             try:
                 await page.evaluate("""async ({codec, capabilities, cameraIntent}) => {
@@ -779,18 +781,24 @@ def test_card_camera_intent_preserves_unknown_destination_video_contract():
                         capabilities:['audio','video'],video_camera_send_enabled:true,send_video:cameraIntent};
                     card._rosterEntries=[{id:'registered-target',name:'Registered phone',enabled:true,
                         metadata:{endpoint_id:'sip:target',device_id:'target-device',endpoint_kind:'sip_account',
-                            registered:true,capabilities,...(codec==='__absent__'?{}:{sip_video_codec:codec})}}];
+                            username:'registered-target',registered:true,capabilities,
+                            ...(codec==='__absent__'?{}:{sip_video_codec:codec})}}];
                     document.body.append(card);
                 }""", {"codec": codec, "capabilities": capabilities, "cameraIntent": camera_intent})
-                await page.get_by_role("button", name="Call", exact=True).click()
+                assert await page.evaluate("card._els.destSelect.selectedOptions[0].textContent") == "Registered phone"
+                # The explicit control supplies intent; discovery metadata does
+                # not negotiate the PBX's final SDP or enable the camera.
+                await page.get_by_role("button", name="Video call" if video_call else "Call", exact=True).click()
                 await page.wait_for_function("rpcCalls.length === 1")
                 request = await page.evaluate("rpcCalls[0]")
                 assert request["service_data"]["send_video"] is expected, {
                     "codec": codec, "capabilities": capabilities,
-                    "camera_intent": camera_intent, "request": request,
+                    "camera_intent": camera_intent, "video_call": video_call, "request": request,
                 }
-                # Public destinations use the selected phone's readable name.
-                assert request["service_data"]["destination"] == "Registered phone"
+                assert request["service_data"]["receive_video"] is video_call
+                # SIP accounts dial their public username while retaining the
+                # readable name in the contact selector.
+                assert request["service_data"]["destination"] == "registered-target"
                 assert request["service_data"]["device_id"] == "browser-device"
                 assert request["service_data"]["media_client_id"] == await page.evaluate("engine.mediaClientId")
             finally:

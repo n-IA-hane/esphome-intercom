@@ -3,7 +3,6 @@
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
-import time
 from xml.etree import ElementTree
 
 import pytest
@@ -25,11 +24,12 @@ async def drained(methods):
 @pytest.mark.parametrize("requested,granted", [(3600, 60), (300, 60), (60, 60), (17, 17)])
 async def test_dialog_server_grants_bounded_lease_and_honors_shorter_request(blf, requested, granted):
     methods, notifications, send = blf
-    before = time.time()
+    loop = asyncio.get_running_loop()
+    before = loop.time()
     response = await methods.handle(subscribe(expires=requested), ("127.0.0.3", 5060), "UDP", send)
     assert response.status == 200 and dict(response.headers)["Expires"] == str(granted)
     owner = next(iter(methods.subscriptions.values()))
-    assert before + granted <= owner.expires_at <= time.time() + granted
+    assert before + granted <= owner.expires_at <= loop.time() + granted
     response.follow_up_scheduler()
     initial = await asyncio.wait_for(notifications.get(), 1)
     assert dict(initial.headers)["Subscription-State"] == f"active;expires={granted}"
@@ -55,11 +55,12 @@ async def test_dialog_cap_does_not_shorten_presence_or_mailbox_leases(blf, event
 
 @pytest.mark.parametrize("watches", [12, 128])
 async def test_many_watches_renew_full_snapshots_without_register_bursts_or_owner_growth(blf, monkeypatch, watches):
-    import custom_components.voip_stack.sip_application as application
-
     methods, notifications, send = blf
-    clock = [time.time()]
-    monkeypatch.setattr(application, "time", SimpleNamespace(time=lambda: clock[0]))
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    elapsed = [0.0]
+    # Subscription leases and asyncio timers share the loop's monotonic clock.
+    monkeypatch.setattr(loop, "time", lambda: real_time() + elapsed[0])
     address = ("127.0.0.3", 5060)
 
     async def register(sequence):
@@ -91,7 +92,7 @@ async def test_many_watches_renew_full_snapshots_without_register_bursts_or_owne
         assert ElementTree.fromstring(initial.body).attrib["version"] == "0"
     await drained(methods)
     for cycle in (1, 2):
-        clock[0] += 48
+        elapsed[0] += 48
         for identity, tag in tags.items():
             result = await methods.handle(subscribe(call_id=identity, tag=tag, cseq=cycle+1, expires=3600),
                                           address, "UDP", send)

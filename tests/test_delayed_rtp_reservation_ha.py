@@ -275,8 +275,8 @@ async def test_browser_receiver_adopts_reserved_fd_and_first_packet(trunks, monk
     peer.bind(("127.0.0.2", 0))
     fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
     invite = LocalAudioContract("browser-reserved", "127.0.0.2", peer.getsockname()[1], fmt, fmt,
-        remote_sdp=f"v=0\r\nc=IN IP4 127.0.0.2\r\nm=audio {peer.getsockname()[1]} RTP/AVP 96\r\na=rtpmap:96 L16/16000/1\r\na=ptime:20\r\n")
-    invite = SimpleNamespace(**vars_for_contract(invite), source_host="127.0.0.2")
+        remote_sdp=f"v=0\r\nc=IN IP4 127.0.0.2\r\nm=audio {peer.getsockname()[1]} RTP/AVP 96\r\na=rtpmap:96 L16/16000/1\r\na=ptime:20\r\n",
+        source_host="127.0.0.2")
     lab.calls.upsert(invite.call_id, state="in_call", owner="ha_softphone")
     lab.calls.attach_media(invite.call_id, {"invite": invite, "local_rtp_port": owner.ports[0], "rtp_reservation": owner})
     store = {"call_id": invite.call_id, "state": "in_call"}
@@ -332,10 +332,6 @@ async def test_browser_receiver_adopts_reserved_fd_and_first_packet(trunks, monk
             await barrier
         await asyncio.sleep(0)
         assert source.fileno() < 0 and not lab.runtime.rtp_port_pool.get("used")
-
-
-def vars_for_contract(contract):
-    return {name: getattr(contract, name) for name in contract.__dataclass_fields__}
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

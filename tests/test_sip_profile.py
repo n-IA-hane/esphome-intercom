@@ -256,6 +256,8 @@ class SipProfileTest(unittest.TestCase):
 
     def test_g722_relay_advances_rtp_clock_by_160_not_pcm_samples(self) -> None:
         class PassthroughCodec:
+            has_pending_pcm = False
+
             def __init__(self, fmt, **_kwargs) -> None:
                 self.fmt = fmt
 

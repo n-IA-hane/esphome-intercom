@@ -68,6 +68,7 @@ async def test_ldap3_starttls_on_configured_plain_listener_verifies_certificate(
     from custom_components.voip_stack import phone_services
     lab = managed
     directory_actions(lab.native.runtime_data)
+    await lab.controller.async_sync()
     certificate, key = certificate_paths(tmp_path)
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, "phone_services": {
         "listen_host": "127.0.0.1", "ldap_port": 0, "certificate": str(certificate), "private_key": str(key)}})

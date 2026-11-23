@@ -23,6 +23,9 @@ pytestmark = [pytest.mark.ha, pytest.mark.usefixtures("socket_enabled")]
 async def start(lab, **config):
     from custom_components.voip_stack.phone_services import async_setup_phone_services
     directory_actions(lab.native.runtime_data)
+    # These lifecycle tests start with a configured account, as a loaded entry
+    # does before an LDAP listener is reconciled.
+    await lab.controller.async_sync()
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
         "phone_services": {"listen_host": "127.0.0.1", "ldap_port": 0, **config}})
     await async_setup_phone_services(lab.hass, lab.entry)
@@ -266,7 +269,7 @@ async def test_implicit_tls_ldap3_validates_ca_and_hostname_and_reads_canonical_
         try:
             assert connection.search(BASE, "(&(uid=*)(ou=sip_account))", attributes=["uid", "cn", "labeledURI"])
             assert len(connection.entries) == 1
-            assert connection.entries[0].uid.value == phone.endpoint_id
+            assert connection.entries[0].uid.value == phone.username
             assert connection.entries[0].cn.value == "Ingresso"
         finally:
             connection.unbind()

@@ -156,8 +156,8 @@ async def test_discovery_does_not_reselect_listener_authoritative_audio(monkeypa
 
     _patch_route_prefix(monkeypatch, pending_routes={"call-1": object()})
     known = Peer(name="Alice", host="192.0.2.10",
-        sip_audio_tx_formats=("L16/16000/1/10",),
-        sip_audio_rx_formats=("L16/48000/1/10",))
+        device={"sip_audio_tx_formats": ("L16/16000/1/10",),
+                "sip_audio_rx_formats": ("L16/48000/1/10",)})
     runtime = _runtime()
     runtime.build_peer_snapshot.return_value = [known]
     authoritative = _invite()

@@ -5,7 +5,7 @@ from pathlib import Path
 from collections.abc import Iterator
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from homeassistant.helpers.entity import Entity
 
 import pytest
@@ -14,6 +14,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import EntityPlatform
 from homeassistant.exceptions import Unauthorized
 from pytest_homeassistant.common import MockConfigEntry
+from .test_managed_phones_ha import phone_lab as phone_lab, managed as managed
 
 pytestmark = pytest.mark.ha
 
@@ -202,6 +203,7 @@ async def test_esphome_rename_updates_owned_roles_without_adopting_device(
         register_state_event_bridge,
     )
     from homeassistant.helpers import device_registry as dr
+    from homeassistant.config_entries import ConfigSubentry
 
     entry = MockConfigEntry(domain="voip_stack", data={})
     entry.add_to_hass(hass)
@@ -225,11 +227,17 @@ async def test_esphome_rename_updates_owned_roles_without_adopting_device(
         phones=SimpleNamespace(),
     )
     entry.runtime_data = runtime
+    hass.config_entries.async_add_subentry(entry, ConfigSubentry(
+        subentry_type="phone", title="ESP", unique_id="phone:ESP",
+        data={"kind": "sip_account", "name": "ESP", "username": "ESP",
+              "managed_esphome": True, "device_id": device.id},
+    ))
     runtime.endpoints.register(
         PhoneEndpoint(
-            endpoint_id=f"esphome:{device.id}",
+            endpoint_id="ESP",
             name="ESP",
-            kind=EndpointKind.ESPHOME,
+            username="ESP",
+            kind=EndpointKind.SIP_ACCOUNT,
             device_id=device.id,
             entity_ids=frozenset({entity.entity_id}),
             active_call_id="current-call",
@@ -309,33 +317,26 @@ async def test_shared_entity_rename_keeps_subscriptions(
 
 
 @pytest.mark.parametrize("domain, role", [("text", "voip_ring_groups"), ("text", "voip_conference_groups"), ("switch", "voip_ring_on_conference")])
-async def test_phonebook_tracks_renamed_esphome_roles(hass: HomeAssistant, monkeypatch, domain: str, role: str) -> None:
-    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
-    from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
-    from custom_components.voip_stack.runtime_data import VoipStackRuntime
-    from custom_components.voip_stack import peer_snapshot
-
+async def test_provisioner_tracks_renamed_esphome_roles(managed, monkeypatch, domain: str, role: str) -> None:
+    lab = managed
+    hass = lab.hass
     registry = er.async_get(hass)
     entity = registry.async_get_or_create(domain, "esphome", f"board-{role}",
-                                          suggested_object_id="board_voip_ring_groups")
-    entry = MockConfigEntry(domain="voip_stack", data={})
-    entry.add_to_hass(hass)
-    runtime = entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},
-        endpoints=EndpointRegistry(), phones=None)
-    source = AsyncMock(return_value=[])
-    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", source)
-    coordinator = entry_phonebook(hass, runtime)
-    await coordinator.async_start()
+        suggested_object_id="board_voip_ring_groups", config_entry=lab.native, device_id=lab.device.id)
+    scheduled = MagicMock()
+    monkeypatch.setattr(lab.controller, "schedule", scheduled)
+    lab.controller.start()
     try:
         hass.states.async_set(entity.entity_id, "before")
         registry.async_update_entity(entity.entity_id, new_entity_id=f"{domain}.renamed_groups")
         await hass.async_block_till_done()
-        assert coordinator._tracked_entities == {f"{domain}.renamed_groups"}
+        assert f"{domain}.renamed_groups" in lab.controller._state_entities
+        assert entity.entity_id not in lab.controller._state_entities
         hass.states.async_set(f"{domain}.renamed_groups", "first")
         await hass.async_block_till_done()
-        source.reset_mock()
+        scheduled.reset_mock()
         hass.states.async_set(f"{domain}.renamed_groups", "second")
         await hass.async_block_till_done()
-        source.assert_awaited_once_with(hass)
+        scheduled.assert_called_once_with()
     finally:
-        await coordinator.async_close()
+        await lab.controller.async_close()

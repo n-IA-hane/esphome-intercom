@@ -51,6 +51,7 @@ def _fixture():
         send_format=_format("PCMA/8000"),
         recv_format=_format("PCMU/8000"),
         recv_formats=(),
+        send_formats=(),
         send_video_format=None,
         recv_video_format=None,
         remote_sdp=(

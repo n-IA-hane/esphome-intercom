@@ -76,6 +76,32 @@ phone_endpoint = _load("phone_endpoint")
 endpoint_registry = _load("endpoint_registry")
 
 
+@pytest.fixture(autouse=True)
+def hardware_registries(monkeypatch):
+    """Keep hardware projection independent from other modules' HA fakes."""
+    helpers = types.ModuleType("homeassistant.helpers")
+    helpers.__path__ = []
+    devices = types.ModuleType("homeassistant.helpers.device_registry")
+    entities = types.ModuleType("homeassistant.helpers.entity_registry")
+    device_lookups = []
+
+    class DeviceRegistry:
+        def async_get(self, device_id):
+            device_lookups.append(device_id)
+            return None
+
+    devices.async_get = lambda _hass: DeviceRegistry()
+    helpers.device_registry = devices
+    helpers.entity_registry = entities
+    for module in (helpers, devices, entities):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(sys.modules["homeassistant.core"], "ServiceCall", object, raising=False)
+    resolver = _load("device_resolver")
+    monkeypatch.setattr(resolver, "dr", devices)
+    monkeypatch.setattr(resolver, "er", entities)
+    return device_lookups
+
+
 def test_phone_config_loader_ignores_foreign_module_and_subentry_placeholders(monkeypatch):
     config_entries = sys.modules["homeassistant.config_entries"]
     placeholder = type("ConfigSubentry", (), {})
@@ -112,7 +138,7 @@ def test_configured_availability_is_independent_of_browser_cards(kind, enabled, 
 
 @pytest.mark.parametrize("card_count", [0, 2])
 @pytest.mark.parametrize("kind", ["browser", "sip_account"])
-def test_configured_enable_cycle_preserves_policy_and_call_identity(card_count, kind):
+def test_configured_enable_cycle_preserves_policy_and_call_identity(card_count, kind, hardware_registries):
     subentry = types.SimpleNamespace(
         subentry_type=phone_config.PHONE_SUBENTRY_TYPE,
         subentry_id="phone", unique_id="phone:stable", title="Phone",
@@ -144,6 +170,7 @@ def test_configured_enable_cycle_preserves_policy_and_call_identity(card_count, 
     phone_config.sync_registry_from_entry(hass, entry)
     assert registry.require("stable").availability.value == "unavailable"
     assert registry.require("stable").policy == original_policy
+    assert hardware_registries == ["stable-device", "stable-device"]
 
 
 def test_phone_policy_survives_rename_and_config_roundtrip():

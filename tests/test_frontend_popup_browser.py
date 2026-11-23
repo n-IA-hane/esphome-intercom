@@ -595,9 +595,14 @@ def test_mailbox_dtmf_call_never_requests_camera_with_global_send_camera_enabled
 def test_mailbox_audio_only_intent_leaves_regular_call_camera_preference(popup_page):
     page = popup_page
     setup_mailbox(page)
-    page.evaluate("mailboxCard._startCall('Ordinary peer')")
-    assert page.evaluate('originations[0].destination') == 'Ordinary peer'
-    assert page.evaluate('originations[0].send_video') is True
+    page.get_by_role('button', name='Delete: Fixture,').click()
+    page.wait_for_function("!mailboxCard._mailboxBusy&&mailboxCard._softphoneSnapshot.state==='idle'")
+    assert page.evaluate('originations[0].send_video') is False
+    assert page.evaluate('cameraRequests') == 0
+    page.evaluate("mailboxCard._startCall('Ordinary peer', {receiveVideo:true})")
+    assert page.evaluate('originations[1].destination') == 'Ordinary peer'
+    assert page.evaluate('originations[1].send_video') is True
+    assert page.evaluate('originations[1].receive_video') is True
     assert page.evaluate('cameraRequests') == 1
     assert page.evaluate('mailboxCard._softphoneSnapshot.send_video') is True
 

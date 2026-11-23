@@ -624,7 +624,7 @@ async def test_expired_subscription_emits_terminal_even_on_unrelated_update(hass
         initial.follow_up_scheduler()
         sub = next(iter(methods.subscriptions.values()))
         await sub.notify_task
-        sub.expires_at = time.time() - 1
+        sub.expires_at = asyncio.get_running_loop().time() - 1
         methods._notify_subscribers("unrelated")
         await asyncio.wait_for(sub.notify_task, 1)
         assert len(sent) == 2

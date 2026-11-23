@@ -180,8 +180,12 @@ def test_small_video_slot_keeps_only_the_left_handset_as_hangup(video_page, pres
     }""")
     phone = page.locator("voip-stack-card")
     controls = page.locator("voip-stack-dashboard-card") if presenter == "dashboard" else phone
-    phone.locator(".hangup-peer").click()
-    phone.locator(".hangup-duration").click()
+    # The informational labels ignore pointer events; exercise actual screen
+    # clicks rather than waiting for the labels themselves to become targets.
+    for label in (phone.locator(".hangup-peer"), phone.locator(".hangup-duration")):
+        box = label.bounding_box()
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        assert page.evaluate("hangups") == 0
     for index, label in enumerate(("Options", "Options", "Keypad", "Contacts", "Park call")):
         controls.get_by_role("button", name=label, exact=True).click()
         if label == "Options":

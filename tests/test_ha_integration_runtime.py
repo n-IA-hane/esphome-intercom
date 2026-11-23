@@ -456,6 +456,8 @@ async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(m
     other.runtime_data.first_connect_done.set()
     state = er.async_get(lab.hass).async_get_or_create('sensor','esphome','84c7bb000002-voip_state',config_entry=other,device_id=device.id)
     lab.hass.states.async_set(state.entity_id,'idle')
+    # Complete enrollment before testing delivery of an unchanged directory.
+    await lab.controller.async_sync()
     coordinator = entry_phonebook(lab.hass,lab.runtime)
     store_manual_roster_entries(lab.hass,[RosterEntry('Casa',name='Casa',number='410')])
     lab.controller.configure_directory_service({'enabled':True,'ldap_port':1389,'base_dn':'ou=phonebook,dc=voip','tls':False},epoch='fixture-directory')
@@ -670,7 +672,7 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
 
 
 async def test_esphome_call_control_repair_tracks_missing_actions(
-    hass: HomeAssistant,
+    phone_lab,
 ) -> None:
     from homeassistant.helpers import issue_registry as ir
 
@@ -678,13 +680,23 @@ async def test_esphome_call_control_repair_tracks_missing_actions(
         ESPHOME_ACTION_ISSUE_PREFIX,
         async_sync_esphome_action_issue,
     )
+    from .test_managed_phones_ha import native_services
+
+    lab = phone_lab
+    hass = lab.hass
+    lab.native.runtime_data.services = {}
 
     device = {
-        "device_id": "p4-device",
+        "device_id": lab.device.id,
         "name": "P4",
         "route_id": "p4",
     }
-    issue_id = f"{ESPHOME_ACTION_ISSUE_PREFIX}p4-device"
+    issue_id = f"{ESPHOME_ACTION_ISSUE_PREFIX}{lab.device.id}"
+
+    lab.native.runtime_data.first_connect_done.clear()
+    async_sync_esphome_action_issue(hass, device)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    lab.native.runtime_data.first_connect_done.set()
 
     async_sync_esphome_action_issue(hass, device)
     issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
@@ -692,15 +704,10 @@ async def test_esphome_call_control_repair_tracks_missing_actions(
     assert issue is not None
     assert issue.translation_placeholders == {
         "phone": "P4",
-        "actions": "start_call, answer_call, decline_call, hangup_call",
+        "actions": "start_call_on_line, answer_call, decline_call, hangup_call",
     }
 
-    async def handle_action(_call) -> None:
-        return None
-
-    for action in ("start_call", "answer_call", "decline_call", "hangup_call"):
-        hass.services.async_register("esphome", f"p4_{action}", handle_action)
-
+    lab.native.runtime_data.services = native_services()
     async_sync_esphome_action_issue(hass, device)
 
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

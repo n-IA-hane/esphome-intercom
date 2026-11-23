@@ -301,9 +301,10 @@ async def restore_managed_caller(lab, caller, discovery):
     from homeassistant.helpers import device_registry as dr, entity_registry as er
     from pytest_homeassistant.common import MockConfigEntry
     from custom_components.voip_stack import peer_snapshot
-    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records
+    from custom_components.voip_stack.managed_phones import ManagedPhone, managed_records, save_managed_account
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
     from custom_components.voip_stack.runtime_data import sip_registrar
-    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.store import config_entry, sip_accounts
 
     origin = MockConfigEntry(domain="esphome", data={"host": "127.0.0.2"})
     origin.add_to_hass(lab.hass)
@@ -316,14 +317,14 @@ async def restore_managed_caller(lab, caller, discovery):
     phone = ManagedPhone(device.id, origin.entry_id, "84c7bb000001", "fixture-only",
         username="managed_caller", display_name="Managed caller", api_host="127.0.0.2", extension="430")
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
-        "managed_esphome_phones": {device.id: phone.record()}})
+    save_managed_account(lab.hass, entry, phone)
+    sync_registry_from_entry(lab.hass, entry)
     restored = managed_records(entry)[device.id]
     caller.local_uri_user = caller.username = restored.username
     caller.password = restored.password
     registrar = sip_registrar(lab.hass)
     registrar.enabled = True
-    registrar.update_accounts([*registrar.accounts.values(), restored.account()])
+    registrar.update_accounts(sip_accounts(lab.hass))
     # The runtime captured this fixture callable at startup. Restore the actual
     # resolver/projection behind that same callable, without replacing its owner.
     peer_snapshot.async_build_peer_snapshot.side_effect = build_real_peer_snapshot

@@ -318,9 +318,13 @@ def test_first_video_frame_moves_call_details_to_one_reachable_bar(card_page, tm
     expect(hangup).to_have_count(1)
     assert hangup.bounding_box()["width"] == 48
     page.locator("voip-stack-card").screenshot(path=str(tmp_path / "video-toolbar.png"))
-    page.locator(".hangup-peer").click()
     video_time = page.locator(".hangup-duration")
-    video_time.click()
+    # These labels intentionally do not receive pointer events. Click their
+    # screen positions, as a user would, without waiting for actionable labels.
+    for label in (page.locator(".hangup-peer"), video_time):
+        box = label.bounding_box()
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        assert page.evaluate("actions") == []
     expect(video_time).not_to_have_text(video_time.inner_text())
     handset = hangup.bounding_box()
     page.mouse.click(handset["x"] + handset["width"] + 2, handset["y"] + handset["height"] / 2)

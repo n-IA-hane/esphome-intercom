@@ -49,6 +49,10 @@ class _InvitePeer(WIRE.SipInvite):
         return self.send_format
 
     @property
+    def outbound_rtp_formats(self):
+        return self.send_formats
+
+    @property
     def inbound_rtp_format(self):
         return self.recv_format
 
@@ -267,6 +271,7 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
     assert answer_calls == [
         {
             "recv_formats": (),
+            "send_formats": (),
             "dtmf": None,
             "dtmf_direction": None,
             "remote_sdp": invite.remote_sdp,
@@ -354,7 +359,8 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
         remote_video_connection_held=False,
     )
     updated_audio_peer = types.SimpleNamespace(
-        outbound_rtp_format=ESTABLISHED_SEND, inbound_rtp_format=ESTABLISHED_RECEIVE, inbound_rtp_formats=())
+        outbound_rtp_format=ESTABLISHED_SEND, inbound_rtp_format=ESTABLISHED_RECEIVE,
+        inbound_rtp_formats=(), outbound_rtp_formats=())
     updated_video_peer = object()
     updated = _invite(
         call_id="call",
@@ -561,6 +567,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
     new_audio_left = types.SimpleNamespace(
         name="new-audio-left",
         outbound_rtp_format=AUDIO_SEND,
+        outbound_rtp_formats=(),
         inbound_rtp_format=AUDIO_RECEIVE,
         inbound_rtp_formats=(),
     )
@@ -892,6 +899,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
     new_audio_left = types.SimpleNamespace(
         name="new-audio-left",
         outbound_rtp_format=AUDIO_SEND,
+        outbound_rtp_formats=(),
         inbound_rtp_format=AUDIO_RECEIVE,
         inbound_rtp_formats=(),
     )
