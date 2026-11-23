@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .session_cleanup import async_wait_for_cleanup
+
 if TYPE_CHECKING:
     from .account_dialing import AccountCallPlan
     from .call_state import CallPrecondition
@@ -64,14 +66,29 @@ class TransferResult:
 async def await_forward_result(task: asyncio.Task[TransferResult | None]) -> TransferResult | None:
     """Await the same session's configured route chain, including its fallback."""
     visited = set()
-    while task is not None:
-        if task in visited:
-            raise RuntimeError("Forward continuation cycle")
-        visited.add(task)
-        result = await asyncio.shield(task)
-        if result is None or result.continuation is None:
-            return result
-        task = result.continuation
+    try:
+        while task is not None:
+            if task in visited:
+                raise RuntimeError("Forward continuation cycle")
+            visited.add(task)
+            result = await asyncio.shield(task)
+            if result is None or result.continuation is None:
+                return result
+            task = result.continuation
+    except asyncio.CancelledError:
+        # A completed route may already have handed ownership to its fallback
+        # before this waiter receives cancellation. Drain the current route,
+        # rather than cancelling only the original, already completed task.
+        while task.done() and not task.cancelled() and task.exception() is None:
+            result = task.result()
+            if result is None or result.continuation is None or result.continuation in visited:
+                break
+            task = result.continuation
+            visited.add(task)
+        if not task.done():
+            task.cancel()
+        await async_wait_for_cleanup(asyncio.gather(task, return_exceptions=True))
+        raise
     return None
 
 

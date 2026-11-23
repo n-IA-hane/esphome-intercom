@@ -779,6 +779,10 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
         async def __anext__(self):
             return await self.messages.get()
         async def send_json(self, value):
+            if "tx_format" in value:
+                from custom_components.voip_stack.core.audio_format import parse_audio_format_token
+                self.capture_format = parse_audio_format_token(value["tx_format"])
+                self.receive_format = parse_audio_format_token(value["rx_format"])
             self.ready.set()
         async def send_bytes(self, value):
             await self.audio.put(value)
@@ -837,8 +841,12 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
             workers.append(worker)
             await asyncio.wait_for(browser.ready.wait(), 2)
             # Keep the call's real RTP path observable before each park.
-            frame = struct.pack("<h", 6000) * media.send_format.audio_format.nominal_frame_samples
-            await browser.messages.put(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(frame)))
+            capture = browser.capture_format
+            frame = struct.pack("<h", 6000) * (capture.nominal_frame_bytes // 2)
+            captured_ms = 0
+            while captured_ms < media.send_format.frame_ms:
+                await browser.messages.put(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(frame)))
+                captured_ms += capture.frame_ms
             async with asyncio.timeout(2):
                 while True:
                     raw = await lab.hass.loop.sock_recv(audio, 4096)
@@ -860,7 +868,9 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
                 while True:
                     decoded = audio_ws.decode_audio_frame(await browser.audio.get())
                     if any(decoded):
-                        assert max(struct.unpack(f"<{len(decoded)//2}h", decoded)) == 7000
+                        samples = struct.unpack(f"<{len(decoded)//2}h", decoded)
+                        assert len(decoded) == browser.receive_format.nominal_frame_bytes
+                        assert all(abs(value - 7000) <= 1 for value in samples[-64:])
                         break
             response = await lab.hass.services.async_call("voip_stack", "park", {"device_id": phone.device_id},
                                                           blocking=True, return_response=True)
@@ -897,21 +907,39 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
 
 
 @pytest.mark.parametrize("active_video", [False, True])
-async def test_browser_video_parking_requires_audio_readiness_without_mutating_call(monkeypatch, active_video):
-    from unittest.mock import Mock
+async def test_browser_video_parking_requires_audio_readiness_without_mutating_call(trunks, active_video):
+    """A video WS owner cannot substitute for a missing real SIP audio source."""
     from custom_components.voip_stack import parking
-    owner = SimpleNamespace(call_id="video-call", live=True, state="in_call", endpoint_claims={"browser"})
-    registry = Mock()
-    registry.resolve_session_id.return_value = "video-call"
-    registry.get_session.return_value = owner
-    registry.resource_for.return_value = None if active_video else {"video_direction": "sendrecv", "video_format": object()}
-    runtime = SimpleNamespace(sip=registry, media=SimpleNamespace(sessions_for=lambda kind:
-        {("video-call", "browser"): object()} if active_video and kind == "video" else {}))
-    monkeypatch.setattr(parking, "require_runtime_data", lambda _: runtime)
-    with pytest.raises(ParkingError, match="audio connection"):
-        await parking.park_browser_sip_call(object(), "video-call", "browser")
-    registry.take_media.assert_not_called()
-    registry.request_termination.assert_not_called()
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
+    from custom_components.voip_stack.websocket_owner import MediaWebSocketOwner
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+
+    runtime = trunks
+    registry = runtime.calls
+    registry.bind_endpoint_registry(runtime.runtime.endpoints)
+    endpoint = PhoneEndpoint(endpoint_id="unready-video-card", name="Unready video card",
+        kind=EndpointKind.BROWSER, availability="available")
+    runtime.runtime.endpoints.register(endpoint)
+    owner = registry.upsert("missing-sip-audio", owner="ha_softphone", state="in_call")
+    registry.claim_endpoint(owner.call_id, endpoint.endpoint_id, role="destination")
+    descriptor = {"endpoint_id": endpoint.endpoint_id, "local_rtp_port": 0}
+    registry.attach_media(owner.call_id, descriptor)
+    video_owner = MediaWebSocketOwner()
+    key = f"{endpoint.endpoint_id}|{owner.call_id}"
+    if active_video:
+        runtime.runtime.media.owners_for("video")[key] = video_owner
+    before_ports = set(runtime.runtime.rtp_port_pool.get("used", ()))
+    try:
+        with pytest.raises(ParkingError, match="SIP dialog ended"):
+            await parking.park_browser_sip_call(runtime.hass, owner.call_id, endpoint.endpoint_id)
+        assert registry.resource_for(owner.call_id, "softphone_media") is descriptor
+        assert endpoint.endpoint_id in owner.endpoint_claims and owner.live
+        assert not video_owner.handoff_requested.is_set()
+        assert set(runtime.runtime.rtp_port_pool.get("used", ())) == before_ports
+    finally:
+        runtime.runtime.media.owners_for("video").pop(key, None)
+        video_owner.released.set()
+        await registry.request_termination(owner.call_id, TerminationIntent("test_cleanup"))
 
 
 @pytest.mark.parametrize('trunks', [True], indirect=True)
@@ -934,7 +962,8 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = offer_video
     if offer_video:
-        runtime.runtime.endpoints.update('transfer_a', capabilities=frozenset({'audio', 'dtmf', 'video'}))
+        from .test_video_originate_unknown_ha import set_configured_video_policy
+        set_configured_video_policy(runtime, 'transfer_a', True)
     endpoint = PhoneEndpoint(endpoint_id='direct-browser', username='direct-browser', name='Direct browser', device_id='direct-browser-device',
         kind=EndpointKind.BROWSER, availability='available', capabilities=frozenset({'audio', 'dtmf', 'video'}))
     runtime.runtime.endpoints.register(endpoint)
@@ -953,7 +982,11 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
         def force_close(self): self.closed = True
         def __aiter__(self): return self
         async def __anext__(self): return await self.messages.get()
-        async def send_json(self, _): self.ready.set()
+        async def send_json(self, value):
+            if "tx_format" in value:
+                from custom_components.voip_stack.core.audio_format import parse_audio_format_token
+                self.capture_format = parse_audio_format_token(value["tx_format"])
+            self.ready.set()
         async def send_bytes(self, value): self.audio.put_nowait(value)
 
     tasks = []
@@ -979,6 +1012,7 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
     try:
         await runtime.hass.services.async_call('voip_stack', 'call', {
             'device_id': endpoint.device_id, 'destination': 'transfer_a', 'media_client_id': 'direct-browser-media',
+            'receive_video': offer_video, 'send_video': False,
         }, blocking=True)
         call_id = runtime.runtime.endpoints.get(endpoint.endpoint_id).active_call_id
         client = runtime.calls.sip_client_for(call_id)
@@ -1003,9 +1037,9 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
         }, blocking=True)
         assert not get_parking_lot(runtime.hass).calls
         recovered_browser, recovered_media = await connect()
-        fmt = recovered_media.send_format.audio_format
-        pcm = struct.pack(f'<{fmt.nominal_frame_samples}h', *([1200] * fmt.nominal_frame_samples))
-        for _ in range(30):
+        fmt = recovered_browser.capture_format
+        pcm = struct.pack('<h', 1200) * (fmt.nominal_frame_bytes // 2)
+        for _ in range(round(600 / fmt.frame_ms)):
             recovered_browser.messages.put_nowait(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(pcm)))
             await asyncio.sleep(fmt.frame_ms / 1000)
         await runtime.hass.services.async_call('voip_stack', 'hangup', {'device_id': endpoint.device_id}, blocking=True)

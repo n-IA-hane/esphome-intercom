@@ -757,32 +757,39 @@ class ForwardOperation:
             video_transcoding_enabled,
         )
 
-    async def _prepare_parked_socket(self, direct_winner):
+    async def _prepare_parked_socket(self, candidate):
+        """Prepare a candidate against the single retained media reservation."""
+        client, video = candidate.client, candidate.video_relay
         if self.retained_media is not None and self.retained_media.video_relay is not None:
             self.retained_media.validate(self.registry)
-            if self.video_relay is None:
-                raise RuntimeError("The transfer target cannot retain the source video")
+            if video is None:
+                return False
             # The new SIP leg uses the existing destination sockets. Its
             # unused reservation remains local until the answer is planned.
-            self.client.local_video_rtp_port = self.retained_media.video_relay.right_port
+            client.local_video_rtp_port = self.retained_media.video_relay.right_port
         if self.parked_media is not None:
-            if self.video_relay is None:
-                raise RuntimeError("The pickup target cannot retain the parked video")
+            if video is None:
+                return False
             # The held relay already owns its four video sockets. Retire
             # only this unused dial candidate, then advertise the held
             # destination port. Bind audio before the first INVITE too.
-            await self.video_relay.stop()
-            self.video_relay = direct_winner.video_relay = None
-            self.client.local_video_rtp_port = self.parked_media.video_relay.right_port
+            await video.stop()
+            candidate.video_relay = None
+            if self.video_relay is video:
+                self.video_relay = None
+            client.local_video_rtp_port = self.parked_media.video_relay.right_port
+            client.local_rtp_port = self.reservation.ports[1]
             from .media_ports import bind_sip_audio_socket
 
-            self.parked_audio_socket = direct_winner.ports.take_audio_socket(
-                self.reservation.ports[1]
-            )
             if self.parked_audio_socket is None:
-                self.parked_audio_socket = bind_sip_audio_socket(
+                self.parked_audio_socket = self.reservation.take_audio_socket(
                     self.reservation.ports[1]
                 )
+                if self.parked_audio_socket is None:
+                    self.parked_audio_socket = bind_sip_audio_socket(
+                        self.reservation.ports[1]
+                    )
+        return True
 
     async def _invite_sip_target(self, direct_winner):
         destination = self.plan.destination
@@ -1001,7 +1008,8 @@ class ForwardOperation:
 
     async def forward_sip(self):
         winner, source_id, wants_video, transcode = self.prepare_sip_target()
-        await self._prepare_parked_socket(winner)
+        if await self._prepare_parked_socket(winner) is False:
+            raise RuntimeError("The destination cannot retain the existing video")
         result = await self._invite_sip_target(winner)
         await self._prepare_destination_media(winner)
         await self.commit_sip(winner, source_id, wants_video, transcode, result)

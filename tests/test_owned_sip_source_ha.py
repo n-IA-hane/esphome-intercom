@@ -30,7 +30,7 @@ pytestmark = pytest.mark.ha
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize("control", ["", "source", "ambiguous"], ids=["no-card", "sip-control", "ambiguous"])
+@pytest.mark.parametrize("control", ["", "source", "ambiguous"], ids=["no-card", "legacy-control", "ambiguous"])
 async def test_source_capture_requires_an_actual_card_claim(queue_lab, control):
     runtime = queue_lab
     session = runtime.calls.upsert("capture-admission", owner="ha_softphone", state="in_call")
@@ -44,6 +44,9 @@ async def test_source_capture_requires_an_actual_card_claim(queue_lab, control):
                 OwnedSipSource.capture(runtime.hass, session)
         else:
             if control:
+                # This admission-only control models a legacy physical phone,
+                # which cannot own an authenticated HA media connection.
+                runtime.runtime.endpoints.update(control, kind=EndpointKind.ESPHOME)
                 runtime.calls.claim_endpoint(session.call_id, control, role="caller")
             assert OwnedSipSource.capture(runtime.hass, session, control) is None
         assert runtime.calls.resource_for(session.call_id, "owned_sip_source") is None

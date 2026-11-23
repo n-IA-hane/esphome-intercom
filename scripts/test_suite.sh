@@ -154,6 +154,7 @@ ha_tests=(
   tests/test_media_duplex_receive_budget_ha.py
   tests/test_local_call_media_packet_time_ha.py
   tests/test_owned_sip_source_ha.py
+  tests/test_forward_continuation_ha.py
   tests/test_replacement_grant_owner_ha.py
   tests/test_dahua_offer_payload_seed_ha.py
   tests/test_community_independent_peer_ha.py

@@ -15,6 +15,33 @@ from .test_voicemail_ha import custom_integrations as custom_integrations
 pytestmark = pytest.mark.ha
 
 
+def prepared_video_candidate(peer, call_id, *, source_client=None):
+    """Let the mocked signaling owner return a canonical committed SIP DTO."""
+    from custom_components.voip_stack.core import sdp, sip
+    from custom_components.voip_stack.sip_client import SipDialog
+    from custom_components.voip_stack.sip_listener import SipInvite
+
+    audio = sdp.RtpPcmFormat(96, "L16", 8000, 1, 20)
+    fields = dict(call_id=call_id, send_format=audio, recv_format=audio,
+        remote_rtp_host=peer.host, remote_rtp_port=41000,
+        video_format=peer.video_format, local_video_format=peer.recv_format,
+        remote_video_rtp_host=peer.host, remote_video_rtp_port=peer.port,
+        remote_video_rtcp_host=peer.rtcp_host, remote_video_rtcp_port=peer.rtcp_port,
+        remote_video_connection_held=peer.connection_held)
+    if source_client is not None:
+        return SipDialog(target="source", remote_host=peer.host, remote_sip_port=5060,
+            local_rtp_port=43000, local_uri="sip:pbx@127.0.0.1",
+            remote_uri=f"sip:source@{peer.host}", **fields)
+    body = sdp.build_offer_directional("127.0.0.1", peer.host, 41000,
+        [audio.audio_format], [audio.audio_format], send_rtp_formats=(audio,),
+        recv_rtp_formats=(audio,), video_port=peer.port, video_formats=(peer.video_format,),
+        video_direction=peer.video_format.direction)
+    return SipInvite(source_host=peer.signaling_host or peer.host, source_port=5060,
+        request_uri=sip.parse_sip_uri("sip:pbx@127.0.0.1"),
+        caller_uri=sip.parse_sip_uri(f"sip:source@{peer.host}"), target="pbx", caller="source",
+        cseq="1 INVITE", remote_sdp=body.encode(), **fields)
+
+
 @pytest.fixture
 async def av_transaction_owner(monkeypatch):
     from unittest.mock import AsyncMock
@@ -77,7 +104,7 @@ async def test_parking_goal_and_slot_are_released_when_video_rollback_raises(av_
 
 async def test_irrecoverable_video_restore_terminates_original_not_only_temporary_goal(av_transaction_owner, monkeypatch):
     from unittest.mock import AsyncMock, Mock
-    from custom_components.voip_stack import parking, sip_video_relay as vr, bridge_media_updates, sip_bridge, local_media_bridge
+    from custom_components.voip_stack import parking, sip_video_relay as vr, bridge_media_updates, local_media_bridge
     from custom_components.voip_stack.core import sdp
     state = av_transaction_owner
     video = state.video
@@ -92,11 +119,12 @@ async def test_irrecoverable_video_restore_terminates_original_not_only_temporar
         async def async_close(self): alive.discard(self.side)
     video._transcode = vr._TranscodeGeneration({"left", "right"}, {s: Worker(s) for s in ("left", "right")}, {}, {})
     async def source_update(*_args, **kwargs):
-        return SimpleNamespace(candidate=parking._video_peer_direction(video.right,
-            sdp.local_direction_for_remote(kwargs["video_direction"])), commit=lambda: True,
+        candidate = prepared_video_candidate(parking._video_peer_direction(video.right,
+            sdp.local_direction_for_remote(kwargs["video_direction"])), _args[1],
+            source_client=kwargs.get("source_client"))
+        return SimpleNamespace(candidate=candidate, commit=lambda: True,
             restore=AsyncMock(return_value=False))
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", source_update)
-    monkeypatch.setattr(sip_bridge, "dialog_video_rtp_peer", lambda candidate: candidate)
     monkeypatch.setattr(local_media_bridge, "adopt_relay_for_application", Mock(side_effect=RuntimeError("adoption failed")))
     monkeypatch.setattr(video, "_build_transcode_generation", AsyncMock(side_effect=RuntimeError("encoder restart failed")))
     monkeypatch.setattr(vr, "_claim_transcoder_slot", AsyncMock())
@@ -113,16 +141,16 @@ async def test_irrecoverable_video_restore_terminates_original_not_only_temporar
 
 async def test_obsolete_video_handoff_rollback_does_not_touch_new_owner(av_transaction_owner, monkeypatch):
     from unittest.mock import AsyncMock, Mock
-    from custom_components.voip_stack import parking, bridge_media_updates, sip_bridge
+    from custom_components.voip_stack import parking, bridge_media_updates
     from custom_components.voip_stack.sip_rtp_bridge import SipRtpRelay
     state = av_transaction_owner
     video = state.video
     video.started = True
     video._maintain_nat = Mock()
-    prepared = SimpleNamespace(candidate=parking._video_peer_direction(video.left, "inactive"),
+    prepared = SimpleNamespace(candidate=prepared_video_candidate(
+        parking._video_peer_direction(video.left, "inactive"), state.original.call_id),
         commit=lambda: True, restore=AsyncMock(return_value=False))
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", AsyncMock(return_value=prepared))
-    monkeypatch.setattr(sip_bridge, "invite_video_rtp_peer", lambda candidate: candidate)
     update = await parking.prepare_retained_video_handoff(object(), state.original, video,
         parking._video_peer_direction(video.left, "inactive"), parking._video_peer_direction(video.right, "inactive"))
     replacement = SipRtpRelay(left=state.relay.left, right=state.relay.right, left_port=43000, right_port=43002)
@@ -139,7 +167,7 @@ async def test_obsolete_video_handoff_rollback_does_not_touch_new_owner(av_trans
 
 async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_workers(monkeypatch):
     from unittest.mock import AsyncMock, Mock
-    from custom_components.voip_stack import parking, sip_video_relay as vr, bridge_media_updates, sip_bridge
+    from custom_components.voip_stack import parking, sip_video_relay as vr, bridge_media_updates
     from custom_components.voip_stack.core import sdp
     left = vr.VideoRtpPeer("127.0.0.1", 41000, 41001, sdp.RtpVideoFormat(payload_type=103, encoding="H264"))
     right = vr.VideoRtpPeer("127.0.0.1", 42000, 42001, sdp.RtpVideoFormat(payload_type=26, encoding="JPEG"))
@@ -173,8 +201,10 @@ async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_
         async def restore(**_kwargs):
             wire["direction"] = previous
             return True
-        return SimpleNamespace(candidate=parking._video_peer_direction(left,
-            sdp.local_direction_for_remote(wire["direction"])), commit=lambda: True, restore=restore)
+        candidate = prepared_video_candidate(parking._video_peer_direction(left,
+            sdp.local_direction_for_remote(wire["direction"])), _args[1],
+            source_client=kwargs.get("source_client"))
+        return SimpleNamespace(candidate=candidate, commit=lambda: True, restore=restore)
 
     session = SimpleNamespace(call_id="cancel-hold", generation=7, live=True)
     owner = SimpleNamespace(video_relay=video)
@@ -183,7 +213,6 @@ async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_
     monkeypatch.setattr(parking, "call_registry", lambda _: registry)
     monkeypatch.setattr(bridge_media_updates, "call_registry", lambda _: registry)
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", source_update)
-    monkeypatch.setattr(sip_bridge, "invite_video_rtp_peer", lambda candidate: candidate)
     monkeypatch.setattr(video, "_build_transcode_generation", build)
     monkeypatch.setattr(vr, "_claim_transcoder_slot", AsyncMock())
     monkeypatch.setattr(vr, "_release_transcoder_slot", AsyncMock())
@@ -466,7 +495,7 @@ async def test_browser_parks_existing_video_and_another_sip_phone_picks_up(
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = True
     runtime.runtime.transport_config[CONF_VIDEO_CAMERA_SEND] = camera_enabled
-    endpoint = PhoneEndpoint(endpoint_id="av-browser", name="av_browser", device_id="av-browser-device",
+    endpoint = PhoneEndpoint(endpoint_id="av-browser", name="av_browser", username="av_browser", device_id="av-browser-device",
         kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf", "video"}))
     runtime.runtime.endpoints.register(endpoint)
     from custom_components.voip_stack.roster import RosterEntry, dump_roster_json

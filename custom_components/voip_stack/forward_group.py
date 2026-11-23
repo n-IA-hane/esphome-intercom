@@ -24,9 +24,7 @@ from .group_candidates import (
     async_prepare_group_candidates,
 )
 from .groups import GROUP_TYPE_RING
-from .outbound_attempts import (
-    BrowserLeg,
-)
+from .outbound_attempts import BrowserLeg, async_close_outbound_leg
 from .outbound_bridge_commit import (
     BridgeCommitData,
     BridgeCommitPolicy,
@@ -164,15 +162,20 @@ class ForwardGroup:
                 ),
             )
             if self.operation.retained_media is not None:
-                retained_video = self.operation.retained_media.video_relay
-                if retained_video is not None:
-                    self.operation.retained_media.validate(registry)
                 for attempt in self.candidates.attempts:
                     attempt.client.local_rtp_port = (
                         self.operation.retained_media.reservation.ports[1]
                     )
-                    if retained_video is not None and attempt.video_relay is not None:
-                        attempt.client.local_video_rtp_port = retained_video.right_port
+            for attempt in tuple(self.candidates.attempts):
+                if await self.operation._prepare_parked_socket(attempt) is not False:
+                    continue
+                await async_close_outbound_leg(attempt)
+                self.candidates.attempts.remove(attempt)
+                if (not any(item.endpoint_id == attempt.endpoint_id for item in self.candidates.attempts)
+                        and not any(item.endpoint_id == attempt.endpoint_id for item in self.candidates.browser_legs)):
+                    current = registry.get_session(self.operation.source.call_id)
+                    if current is not None and current.endpoint_claims.get(attempt.endpoint_id) == "group_candidate":
+                        registry.release_endpoint_claim(current.call_id, attempt.endpoint_id)
         except Exception:
             await self.abort(
                 TerminalReason.PROTOCOL_ERROR.value,
@@ -527,14 +530,16 @@ class ForwardGroup:
         self.operation.claimed_endpoint_id = winner.endpoint_id
         self.operation.destination_call_id = self.operation.client.dialog_ids.call_id
         if (self.operation.owned_sip_source is not None
+                or self.operation.parked_media is not None
                 or self.operation.retained_media is not None
                 and self.operation.retained_media.video_relay is not None):
             await self.operation._prepare_destination_media(winner)
         dest_relay_port = winner.ports.ports[1]
         source_ports = self.operation.reservation.ports
         winner_ports = winner.ports.ports
-        if self.operation.retained_media is not None:
-            dest_relay_port = self.operation.retained_media.reservation.ports[1]
+        retain_ports = self.operation.retained_media is not None or self.operation.parked_media is not None
+        if retain_ports:
+            dest_relay_port = self.operation.reservation.ports[1]
             winner.ports.release()
         response_already_sent = source_dialog_is_answered(self.operation.preanswered)
         connected_party = counterpart_display(
@@ -543,7 +548,7 @@ class ForwardGroup:
             display_name=connected_display_name(winner.client),
         )
 
-        if application is not None:
+        if application is not None and self.operation.parked_media is None:
             await application.release_media_for_forward()
         if local_source is not None:
             local_source.commit()
@@ -559,12 +564,12 @@ class ForwardGroup:
                 local_ip=self.operation.runtime.local_ip,
                 release_port_pairs=(
                     (source_ports,)
-                    if self.operation.retained_media is not None
+                    if retain_ports
                     else (source_ports, winner_ports)
                 ),
                 detach_reservations=(
                     (self.operation.reservation,)
-                    if self.operation.retained_media is not None
+                    if retain_ports
                     else (self.operation.reservation, winner.ports)
                 ),
                 enable_video_transcoding=bool(
@@ -617,6 +622,8 @@ class ForwardGroup:
         if committed is None:
             raise RuntimeError(TerminalReason.CANCELLED.value)
         self.operation.retained_video_update = None
+        if self.operation.parked_media is not None:
+            await application.release_media_for_forward()
         session.update_metadata(connected_party=connected_party,
                                 connected_display_name=connected_display_name(winner.client))
         await self.operation.retire_application()

@@ -17,7 +17,7 @@ from .dtmf_events import attach_dtmf_event_bridge
 from .endpoint_session import CleanupStage, TerminationIntent
 from .fsm import CallState, TerminalReason
 from .inbound_answer import async_commit_runtime_answer
-from .media_ports import release_sip_rtp_port_pair, release_video_media_reservation
+from .media_ports import RtpPortReservation, release_video_media_reservation
 from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
 from .runtime_data import sip_endpoint_manager
 from .session_cleanup import async_wait_for_cleanup
@@ -162,15 +162,15 @@ async def async_commit_outbound_bridge(
     ports_transferred = False
     failure_reason = TerminalReason.MEDIA_INCOMPATIBLE.value
     release_port_pairs = data.release_port_pairs
+    adopted_reservation = None
 
     def _require_current() -> None:
         if not registry.is_generation_current(invite.call_id, generation):
             raise RuntimeError("bridge call generation is no longer current")
 
     def _release_ports(_ports: Any) -> None:
-        if ports_transferred:
-            for ports in release_port_pairs:
-                release_sip_rtp_port_pair(hass, ports)
+        if ports_transferred and adopted_reservation is not None:
+            adopted_reservation.release()
 
     async def _cleanup_failure(barrier: asyncio.Future | None) -> None:
         try:
@@ -293,11 +293,6 @@ async def async_commit_outbound_bridge(
         if winner.video_relay is not None:
             relay.attach_video_relay(winner.video_relay)
             winner.video_relay = None
-        # No await between transfer of reservations and adoption. If adoption
-        # raises, the local cleanup still owns this complete relay inventory.
-        for reservation in reservations:
-            reservation.detach()
-        ports_transferred = True
         if data.prepared_media is not None and data.prepared_media.media is not None:
             old_media = data.prepared_media.media
             session.add_resource(f"retired_local_media:{id(old_media):x}", old_media,
@@ -305,9 +300,22 @@ async def async_commit_outbound_bridge(
             registry.release_resource(invite.call_id, f"relay:{invite.call_id}", value=old_media)
         if data.retained_media is None:
             registry.attach_relay(invite.call_id, relay)
-            if data.prepared_media is not None and data.prepared_media.owned_source is not None:
-                data.prepared_media.owned_source.release_to_session(relay)
         relay_adopted = True
+        # Normalize the complete admitted inventory to the two active ports.
+        # No await separates session adoption, the inventory and its closer.
+        # Later parking can retain this exact pair without losing spare ports.
+        if data.prepared_media is not None and data.prepared_media.owned_source is not None:
+            adopted_reservation = data.prepared_media.reservation
+        else:
+            adopted_reservation = RtpPortReservation.merge(hass, release_port_pairs,
+                (relay.left_port, relay.right_port))
+        for reservation in reservations:
+            if reservation is not adopted_reservation:
+                reservation.detach()
+        ports_transferred = True
+        relay._on_release = _release_ports
+        if data.prepared_media is not None and data.prepared_media.owned_source is not None:
+            data.prepared_media.owned_source.release_to_session(relay)
         if data.prepared_media is not None and data.prepared_media.video_update is not None:
             await data.prepared_media.video_update.commit()
             _require_current()

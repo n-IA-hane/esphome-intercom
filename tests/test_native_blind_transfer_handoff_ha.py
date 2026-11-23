@@ -145,6 +145,7 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.1", 0))
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
     target, transfer = lab.phones[1], None
+    peer_lifetime = None
     target.auto_answer = False
     accepted = asyncio.Event()
     transfer_finished = asyncio.Event()
@@ -200,6 +201,8 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         if state == "ringing":
             state = await caller.wait_for_final(timeout=3)
         assert state == "in_call"
+        peer_lifetime = asyncio.create_task(caller.wait_for_dialog_termination(),
+            name="independent-native-caller-dialog")
         if video_case:
             assert caller.signaling_transport == "TCP"
             assert caller.writer.get_extra_info("sockname")[0] == caller.local_ip
@@ -358,6 +361,8 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
             transfer.cancel()
             await asyncio.gather(transfer, return_exceptions=True)
         await caller.close()
+        if peer_lifetime is not None:
+            await asyncio.gather(peer_lifetime, return_exceptions=True)
         audio.close()
         for sock in video_sockets:
             sock.close()

@@ -284,7 +284,6 @@ async def test_browser_receiver_adopts_reserved_fd_and_first_packet(trunks, monk
     monkeypatch.setattr(view, "_listen_for_call_end", lambda *_: (asyncio.Event(), lambda: None))
     session = view._active_softphone_media_session(lab.hass, "reservation-browser")
     assert session.rtp_reservation is owner
-    expected = struct.pack("<320h", *([3456] * 320))
     raw = rtp.build_packet(rtp.RtpPacket(96, 718, 640, 99, struct.pack("!320h", *([3456] * 320))))
     peer.sendto(raw, ("127.0.0.1", owner.ports[0]))
     adopted = []
@@ -314,8 +313,13 @@ async def test_browser_receiver_adopts_reserved_fd_and_first_packet(trunks, monk
     browser = Browser()
     worker = asyncio.create_task(view._run_audio_session(lab.hass, browser, session, endpoint_id="reservation-browser"))
     try:
-        frame = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 2))
-        assert frame == expected
+        # One 20 ms SIP frame becomes two native 10 ms, 48 kHz card frames.
+        async with asyncio.timeout(2):
+            frames = [audio_ws.decode_audio_frame(await browser.audio.get()) for _ in range(2)]
+        assert all(len(frame) == 480 * 2 for frame in frames)
+        samples = struct.unpack("<960h", b"".join(frames))
+        # Ignore only the resampler's startup response to the initial DC step.
+        assert all(abs(value - 3456) <= 3 for value in samples[64:])
         assert adopted == [fd] and owner.audio_socket(owner.ports[0]) is None
         assert browser.audio.empty()
     finally:
@@ -343,15 +347,16 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
 
     lab = trunks
     phone = lab.phones[0]
-    lab.roster[1] = replace(lab.roster[1], metadata={
+    phone_index = next(index for index, row in enumerate(lab.roster) if row.id == "bedroom0")
+    lab.roster[phone_index] = replace(lab.roster[phone_index], metadata={
         "endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True,
-        "sip_audio_tx_formats": ["L16/16000/1/20"], "sip_audio_rx_formats": ["L16/16000/1/20"],
     })
     lab.runtime.endpoints.update("bedroom0", availability="available")
     target = "bedroom0"
     if route_kind == "group":
         lab.roster.append(RosterEntry("ReservedGroup", metadata={"group_type": "ring", "members": ["bedroom0"]}))
         target = "ReservedGroup"
+    lab.runtime.directory.replace(lab.roster)
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.2", 0))
     media.setblocking(False)
@@ -418,7 +423,16 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
             return (await phone.audio.get())[0]
 
         async def receive_source():
-            return await lab.hass.loop.sock_recv(media, 4096)
+            raw = await lab.hass.loop.sock_recv(media, 4096)
+            packet = rtp.parse_packet(raw)
+            relay = lab.calls.resource_for(caller.dialog_ids.call_id, "relay")
+            assert packet.payload_type == caller.dialog.recv_format.payload_type, {
+                "payload_type": packet.payload_type,
+                "accepted_receive": caller.dialog.recv_formats,
+                "active_receive": caller.dialog.recv_format,
+                "relay_source": relay.left if relay is not None else None,
+            }
+            return raw
 
         destination_pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", phone.last_request.body)[1])
         async with asyncio.timeout(3):
@@ -480,7 +494,7 @@ async def test_delayed_bind_failure_rejects_before_sdp_and_releases_all(trunks, 
         assert len(attempts) == failed_bind
         assert final_responses[0].status_code == 401 and len(final_responses) >= 2
         assert all(response.status_code == 480 and not response.body
-            and response.header("X-Voip-Stack-Decline-Reason") == "transport_unreachable"
+            and not response.header("X-Voip-Stack-Decline-Reason")
             for response in final_responses[1:])
         assert all(sock.fileno() < 0 for sock in opened)
         assert not lab.phones[0].invites

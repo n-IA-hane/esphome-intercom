@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import time
 
 import pytest
-from homeassistant.config_entries import ConfigSubentry
+from custom_components.voip_stack.phone_config import phone_subentry_by_endpoint_id
 
 from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
@@ -26,11 +26,10 @@ async def test_explicit_card_directed_pickup_uses_account_ha_leg(trunks, registe
     caller, native, ringing = registered_phones
     entry = config_entry(runtime.hass)
     account = runtime.calls.component("registrar").accounts["transfer_b"]
-    runtime.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone",
-        title="transfer_b", unique_id="phone:transfer_b", data={
-            "endpoint_id": "transfer_b", "kind": "sip_account", "name": "transfer_b", "username": "transfer_b",
-            "password": account.password, "enabled": True,
-            "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:transfer_b"}]}))
+    existing = phone_subentry_by_endpoint_id(entry, "transfer_b")
+    assert existing is not None and existing.data["password"] == account.password
+    runtime.hass.config_entries.async_update_subentry(entry, existing, data={**existing.data,
+        "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:transfer_b"}]})
     runtime.runtime.endpoints.update("transfer_b", device_id="same-account-device")
     runtime.runtime.endpoints.update("transfer_c", device_id="ringing-account-device")
     owner = HaCardBindings(runtime.hass, entry, runtime.runtime,
@@ -88,11 +87,10 @@ async def test_native_park_then_explicit_card_pickup_uses_same_account_ha_leg(tr
     caller, native, _other = registered_phones
     entry = config_entry(runtime.hass)
     account = runtime.calls.component("registrar").accounts["transfer_b"]
-    runtime.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone",
-        title="transfer_b", unique_id="phone:transfer_b", data={
-            "endpoint_id": "transfer_b", "kind": "sip_account", "name": "transfer_b", "username": "transfer_b",
-            "password": account.password, "enabled": True,
-            "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:transfer_b"}]}))
+    existing = phone_subentry_by_endpoint_id(entry, "transfer_b")
+    assert existing is not None and existing.data["password"] == account.password
+    runtime.hass.config_entries.async_update_subentry(entry, existing, data={**existing.data,
+        "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:transfer_b"}]})
     runtime.runtime.endpoints.update("transfer_b", device_id="same-account-device")
     owner = HaCardBindings(runtime.hass, entry, runtime.runtime,
         lambda ids: recompute_account_availability(runtime.hass, ids))

@@ -283,7 +283,10 @@ async def park_browser_sip_call(hass, call_id, endpoint_id, *, slot=""):
     if (session is None or not session.live or session.state != "in_call"
             or endpoint_id not in session.endpoint_claims):
         raise ParkingError("Select an established call owned by this phone")
-    source = OwnedSipSource.capture(hass, session, endpoint_id)
+    try:
+        source = OwnedSipSource.capture(hass, session, endpoint_id)
+    except RuntimeError as error:
+        raise ParkingError(str(error)) from error
     if source is None:
         raise ParkingError("The remote SIP dialog is no longer available")
     caller = session.caller
@@ -608,6 +611,7 @@ async def pickup_phone_call(call, endpoint, slot):
     from .softphone_answer import async_answer_browser_call
     from .softphone_commands import async_resolve_browser_call_command
     from .browser_phone_runtime import _release_ha_softphone_claim
+    from .forward_plan import await_forward_result
 
     hass = call.hass
     registry = call_registry(hass)
@@ -629,22 +633,30 @@ async def pickup_phone_call(call, endpoint, slot):
                     metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
         task = await registry.forward_call(call_id=session.call_id, destination=endpoint.username,
             on_failure="resume", **resolved)
+        outcome = None
         if task is not None:
             try:
                 async with asyncio.timeout(float(call.data.get("answer_timeout", 30))):
-                    await asyncio.shield(task)
+                    outcome = await await_forward_result(task)
             except BaseException:
                 if not task.done():
                     task.cancel()
                 await async_wait_for_cleanup(asyncio.gather(task, return_exceptions=True))
                 raise
         if not endpoint.kind.is_softphone:
-            if not session.live or session.state != "in_call" or session.metadata.get("dest_endpoint_id") != endpoint.endpoint_id:
+            if outcome is None or not outcome.committed_for(session):
                 raise ParkingError("The selected phone did not answer the pickup")
             if claim.current:
                 claim.commit()
             publish_bridge_projection(hass, session, event_type="picked_up", route_kind="parking_pickup")
             return session
+        if outcome is not None and outcome.committed_for(session):
+            if claim.current:
+                claim.commit()
+            publish_bridge_projection(hass, session, event_type="picked_up", route_kind="parking_pickup")
+            return session
+        if outcome is None or outcome.status != "ringing":
+            raise ParkingError("The selected phone could not accept the parked call")
         if not claim.current or session.owner == "parking":
             raise ParkingError("The selected phone could not accept the parked call")
         answer = ServiceCall(hass, "voip_stack", "answer", {

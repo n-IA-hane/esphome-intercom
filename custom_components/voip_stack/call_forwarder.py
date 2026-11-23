@@ -643,11 +643,15 @@ class _ForwardAdmission:
         if account_plan is not None:
             account_plan = replace(account_plan, route_kind="transfer")
         if decision.action is RouteAction.ANSWER_HA:
-            target_browser_endpoint = self.runtime.route_resolver.logical_endpoint(
-                decision.target or destination,
-                peers,
-                roster_entries,
-            )
+            endpoint_id = str(decision.entry.metadata.get("endpoint_id") or "") if decision.entry is not None else ""
+            if endpoint_id:
+                target_browser_endpoint = endpoint_directory(hass).get(endpoint_id)
+            else:
+                target_browser_endpoint = self.runtime.route_resolver.logical_endpoint(
+                    decision.target or destination,
+                    peers,
+                    roster_entries,
+                )
             if (
                 target_browser_endpoint is None
                 or not target_browser_endpoint.supports_ha_client
