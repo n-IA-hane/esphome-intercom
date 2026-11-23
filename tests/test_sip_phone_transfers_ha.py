@@ -427,7 +427,7 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
     monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", roster_from_peers)
     monkeypatch.setattr(invite_router, "_roster_from_peers", roster_from_peers)
     registrar = lab.calls.component("registrar")
-    if origin == "caller":
+    if origin == "caller" or represented:
         registrar.update_accounts([*registrar.accounts.values(), SipAccount("legacy", "Legacy", "isolated-test-only")])
     if represented:
         lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="legacy", name="Legacy", username="legacy",
@@ -450,7 +450,7 @@ async def test_local_transfer_keeps_legacy_caller_dialog_and_echoed_audio(regist
     scenarios = Path(__file__).parent / "fixtures/sipp"
     peer_args = ["-i", "127.0.0.1", "-p", str(port), "-m", "1"]
     remote = f"127.0.0.1:{lab.runtime.transport_config['sip_port']}"
-    if origin == "caller":
+    if origin == "caller" or represented:
         import subprocess
 
         # SIPp 3.x has one Digest URI override per process. REGISTER signs the
