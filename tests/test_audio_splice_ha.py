@@ -40,9 +40,12 @@ async def test_application_pickup_keeps_bound_socket_and_bidirectional_audio(app
         assert relay.left_transport is transport and not transport.is_closing()
         assert released == []
 
+        sequences = {}
         async def exchange(sender, target, port, sample, source_ssrc):
+            sequence = sequences.get(source_ssrc, 0) + 1
+            sequences[source_ssrc] = sequence
             payload = struct.pack("!320h", *([sample] * 320))
-            packet = rtp.build_packet(rtp.RtpPacket(96, 1, 320, source_ssrc, payload))
+            packet = rtp.build_packet(rtp.RtpPacket(96, sequence, sequence * 320, source_ssrc, payload))
             await asyncio.get_running_loop().sock_sendto(sender, packet, ("127.0.0.1", port))
             async with asyncio.timeout(2):
                 while True:
@@ -57,12 +60,12 @@ async def test_application_pickup_keeps_bound_socket_and_bidirectional_audio(app
         assert received.ssrc == source_ssrc
         assert [(side, struct.unpack('<320h', pcm)[0]) for side, pcm, _fmt in recorded] == [('left', 1700), ('right', -2100)]
         assert relay.left_to_right_passthrough and relay.right_to_left_passthrough
-        decode = relay.left_decoder.decode
+        decode = relay.left_decoder.decode_packet
         def failed_decode(*_args):
             raise ValueError('injected recording decode failure')
-        relay.left_decoder.decode = failed_decode
+        relay.left_decoder.decode_packet = failed_decode
         await exchange(caller, picker, relay.left_port, 1900, 123)
-        relay.left_decoder.decode = decode
+        relay.left_decoder.decode_packet = decode
         assert errors == ['decode_error']
         detach_recording()
         await exchange(caller, picker, relay.left_port, 2000, 123)
@@ -249,7 +252,8 @@ class AudioSpliceTest(unittest.IsolatedAsyncioTestCase):
                 for session, wire, relay in ((original, "a", first), (consultation, "c", second)):
                     calls.add_leg(session.call_id, wire, role="callee", state="in_call")
                     session.legs[wire].dialog = SimpleNamespace(dialog=object(), close=AsyncMock(), terminate=AsyncMock(),
-                        dialog_ids=SimpleNamespace(call_id=wire), on_refer=None, on_media_update=None, on_info_dtmf=None)
+                        dialog_ids=SimpleNamespace(call_id=wire), on_refer=None, on_media_update=None,
+                        on_info_dtmf=None, on_info_dtmf_event=None, on_info_video=None)
                     calls.set_bridge_link(session.call_id, wire)
                     calls.attach_relay(session.call_id, relay)
                 runtime = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},

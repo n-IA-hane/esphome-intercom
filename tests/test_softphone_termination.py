@@ -204,6 +204,8 @@ def test_bridge_termination_delegates_projection_to_session_owner(termination) -
     termination.call_registry = Mock(
         return_value=SimpleNamespace(
             bridge_for=Mock(return_value=("source-call", "dest-call")),
+            get_session=Mock(return_value=None),
+            resolve_session_id=lambda value: value,
             sip_clients={"dest-call": object()},
             sip_client_for=lambda call_id: object() if call_id == "dest-call" else None,
         )
@@ -231,6 +233,7 @@ def test_bridge_termination_rejects_stale_generation(termination) -> None:
     registry = SimpleNamespace(
         bridge_for=Mock(return_value=("source-call", "dest-call")),
         get_session=Mock(return_value=None),
+        resolve_session_id=lambda value: value,
         sip_client_for=Mock(),
     )
     termination.call_registry = Mock(return_value=registry)

@@ -21,7 +21,7 @@ async def prepare_paging(lab):
     lab.runtime.default_trunk_id = ""
     identity = "780e47a5b85c4563a3390db63be9fd3f"
     data = {"paging_group_id": identity, "name": "Paging", "extension": "402",
-            "members": ["sip:bedroom0", "sip:bedroom1"], "answer_timeout": 1, "timeout": 10}
+            "members": ["bedroom0", "bedroom1"], "answer_timeout": 1, "timeout": 10}
     entry = SimpleNamespace(subentries={identity: SimpleNamespace(subentry_type="paging", subentry_id=identity, data=data)})
     owner = PagingRuntime(lab.hass, entry)
     lab.calls.adopt_component("paging", owner, closer=owner.close)
@@ -50,7 +50,7 @@ async def assert_unidentified_paging_origin(lab, name, address, *, authenticated
     remove = lab.runtime.endpoints.subscribe(lambda event: claims.append(event.endpoint.active_call_id)
         if event.endpoint.endpoint_id == "source" and event.endpoint.active_call_id else None)
     client, _audio = await lab.caller(name, address, authenticate=authenticated,
-        account_endpoint_id="sip:bedroom1" if authenticated else None)
+        account_endpoint_id="bedroom1" if authenticated else None)
     try:
         result = await client.invite(target="402", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3, audio_direction="sendonly")

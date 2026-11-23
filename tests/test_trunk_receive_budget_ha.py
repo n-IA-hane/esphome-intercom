@@ -116,7 +116,8 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         assert session.metadata['inbound_trunk_id']=='home'
         relay=runtime.calls.resource_for(session.call_id,'relay')
         observed['relay_receiver']=asdict(relay.left.inbound_rtp_format)
-        receive_limit=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(relay.left.inbound_rtp_format)
+        receive_limit=min(HA_AUDIO_CAPABILITIES.max_receive_packet_ms(fmt)
+            for fmt in relay.left.inbound_rtp_formats or (relay.left.inbound_rtp_format,))
         assert receive_limit==128
         if narrow_presets:
             assert observed['receive_presets']==['48000:s16le:1:10']
@@ -237,7 +238,7 @@ def test_invite_receive_capabilities_are_local_and_survive_replacement():
     (48000,48000,16000,True),
     (8000,48000,48000,False),
 ])
-def test_bridge_receive_geometry_changes_only_when_conversion_count_improves(
+def test_bridge_keeps_admitted_receive_geometry_when_destination_changes_transmitter(
     source_rate,dest_send_rate,dest_recv_rate,kept,
 ):
     from types import SimpleNamespace
@@ -262,10 +263,11 @@ def test_bridge_receive_geometry_changes_only_when_conversion_count_improves(
     selected=bridge_source_audio(invite,destination)
 
     assert (selected is invite)==kept
-    assert selected.send_format.sample_rate==selected.recv_format.sample_rate==48000
+    assert selected.send_format.sample_rate==48000
+    assert selected.recv_format.sample_rate==source_rate
     assert selected.send_format.frame_ms==10  # The peer's receiver asks for10ms.
-    assert selected.recv_format.frame_ms==(10 if kept else 20)  # Keep admitted RX, else apply R1.
+    assert selected.recv_format.frame_ms==original.frame_ms
     answer=sdp.build_answer_directional('127.0.0.1','127.0.0.1',40000,
         selected.send_format,selected.recv_format,remote_sdp=body)
-    assert re.search(rf'^a=ptime:{10 if kept else 20}\r?$',answer,re.MULTILINE)
-    assert selected.recv_format.payload_type==96
+    assert re.search(r'^a=ptime:10\r?$',answer,re.MULTILINE)
+    assert selected.recv_format.payload_type==original.payload_type

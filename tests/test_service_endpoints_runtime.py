@@ -150,6 +150,7 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.hass = types.SimpleNamespace(
             data={"voip_stack": {}},
             config=types.SimpleNamespace(location_name="Casa"),
+            config_entries=types.SimpleNamespace(async_entries=lambda _domain: ()),
         )
 
     def test_browser_selector_requires_a_configured_phone(self) -> None:

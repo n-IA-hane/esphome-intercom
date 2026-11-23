@@ -91,7 +91,7 @@ async def test_directory_configure_and_refresh_use_actual_private_api_client_pro
         lab.native.runtime_data.client = client
         owner = await start(lab)
         await asyncio.wait_for(completed.wait(), 2)
-        assert [message.key for message in messages] == [1, 2, 3, 10, 11]
+        assert [message.key for message in messages] == [1, 2, 4, 10, 11]
         configure = messages[3]
         assert [item.string_ for item in configure.args] == ["127.0.0.1", "", "ou=phonebook,dc=voip",
             "uid={username},ou=accounts,ou=phonebook,dc=voip", "ha", "", ""]
@@ -132,7 +132,7 @@ async def test_directory_refresh_await_does_not_mark_replaced_api_owner_delivere
         before = len(lab.sent)
         await lab.controller.async_sync()
         assert [action for action, _ in lab.sent[before:]] == [
-            "set_ha_display_name", "set_account", "register_account", "configure_directory", "refresh_ldap_directory"]
+            "set_ha_display_name", "set_account", "register_ha_account", "configure_directory", "refresh_ldap_directory"]
     finally:
         release.set()
         await owner.async_close()

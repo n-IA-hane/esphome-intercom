@@ -39,7 +39,11 @@ async def test_public_entry_setup_starts_ldap_and_privately_configures_native(ph
     monkeypatch.setattr(lab.hass.config_entries, "async_forward_entry_setups", AsyncMock())
 
     async def sip(_hass):
-        lab.entry.runtime_data.sip = lab.runtime.sip
+        from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+        owner = SipEndpointRuntime(allow_dark_sessions=True)
+        owner.attach_component("registrar", lab.registrar)
+        owner.activate()
+        lab.entry.runtime_data.sip = owner
         return True
 
     monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", sip)

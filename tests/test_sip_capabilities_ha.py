@@ -178,7 +178,7 @@ async def test_public_browser_originate_keeps_directional_pcm_and_receiver_ptime
         destination = "caps"
     else:
         phone = lab.phones[0]
-        lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+        lab.runtime.endpoints.update("bedroom0", availability="available")
 
         def answer():
             phone.respond(phone.last_request, phone.remote, 200,
@@ -439,7 +439,7 @@ async def test_register_discovery_is_advisory_and_final_invite_remains_authorita
     registrar.update_accounts([*registrar.accounts.values(), SipAccount("caps", "Caps", "fixture-only")])
     transport, peer = await lab.hass.loop.create_datagram_endpoint(
         lambda: RegisteredPeer(outcome), local_addr=("127.0.0.1", 0))
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent caller", local_sip_port=0,
         username=account.username, password=account.password,
         local_rtp_port=36000, supported_formats=[AudioFormat(16000, frame_ms=20)])

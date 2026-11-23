@@ -1,4 +1,4 @@
-"""Codec registry: the single owner of the facts about each audio codec.
+"""Codec registry: RTP identity facts and implemented audio codec geometry.
 
 Every module that needs to know how wide a sample is on the wire, which static
 payload number a codec has, or which dynamic number it conventionally gets,
@@ -12,6 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEFAULT_OPUS_RECEIVE_FMTP = "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+
+# RFC 3551 video assignments shared by SDP parsing and dialog payload history.
+STATIC_VIDEO_RTPMAP = {26: ("JPEG", 90000, 1), 34: ("H263", 90000, 1)}
 
 
 @dataclass(frozen=True, slots=True)

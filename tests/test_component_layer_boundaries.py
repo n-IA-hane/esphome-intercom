@@ -44,7 +44,7 @@ def test_audio_facts_transitive_dependencies_remain_acyclic_protocol_leaves():
     prefix = "custom_components.voip_stack.core."
     allowed = {
         "sdp_audio_facts", "sdp_parser", "sdp_document", "sdp_types",
-        "audio_format", "imageattr", "media.codecs",
+        "audio_format", "imageattr", "media.codecs", "media.payload_map",
     }
 
     def module_path(module):

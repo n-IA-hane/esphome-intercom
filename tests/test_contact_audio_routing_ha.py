@@ -81,7 +81,7 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         return sock
 
     caller_audio = audio_socket("127.0.0.2")
-    account = sip_test_account(runtime, "sip:bedroom1")
+    account = sip_test_account(runtime, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent caller", local_sip_port=0,
         username=account.username, password=account.password,
         local_rtp_port=caller_audio.getsockname()[1], supported_formats=[AudioFormat(16000, frame_ms=20)])
@@ -109,7 +109,7 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         runtime.roster.append(RosterEntry("ContactGroup", metadata={"group_type": "ring", "members": ["caps"]}))
         if route == "forward":
             runtime.phones[0].auto_answer = False
-            runtime.runtime.endpoints.update("sip:bedroom0", availability=EndpointAvailability.AVAILABLE)
+            runtime.runtime.endpoints.update("bedroom0", availability=EndpointAvailability.AVAILABLE)
             # The initial ringing account needs a real authenticated Contact;
             # changing the fixture's availability is not a SIP registration.
             registrar.update_accounts([*registrar.accounts.values(),

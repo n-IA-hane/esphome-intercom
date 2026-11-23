@@ -20,20 +20,20 @@ def resolve(data, *, kind="browser", availability="available", dnd=False,
             call_id="new-call", enabled=True):
     registry = EndpointRegistry()
     first = PhoneEndpoint(
-        endpoint_id="first", name="Kitchen", kind=kind,
+        endpoint_id="first", username='first', name="Kitchen", kind=kind,
         availability=availability, dnd=dnd, active_call_id=active_call_id,
         policy=PhonePolicy.from_data(data),
     )
     registry.register(first)
     registry.register(PhoneEndpoint(
-        endpoint_id="second", name="Renamed bedroom", kind="browser",
+        endpoint_id="second", username='second', name="Renamed bedroom", kind="browser",
         availability="available", policy=PhonePolicy.from_data(second_policy),
     ))
     entries = [
-        RosterEntry(id="Kitchen", name="Kitchen", enabled=enabled,
+        RosterEntry(id="first", name="Kitchen", enabled=enabled,
                     metadata={"endpoint_id": "first", "local_ha": kind == "browser",
                               "endpoint_kind": kind}),
-        RosterEntry(id="Renamed bedroom", name="Renamed bedroom",
+        RosterEntry(id="second", name="Renamed bedroom",
                     metadata={"endpoint_id": "second", "local_ha": True}),
         RosterEntry(id="Welcome", name="Welcome",
                     metadata={"virtual_endpoint": "automation"}),
@@ -51,7 +51,7 @@ def test_unconditional_forward_follows_stable_identity_after_rename(caplog):
     result = resolve({"always": {"target": "second"}})
     assert result.failure is None
     assert result.endpoint.endpoint_id == "second"
-    assert result.decision.target == "Renamed bedroom"
+    assert result.decision.target == "second"
     assert result.forwarded_endpoint_ids == ("first",)
     assert "Phone Kitchen redirects to Renamed bedroom: unconditional forwarding policy" in caplog.text
     assert "[call_id=new-call]" in caplog.text

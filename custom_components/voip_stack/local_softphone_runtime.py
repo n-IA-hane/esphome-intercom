@@ -622,6 +622,8 @@ class PendingLocalSource:
 
     def _publish_retired_phone(self, session) -> None:
         retired = self.call.callee_endpoint_id
+        if not retired:
+            return
         outgoing = self.snapshot is not None and retired == self.snapshot.caller_endpoint_id
         observe_phone_leg_projection(
             self.hass, self.registry, session, retired, "idle",
@@ -753,9 +755,9 @@ class PendingLocalSource:
             media_client_id=self.call.caller_media_owner_id,
             source_media_client_id=self.call.caller_media_owner_id,
         )
-        if self.established:
-            self._publish_retired_phone(session)
-            self.registry.remove_leg(self.token.call_id, f"local:{self.call.callee_endpoint_id}")
+        # Publish retirement after detaching the bridge and its endpoint claims.
+        self._publish_retired_phone(session)
+        self.registry.remove_leg(self.token.call_id, f"local:{self.call.callee_endpoint_id}")
 
     def resume(self, *, redial: bool = False, destination: str = "", trunk_id: str = "") -> None:
         if self.outgoing:

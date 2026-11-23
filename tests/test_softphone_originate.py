@@ -152,9 +152,6 @@ def softphone_originate(monkeypatch):
                 or ("" if getattr(entry, "metadata", {}).get("capabilities") else None),
             "device_formats": Mock(return_value=[]),
             "roster_entry_formats": Mock(return_value=[]),
-            "sip_target_rtp_audio_profile": Mock(return_value=SimpleNamespace(
-                send_formats=(), recv_formats=(), send_rtp_formats=(), recv_rtp_formats=(),
-                include_dahua_pcm=False, match_received_codec=False)),
         },
         "esphome_actions": {
             "async_call_action": AsyncMock(),
@@ -238,6 +235,32 @@ def softphone_originate(monkeypatch):
         for key, value in values.items():
             setattr(dependency, key, value)
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
+
+    def production_module(name, filename):
+        fullname = f'{package_name}.{name}'
+        spec = importlib.util.spec_from_file_location(fullname, MODULE.parent / filename)
+        value = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, fullname, value)
+        spec.loader.exec_module(value)
+        return value
+
+    roster_contract = production_module('roster_contract', 'roster.py')
+    roster_adapter = sys.modules[f'{package_name}.roster']
+    for name in ('RosterEntry', 'RosterError', 'find_entry', 'normalize_roster_key', 'duplicate_numeric_extensions', 'entry_matches_extension'):
+        setattr(roster_adapter, name, getattr(roster_contract, name))
+    router_contract = production_module('router_contract', 'router.py')
+    sys.modules[f'{package_name}.router'].RouteDecision = router_contract.RouteDecision
+    sys.modules[f'{package_name}.config'].assist_config = lambda _hass: {}
+    runtime_adapter = sys.modules[f'{package_name}.runtime_data']
+    runtime_adapter.preferred_browser_phone = lambda _hass: None
+    runtime_adapter.runtime_data = lambda hass: getattr(hass, 'runtime', None)
+    store_adapter = types.ModuleType(f'{package_name}.store')
+    store_adapter.manual_roster_entries = lambda _hass: []
+    monkeypatch.setitem(sys.modules, store_adapter.__name__, store_adapter)
+    routing_contract = production_module('routing_contract', 'endpoint_routing.py')
+    routing_adapter = sys.modules[f'{package_name}.endpoint_routing']
+    routing_adapter.sip_target_rtp_audio_profile = routing_contract.sip_target_rtp_audio_profile
+    routing_adapter.peer_video_codec = routing_contract.peer_video_codec
 
     call_projection = sys.modules[f"{package_name}.call_projection"]
 
@@ -351,6 +374,7 @@ def test_browser_to_browser_uses_local_bridge_before_network(
         destination="Test",
         media_client_id="browser-casa",
         send_video=camera,
+        receive_video=True,
     )
 
     asyncio.run(

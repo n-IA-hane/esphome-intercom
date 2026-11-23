@@ -201,7 +201,7 @@ class EndpointRegistryTest(unittest.TestCase):
 
     def test_route_namespace_rejects_cross_field_collisions(self) -> None:
         collisions = (
-            endpoint("office", "kitchen"),
+            endpoint("office", "Office", username="KITCHEN-SIP"),
             endpoint("office", "Office", extension="KITCHEN-SIP"),
             endpoint("office", "Office", username="401"),
         )
@@ -216,8 +216,9 @@ class EndpointRegistryTest(unittest.TestCase):
         registry = endpoint_registry.EndpointRegistry()
         registry.register(endpoint("kitchen-one", "Kitchen-1"))
 
-        with self.assertRaises(endpoint_registry.EndpointCollisionError):
-            registry.register(endpoint("kitchen-two", "Kitchen 1"))
+        registry.register(endpoint("kitchen-two", "Kitchen 1"))
+        with self.assertRaises(endpoint_registry.EndpointAmbiguousError):
+            registry.by_name('Kitchen1')
 
     def test_rejects_stable_device_and_entity_collisions(self) -> None:
         for candidate in (
@@ -243,7 +244,7 @@ class EndpointRegistryTest(unittest.TestCase):
             endpoint("office", "Office", extension="402", device_id="dev-office")
         )
         with self.assertRaises(endpoint_registry.EndpointCollisionError):
-            self.registry.update("office", name="Kitchen")
+            self.registry.update("office", username="401")
 
         self.assertEqual(self.registry.get("office"), office)
         self.assertEqual(self.registry.by_name("Office"), office)
@@ -306,13 +307,10 @@ class EndpointRegistryTest(unittest.TestCase):
         self.assertEqual(set(ctx.exception.endpoint_ids), {"kitchen", "office"})
 
     def test_extension_cannot_shadow_another_endpoint_name_or_username(self) -> None:
-        for candidate in (
-            endpoint("office", "Office", extension="Kitchen"),
-            endpoint("office", "Office", extension="kitchen-sip"),
-        ):
-            with self.subTest(candidate=candidate):
-                with self.assertRaises(endpoint_registry.EndpointCollisionError):
-                    self.registry.register(candidate)
+        allowed = self.registry.register(endpoint('office-label', 'Kitchen', username='office-label', extension='Kitchen'))
+        self.assertEqual(self.registry.by_username('office-label'), allowed)
+        with self.assertRaises(endpoint_registry.EndpointCollisionError):
+            self.registry.register(endpoint('office', 'Office', extension='KITCHEN-SIP'))
 
     @pytest.mark.fault
     def test_call_claim_is_idempotent_busy_safe_and_guarded_on_release(self) -> None:

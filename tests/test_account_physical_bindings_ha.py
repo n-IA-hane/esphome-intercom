@@ -51,15 +51,15 @@ async def test_inverse_picker_limits_each_device_and_preserves_legacy_rest_rows(
 
     state = physical_flow
     phones = []
-    for model, mac, name, owner in [("x3u-pro", "001122334455", "Fanvil", "sip:office"),
-                                     ("h2u-v2", "001122334466", "Small", "sip:front")]:
+    for model, mac, name, owner in [("x3u-pro", "001122334455", "Fanvil", "482"),
+                                     ("h2u-v2", "001122334466", "Small", "481")]:
         data = normalize_physical_phone({"name": name, "mac": mac, "profile_id": "fanvil/" + model,
             "catalog_commit": "a" * 40, "lines": [{"slot": "1", "endpoint_id": owner}], "keys": []})
         state.lab.hass.config_entries.async_add_subentry(state.lab.entry, ConfigSubentry(
             subentry_type="physical_phone", title=name, data=data, unique_id="physical_phone:" + data["phone_id"]))
         phones.append(data)
     state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
-    options = await async_account_physical_binding_options(state.lab.hass, state.lab.entry, "sip:front")
+    options = await async_account_physical_binding_options(state.lab.hass, state.lab.entry, "481")
     offered = {tuple(json.loads(option["value"])) for option in options}
     assert (phones[0]["phone_id"], "1") not in offered
     assert (phones[0]["phone_id"], "6") in offered
@@ -68,7 +68,7 @@ async def test_inverse_picker_limits_each_device_and_preserves_legacy_rest_rows(
     selector = account_physical_bindings_selector(state.lab.entry, options=options)
     assert account_physical_bindings_from_form(selector(rows)) == rows
     with pytest.raises(ValueError, match="phone_line_unsupported"):
-        await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "sip:front",
+        await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "481",
             [{"phone_id": phones[1]["phone_id"], "slot": "2", "transport": "udp"}])
 
 
@@ -121,16 +121,16 @@ async def test_inverse_account_edits_are_staged_and_keep_other_account_slots(phy
     state = physical_flow
     phone = normalize_physical_phone({"name": "Desk", "mac": "001122334455",
         "profile_id": "fanvil/x3u-pro", "catalog_commit": "a" * 40,
-        "lines": [{"slot": "1", "endpoint_id": "sip:office"}], "keys": []})
+        "lines": [{"slot": "1", "endpoint_id": "482"}], "keys": []})
     sub = ConfigSubentry(subentry_type="physical_phone", title="Desk", unique_id=phone["phone_id"], data=phone)
     state.lab.hass.config_entries.async_add_subentry(state.lab.entry, sub)
     state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
     rows = [{"phone_id": phone["phone_id"], "slot": "2", "transport": "udp"}]
-    prepared = await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "sip:front", rows)
+    prepared = await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "481", rows)
     assert list(sub.data["lines"]) == phone["lines"]
-    assert account_physical_bindings(state.lab.entry, "sip:front") == []
+    assert account_physical_bindings(state.lab.entry, "481") == []
     apply_account_bindings(state.lab.hass, state.lab.entry, prepared)
-    assert account_physical_bindings(state.lab.entry, "sip:front") == rows
+    assert account_physical_bindings(state.lab.entry, "481") == rows
     assert sub.data["lines"][0] == phone["lines"][0]
 
 
@@ -141,12 +141,12 @@ async def test_inverse_account_edit_cannot_overwrite_another_account_slot(physic
     state = physical_flow
     phone = normalize_physical_phone({"name": "Desk", "mac": "001122334455",
         "profile_id": "fanvil/x3u-pro", "catalog_commit": "a" * 40,
-        "lines": [{"slot": "1", "endpoint_id": "sip:office"}], "keys": []})
+        "lines": [{"slot": "1", "endpoint_id": "482"}], "keys": []})
     sub = ConfigSubentry(subentry_type="physical_phone", title="Desk", unique_id=phone["phone_id"], data=phone)
     state.lab.hass.config_entries.async_add_subentry(state.lab.entry, sub)
     state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
     before = deepcopy(dict(sub.data))
     with pytest.raises(ValueError, match="phone_line_occupied"):
-        await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "sip:front",
+        await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "481",
             [{"phone_id": phone["phone_id"], "slot": "1", "transport": "udp"}])
     assert dict(sub.data) == before

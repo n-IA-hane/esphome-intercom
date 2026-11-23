@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from .. import sdp
 from ..audio_capabilities import AudioCapabilities, HA_AUDIO_CAPABILITIES
-from ..audio_format import AudioFormat, PcmFormat, MAX_FRAME_MS
+from ..audio_format import AudioFormat, PcmFormat, SUPPORTED_CHANNELS
 from ..codec_policy import CodecPolicy
 from ..sdp_types import RtpPcmDirection, RtpPcmFormat
 from . import leg, negotiator
@@ -81,6 +81,8 @@ class BrowserAudioPlan:
 
 def plan_browser_audio(send, receive) -> BrowserAudioPlan:
     """Keep the real browser PCM edge at 48 kHz independently of the SIP codec."""
+    capture = negotiator.browser_rtp_format().audio_format
+
     def edge(wire):
         pcm = wire.audio_format
         try:
@@ -90,8 +92,13 @@ def plan_browser_audio(send, receive) -> BrowserAudioPlan:
             # at the browser's fixed clock. Its packetizer retains that quantum.
             return replace(pcm, sample_rate=48000, frame_ms=20)
 
-    return BrowserAudioPlan(edge(send), edge(receive),
-        48000 * 2 * 4 * MAX_FRAME_MS // 1000 + 1)
+    microphone = replace(send.audio_format, sample_rate=capture.sample_rate,
+                         frame_ms=capture.frame_ms)
+    # A WebSocket survives codec changes. Reserve one real capture quantum
+    # across the PCM widths/channels supported by the existing worklet.
+    maximum = max(replace(capture, pcm_format=width, channels=channels).nominal_frame_bytes
+                  for width in PcmFormat for channels in SUPPORTED_CHANNELS)
+    return BrowserAudioPlan(microphone, edge(receive), maximum + 1)
 
 
 def plan_bridge_offer(send_formats, receive_formats, source, *, send_rtp_formats=None,
@@ -208,7 +215,7 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
             and can_retain_receive
             and receive_mapping(selected.recv) == receive_mapping(caller.recv)
             and all(receive_mapping(fmt) in previous_receives for fmt in selected.recv_formats)):
-        # R1: a bridge cannot retime an unchanged admitted receiver merely
+        # A bridge cannot retime an unchanged admitted receiver merely
         # because its candidate search uses the generic backend default.
         selected = replace(selected, recv=caller.recv, recv_formats=tuple(
             previous_receives[receive_mapping(fmt)] for fmt in selected.recv_formats))

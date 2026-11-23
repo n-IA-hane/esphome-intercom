@@ -81,7 +81,8 @@ async def test_account_revocation_closes_authenticated_socket_before_next_search
         elif change == "runtime":
             lab.entry.runtime_data = replace(lab.runtime, ldap_server=None, phone_services=None)
         elif change == "suspend":
-            lab.native.runtime_data.services = {}
+            from custom_components.voip_stack.phone_config import update_phone_subentry
+            assert update_phone_subentry(lab.hass, lab.entry, phone.endpoint_id, {"enabled": False})
             await lab.controller.async_sync()
         else:
             accounts = [] if change in {"remove", "remove-readd"} else [replace(account,
@@ -227,11 +228,10 @@ async def test_directory_change_immediately_coalesces_refresh_and_unchanged_reco
         await lab.controller.async_sync()
         assert calls() == before
         # Canonical generation observer invokes the existing coalescing coordinator.
-        from homeassistant.helpers import device_registry as dr
-        devices = dr.async_get(lab.hass)
+        from custom_components.voip_stack.roster import RosterEntry
         async with lab.controller._lock:
-            devices.async_update_device(lab.device.id, name_by_user="One")
-            devices.async_update_device(lab.device.id, name_by_user="Two")
+            directory.upsert(RosterEntry("public-desk", name="One", number="+391234"))
+            directory.upsert(RosterEntry("public-desk", name="Two", number="+391234"))
         await lab.hass.async_block_till_done(wait_background_tasks=True)
         assert calls() == before + 1
         directory.replace(directory.snapshot())
@@ -252,7 +252,7 @@ async def test_implicit_tls_ldap3_validates_ca_and_hostname_and_reads_canonical_
             ca_certs_file=str(certificate)), get_info=ldap3.NONE), user=phone.username, password=phone.password,
             auto_bind=True)
         try:
-            assert connection.search(BASE, "(&(uid=*)(ou=esphome))", attributes=["uid", "cn", "labeledURI"])
+            assert connection.search(BASE, "(&(uid=*)(ou=sip_account))", attributes=["uid", "cn", "labeledURI"])
             assert len(connection.entries) == 1
             assert connection.entries[0].uid.value == phone.endpoint_id
             assert connection.entries[0].cn.value == "Ingresso"

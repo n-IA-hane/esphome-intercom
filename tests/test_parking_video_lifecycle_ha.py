@@ -18,7 +18,7 @@ pytestmark = pytest.mark.ha
 @pytest.fixture
 async def av_transaction_owner(monkeypatch):
     from unittest.mock import AsyncMock
-    from custom_components.voip_stack import parking, call_transfer, local_call_media
+    from custom_components.voip_stack import parking, call_transfer, local_call_media, bridge_media_updates
     from custom_components.voip_stack.sip_rtp_bridge import SipRtpRelay, RtpPeer
     from custom_components.voip_stack.sip_video_relay import SipVideoRtpRelay, VideoRtpPeer
     from custom_components.voip_stack.core.audio_format import AudioFormat
@@ -46,6 +46,7 @@ async def av_transaction_owner(monkeypatch):
     lot = ParkingLot(("701",))
     monkeypatch.setattr(parking, "require_runtime_data", lambda _: runtime)
     monkeypatch.setattr(parking, "call_registry", lambda _: owner)
+    monkeypatch.setattr(bridge_media_updates, "call_registry", lambda _: owner)
     monkeypatch.setattr(parking, "get_parking_lot", lambda _: lot)
     monkeypatch.setattr(parking, "parking_settings", lambda _: {})
     monkeypatch.setattr(call_transfer, "_inbound_server", lambda *_: (None, None))
@@ -65,7 +66,7 @@ async def test_parking_goal_and_slot_are_released_when_video_rollback_raises(av_
     update = SimpleNamespace(commit=AsyncMock(side_effect=RuntimeError("cutover failed")),
                              rollback=AsyncMock(side_effect=RuntimeError("restore failed")))
     prepare = AsyncMock(return_value=update)
-    monkeypatch.setattr(parking, "_prepare_video_handoff", prepare)
+    monkeypatch.setattr(parking, "prepare_retained_video_handoff", prepare)
     with pytest.raises(RuntimeError, match="restore failed"):
         await parking.park_established_sip_call(object(), state.original.call_id, origin)
     assert prepare.await_args.args[1] is state.original
@@ -122,7 +123,7 @@ async def test_obsolete_video_handoff_rollback_does_not_touch_new_owner(av_trans
         commit=lambda: True, restore=AsyncMock(return_value=False))
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", AsyncMock(return_value=prepared))
     monkeypatch.setattr(sip_bridge, "invite_video_rtp_peer", lambda candidate: candidate)
-    update = await parking._prepare_video_handoff(object(), state.original, video,
+    update = await parking.prepare_retained_video_handoff(object(), state.original, video,
         parking._video_peer_direction(video.left, "inactive"), parking._video_peer_direction(video.right, "inactive"))
     replacement = SipRtpRelay(left=state.relay.left, right=state.relay.right, left_port=43000, right_port=43002)
     replacement.attach_video_relay(video)
@@ -180,13 +181,14 @@ async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_
     registry = SimpleNamespace(resource_for=lambda *_: owner, is_generation_current=lambda *_: True,
                                request_termination=Mock())
     monkeypatch.setattr(parking, "call_registry", lambda _: registry)
+    monkeypatch.setattr(bridge_media_updates, "call_registry", lambda _: registry)
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", source_update)
     monkeypatch.setattr(sip_bridge, "invite_video_rtp_peer", lambda candidate: candidate)
     monkeypatch.setattr(video, "_build_transcode_generation", build)
     monkeypatch.setattr(vr, "_claim_transcoder_slot", AsyncMock())
     monkeypatch.setattr(vr, "_release_transcoder_slot", AsyncMock())
     try:
-        update = await parking._prepare_video_handoff(object(), session, video,
+        update = await parking.prepare_retained_video_handoff(object(), session, video,
             parking._video_peer_direction(left, "inactive"), parking._video_peer_direction(right, "inactive"))
         committing = asyncio.create_task(update.commit())
         await asyncio.wait_for(entered.wait(), 1)
@@ -996,7 +998,9 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
     registered_phones, trunks, unavailable,
 ):
     from custom_components.voip_stack.const import CONF_SIP_VIDEO
-    from custom_components.voip_stack.endpoint_routing import assemble_directory_entries, peer_video_codec
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.endpoint_routing import peer_video_codec
+    from .test_video_originate_unknown_ha import set_configured_video_policy
     from custom_components.voip_stack.parking import get_parking_lot
     from custom_components.voip_stack.store import config_entry
     runtime = trunks
@@ -1023,18 +1027,10 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
     ports = set(runtime.runtime.rtp_port_pool["used"])
     fds = {key: transport.get_extra_info("socket").fileno() for key, transport in video._transports.items()}
     runtime.runtime.endpoints.update("transfer_c", device_id="negative-video-picker")
-    picker_capabilities = []
     if unavailable == "known_audio_only":
-        runtime.runtime.endpoints.update("transfer_c", capabilities=frozenset({"audio", "dtmf"}))
+        set_configured_video_policy(runtime, "transfer_c", False)
         registrar = runtime.calls.component("registrar")
-        # OPTIONS now supplies the explicit codec contract. The negative peer
-        # must decline video in that contract as well as the fallback names.
-        picker_capabilities = [(binding, binding.capabilities)
-            for binding in registrar.registered_contacts("transfer_c")]
-        assert picker_capabilities
-        for binding, capabilities in picker_capabilities:
-            binding.capabilities = {**(capabilities or {}), "sip_video_codec": ""}
-        runtime.roster[:] = assemble_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
+        assert registrar.registered_contacts("transfer_c")
         picker_entry = next(entry for entry in runtime.roster if entry.metadata.get("endpoint_id") == "transfer_c")
         assert peer_video_codec(None, picker_entry) == ""
     else:
@@ -1051,11 +1047,9 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
         for key, transport in video._transports.items()} == fds
     assert not runtime.runtime.endpoints.get("transfer_c").active_call_id
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = True
-    runtime.runtime.endpoints.update("transfer_c", capabilities=frozenset())
-    for binding, capabilities in picker_capabilities:
-        binding.capabilities = capabilities
+    set_configured_video_policy(runtime, "transfer_c", True)
     registrar = runtime.calls.component("registrar")
-    runtime.roster[:] = assemble_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
+    runtime.roster[:] = compose_directory_entries(runtime.hass, [], registrar.registered_roster_entries())
     await runtime.hass.services.async_call("voip_stack", "pickup", {
         "device_id": "negative-video-picker", "slot": "701", "answer_timeout": 3,
     }, blocking=True)

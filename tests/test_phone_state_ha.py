@@ -34,7 +34,7 @@ async def phones(hass):
             PhoneEndpoint(
                 endpoint_id=identity,
                 name=identity.title(),
-                kind="browser",
+                kind="sip_account", username=identity,
                 device_id=identity + "-device",
                 extension=extension,
                 availability="available",
@@ -69,6 +69,7 @@ async def test_phone_state_service_returns_same_calls_as_conditions(hass, phones
         source_endpoint_id="office",
         dest_endpoint_id="kitchen",
     )
+    phones.calls.add_leg(session.call_id, 'recipient-kitchen', role='callee', state='ringing', endpoint_id='kitchen')
     phones.calls.claim_endpoint(session.call_id, "kitchen", role="destination")
     response = await hass.services.async_call(
         "voip_stack",
@@ -82,7 +83,7 @@ async def test_phone_state_service_returns_same_calls_as_conditions(hass, phones
     )
     assert response["calls"][0]["call_id"] == session.call_id
     assert response["calls"][0]["generation"] == session.generation
-    assert snapshot(phones.runtime, "kitchen")[0].peer_user == "102"
+    assert snapshot(phones.runtime, "kitchen")[0].peer_user == "office"
     for kind, options in (
         (PhoneStateCondition, {"phone": "kitchen-device", "state": "ringing"}),
         (HasRingingCallCondition, {"phone": "kitchen-device"}),
@@ -132,6 +133,7 @@ async def test_state_trigger_keeps_exact_call_context_and_suppresses_duplicate_s
             source_endpoint_id="office",
             dest_endpoint_id="kitchen",
         )
+        phones.calls.add_leg(session.call_id, 'recipient-kitchen', role='callee', state='ringing', endpoint_id='kitchen')
         phones.calls.claim_endpoint(session.call_id, "kitchen", role="destination")
         await hass.async_block_till_done()
         hass.bus.async_fire(
@@ -231,6 +233,7 @@ async def test_complete_registry_operation_publishes_without_a_manual_call_event
         publish_bridge_projection(hass, session)
         with phones.calls.state_operation():
             phones.calls.transition(session.call_id, state="ringing")
+            phones.calls.add_leg(session.call_id, 'recipient-kitchen', role='callee', state='ringing', endpoint_id='kitchen')
             phones.calls.claim_endpoint(session.call_id, "kitchen", role="destination")
             assert changes == []
         await hass.async_block_till_done()

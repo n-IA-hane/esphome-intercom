@@ -59,7 +59,8 @@ def test_unknown_flow_attributes_cannot_remove_standard_mapping_alternatives():
     assert isinstance(result, negotiator.LegContract)
     assert [(fmt.payload_type, fmt.encoding) for fmt in result.send_accept] == [(0, "PCMU"), (120, "L16")]
     selected = negotiator.as_direction(result, answer)
-    assert selected.send.payload_type == 0 and selected.recv.payload_type == 96
+    assert selected.send.payload_type == selected.recv.payload_type == 0
+    assert any(fmt.payload_type == 96 and fmt.sample_rate == 16000 for fmt in selected.recv_formats)
 
 
 def test_receive_only_answer_exposes_no_transmit_mapping():

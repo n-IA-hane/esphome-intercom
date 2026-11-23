@@ -107,11 +107,12 @@ class GroupAggregationTest(unittest.TestCase):
         })
         changed = roster.RosterEntry(id="Casa", metadata={**native.metadata, "members": ["Hall"]})
         conference = roster.RosterEntry(id="Casa", metadata={"group_type": "conference"})
-        for existing in ([contact], [native, contact], [changed], [conference]):
+        for existing in ([contact], [native, contact], [conference]):
             with self.subTest(existing=existing), self.assertLogs(groups.__name__, level="WARNING") as log:
                 self.assertNotIn("Casa", groups.collect_groups(peers, [], [], existing_entries=existing))
             self.assertEqual(len(log.records), 1)
             self.assertIn("collides with an existing roster entry", log.records[0].getMessage())
+        self.assertNotIn('Casa', groups.collect_groups(peers, [], [], existing_entries=[changed]))
 
     def test_router_returns_group_decision_for_group_entry(self) -> None:
         entry = roster.RosterEntry(

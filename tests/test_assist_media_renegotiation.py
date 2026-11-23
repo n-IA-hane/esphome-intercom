@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
 import sys
@@ -12,11 +11,92 @@ import types
 import pytest
 
 from tests.test_media_session_updates import MEDIA_SESSION_UPDATES
+from .voip_phase1_support import _load_intercom_module
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"
 PACKAGE = "voip_assist_reinvite_test"
+SDP = _load_intercom_module("core.sdp")
+SIP = _load_intercom_module("core.sip")
+WIRE = _load_intercom_module("sip_server_state")
+CLIENT = _load_intercom_module("sip_client")
+AUDIO_SEND = SDP.RtpPcmFormat(111, "L16", 16000, 1, 20)
+AUDIO_RECEIVE = AUDIO_SEND
+OPUS_SEND = SDP.RtpPcmFormat(112, "OPUS", 48000, 2, 20)
+OPUS_RECEIVE = OPUS_SEND
+DEFAULT_SEND = SDP.RtpPcmFormat(113, "L16", 48000, 1, 10)
+DEFAULT_RECEIVE = SDP.RtpPcmFormat(114, "L16", 16000, 1, 20)
+ESTABLISHED_SEND = SDP.RtpPcmFormat(115, "L16", 48000, 1, 10)
+ESTABLISHED_RECEIVE = SDP.RtpPcmFormat(116, "L16", 16000, 1, 20)
+
+
+def _video(direction="sendrecv", encoding="JPEG"):
+    return SDP.RtpVideoFormat(payload_type={"JPEG": 26, "VP8": 104, "H264": 105}[encoding],
+                              encoding=encoding, direction=direction)
+
+
+JPEG = _video()
+H264_SEND = _video("sendonly", "H264")
+H264_RECEIVE = _video("recvonly", "H264")
+
+
+class _InvitePeer(WIRE.SipInvite):
+    """Expose the fake media edge's view without copying the wire record schema."""
+
+    @property
+    def outbound_rtp_format(self):
+        return self.send_format
+
+    @property
+    def inbound_rtp_format(self):
+        return self.recv_format
+
+    @property
+    def inbound_rtp_formats(self):
+        return self.recv_formats
+
+
+class _DialogPeer(CLIENT.SipDialog):
+    """The fake bidirectional audio edge retains the real SIP dialog model."""
+
+    can_send = True
+    can_receive = True
+
+
+def _invite(**values):
+    data = dict(source_host="198.51.100.20", source_port=5060,
+        request_uri=SIP.SipUri("HA", "192.0.2.10"), caller_uri=SIP.SipUri("Caller", "198.51.100.20"),
+        target="HA", caller="Caller", call_id="call", cseq="1 INVITE",
+        send_format=AUDIO_SEND, recv_format=AUDIO_RECEIVE,
+        remote_rtp_host="198.51.100.20", remote_rtp_port=42000)
+    data.update(values)
+    if "remote_sdp" not in data:
+        formats = (AUDIO_SEND, OPUS_SEND, DEFAULT_SEND, DEFAULT_RECEIVE,
+                   ESTABLISHED_SEND, ESTABLISHED_RECEIVE)
+        body = ("v=0\r\no=- 1 1 IN IP4 198.51.100.20\r\ns=Independent peer\r\n"
+                "c=IN IP4 198.51.100.20\r\nt=0 0\r\nm=audio 42000 RTP/AVP "
+                + " ".join(str(fmt.payload_type) for fmt in formats) + "\r\n")
+        body += "".join(f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}\r\n"
+                        for fmt in formats)
+        body += "a=ptime:20\r\na=maxptime:20\r\na=sendrecv\r\n"
+        if (video := data.get("video_format")) is not None:
+            body += (f"m=video 42002 RTP/AVP {video.payload_type}\r\n"
+                     f"a=rtpmap:{video.payload_type} {video.encoding}/90000\r\na={video.direction}\r\n")
+            data.setdefault("remote_video_rtp_host", "198.51.100.20")
+            data.setdefault("remote_video_rtp_port", 42002)
+        data["remote_sdp"] = body.encode()
+    return _InvitePeer(**data)
+
+
+def _dialog(video=None, **values):
+    data = dict(target="Peer", remote_host="192.0.2.20", remote_sip_port=5060,
+        remote_rtp_host="192.0.2.20", remote_rtp_port=42000, local_rtp_port=41002,
+        call_id="destination", local_uri="sip:HA@192.0.2.10", remote_uri="sip:Peer@192.0.2.20",
+        send_format=AUDIO_SEND, recv_format=AUDIO_RECEIVE, video_format=video,
+        local_video_direction=video.direction if video else "inactive")
+    data.update(values)
+    return _DialogPeer(**data)
 
 
 def _module(name: str, **values):
@@ -97,9 +177,9 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         require_runtime_data=lambda hass: hass.runtime,
     )
 
-    def build_answer_directional(*_args, **kwargs):
+    def build_answer_directional(*args, **kwargs):
         answer_calls.append(dict(kwargs))
-        return "m=audio 41000 RTP/AVP 111\r\nm=video 0 RTP/AVP 104\r\n"
+        return SDP.build_answer_directional(*args, **kwargs)
 
     from .voip_phase1_support import _load_intercom_module
     _module(
@@ -107,20 +187,15 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         RtpVideoFormat=_load_intercom_module("core.sdp").RtpVideoFormat,
         build_answer_directional=build_answer_directional,
         constrained_media_direction=lambda *_args, **_kwargs: "sendrecv",
-        constrained_video_direction=lambda *_args, **_kwargs: "inactive",
+        constrained_video_direction=SDP.constrained_video_direction,
         first_offered_dtmf_format=lambda _sdp: None,
-        offered_video_formats=lambda _sdp: (),
-        video_fmtp_parameters=lambda fmt: dict(
-            part.split("=", 1) for part in fmt.fmtp.split(";") if part
-        ),
-        remote_can_receive=lambda *_args, **_kwargs: False,
-        remote_can_send=lambda *_args, **_kwargs: False,
+        offered_video_formats=SDP.offered_video_formats,
+        video_fmtp_parameters=SDP.video_fmtp_parameters,
+        remote_can_receive=SDP.remote_can_receive,
+        remote_can_send=SDP.remote_can_send,
     )
     def invite_rtp_peer(invite, *, established=None):
-        if not hasattr(invite, "outbound_rtp_format"):
-            invite.outbound_rtp_format = invite.send_format
-            invite.inbound_rtp_format = invite.recv_format
-            invite.inbound_rtp_formats = invite.recv_formats
+        assert isinstance(invite, WIRE.SipInvite)
         return invite
 
     _module(
@@ -130,22 +205,9 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
         invite_video_rtp_peer=lambda invite: invite,
     )
 
-    @dataclass(frozen=True)
-    class SipInviteResult:
-        status: int
-        reason: str
-        answer_sdp: str = ""
-        to_tag: str = ""
-        defer_final: bool = False
-        decline_reason: str = ""
-        commit: object | None = None
-        rollback: object | None = None
-        dialog_identity: object | None = None
-        finalize: object | None = None
-
     identity = _load_intercom_module("core.sip_dialog").PreparedDialogIdentity
     _module("core.sip_dialog", PreparedDialogIdentity=identity)
-    _module("sip_listener", SipInvite=object, SipInviteResult=SipInviteResult)
+    _module("sip_listener", SipInvite=WIRE.SipInvite, SipInviteResult=WIRE.SipInviteResult)
     _module("sip_video_relay")
     _module("call_events", fire_call_event=lambda *_args, **_kwargs: None)
     _module("browser_phone_data", _ha_softphone_store=lambda *_args, **_kwargs: {})
@@ -176,21 +238,20 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
     module, AssistMediaSession = _load_module(registry, answer_calls, generic=generic)
     owner = AssistMediaSession()
     registry.relays["call"] = owner
-    video = types.SimpleNamespace(direction="recvonly")
-    invite = types.SimpleNamespace(
+    video = _video("recvonly")
+    invite = _invite(
         call_id="call",
-        send_format="opus-send",
-        recv_format="opus-receive",
+        send_format=OPUS_SEND,
+        recv_format=OPUS_RECEIVE,
         recv_formats=(),
-        remote_sdp=b"offer-with-audio-and-video",
         remote_rtp_host="198.51.100.20",
         remote_rtp_port=42000,
         remote_audio_direction="sendrecv",
         local_audio_direction="sendrecv",
         remote_audio_connection_held=False,
         video_format=video,
-        recv_video_format=video,
-        answer_video_format=video,
+        local_video_format=video,
+        video_answer_format=video,
     )
 
     result = asyncio.run(
@@ -200,12 +261,15 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
     )
 
     assert result.status == 200
+    assert isinstance(result, WIRE.SipInviteResult)
+    assert isinstance(result.media_contract, WIRE.SipInvite)
     assert "m=video 0" in result.answer_sdp
     assert answer_calls == [
         {
             "recv_formats": (),
             "dtmf": None,
-            "remote_sdp": b"offer-with-audio-and-video",
+            "dtmf_direction": None,
+            "remote_sdp": invite.remote_sdp,
             "audio_direction": "sendrecv",
             "video_port": 0,
             "video_format": video,
@@ -247,15 +311,15 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
 
     def retained_peer(invite, *, established=None):
         established_peers.append(established)
-        return invite.audio_peer
+        return updated_audio_peer
 
     def answer(*args, **_kwargs):
         answered_formats.append((args[3], args[4]))
-        return "m=audio 41000 RTP/AVP 111\r\nm=video 0 RTP/AVP 104\r\n"
+        return SDP.build_answer_directional(*args, **_kwargs)
 
     module.invite_rtp_peer = retained_peer
     module.build_answer_directional = answer
-    module.invite_video_rtp_peer = lambda invite: invite.video_peer
+    module.invite_video_rtp_peer = lambda invite: updated_video_peer
 
     class PeerOwner:
         def __init__(self, left, right) -> None:
@@ -265,13 +329,13 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
         def prepare_peer_reconfiguration(self, side, peer):
             return lambda: setattr(self, side, peer)
 
-    video = types.SimpleNamespace(direction="recvonly")
+    video = _video("recvonly")
     video_relay = PeerOwner(
         object(),
         types.SimpleNamespace(
-            send_format="h264-send",
-            recv_format="h264-recv",
-            video_format=types.SimpleNamespace(direction="sendonly"),
+            send_format=H264_SEND,
+            recv_format=H264_RECEIVE,
+            video_format=_video("sendonly"),
             connection_held=False,
         ),
     )
@@ -284,25 +348,24 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     relay.left_port = 41000
     relay.video_relay = video_relay
     registry.relays["call"] = relay
-    previous = types.SimpleNamespace(
+    previous = _invite(
         call_id="call",
         video_format=video,
         remote_video_connection_held=False,
     )
-    updated = types.SimpleNamespace(
+    updated_audio_peer = types.SimpleNamespace(
+        outbound_rtp_format=ESTABLISHED_SEND, inbound_rtp_format=ESTABLISHED_RECEIVE, inbound_rtp_formats=())
+    updated_video_peer = object()
+    updated = _invite(
         call_id="call",
-        send_format="default-send",
-        recv_format="default-recv",
+        send_format=DEFAULT_SEND,
+        recv_format=DEFAULT_RECEIVE,
         recv_formats=(),
-        audio_peer=types.SimpleNamespace(
-            outbound_rtp_format="established-send", inbound_rtp_format="established-recv", inbound_rtp_formats=()),
-        video_peer=object(),
-        remote_sdp=b"audio-refresh-with-unchanged-video",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
         video_format=video,
-        recv_video_format=video,
-        answer_video_format=video,
+        local_video_format=video,
+        video_answer_format=video,
         remote_video_connection_held=False,
     )
 
@@ -319,7 +382,7 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
     # The refresh resolves audio against the leg's current peer and answers with
     # the retained formats, not with the freshly parsed defaults.
     assert established_peers == [old_audio]
-    assert answered_formats == [("established-send", "established-recv")]
+    assert answered_formats == [(ESTABLISHED_SEND, ESTABLISHED_RECEIVE)]
     if replace_owner:
         registry.relays["call"] = object()
         with pytest.raises(RuntimeError, match="owner changed"):
@@ -327,7 +390,7 @@ def test_bridged_audio_refresh_preserves_owned_video_transcoding(replace_owner) 
         assert relay.left is old_audio and video_relay.left is old_video
     else:
         asyncio.run(result.commit())
-        assert relay.left is updated.audio_peer and video_relay.left is updated.video_peer
+        assert relay.left is updated_audio_peer and video_relay.left is updated_video_peer
 
 
 def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
@@ -387,11 +450,11 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
         (None, None, None, None),
     )
 
-    candidate = types.SimpleNamespace()
+    candidate = _dialog(JPEG)
 
     class Client:
         def __init__(self) -> None:
-            self.dialog = types.SimpleNamespace(remote_host="192.0.2.20")
+            self.dialog = _dialog()
             self.aborted = False
 
         def prepared_reinvite_identity(self, candidate):
@@ -417,16 +480,16 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
     sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: video_relay
     sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: (
         types.SimpleNamespace(
-            video_format="jpeg",
+            video_format=JPEG,
             direction="sendrecv",
         )
     )
     sip_bridge.dialog_rtp_peer = lambda item: item
-    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("jpeg",)
+    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: (JPEG,)
 
-    video = types.SimpleNamespace(direction="sendrecv")
-    previous = types.SimpleNamespace(call_id="source", video_format=None)
-    updated = types.SimpleNamespace(call_id="source", video_format=video)
+    video = _video("sendrecv")
+    previous = _invite(call_id="source", video_format=None)
+    updated = _invite(call_id="source", video_format=video)
 
     async def run() -> None:
         task = asyncio.create_task(
@@ -497,8 +560,8 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
     )
     new_audio_left = types.SimpleNamespace(
         name="new-audio-left",
-        outbound_rtp_format="audio-send",
-        inbound_rtp_format="audio-receive",
+        outbound_rtp_format=AUDIO_SEND,
+        inbound_rtp_format=AUDIO_RECEIVE,
         inbound_rtp_formats=(),
     )
     new_audio_right = types.SimpleNamespace(
@@ -551,8 +614,8 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
 
     relay = Relay()
     registry.relays["source"] = relay
-    destination_dialog = types.SimpleNamespace(remote_host="192.0.2.20")
-    candidate = types.SimpleNamespace(video_format="jpeg")
+    destination_dialog = _dialog()
+    candidate = _dialog(JPEG)
 
     class Client:
         def __init__(self) -> None:
@@ -590,33 +653,32 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
     )
     sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: (
         types.SimpleNamespace(
-            video_format="vp8",
+            video_format=JPEG,
             direction="sendrecv",
         )
     )
     sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
     sip_bridge.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
-    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("jpeg",)
+    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: (JPEG,)
     module.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     module.invite_video_rtp_peer = lambda _invite: new_video_left
 
-    previous_video = types.SimpleNamespace(direction="recvonly")
-    updated_video = types.SimpleNamespace(direction="sendrecv")
-    previous = types.SimpleNamespace(
+    previous_video = _video("recvonly")
+    updated_video = _video("sendrecv")
+    previous = _invite(
         call_id="source",
         video_format=previous_video,
         remote_video_connection_held=False,
     )
-    updated = types.SimpleNamespace(
+    updated = _invite(
         call_id="source",
         video_format=updated_video,
-        recv_video_format=updated_video,
-        answer_video_format=updated_video,
+        local_video_format=updated_video,
+        video_answer_format=updated_video,
         remote_video_connection_held=False,
-        send_format="audio-send",
-        recv_format="audio-receive",
+        send_format=AUDIO_SEND,
+        recv_format=AUDIO_RECEIVE,
         recv_formats=(),
-        remote_sdp=b"audio-video-sendrecv",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
     )
@@ -630,7 +692,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
     assert result.status == 200
     assert client.prepared == {
         "local_video_rtp_port": 43002,
-        "video_formats": ("jpeg",),
+        "video_formats": (JPEG,),
         "video_direction": "sendrecv",
     }
     assert staged_video_relay.started is True
@@ -642,7 +704,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly(superseded) -> N
     assert answer_calls[-1]["video_direction"] == "sendrecv"
 
     if superseded:
-        client.dialog = types.SimpleNamespace(video_format="jpeg", remote_rtp_port=42002)
+        client.dialog = _dialog(JPEG, remote_rtp_port=42002)
         asyncio.run(result.rollback())
         assert relay.video_relay is staged_video_relay
         assert not staged_video_relay.stopped
@@ -707,12 +769,12 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
 
     relay = Relay()
     registry.relays["source"] = relay
-    candidate = types.SimpleNamespace(can_send=True, can_receive=True)
+    candidate = _dialog()
 
     class Client:
         def __init__(self) -> None:
-            self.dialog = types.SimpleNamespace(remote_host="192.0.2.20")
-            self.video_formats = ("jpeg",)
+            self.dialog = _dialog(JPEG)
+            self.video_formats = (JPEG,)
             self.prepared: dict = {}
             self.committed = False
 
@@ -731,6 +793,11 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
             self.dialog = staged
             return True
 
+        async def restore_prepared_reinvite(self, previous, staged):
+            assert staged is candidate and not self.committed
+            assert self.dialog is previous
+            return previous
+
         def abort_prepared_reinvite(self, _previous, _staged) -> None:
             raise AssertionError("committed removal was rolled back")
 
@@ -742,18 +809,17 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: None
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ()
 
-    previous = types.SimpleNamespace(
+    previous = _invite(
         call_id="source",
-        video_format=types.SimpleNamespace(direction="sendrecv"),
+        video_format=_video("sendrecv"),
     )
-    updated = types.SimpleNamespace(
+    updated = _invite(
         call_id="source",
         video_format=None,
-        answer_video_format=None,
-        send_format="audio-send",
-        recv_format="audio-receive",
+        video_answer_format=None,
+        send_format=AUDIO_SEND,
+        recv_format=AUDIO_RECEIVE,
         recv_formats=(),
-        remote_sdp=b"audio-with-rejected-video",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
     )
@@ -771,7 +837,7 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     assert result.status == 200
     assert client.prepared == {
         "local_video_rtp_port": 0,
-        "video_formats": ("jpeg",),
+        "video_formats": (JPEG,),
         "video_direction": "inactive",
     }
     assert relay.video_relay is video_relay
@@ -787,7 +853,7 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     assert relay.right is candidate
 
 
-@pytest.mark.parametrize("local_parameters", ["", "local-encoder"])
+@pytest.mark.parametrize("local_parameters", ["", "Z0IAH5WoFAFuQA==,aM48gA=="], ids=["", "local-encoder"])
 def test_bridge_video_inactive_updates_both_video_legs_atomically(local_parameters) -> None:
     answer_calls: list[dict] = []
     session = types.SimpleNamespace(generation=13)
@@ -825,8 +891,8 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
     )
     new_audio_left = types.SimpleNamespace(
         name="new-audio-left",
-        outbound_rtp_format="audio-send",
-        inbound_rtp_format="audio-receive",
+        outbound_rtp_format=AUDIO_SEND,
+        inbound_rtp_format=AUDIO_RECEIVE,
         inbound_rtp_formats=(),
     )
     new_audio_right = types.SimpleNamespace(
@@ -837,9 +903,9 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
     new_video_left = types.SimpleNamespace(name="new-video-left")
     new_video_right = types.SimpleNamespace(
         name="new-video-right",
-        send_format="jpeg-send",
-        recv_format="jpeg-recv",
-        video_format=types.SimpleNamespace(direction="inactive"),
+        send_format=JPEG,
+        recv_format=JPEG,
+        video_format=_video("inactive"),
         connection_held=False,
     )
 
@@ -884,30 +950,22 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
 
     relay = Relay()
     registry.relays["source"] = relay
-    @dataclass(frozen=True)
-    class VideoFormat:
-        sprop_parameter_sets: str
-        payload_type: int = 105
-        encoding: str = "H264"
-        fmtp: str = "max-fs=3600"
-    remote_format = VideoFormat("remote-encoder", fmtp="sprop-parameter-sets=remote-encoder;max-fs=3600")
-    local_format = VideoFormat(local_parameters)
-    module.sdp_video_formats = lambda body: (local_format,) if body == "current-local-sdp" else ()
-    destination_dialog = types.SimpleNamespace(
-        remote_host="192.0.2.20",
-        recv_video_format=remote_format,
-        video_format=remote_format,
-        local_sdp_body="current-local-sdp",
-    )
-    candidate = types.SimpleNamespace(
-        video_format=types.SimpleNamespace(direction="inactive"),
-        remote_video_connection_held=False,
-    )
+    remote_format = SDP.RtpVideoFormat(payload_type=105, encoding="H264", profile_level_id="42001f",
+        sprop_parameter_sets="Z0IAH5WoFAFuQA==,aM4xUg==", fmtp="max-fs=3600")
+    local_sdp = ("v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\ns=Local encoder\r\n"
+        "c=IN IP4 192.0.2.10\r\nt=0 0\r\nm=video 43002 RTP/AVP 105\r\n"
+        "a=rtpmap:105 H264/90000\r\na=sendrecv\r\n"
+        "a=fmtp:105 profile-level-id=42001f;packetization-mode=1;level-asymmetry-allowed=1;max-fs=3600"
+        + (f";sprop-parameter-sets={local_parameters}" if local_parameters else "") + "\r\n")
+    local_format = SDP.offered_video_formats(local_sdp)[0]
+    destination_dialog = _dialog(remote_format, local_video_format=remote_format,
+        local_sdp_body=local_sdp)
+    candidate = _dialog(_video("inactive"))
 
     class Client:
         def __init__(self) -> None:
             self.dialog = destination_dialog
-            self.video_formats = ("jpeg",)
+            self.video_formats = (JPEG,)
             self.prepared = None
             self.committed = False
 
@@ -925,6 +983,11 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
             self.committed = True
             self.dialog = staged
             return True
+
+        async def restore_prepared_reinvite(self, previous, staged):
+            assert previous is destination_dialog and staged is candidate and not self.committed
+            assert self.dialog is previous
+            return previous
 
         def abort_prepared_reinvite(self, *_args) -> None:
             raise AssertionError("committed direction update was rolled back")
@@ -950,23 +1013,22 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically(local_paramete
     )
     module.constrained_video_direction = lambda *_args, **_kwargs: "inactive"
 
-    previous_video = types.SimpleNamespace(direction="sendrecv")
-    updated_video = types.SimpleNamespace(direction="inactive")
-    previous = types.SimpleNamespace(
+    previous_video = _video("sendrecv")
+    updated_video = _video("inactive")
+    previous = _invite(
         call_id="source",
         video_format=previous_video,
         remote_video_connection_held=False,
     )
-    updated = types.SimpleNamespace(
+    updated = _invite(
         call_id="source",
         video_format=updated_video,
-        recv_video_format=updated_video,
-        answer_video_format=updated_video,
+        local_video_format=updated_video,
+        video_answer_format=updated_video,
         remote_video_connection_held=False,
-        send_format="audio-send",
-        recv_format="audio-receive",
+        send_format=AUDIO_SEND,
+        recv_format=AUDIO_RECEIVE,
         recv_formats=(),
-        remote_sdp=b"audio-video-inactive",
         remote_audio_direction="sendrecv",
         remote_audio_connection_held=False,
     )

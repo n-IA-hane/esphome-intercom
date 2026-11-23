@@ -1,12 +1,15 @@
 """Default 16 kHz packet preference, with independent transmit and receive clocks."""
 
 import struct
+from dataclasses import replace
 
 import pytest
 
 from .voip_phase1_support import (
     _load_intercom_module, audio_format, sdp, sip_client,
 )
+from custom_components.voip_stack.core.media import leg, negotiator
+from custom_components.voip_stack.core.codec_policy import CodecPolicy
 
 
 @pytest.mark.parametrize("initiator", ["esp", "ha"])
@@ -18,12 +21,14 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     esp_send.append(audio_format.AudioFormat(48000, frame_ms=10))
     esp_recv = [audio_format.AudioFormat(48000, frame_ms=10),
                 audio_format.AudioFormat(48000, frame_ms=20),
-                *[fmt for fmt in esp_send if fmt.sample_rate == 16000]]
+                audio_format.AudioFormat(16000, frame_ms=20),
+                audio_format.AudioFormat(16000, frame_ms=10)]
     local = {
         "ha": (list(audio_format.HA_SIP_PCM_TX_FORMATS), list(audio_format.HA_SIP_PCM_RX_FORMATS)),
         "esp": (esp_send, esp_recv),
     }
     answerer = "ha" if initiator == "esp" else "esp"
+    pcm_policy = CodecPolicy(audio=("L16",))
     offer_options = {}
     if initiator == "esp":
         wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10, max_frame_ms=20)
@@ -33,12 +38,18 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     offer = sdp.build_offer_directional(
         "192.0.2.1", "192.0.2.1", 40000, *local[initiator],
         local_capabilities=sip_client.HA_AUDIO_CAPABILITIES if initiator == "ha" else None,
+        codec_policy=pcm_policy if initiator == "esp" else None,
         **offer_options,
     )
-    selected = sdp.negotiate_directional(
-        offer, *local[answerer],
-        local_capabilities=sip_client.HA_AUDIO_CAPABILITIES if answerer == "ha" else None,
-    )
+    if answerer == "esp":
+        # The fixed ESP receiver asks for 10 ms independently of the native
+        # transmitter's 20 ms preference and its declared fallback formats.
+        policy = replace(negotiator.policy_for_leg(*local[answerer], codec_policy=pcm_policy), default_packet_ms=10)
+        selected = negotiator.as_direction(leg.answer_offer(offer, policy), offer)
+    else:
+        selected = sdp.negotiate_directional(
+            offer, *local[answerer], local_capabilities=sip_client.HA_AUDIO_CAPABILITIES,
+        )
     assert selected is not None
     answer = sdp.build_answer_directional(
         "192.0.2.2", "192.0.2.2", 41000,
@@ -47,6 +58,7 @@ def test_default_ha_and_full_esp_negotiate_both_directions(initiator, esp_suppor
     accepted = sdp.negotiate_answer_directional(
         answer, *local[initiator], local_offer_sdp=offer,
         local_capabilities=sip_client.HA_AUDIO_CAPABILITIES if initiator == "ha" else None,
+        codec_policy=pcm_policy if initiator == "esp" else None,
     )
     assert accepted is not None
     ha, esp = (selected, accepted) if answerer == "ha" else (accepted, selected)

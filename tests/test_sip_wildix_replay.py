@@ -203,10 +203,11 @@ class WildixVideoReinviteReplayTest(unittest.IsolatedAsyncioTestCase):
                 40018,
                 updated.send_format,
                 updated.recv_format,
+                recv_formats=updated.recv_formats, dtmf_direction=updated.dtmf_direction,
                 remote_sdp=updated.remote_sdp,
                 video_port=40024,
                 video_format=updated.answer_video_format,
-                video_direction="recvonly",
+                video_direction=sdp.constrained_video_direction(updated.video_format.direction, allow_send=False),
             )
 
             async def commit() -> None:
@@ -216,6 +217,7 @@ class WildixVideoReinviteReplayTest(unittest.IsolatedAsyncioTestCase):
                 200,
                 "OK",
                 answer_sdp=answer,
+                media_contract=updated,
                 commit=commit,
             )
 
@@ -226,7 +228,7 @@ class WildixVideoReinviteReplayTest(unittest.IsolatedAsyncioTestCase):
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_terminated=on_terminated,
             on_media_update=on_media_update,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
             enable_video=True,
             trusted_trunk=True,
         )

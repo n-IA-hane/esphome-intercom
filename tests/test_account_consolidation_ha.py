@@ -67,20 +67,28 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     hass.config_entries.async_update_entry(entry, data={**entry.data, "preferred_phone_device_id": device.id})
     options_before, parent_before = dict(entry.options), dict(entry.data)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 3
+    assert entry.version == 7 and entry.minor_version == 4
     for original, sub in [(before, legacy), ({**before, "endpoint_id": "browser:opaque", "name": "Test", "extension": "222",
             "username": "existing-browser-user", "password": "fixture-existing-browser-password"}, opaque)]:
         assert sub.data["kind"] == "sip_account"
         projected = phone_subentry_data(sub)
-        assert all(projected[key] == value for key, value in original.items() if key not in {"kind", "ha_bindings"})
+        assert all(projected[key] == value for key, value in original.items()
+                   if key not in {'kind', 'ha_bindings', 'endpoint_id', 'call_policy'})
+        assert projected['endpoint_id'] == sub.data['username']
+        policy = deepcopy(original['call_policy'])
+        policy['no_answer']['target'] = 'Casa'
+        assert projected['call_policy'] == policy
         assert sub.data.get("username") and len(sub.data.get("password", "")) >= 20
-        assert {"source": "migration"} in sub.data["ha_bindings"]
+        assert {'source': 'migration', 'reference': 'legacy_ha_phone:' + original['endpoint_id']} in sub.data['ha_bindings']
         assert original["ha_bindings"][0] in sub.data["ha_bindings"]
     assert legacy.data["username"] == "Casa"
-    assert phone_subentry_data(existing) == sip_before
+    assert phone_subentry_data(existing) == {**sip_before, 'endpoint_id': sip_before['username'], 'username_source': 'user'}
     assert all("endpoint_id" not in sub.data for sub in (legacy, opaque, existing))
-    assert dict(entry.data) == parent_before and dict(entry.options) == options_before
-    assert devices.async_get(device.id).identifiers == device.identifiers
+    from custom_components.voip_stack.const import CONF_REGISTRAR_ENABLED, HA_SOFTPHONE_DEVICE_ID
+    assert dict(entry.data) == {**parent_before, CONF_REGISTRAR_ENABLED: True, 'legacy_phone_references': {
+        'default': 'Casa', HA_SOFTPHONE_DEVICE_ID: 'Casa', 'browser:opaque': 'existing-browser-user', 'sip:480': 'ha_phone_default'}}
+    assert dict(entry.options) == options_before
+    assert devices.async_get(device.id).identifiers == {('voip_stack', 'phone_endpoint:Casa')}
     assert er.async_get(hass).async_get(entity.entity_id).id == entity.id
     after = {sub.subentry_id: dict(sub.data) for sub in entry.subentries.values()}
     assert await async_migrate_entry(hass, entry)
@@ -128,7 +136,7 @@ async def test_pre_v3_default_softphone_checks_its_name_before_moving_legacy_acc
     assert await async_migrate_entry(hass, entry)
     accounts = {item.data["username"]: item for item in entry.subentries.values() if item.subentry_type == "phone"}
     assert accounts.keys() == {"Casa", "desk-login"}
-    assert phone_endpoint_id(accounts["Casa"]) == "default"
+    assert phone_endpoint_id(accounts["Casa"]) == "Casa"
     assert accounts["desk-login"].data["password"] == manual["password"]
     assert accounts["desk-login"].data["extension"] == manual["extension"]
 
@@ -203,9 +211,9 @@ async def test_native_account_editor_has_one_kind_and_preserves_browser_preferen
     created = await lab.hass.config_entries.subentries.async_configure(result["flow_id"], {
         "name": "New account", "username": username, "password": "fixture-long-account-password",
         "enabled": True, "dnd": False, "auto_answer": True, "send_video": True, "physical_bindings": []})
-    assert created["type"] == "abort" and created["reason"] == "phone_configured"
+    assert created["type"] == "create_entry"
     account = next(sub for sub in lab.entry.subentries.values() if sub.data.get("username") == login)
-    assert account.unique_id == "phone:sip:" + account.subentry_id
+    assert account.unique_id == "phone:" + login
     assert account.data["kind"] == "sip_account" and account.data["auto_answer"] and account.data["send_video"]
     assert "physical_bindings" not in account.data
 
@@ -249,7 +257,7 @@ async def test_native_reconfigure_preserves_the_existing_ha_reception(phone_lab)
     assert sub.data["ha_bindings"] == data["ha_bindings"]
     assert sub.data["auto_answer"] and sub.data["send_video"] and sub.data["future_unknown"] == data["future_unknown"]
     from custom_components.voip_stack.phone_config import phone_endpoint_id
-    assert phone_endpoint_id(sub) == "default"
+    assert phone_endpoint_id(sub) == data["username"]
 
 
 async def test_native_account_creation_commits_physical_inverse_without_parallel_list(phone_lab):
@@ -280,7 +288,7 @@ async def test_native_account_creation_commits_physical_inverse_without_parallel
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
         "name": "Bound account", "username": username, "password": "fixture-bound-account-password",
         "physical_bindings": [{"phone_id": hardware["phone_id"], "slot": "1", "transport": "udp"}]})
-    assert result["type"] == "abort" and result["reason"] == "phone_configured"
+    assert result["type"] == "create_entry"
     accounts = [row for row in lab.entry.subentries.values() if row.subentry_type == "phone"]
     assert len(accounts) == 1 and accounts[0].data["kind"] == "sip_account"
     assert "physical_bindings" not in accounts[0].data
@@ -322,7 +330,8 @@ async def test_interrupted_v7_registry_writes_retry_without_namespace_or_credent
     first_saved = deepcopy(dict(first.data))
     monkeypatch.setattr(hass.config_entries, "async_update_subentry", original)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and dict(first.data) == first_saved
+    assert entry.version == 7 and entry.minor_version == 4
+    assert dict(first.data) == {**{key: value for key, value in first_saved.items() if key != 'endpoint_id'}, 'username_source': 'user'}
     assert second.data["kind"] == "sip_account" and second.data["send_video"]
     assert second.data["future_unknown"] == {"keep": 2}
     assert first.data["username"] == "Casa"
@@ -377,15 +386,16 @@ async def test_conditional_account_fields_preserve_omitted_preferences_and_targe
         "conference_group": "", "conference_ring": True, "video_enabled": False, "send_video": True,
         "call_policy": {"unavailable": {"kind": "contact", "target": "backup"}}}
     sub = add_phone(lab.hass, lab.entry, data)
-    before_id = sub.unique_id
+    before_id = sub.subentry_id
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"),
         context={"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id})
     markers = {marker.schema: marker for marker in form["data_schema"].schema}
     assert markers["send_video"].visible == {"field": "video_enabled", "value": True}
-    assert markers["offline_forward_target"].visible == {"field": "offline_policy", "value": "forward"}
+    assert "offline_forward_target" not in markers and "offline_policy" not in markers
+    assert "unavailable_to" in markers
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
         "name": "Desk renamed", "username": "desk", "password": data["password"],
-        "offline_policy": "forward", "video_enabled": False})
+        "unavailable_action": "forward", "unavailable_to": "backup", "video_enabled": False})
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
-    assert sub.unique_id == before_id and sub.data["conference_ring"] and sub.data["send_video"]
+    assert sub.subentry_id == before_id and sub.data["conference_ring"] and sub.data["send_video"]
     assert sub.data["call_policy"]["unavailable"]["target"] == "backup"

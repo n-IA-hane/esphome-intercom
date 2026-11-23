@@ -332,16 +332,16 @@ async def test_browser_pickup_uses_existing_call_and_actual_rtp(registered_phone
     from custom_components.voip_stack.parking import get_parking_lot
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint,EndpointKind
     from custom_components.voip_stack import softphone_originate,audio_ws_view,audio_ws
-    from custom_components.voip_stack.roster import RosterEntry,dump_roster_json
+    from custom_components.voip_stack.roster import RosterEntry
 
     runtime=trunks
     entry=config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
-    endpoint=PhoneEndpoint(endpoint_id='browser-pickup',name='Pickup Browser',device_id='pickup-device',kind=EndpointKind.BROWSER,
+    endpoint=PhoneEndpoint(endpoint_id='browser-pickup', username='browser-pickup',name='Pickup Browser',device_id='pickup-device',kind=EndpointKind.BROWSER,
                            availability='available',capabilities=frozenset({'audio','dtmf'}))
     runtime.runtime.endpoints.register(endpoint)
-    runtime.roster.append(RosterEntry('Pickup Browser',metadata={'local_ha':True,'endpoint_id':endpoint.endpoint_id}))
-    runtime.hass.states.async_set('sensor.voip_phonebook','ready',{'roster_json':dump_roster_json(runtime.roster)})
+    runtime.roster.append(RosterEntry(endpoint.username,name=endpoint.name,metadata={'local_ha':True,'endpoint_id':endpoint.endpoint_id}))
+    runtime.runtime.directory.replace(runtime.roster)
     monkeypatch.setattr(softphone_originate,'_ha_advertise_host',AsyncMock(return_value='127.0.0.1'))
     monkeypatch.setattr(softphone_originate,'_resolve_target_device',AsyncMock(return_value=None))
     async def wait_for(predicate):
@@ -595,7 +595,7 @@ async def test_local_browser_parking_keeps_other_phone_for_sip_pickup(registered
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
     for name in ('local-a', 'local-b', 'local-c'):
-        runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id=name, name=name,
+        runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id=name, username=name, name=name,
             device_id='device-' + name, kind=EndpointKind.BROWSER,
             availability='available', capabilities=frozenset({'audio', 'dtmf'})))
     bridge = async_setup_local_softphone_bridge(runtime.hass)
@@ -663,9 +663,9 @@ async def test_local_browser_parking_keeps_other_phone_for_sip_pickup(registered
         if pickup_kind != 'sip':
             from unittest.mock import AsyncMock
             from custom_components.voip_stack import softphone_originate
-            from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+            from custom_components.voip_stack.roster import RosterEntry
             runtime.roster.append(RosterEntry(picker, metadata={'local_ha': True, 'endpoint_id': picker}))
-            runtime.hass.states.async_set('sensor.voip_phonebook', 'ready', {'roster_json': dump_roster_json(runtime.roster)})
+            runtime.runtime.directory.replace(runtime.roster)
             monkeypatch.setattr(softphone_originate, '_ha_advertise_host', AsyncMock(return_value='127.0.0.1'))
             monkeypatch.setattr(softphone_originate, '_resolve_target_device', AsyncMock(return_value=None))
             await runtime.hass.services.async_call('voip_stack', 'call',
@@ -731,19 +731,19 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
     from custom_components.voip_stack.core import rtp, sdp
     from custom_components.voip_stack.parking import get_parking_lot
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
-    from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+    from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.sip_client import SipCallClient
     from custom_components.voip_stack.store import config_entry
 
     lab = trunks
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
-    phone = PhoneEndpoint(endpoint_id="desk", name="Desk", device_id="desk-device",
+    phone = PhoneEndpoint(endpoint_id="desk", username="desk", name="Desk", device_id="desk-device",
                           kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf", "video"}))
     lab.runtime.endpoints.register(phone)
     lab.runtime.preferred_phone_device_id = phone.device_id
-    lab.roster.append(RosterEntry("Desk", metadata={"local_ha": True, "endpoint_id": phone.endpoint_id}))
-    lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
+    lab.roster.append(RosterEntry(phone.username, name=phone.name, metadata={"local_ha": True, "endpoint_id": phone.endpoint_id}))
+    lab.runtime.directory.replace(lab.roster)
     lab.runtime.trunk_configs["home"] = normalized_trunk_config({
         "trunk_enabled": True, "trunk_register": False, "trunk_server": "127.0.0.3",
         "trunk_allowed_ips": ["127.0.0.3"], "trunk_inbound_default_target": "Desk",
@@ -935,12 +935,12 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = offer_video
     if offer_video:
         runtime.runtime.endpoints.update('transfer_a', capabilities=frozenset({'audio', 'dtmf', 'video'}))
-    endpoint = PhoneEndpoint(endpoint_id='direct-browser', name='Direct browser', device_id='direct-browser-device',
+    endpoint = PhoneEndpoint(endpoint_id='direct-browser', username='direct-browser', name='Direct browser', device_id='direct-browser-device',
         kind=EndpointKind.BROWSER, availability='available', capabilities=frozenset({'audio', 'dtmf', 'video'}))
     runtime.runtime.endpoints.register(endpoint)
-    from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
-    runtime.roster.append(RosterEntry(endpoint.name, metadata={'local_ha': True, 'endpoint_id': endpoint.endpoint_id}))
-    runtime.hass.states.async_set('sensor.voip_phonebook', 'ready', {'roster_json': dump_roster_json(runtime.roster)})
+    from custom_components.voip_stack.roster import RosterEntry
+    runtime.roster.append(RosterEntry(endpoint.username, name=endpoint.name, metadata={'local_ha': True, 'endpoint_id': endpoint.endpoint_id}))
+    runtime.runtime.directory.replace(runtime.roster)
     monkeypatch.setattr(softphone_originate, '_ha_advertise_host', AsyncMock(return_value='127.0.0.1'))
     monkeypatch.setattr(softphone_originate, '_resolve_target_device', AsyncMock(return_value=None))
 

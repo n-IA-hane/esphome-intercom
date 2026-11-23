@@ -1283,7 +1283,10 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             CONF_PHONE_DND: bool(values.get(CONF_PHONE_DND, False)),
             **membership_values,
             CONF_PHONE_CONFERENCE_RING: bool(
-                membership_values[CONF_PHONE_CONFERENCE_GROUP] and values.get(CONF_PHONE_CONFERENCE_RING, False)
+                values.get(CONF_PHONE_CONFERENCE_RING, False) and (
+                    membership_values[CONF_PHONE_CONFERENCE_GROUP]
+                    or (current.get(CONF_PHONE_CONFERENCE_RING) and not membership_names('ring_group', current.get(CONF_PHONE_CONFERENCE_GROUP)))
+                )
             ),
             CONF_PHONE_VIDEO_ENABLED: bool(
                 values.get(CONF_PHONE_VIDEO_ENABLED, True)

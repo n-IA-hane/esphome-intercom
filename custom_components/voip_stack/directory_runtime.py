@@ -14,6 +14,8 @@ def routing_snapshot(runtime):
     if directory is None or directory.closed:
         raise ValueError("Phone directory is unavailable")
     entries = list(directory.snapshot())
+    video_disabled = {row.metadata.get('endpoint_id') for row in entries
+                      if row.metadata.get('configured_video_enabled') is False}
     sip_runtime = getattr(runtime, "sip", None)
     registrar = sip_runtime.component("registrar") if sip_runtime is not None else None
     if registrar is None:
@@ -37,6 +39,8 @@ def routing_snapshot(runtime):
     result = []
     for row in entries:
         endpoint = runtime.endpoints.get(row.metadata.get("endpoint_id", ""))
+        if endpoint is not None and endpoint.endpoint_id in video_disabled:
+            row = replace(row, metadata={**row.metadata, 'configured_video_enabled': False, 'sip_video_codec': ''})
         if endpoint is not None and endpoint.supports_ha_client:
             bindings = runtime.ha_bindings
             bound = endpoint.kind.is_softphone or bool(bindings and bindings.has_binding(endpoint.endpoint_id))
@@ -114,9 +118,13 @@ def compose_directory_entries(hass, peers, registered):
             identity = service_directory_reference(row)
         elif isinstance(endpoint, PhoneEndpoint):
             from .account_runtime import account_has_ha_binding
+            from .phone_config import phone_subentry_by_endpoint_id
 
             kind, identity = endpoint.kind.value, endpoint.endpoint_id
             metadata.update(account_id="ha", availability=endpoint.availability.value)
+            account = phone_subentry_by_endpoint_id(entry, identity) if entry is not None else None
+            if account is not None and account.data.get('video_enabled') is False:
+                metadata.update(configured_video_enabled=False, sip_video_codec='')
             if endpoint.supports_ha_client:
                 bound = endpoint.kind.is_softphone or account_has_ha_binding(hass, identity)
                 # A bare account routes to the deferred HA offer; one with

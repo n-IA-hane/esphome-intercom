@@ -78,6 +78,12 @@ class ForwardGroup:
         self.branch_results = {}
 
     def settle(self, state, reason, **kwargs):
+        registry = self.operation.registry
+        session = registry.get_session(self.operation.source.call_id)
+        retained = {kwargs.get("keep_endpoint_id"), kwargs.get("retain_claim_endpoint_id")}
+        for endpoint_id in {attempt.endpoint_id for attempt in self.candidates.attempts} - retained - {""}:
+            if session is not None and session.endpoint_claims.get(endpoint_id) == "group_candidate":
+                registry.release_endpoint_claim(session.call_id, endpoint_id)
         _settle_ring_browser_candidates(
             self.operation.runtime.hass,
             self.operation.registry,

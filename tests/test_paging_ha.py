@@ -20,7 +20,7 @@ def manager(lab, monkeypatch):
     owner = paging.PagingRuntime(lab.hass, SimpleNamespace(subentries={}))
     lab.calls.adopt_component("paging", owner, closer=owner.close)
     monkeypatch.setattr(paging, "paging_group_configs", lambda _entry: {
-        "all": {"paging_group_id": "all", "name": "All", "members": ["sip:bedroom0", "sip:bedroom1"]},
+        "all": {"paging_group_id": "all", "name": "All", "members": ["bedroom0", "bedroom1"]},
     })
     for phone in lab.phones:
         phone.direction = "recvonly"
@@ -31,7 +31,7 @@ def manager(lab, monkeypatch):
 
 def announce(lab, **kwargs):
     return ServiceCall(lab.hass, "voip_stack", "announce", {
-        "targets": ["paging:all", "sip:bedroom0"], "tts_entity_id": "tts.test", "message": "Wake up", **kwargs,
+        "targets": ["paging:all", "bedroom0"], "tts_entity_id": "tts.test", "message": "Wake up", **kwargs,
     }, context=Context())
 
 
@@ -116,13 +116,13 @@ async def test_busy_phone_is_skipped_without_interrupting_it(lab, monkeypatch):
     manager(lab, monkeypatch)
     tts_fixture(monkeypatch, lab)
     lab.calls.upsert("other", state="in_call", owner="bridge")
-    lab.calls.claim_endpoint("other", "sip:bedroom0", role="callee")
+    lab.calls.claim_endpoint("other", "bedroom0", role="callee")
     result = await asyncio.wait_for(paging.async_announce(announce(lab)), 8)
     assert result["state"] == "completed", result
-    assert result["targets"][0] == {"endpoint_id": "sip:bedroom0", "status": "skipped", "reason": "busy"}
+    assert result["targets"][0] == {"endpoint_id": "bedroom0", "status": "skipped", "reason": "busy"}
     assert not lab.phones[0].invites
     assert lab.calls.get_session("other").live
-    assert lab.runtime.endpoints.get("sip:bedroom0").active_call_id == "other"
+    assert lab.runtime.endpoints.get("bedroom0").active_call_id == "other"
 
 
 async def test_no_answer_is_cancelled_and_does_not_get_partial_speech(lab, monkeypatch):

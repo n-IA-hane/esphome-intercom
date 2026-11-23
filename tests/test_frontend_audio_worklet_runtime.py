@@ -39,6 +39,35 @@ def _worklet_script(script):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_real_ten_ms_capture_quantum_has_a_bounded_pcm_message():
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+let Recorder;
+class Base {{constructor() {{this.messages=[];this.port={{postMessage: value=>this.messages.push(value)}};}}}}
+const context=vm.createContext({{AudioWorkletProcessor:Base,sampleRate:48000,
+  registerProcessor(_name,value){{Recorder=value;}},ArrayBuffer,DataView,Float32Array,Math,Number,Object,Error}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PROCESSOR))},"utf8"),context);
+for (const [pcmFormat,channels,bytes] of [["s16le",1,960],["s32le",2,3840]]) {{
+  const recorder=new Recorder({{processorOptions:{{format:{{sampleRate:48000,frameMs:10,channels,pcmFormat}}}}}});
+  recorder.process([[new Float32Array(479).fill(-.25)]]);
+  assert.equal(recorder.messages.length,0,"No padded packet before 10 ms of actual input");
+  recorder.process([[new Float32Array(1).fill(-.25)]]);
+  assert.equal(recorder.messages.length,1);
+  const frame=recorder.messages[0].buffer;
+  assert.equal(frame.byteLength,bytes);assert.ok(frame.byteLength+1<=4096);
+  assert.equal(frame.byteLength/(channels*(pcmFormat==="s16le"?2:4))/48000,.01);
+  const samples=new DataView(frame);
+  for(let offset=0;offset<bytes;offset+=pcmFormat==="s16le"?2:4)
+    assert.equal(pcmFormat==="s16le"?samples.getInt16(offset,true):samples.getInt32(offset,true),
+      pcmFormat==="s16le"?-8192:-536870912);
+}}
+'''
+    subprocess.run(["node", "--input-type=module", "-e", _worklet_script(script)], check=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_preparation_ack_requires_real_processing_and_requested_input() -> None:
     script = rf'''
 import fs from "fs";

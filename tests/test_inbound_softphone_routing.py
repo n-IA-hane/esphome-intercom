@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import sys
 import types
 
+from .voip_phase1_support import sdp as protocol_sdp, sip_listener as protocol_listener
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (
@@ -28,7 +30,7 @@ def _module(name: str, **values):
         parent_name = f"{PACKAGE}.{parent}"
         if parent_name not in sys.modules:
             package = types.ModuleType(parent_name)
-            package.__path__ = []
+            package.__path__ = [str(SOURCE.parents[1].joinpath(*parent.split(".")))]
             sys.modules[parent_name] = package
     module = types.ModuleType(f"{PACKAGE}.{name}")
     for key, value in values.items():
@@ -37,14 +39,7 @@ def _module(name: str, **values):
     return module
 
 
-@dataclass(frozen=True)
-class _Result:
-    status: int
-    reason: str
-    answer_sdp: str = ""
-    to_tag: str = ""
-    defer_final: bool = False
-    decline_reason: str = ""
+_Result = protocol_listener.SipInviteResult
 
 
 class _EndpointKind(StrEnum):
@@ -234,10 +229,7 @@ def _load_module():
 
 
 def _invite():
-    audio = SimpleNamespace(
-        wire_token=lambda: "16000:s16le:1:20",
-        audio_format=SimpleNamespace(wire_token=lambda: "16000:s16le:1:20"),
-    )
+    audio = protocol_sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
     return SimpleNamespace(
         call_id="call-1",
         caller="ESP",

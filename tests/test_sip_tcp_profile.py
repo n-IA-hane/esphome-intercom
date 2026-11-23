@@ -32,6 +32,8 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
             return sip_listener.SipInviteResult(
                 200, "OK", answer_sdp=sdp.build_answer_directional(
                     local, local, rtp_port, invite.send_format, invite.recv_format,
+                    recv_formats=invite.recv_formats,
+                    dtmf_direction=invite.dtmf_direction,
                 ),
             )
 
@@ -245,6 +247,8 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 rtp_port,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
             )
             return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
 
@@ -353,6 +357,7 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
             assert response is not None
             return sip.parse_message(response)
 
+        peer_tasks = []
         try:
             challenge = await send_and_read(
                 sip.build_request("REGISTER", request_uri, base_headers, b"")
@@ -455,6 +460,7 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 await writer.drain()
 
             answer_task = asyncio.create_task(dahua_answer())
+            peer_tasks.append(answer_task)
             result = await client.invite(
                 target="100",
                 remote_host=source_addr[0],
@@ -472,10 +478,29 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
             assert client.dialog is not None
             self.assertEqual(client.dialog.send_format.encoding, "PCM")
             self.assertEqual(client.dialog.recv_format.encoding, "PCM")
-            client.bye()
+
+            async def dahua_terminate() -> None:
+                while True:
+                    raw = await sip_listener._read_sip_stream_message(reader)
+                    self.assertIsNotNone(raw)
+                    request = sip.parse_message(raw)
+                    if request.method == "BYE":
+                        writer.write(sip.build_uas_response(request, 200, "OK"))
+                        await writer.drain()
+                        return
+                    self.assertEqual(request.method, "ACK")
+
+            terminal = asyncio.create_task(dahua_terminate())
+            peer_tasks.append(terminal)
+            self.assertTrue(client.bye())
             await client.close()
+            await asyncio.wait_for(terminal, 2)
             self.assertEqual(server._dialog_queues, {})
         finally:
+            for task in peer_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*peer_tasks, return_exceptions=True)
             writer.close()
             await writer.wait_closed()
             await server.stop()
@@ -496,6 +521,8 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 rtp_port,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
                 video_port=rtp_port + 2,
                 video_format=invite.answer_video_format,
@@ -616,6 +643,8 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 server_rtp,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
             )
             return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
 

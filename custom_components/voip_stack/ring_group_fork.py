@@ -246,6 +246,7 @@ def build_ring_group_fork(
             tier=control_tier,
             order=-2,
             control=True,
+            keeps_offer_open=bool(browser_legs),
         )
     )
     return fork_candidates, candidate_payloads, browser_decision
@@ -307,7 +308,8 @@ async def run_owned_ring_group_fork(
         on_leg_state=on_leg_state,
     )
     candidate = DialCandidate(
-        "external:pickup", gate.dial, gate.reject, control=True, confirm=gate.confirm
+        "external:pickup", gate.dial, gate.reject, control=True, confirm=gate.confirm,
+        keeps_offer_open=False,
     )
     candidates.append(candidate)
     payloads[candidate.candidate_id] = gate

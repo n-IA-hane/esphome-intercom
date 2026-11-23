@@ -89,6 +89,63 @@ class WebSocketBoundary:
         return message
 
 
+async def test_ten_ms_browser_capture_preserves_sixty_ms_wire_payload_and_tone(lab, monkeypatch):
+    peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    peer.bind(("127.0.0.1", 0))
+    peer.setblocking(False)
+    bound = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    bound.bind(("127.0.0.1", 0))
+    bound.setblocking(False)
+    wire = sdp.RtpPcmFormat(96, "L16", 8000, 1, 60, max_frame_ms=60)
+    session = audio_ws_view._SoftphoneMediaSession(call_id="capture10-wire60",
+        local_rtp_port=bound.getsockname()[1], rtp_socket=bound,
+        remote_rtp_host="127.0.0.1", remote_rtp_port=peer.getsockname()[1],
+        send_format=wire, recv_format=wire, local_audio_direction="sendrecv")
+    ws, store = WebSocketBoundary(), {"call_id": session.call_id}
+    monkeypatch.setattr(audio_ws_view, "_ha_softphone_store", lambda *_args: store)
+    monkeypatch.setattr(audio_ws_view, "_publish_ha_softphone_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(audio_ws_view, "publish_media_route", lambda *_args: None)
+    monkeypatch.setattr(audio_ws_view, "_listen_for_call_end", lambda *_args: (asyncio.Event(), lambda: None))
+    monkeypatch.setattr(audio_ws_view, "media_capture_enabled", lambda *_args: False)
+    monkeypatch.setattr(audio_ws_view, "debug_mode", lambda *_args: False)
+    task = asyncio.create_task(audio_ws_view._run_audio_session(lab.hass, ws, session,
+        endpoint_id="bedroom0"))
+    try:
+        await asyncio.wait_for(ws.ready.wait(), 1)
+        assert ws.json[0]["tx_format"] == "48000:s16le:1:10"
+        assert session.send_format.frame_ms == 60
+        assert audio_ws_view._browser_audio_message_limit(session) <= 4096
+        samples = tone(48000, 180, 650)
+        for offset in range(0, len(samples), 480):
+            capture = struct.pack("<480h", *samples[offset:offset + 480])
+            assert len(capture) + 1 <= audio_ws_view._browser_audio_message_limit(session)
+            ws.messages.put_nowait(SimpleNamespace(type=WSMsgType.BINARY,
+                data=audio_ws.encode_audio_frame(capture)))
+        received = []
+        async with asyncio.timeout(2):
+            while len(received) < 2:
+                raw, _address = await lab.hass.loop.sock_recvfrom(peer, 8192)
+                packet = rtp.parse_packet(raw)
+                assert packet.payload_type == 96 and len(packet.payload) == 960
+                if any(packet.payload):
+                    received.append(packet)
+        assert (received[1].timestamp - received[0].timestamp) & 0xFFFFFFFF == 480
+        assert (received[1].sequence - received[0].sequence) & 65535 == 1
+        pcm = struct.unpack("!960h", b"".join(value.payload for value in received))
+        assert len(pcm) / 8000 == .12
+        stable = pcm[160:]
+        def power(frequency):
+            return abs(sum(value * complex(math.cos(2 * math.pi * frequency * index / 8000),
+                math.sin(2 * math.pi * frequency * index / 8000)) for index, value in enumerate(stable)))
+        assert power(650) > 10 * max(power(300), power(1000))
+        assert math.sqrt(sum(value * value for value in stable) / len(stable)) > 5000
+    finally:
+        ws.messages.put_nowait(None)
+        await asyncio.wait_for(task, 2)
+        peer.close()
+        bound.close()
+
+
 async def test_actual_ws_microphone_and_speaker_keep_a_10khz_tone_with_selected_16k_rx(lab, monkeypatch):
     peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     peer.bind(("127.0.0.1", 0))
@@ -113,7 +170,7 @@ async def test_actual_ws_microphone_and_speaker_keep_a_10khz_tone_with_selected_
     monkeypatch.setattr(audio_ws_view, "media_capture_enabled", lambda *_args: False)
     monkeypatch.setattr(audio_ws_view, "debug_mode", lambda *_args: False)
     task = asyncio.create_task(audio_ws_view._run_audio_session(lab.hass, ws, session,
-                                                               endpoint_id="sip:bedroom0"))
+                                                               endpoint_id="bedroom0"))
     samples = tone(48000, 10)
     microphone = struct.pack(f"<{len(samples)}h", *samples)
     wire = struct.pack(f"!{len(samples)}h", *samples)

@@ -105,7 +105,7 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         instance_id="urn:uuid:10000000-0000-4000-8000-000000000001" if outbound else "", reg_id=1 if outbound else 0)
     methods = SipApplicationMethods(lab.hass, registrar)
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
-    lab.runtime.endpoints.update("sip:bedroom0", extension="101")
+    lab.runtime.endpoints.update("bedroom0", extension="101")
     manager = SipEndpointManager(host="127.0.0.1", port=0, local_ip="127.0.0.1",
         local_rtp_port=41000, supported_formats=[AudioFormat(16000)], on_invite=lambda _: None,
         on_request=methods.handle, request_router=methods)
@@ -130,11 +130,11 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
         assert not ElementTree.fromstring(initial.body).findall("d:dialog", NS)
         # Standard peer identity data keeps the document large even with compact dialog ids.
         peer_display = ("Independent reception desk " * 16).strip()
-        lab.runtime.endpoints.update("sip:bedroom1", name=peer_display)
+        lab.runtime.endpoints.update("bedroom1", name=peer_display)
         session = lab.calls.upsert("caller-" + "x" * 180 + "@independent.test", state="connecting",
-            owner="router", route_kind="sip", source_endpoint_id="sip:bedroom0",
-            dest_endpoint_id="sip:bedroom1", callee=peer_display)
-        lab.calls.claim_endpoint(session.call_id, "sip:bedroom0", role="source")
+            owner="router", route_kind="sip", source_endpoint_id="bedroom0",
+            dest_endpoint_id="bedroom1", callee=peer_display)
+        lab.calls.claim_endpoint(session.call_id, "bedroom0", role="source")
         publish_bridge_projection(lab.hass, session)
         trying, trying_transport, trying_raw = await next_notify()
         assert ElementTree.fromstring(trying.body).find("d:dialog/d:state", NS).text == "proceeding"

@@ -226,7 +226,7 @@ async def test_mixed_browser_and_sip_page_waits_for_playback_then_synthesizes_on
     owner.browser_originate = async_originate_browser_paging
     stream = tts_fixture(monkeypatch, lab)
     call = ServiceCall(lab.hass, "voip_stack", "announce", {
-        "targets": [phone.endpoint_id, "sip:bedroom0"], "tts_entity_id": "tts.test",
+        "targets": [phone.endpoint_id, "bedroom0"], "tts_entity_id": "tts.test",
         "message": "Wake up", "wait": False,
     }, context=Context())
     result = await paging.async_announce(call)

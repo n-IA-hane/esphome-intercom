@@ -526,7 +526,8 @@ class FrontendCardContractTest(unittest.TestCase):
         )[0]
         self.assertNotIn("video_offered", wants_video)
         self.assertIn("this._softphoneSnapshot?.send_video", start)
-        self.assertIn("this._targetSupportsVideo(target)", start)
+        self.assertIn("options.receiveVideo", start)
+        self.assertIn("receiveVideo,", start)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", answer)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", start)
         self.assertIn('voipStackEngine.checkAutoAnswerMedia("video")', auto_answer)
@@ -547,7 +548,8 @@ class FrontendCardContractTest(unittest.TestCase):
 
         self.assertIn("targetFromRosterEntry(entry)", target)
         self.assertIn("this._softphoneSnapshot?.send_video", start)
-        self.assertIn("this._targetSupportsVideo(target)", start)
+        self.assertIn("options.receiveVideo", start)
+        self.assertIn("receiveVideo,", start)
 
     def test_esp_video_send_control_is_discovered_from_its_switch(self) -> None:
         render = _method_body(self.source, "_render")
@@ -752,7 +754,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("if (this._sessionAttachKey !== attachKey) return", engine)
         setup = _method_body(engine, "async _setupAudioOrAbort")
         self.assertIn("await this._setupAudio(", setup)
-        self.assertIn("{ ...(reply || {}), ...(negotiated || {}) }", setup)
+        self.assertIn("selected_tx_format: negotiated?.selected_tx_format || negotiated?.tx_format", setup)
+        self.assertIn("selected_rx_format: negotiated?.selected_rx_format || negotiated?.rx_format", setup)
         after_setup = setup.split("await this._setupAudio(", 1)[1]
         self.assertIn("this._sessionAttachKey !== attachKey", after_setup)
         self.assertNotIn('await this.close("superseded", true)', after_setup)

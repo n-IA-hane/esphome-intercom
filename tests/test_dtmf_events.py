@@ -15,6 +15,9 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "dtmf_events.py"
 
 
 def _load_dtmf_events(monkeypatch):
+    from .voip_phase1_support import _load_intercom_module
+
+    real_dtmf = _load_intercom_module("dtmf")
     homeassistant = types.ModuleType("homeassistant")
     homeassistant_core = types.ModuleType("homeassistant.core")
     homeassistant_core.HomeAssistant = object
@@ -28,8 +31,6 @@ def _load_dtmf_events(monkeypatch):
     const = types.ModuleType("custom_components.voip_stack.const")
     const.DOMAIN = "voip_stack"
     const.SIP_DTMF_EVENT = "voip_stack.dtmf"
-    dtmf = types.ModuleType("custom_components.voip_stack.dtmf")
-    dtmf.parse_sip_info_digit = lambda _content_type, body: body.decode("ascii").strip()
     lifecycle = types.ModuleType("custom_components.voip_stack.endpoint_lifecycle")
     lifecycle.call_registry = lambda _hass: None
     fsm = types.ModuleType("custom_components.voip_stack.fsm")
@@ -44,7 +45,7 @@ def _load_dtmf_events(monkeypatch):
         "custom_components.voip_stack": voip_stack,
         "custom_components.voip_stack.automation_routing": automation,
         "custom_components.voip_stack.const": const,
-        "custom_components.voip_stack.dtmf": dtmf,
+        "custom_components.voip_stack.dtmf": real_dtmf,
         "custom_components.voip_stack.endpoint_lifecycle": lifecycle,
         "custom_components.voip_stack.fsm": fsm,
         "custom_components.voip_stack.runtime_data": runtime_data,
@@ -92,7 +93,7 @@ def test_bridge_publishes_canonical_dtmf_and_translates_info(monkeypatch) -> Non
     relayed: list[tuple[str, str]] = []
     relay = SimpleNamespace(
         on_dtmf=None,
-        relay_dtmf=lambda side, digit: relayed.append((side, digit)),
+        relay_dtmf=lambda side, digit, *, duration_ms=160: relayed.append((side, digit)),
     )
     client = SimpleNamespace(on_info_dtmf=None)
     dtmf_events.attach_dtmf_event_bridge(
@@ -106,7 +107,7 @@ def test_bridge_publishes_canonical_dtmf_and_translates_info(monkeypatch) -> Non
     )
 
     relay.on_dtmf("left", "6", "rfc4733")
-    client.on_info_dtmf("7")
+    client.on_info_dtmf_event("7", 160)
 
     assert relayed == [("right", "7")]
     assert [event[0] for event in bus.events] == [
@@ -150,11 +151,12 @@ def test_bridge_falls_back_to_client_info_when_rtp_dtmf_is_unavailable(
     class _Client:
         on_info_dtmf = None
 
-        async def send_dtmf_info(self, digit: str) -> bool:
+        async def send_dtmf_info(self, digit: str, *, duration_ms=160) -> bool:
+            assert duration_ms == 160
             sent.append(digit)
             return True
 
-    relay = SimpleNamespace(on_dtmf=None, relay_dtmf=lambda _side, _digit: False)
+    relay = SimpleNamespace(on_dtmf=None, relay_dtmf=lambda _side, _digit, **_kwargs: False)
     dtmf_events.attach_dtmf_event_bridge(
         hass,
         relay,
@@ -198,7 +200,7 @@ def test_direct_outbound_client_projects_info_from_callee(monkeypatch) -> None:
         caller="Casa",
         callee="Codex",
     )
-    client.on_info_dtmf("8")
+    client.on_info_dtmf_event("8", 160)
 
     payload = bus.events[0][1]
     assert payload["digit"] == "8"
@@ -212,7 +214,7 @@ def test_direct_outbound_client_projects_info_from_callee(monkeypatch) -> None:
 class _InfoRequest:
     def __init__(self, call_id: str, digit: str) -> None:
         self.call_id = call_id
-        self.body = digit.encode()
+        self.body = f"Signal={digit}\r\nDuration=160\r\n".encode()
 
     def header(self, name: str) -> str:
         if name == "Call-ID":

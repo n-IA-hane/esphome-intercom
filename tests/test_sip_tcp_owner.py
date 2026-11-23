@@ -34,7 +34,10 @@ def test_transport_owner_import_does_not_load_the_request_protocol():
 def test_legacy_constructor_keeps_every_frozen_keyword_and_default():
     baseline = json.loads((Path(__file__).parent / "fixtures/sip_tcp_server_constructor.json").read_text())
     public = inspect.signature(sip_listener.SipTcpServer)
-    assert list(public.parameters) == [field["name"] for field in baseline]
+    names = [field["name"] for field in baseline]
+    assert [name for name in public.parameters if name in names] == names
+    assert set(public.parameters) - set(names) == {"codec_policy"}
+    assert public.parameters["codec_policy"].default is None
     for field in baseline:
         parameter = public.parameters[field["name"]]
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY

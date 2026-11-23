@@ -61,7 +61,7 @@ async def test_joint_update_does_not_publish_audio_during_video_await(monkeypatc
     monkeypatch.setattr(binder, 'call_registry', lambda _: registry)
     monkeypatch.setattr(uas, '_call_registry', lambda _: registry)
     monkeypatch.setattr(call_projection, 'publish_bridge_projection', Mock())
-    monkeypatch.setattr(call_projection, 'publish_esp_media_route', Mock())
+    monkeypatch.setattr(call_projection, 'publish_media_route', Mock())
     real_prepare = binder.prepare_owned_video_generation
     entered, release = asyncio.Event(), asyncio.Event()
 

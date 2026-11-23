@@ -25,9 +25,6 @@ from .voip_phase1_support import (
 
 async def _factory_arguments(module, local_port):
     """Run the actual HA factory up to construction, without a second call owner."""
-    # Both production modules share this class/catalog. The isolated factory
-    # loader otherwise creates a second dataclass identity in its test package.
-    module.HA_TRUNK_AUDIO_FORMATS = audio_format.HA_TRUNK_AUDIO_FORMATS
     endpoint = SimpleNamespace(
         endpoint_id="caller", device_id="browser", sip_uri_user="browser",
         availability=_Availability.AVAILABLE, supports=lambda _: False,
@@ -62,8 +59,14 @@ async def _factory_arguments(module, local_port):
             _call(hass, destination="8001", send_video=False),
             endpoint_id="caller", browser_endpoint=endpoint,
         )
-    assert captured["supported_recv_rtp_formats"] is None
-    assert captured["supported_send_formats"] == list(module.HA_TRUNK_AUDIO_FORMATS)
+    assert captured["supported_recv_rtp_formats"]
+    assert captured["supported_send_rtp_formats"]
+    assert any(fmt.encoding == "PCM" and fmt.sample_rate == 16000
+               for fmt in captured["supported_recv_rtp_formats"])
+    assert all(sip_client.HA_AUDIO_CAPABILITIES.supports_rtp(fmt, receive=True)
+               for fmt in captured["supported_recv_rtp_formats"])
+    assert all(sip_client.HA_AUDIO_CAPABILITIES.supports_rtp(fmt)
+               for fmt in captured["supported_send_rtp_formats"])
     assert captured["include_dahua_pcm"] is True
     return captured
 
@@ -147,6 +150,10 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
             assert session.send_format.max_frame_ms == remote_max
         runtime = asyncio.create_task(view._run_audio_session(hass, browser, session, endpoint_id="default"))
         await asyncio.wait_for(browser.ready.wait(), 1)
+        native = []
+        session.observe_audio(lambda side, pcm, _fmt: native.append(pcm) if side == "right" else None)
+        receive = audio_format.parse_audio_format_token(browser.json[0]["rx_format"])
+        assert receive.sample_rate == 48000
 
         # Independent RTP construction also permits an intentionally oversized
         # receive datagram, beyond both negotiated capacity and the 12 KiB cap.
@@ -163,8 +170,12 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
             await asyncio.sleep(delay)
         frames = [audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
                   for _ in range(sum(durations) // 20)]
-        assert all(len(frame) == 640 for frame in frames)
-        assert b"".join(frames) == b"".join(expected)
+        assert all(len(frame) == receive.nominal_frame_bytes for frame in frames)
+        assert sum(len(frame) for frame in frames) == receive.sample_rate * sum(durations) // 1000 * 2
+        # Preserve the original independent byte oracle before the browser SRC,
+        # then separately prove that all real duration reaches the 48k edge.
+        assert b"".join(native) == b"".join(expected)
+        assert any(b"".join(frames))
         assert browser.audio.empty()
         # Actual sender pacing/geometry remains 20 ms despite 40 ms receive.
         outgoing = [rtp.parse_packet((await asyncio.wait_for(loop.sock_recvfrom(remote, 2048), 1))[0])

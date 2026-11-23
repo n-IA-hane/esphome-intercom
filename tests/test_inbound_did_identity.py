@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import FrozenInstanceError, replace
-from types import SimpleNamespace
 
 import pytest
 
@@ -102,16 +101,19 @@ def test_untrusted_source_never_reads_provider_identity_or_uses_fixed_did():
     assert not initial.called_number and not initial.inbound_trunk_id
 
 
-def test_reinvite_keeps_initial_identity_even_when_contact_target_and_provider_headers_change():
+async def test_reinvite_keeps_initial_identity_even_when_contact_target_and_provider_headers_change():
     owner = endpoint({"trunk_did_source": "to"})
     request = sip.parse_message(wire_invite())
     first = owner._parse_invite(request, ("127.0.0.1", 5090))
-    owner.active_dialogs[first.call_id] = SimpleNamespace(invite=first, codec_policy=first.codec_policy)
+    pending = sip_listener._PendingInvite(request, ("127.0.0.1", 5090), "local", "UDP",
+        identity=first, media_contract=first, codec_policy=first.codec_policy)
+    owner._activate_dialog(first.call_id, pending, request, ("127.0.0.1", 5090))
     changed = sip.parse_message(wire_invite(to="000777"))
     changed = replace(changed, uri="sip:retargeted-contact@127.0.0.1")
     updated = owner._parse_invite(changed, ("127.0.0.1", 5090))
     assert updated.request_uri.user == "retargeted-contact"
     assert identity_fields(updated) == identity_fields(first)
+    await owner.wait_closed()
 
 
 @pytest.mark.parametrize("config", [

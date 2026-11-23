@@ -35,7 +35,7 @@ async def browser_call_setup(lab, monkeypatch):
     lab.runtime.directory.replace(lab.roster)
     monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
-    for phone in ("sip:bedroom0", "sip:bedroom1"):
+    for phone in ("bedroom0", "bedroom1"):
         lab.runtime.endpoints.update(phone, availability="available")
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
@@ -116,7 +116,7 @@ async def test_blind_refer_keeps_browser_and_waits_for_native_destination_answer
     await wait_for(lab.phones[0].bye.is_set)
     assert lab.calls.get_session(session.call_id) is session and session.live
     assert lab.runtime.endpoints.require("retained").active_call_id == session.call_id
-    assert lab.runtime.endpoints.require("destination" if target_kind == "browser" else "sip:bedroom1").active_call_id == session.call_id
+    assert lab.runtime.endpoints.require("destination" if target_kind == "browser" else "bedroom1").active_call_id == session.call_id
     assert source._incoming_refer_task is None
     await lab.hass.services.async_call("voip_stack", "hangup", {
         "device_id": "device-retained", "call_id": session.call_id,
@@ -601,7 +601,7 @@ async def test_browser_refer_uses_destination_no_answer_policy_beyond_thirty_sec
 
     lab = trunks
     session = await browser_call(lab, monkeypatch)
-    lab.runtime.endpoints.update("sip:bedroom1", policy=PhonePolicy(
+    lab.runtime.endpoints.update("bedroom1", policy=PhonePolicy(
         ringing_timeout=45, no_answer=PhoneDestination("contact", "bedroom0")))
     phone, target = lab.phones
     target.auto_answer = False
@@ -619,7 +619,7 @@ async def test_browser_refer_uses_destination_no_answer_policy_beyond_thirty_sec
     assert session.live and source._incoming_refer_task is not None
     assert not source._incoming_refer_task.done() and source.dialog is not None
     target.answer()
-    await wait_for(lambda: session.state == "in_call" and "sip:bedroom1" in session.endpoint_claims)
+    await wait_for(lambda: session.state == "in_call" and "bedroom1" in session.endpoint_claims)
     await lab.hass.services.async_call("voip_stack", "hangup", {
         "device_id": "device-retained", "call_id": session.call_id,
     }, blocking=True)

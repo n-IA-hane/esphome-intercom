@@ -275,7 +275,7 @@ async def _try_local_blind_transfer(hass, runtime, session, target, referrer, wi
     from .pending_sip_destination import EstablishedSipDestination
     from .session_cleanup import async_wait_for_cleanup
 
-    if session is None or runtime.sip.forward_call is None:
+    if session is None or session.owner != "bridge" or runtime.sip.forward_call is None:
         return None
     uri = sip.parse_sip_uri(target.uri)
     listener = runtime.sip.component("udp_listener")

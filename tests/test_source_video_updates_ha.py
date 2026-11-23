@@ -341,7 +341,7 @@ async def test_destination_resume_negotiates_retained_uac_source_on_wire(monkeyp
     )
     monkeypatch.setattr(module, "call_registry", lambda _: registry)
     monkeypatch.setattr(module, "sip_endpoint_manager", lambda _: pytest.fail("UAC source has no UAS endpoint"))
-    monkeypatch.setattr(call_projection, "publish_esp_media_route", Mock())
+    monkeypatch.setattr(call_projection, "publish_media_route", Mock())
     module.BridgeMediaUpdateBinder(object()).attach(client, relay, source_call_id="logical-source", source_client=source)
     try:
         prepared = await client.on_media_update(previous, updated, "INVITE")
@@ -388,7 +388,7 @@ async def test_preanswered_bridge_activates_explicit_uac_source_without_uas_look
     monkeypatch.setattr(module, "attach_dtmf_event_bridge", Mock())
     monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
     monkeypatch.setattr(module, "async_watch_sip_bridge_destination", AsyncMock())
-    monkeypatch.setattr(call_projection, "publish_esp_media_route", Mock())
+    monkeypatch.setattr(call_projection, "publish_media_route", Mock())
     hass = object()
     result = await module.async_commit_outbound_bridge(
         hass, registry,

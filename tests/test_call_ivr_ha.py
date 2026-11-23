@@ -16,8 +16,12 @@ pytestmark = pytest.mark.ha
 
 async def test_rtp_dtmf_interrupts_prompt_without_losing_digit_or_ending_call(application):
     app, registry, peer, _released = application
-    app.invite = replace(app.invite, remote_sdp=app.invite.remote_sdp.replace(b"RTP/AVP 96", b"RTP/AVP 96 101") +
-                         b"a=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\n")
+    from custom_components.voip_stack.core.media import negotiator
+    offer = app.invite.remote_sdp.replace(b"RTP/AVP 96", b"RTP/AVP 96 101") + b"a=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\n"
+    events = negotiator.negotiate_dtmf(offer,
+        send_clock_rate=app.invite.send_format.rtp_clock_rate,
+        receive_clock_rate=app.invite.recv_format.rtp_clock_rate)
+    app.invite = replace(app.invite, remote_sdp=offer, dtmf_direction=events)
     await app.answer()
     ivr = CallIVR(app.media, app.session.create_task)
     app.media.on_dtmf = lambda _side, digit, _transport: ivr.feed(digit)

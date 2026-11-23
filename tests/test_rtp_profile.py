@@ -140,22 +140,24 @@ class RtpProfileTest(unittest.TestCase):
         output = FakeTransport()
         relay.right_transport = output  # type: ignore[assignment]
 
-        def packet(ssrc: int) -> bytes:
+        def packet(ssrc: int, sequence: int) -> bytes:
             return rtp.build_packet(
                 rtp.RtpPacket(
                     payload_type=96,
-                    sequence=1,
-                    timestamp=1,
+                    sequence=sequence,
+                    timestamp=sequence * fmt.nominal_frame_bytes // 2,
                     ssrc=ssrc,
                     payload=b"\0" * fmt.nominal_frame_bytes,
                 )
             )
 
-        relay.handle_packet("left", packet(0x1234), (left.host, 45000))
+        relay.handle_packet("left", packet(0x1234, 1), (left.host, 45000))
         self.assertEqual(left.port, 45000)
-        relay.handle_packet("left", packet(0x1234), (left.host, 45002))
+        relay.handle_packet("left", packet(0x1234, 2), (left.host, 45002))
         self.assertEqual(left.port, 45002)
-        relay.handle_packet("left", packet(0x9999), (left.host, 45004))
+        relay.handle_packet("left", packet(0x1234, 2), (left.host, 45004))
+        self.assertEqual(left.port, 45002)
+        relay.handle_packet("left", packet(0x9999, 3), (left.host, 45006))
         self.assertEqual(left.port, 45002)
         self.assertEqual(len(output.sent), 2)
 

@@ -137,6 +137,55 @@ class Phone(asyncio.DatagramProtocol):
         self.transport.sendto(sip.build_request("BYE", target, headers), self.remote)
 
 
+PHONE_PASSWORD = 'isolated-test-only'
+
+
+async def register_shared_phone(lab, index, *, network=False):
+    """Authenticate the existing peer Contact through the production registrar."""
+    from custom_components.voip_stack.core.sip_auth import build_digest_authorization
+    registrar = lab.calls.component('registrar')
+    peer = lab.phones[index]
+    address = peer.transport.get_extra_info('sockname')
+    username = f'bedroom{index}'
+    uri = f"sip:127.0.0.1:{lab.runtime.transport_config['sip_port']}"
+    identity = f'shared-bedroom-registration-{index}'
+    responses = asyncio.Queue()
+    if network:
+        previous = peer.datagram_received
+        def receive(raw, remote):
+            message = sip.parse_message(raw)
+            if message.is_response and message.header('Call-ID') == identity and message.header('CSeq').endswith(' REGISTER'):
+                responses.put_nowait(message)
+            elif message.method == 'OPTIONS':
+                peer.respond(message, remote, 200)
+            else:
+                previous(raw, remote)
+        peer.datagram_received = receive
+
+    async def exchange(cseq, authorization=''):
+        headers = [('Via', f'SIP/2.0/UDP {address[0]}:{address[1]};branch=z9hG4bK-shared-{index}-{cseq};rport'),
+            ('From', f'<sip:{username}@127.0.0.1>;tag=shared-{index}'), ('To', f'<sip:{username}@127.0.0.1>'),
+            ('Call-ID', identity), ('CSeq', f'{cseq} REGISTER'),
+            ('Contact', f'<sip:{username}@{address[0]}:{address[1]}>'), ('Expires', '120')]
+        if authorization:
+            headers.append(('Authorization', authorization))
+        raw = sip.build_request('REGISTER', uri, headers)
+        if network:
+            peer.transport.sendto(raw, ('127.0.0.1', lab.runtime.transport_config['sip_port']))
+            result = await asyncio.wait_for(responses.get(), 2)
+            return result.status_code, result.headers
+        result = await registrar.handle_register(sip.parse_message(raw), address, 'UDP')
+        return result.status, result.headers
+
+    status, headers = await exchange(1)
+    assert status == 401
+    challenge = next(value for key, value in headers if key.casefold() == 'www-authenticate')
+    authorization = build_digest_authorization(challenge_header=challenge, username=username,
+        password=PHONE_PASSWORD, method='REGISTER', uri=uri)
+    assert (await exchange(2, authorization))[0] == 200
+    assert registrar.registered_contacts(username)
+
+
 @pytest.fixture
 async def lab(hass, monkeypatch, socket_enabled):
     from custom_components import voip_stack
@@ -170,16 +219,21 @@ async def lab(hass, monkeypatch, socket_enabled):
     for index, transport in enumerate(transports):
         name = f"bedroom{index}"
         endpoints.register(PhoneEndpoint(
-            endpoint_id=f"sip:{name}", name=name, kind=EndpointKind.SIP_ACCOUNT,
+            endpoint_id=name, name=name, kind=EndpointKind.SIP_ACCOUNT,
             username=name, device_id=f"device-{name}",
         ))
         roster.append(RosterEntry(name, sip_uri=f"sip:{name}@127.0.0.1:{transport.get_extra_info('sockname')[1]}",
-                                  metadata={"endpoint_id": f"sip:{name}", "endpoint_kind": "sip_account", "registered": True}))
+                                  metadata={"endpoint_id": name, "endpoint_kind": "sip_account"}))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(("127.0.0.1", 0))
         base_rtp_port = probe.getsockname()[1]
-    entry = MockConfigEntry(domain="voip_stack", data={})
+    entry = MockConfigEntry(domain="voip_stack", data={'initial_phone_created': True, 'sip_registrar_enabled': True})
     entry.add_to_hass(hass)
+    from homeassistant.config_entries import ConfigSubentry
+    for name in ('bedroom0', 'bedroom1'):
+        hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type='phone', title=name,
+            unique_id='phone:' + name, data={'kind': 'sip_account', 'name': name, 'username': name,
+                'password': PHONE_PASSWORD, 'username_source': 'user'}))
     from homeassistant.helpers import entity_registry as er
     er.async_get(hass).async_get_or_create(
         "sensor", "voip_stack", "voip_stack_phonebook", config_entry=entry,
@@ -190,9 +244,13 @@ async def lab(hass, monkeypatch, socket_enabled):
         suggested_object_id="voip_stack_call",
     )
     calls = SipEndpointRuntime(allow_dark_sessions=True)
+    from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistrar
+    registrar = SipRegistrar(enabled=True, accounts=[SipAccount(name, name, PHONE_PASSWORD) for name in ('bedroom0', 'bedroom1')],
+        local_ip='127.0.0.1', local_sip_port=5099)
+    calls.attach_component('registrar', registrar)
     calls.activate()
     runtime = VoipStackRuntime(
-        transport_config={"sip_port": 5099, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1"},
+        transport_config={"sip_port": 5099, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1", 'sip_registrar_enabled': True},
         assist_config={}, trunk_config={}, endpoints=endpoints,
         phones=PhoneAdapterRegistry(hass, endpoints), sip=calls, directory=PhoneDirectory(roster),
     )
@@ -228,11 +286,22 @@ async def lab(hass, monkeypatch, socket_enabled):
         "transcribe_voicemail": mailbox_actions.async_transcribe_voicemail,
         "get_voicemail": mailbox_actions.async_get_voicemail,
     })
+    from custom_components.voip_stack.phone_config import sync_registry_from_entry
+    sync_registry_from_entry(hass, entry)
     obj = SimpleNamespace(hass=hass, phones=phones, calls=calls, runtime=runtime, roster=roster)
+    for index in range(2):
+        await register_shared_phone(obj, index)
+    from custom_components.voip_stack.account_runtime import recompute_account_availability
+    recompute_account_availability(hass)
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    automation = [row for row in roster if row.metadata.get('virtual_endpoint') == 'automation']
+    roster[:] = [*compose_directory_entries(hass, [], registrar.registered_roster_entries()), *automation]
+    runtime.directory.replace(roster)
     yield obj
     from custom_components.voip_stack.endpoint_session import TerminationIntent
     for session in list(calls.sessions.values()):
         await calls.request_termination(session.call_id, TerminationIntent("test_done"))
+    await calls.shutdown()
     for transport in transports:
         transport.close()
     for task in collectors:
@@ -287,8 +356,8 @@ async def test_ordinary_script_calls_then_speaks_and_hangs_up(lab, monkeypatch, 
     stream = tts_fixture(monkeypatch, lab)
     if forwarded:
         from custom_components.voip_stack.phone_policy import PhonePolicy
-        lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
-            "always": {"kind": "contact", "target": "sip:bedroom1"},
+        lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
+            "always": {"kind": "contact", "target": "bedroom1"},
         }))
     phone = lab.phones[int(forwarded)]
     phone.auto_answer = not delayed
@@ -344,7 +413,7 @@ async def test_stopping_script_while_ringing_cancels_call(lab, monkeypatch):
 async def test_phone_deadline_cancels_real_sip_invite_before_action_deadline(lab, monkeypatch):
     from custom_components.voip_stack.phone_policy import PhonePolicy
 
-    lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
+    lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1, "no_answer": {"kind": "hangup"},
     }))
     stream = tts_fixture(monkeypatch, lab)
@@ -399,7 +468,7 @@ async def test_final_sip_answer_wins_timeout_while_media_is_starting(lab, monkey
     from custom_components.voip_stack.phone_policy import PhonePolicy
     from custom_components.voip_stack.websocket_api import CALL_EVENT
 
-    lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
+    lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1, "no_answer": {"kind": "hangup"},
     }))
     ringing, starting, release, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -510,9 +579,9 @@ async def test_no_answer_policy_retargets_outgoing_announcement_without_replacin
     from custom_components.voip_stack.call_forwarder import async_forward_existing_call
     from custom_components.voip_stack.phone_policy import PhonePolicy
 
-    lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
+    lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
         "ringing_timeout": 1,
-        "no_answer": {"kind": "contact", "target": "sip:bedroom1"},
+        "no_answer": {"kind": "contact", "target": "bedroom1"},
     }))
     lab.calls.forward_call = partial(async_forward_existing_call, SimpleNamespace(
         hass=lab.hass, config=lab.runtime.transport_config, local_ip="127.0.0.1",
@@ -549,8 +618,8 @@ async def test_retarget_failure_or_cancellation_releases_both_attempts(lab, monk
     from custom_components.voip_stack.call_forwarder import async_forward_existing_call
     from custom_components.voip_stack.phone_policy import PhonePolicy
 
-    lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
-        "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": "sip:bedroom1"},
+    lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
+        "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": "bedroom1"},
     }))
     lab.calls.forward_call = partial(async_forward_existing_call, SimpleNamespace(
         hass=lab.hass, config=lab.runtime.transport_config, local_ip="127.0.0.1",

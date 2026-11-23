@@ -23,11 +23,11 @@ async def test_bridge_retains_first_rtp_after_ack_before_media_commit(trunks, mo
     lab = trunks
     target = lab.phones[0]
     lab.roster[1] = replace(lab.roster[1], metadata={
-        "endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True,
+        "endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True,
         "sip_audio_tx_formats": ["L16/16000/1/10"],
         "sip_audio_rx_formats": ["L16/16000/1/10"],
     })
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     commit_entered, release_commit, first_sent = asyncio.Event(), asyncio.Event(), asyncio.Event()
     observed = {}
     from custom_components.voip_stack import sip_rtp_bridge
@@ -89,7 +89,7 @@ async def test_bridge_retains_first_rtp_after_ack_before_media_commit(trunks, mo
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Immediate RTP caller",
         local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],
@@ -228,7 +228,7 @@ async def test_inbound_bridge_failure_releases_prebound_audio(trunks, monkeypatc
 
     lab = trunks
     target = lab.phones[0]
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     target.final_status = 486 if failure == "decline" else 200
     target.auto_answer = failure not in {"cancel", "timeout"}
     if failure == "timeout":
@@ -256,7 +256,7 @@ async def test_inbound_bridge_failure_releases_prebound_audio(trunks, monkeypatc
         monkeypatch.setattr(type(lab.calls), "attach_relay", reject)
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Aborted bridge caller",
         local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=audio.getsockname()[1],

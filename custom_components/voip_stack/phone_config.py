@@ -699,10 +699,18 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if runtime is None:
         return
     subentries = phone_subentries(entry)
+    next_subentry_ids = _phone_subentry_ids(entry)
+    for identity, subentry_id in next_subentry_ids.items():
+        previous = registry.get(identity)
+        previous_owner = registry.subentry_ids.get(identity)
+        if previous is not None and previous.active_call_id and (
+                identity in registry.pending_removals or (previous_owner is not None and previous_owner != subentry_id)):
+            from .endpoint_registry import EndpointBusyError
+            raise EndpointBusyError(previous, previous.active_call_id)
     # Entity/device listeners run synchronously from registry.upsert(). Publish
     # ownership before the first event so a newly added phone is immediately
     # associated with its native HA config subentry.
-    registry.subentry_ids = _phone_subentry_ids(entry)
+    registry.subentry_ids = next_subentry_ids
     pending_removals = registry.pending_removals
     presence = runtime.softphone_presence
     for subentry in subentries:
@@ -849,6 +857,7 @@ def validate_sip_account_namespace(
         if phone_endpoint_id(subentry) not in replaced:
             future.register(endpoint_from_subentry(entry, subentry))
     live = getattr(getattr(entry, "runtime_data", None), "endpoints", None)
+    configured = {phone_endpoint_id(row) for row in phone_subentries(entry)}
     for data in candidates:
         candidate = endpoint_from_data(entry, data)
         future.register(candidate)
@@ -857,6 +866,15 @@ def validate_sip_account_namespace(
             # reconciliation. A valid future route may still belong to another
             # live endpoint; reject before saving until that owner releases it.
             live.validate(candidate, replacing_endpoint_id=candidate.endpoint_id)
+            if candidate.endpoint_id in live.pending_removals or (live.get(candidate.endpoint_id) is not None
+                    and candidate.endpoint_id not in configured):
+                raise PhoneRouteConflict(candidate.name, candidate.username or candidate.endpoint_id)
+            for published in live.endpoints:
+                if published.endpoint_id == candidate.endpoint_id:
+                    continue
+                aliases = {value.casefold() for value in (published.username, published.extension) if value}
+                if any(value and value.casefold() in aliases for value in (candidate.username, candidate.extension)):
+                    raise PhoneRouteConflict(candidate.name, candidate.username or candidate.extension)
     return future
 
 

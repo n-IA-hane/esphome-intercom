@@ -16,7 +16,7 @@ from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.runtime_data import sip_trunk, sip_trunks
 from custom_components.voip_stack.trunk_runtime import async_start_sip_trunk, async_stop_sip_trunk
 
-from .test_automation_originate_ha import lab as lab, dial, tts_fixture
+from .test_automation_originate_ha import lab as lab, dial, tts_fixture, register_shared_phone
 from .support.sip_invite_auth import send_authenticated_invite
 
 pytestmark = pytest.mark.ha
@@ -42,6 +42,7 @@ async def trunks(lab, monkeypatch, request):
         from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot
         from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 
+        await lab.calls.shutdown()
         lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
         # The listener needs the same port on UDP and TCP. Keep it outside
         # peer media and OS ephemeral ranges to avoid cross-transport collisions.
@@ -90,6 +91,13 @@ async def trunks(lab, monkeypatch, request):
     await async_start_sip_trunk(lab.hass, local_ip="127.0.0.1")
     try:
         assert all(await asyncio.gather(*(client.wait_for_registration(timeout=2) for client in sip_trunks(lab.hass).values())))
+        if full_runtime:
+            for index in range(2):
+                await register_shared_phone(lab, index, network=True)
+            from custom_components.voip_stack.directory_runtime import compose_directory_entries
+            automation = [row for row in lab.roster if row.metadata.get('virtual_endpoint') == 'automation']
+            lab.roster[:] = [*compose_directory_entries(lab.hass, [], lab.calls.component('registrar').registered_roster_entries()), *automation]
+            lab.runtime.directory.replace(lab.roster)
         yield lab
     finally:
         await async_stop_sip_trunk(lab.hass)
@@ -827,11 +835,11 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                 queue_id = "fd8aba0b247840e898892f90ff83be4b"
                 manager = QueueManager(lab.hass, entry)
                 policy = QueuePolicy(max_wait=5, no_agent_wait=5)
-                manager.definitions[queue_id] = QueueDefinition(queue_id, "Media queue", ("sip:bedroom1",), "405")
+                manager.definitions[queue_id] = QueueDefinition(queue_id, "Media queue", ("bedroom1",), "405")
                 manager.policies[queue_id] = policy
-                manager.agent_states[queue_id] = {"sip:bedroom1": "paused"}
+                manager.agent_states[queue_id] = {"bedroom1": "paused"}
                 lab.runtime.queues = manager
-                lab.runtime.endpoints.update("sip:bedroom1", queues=("Media queue",))
+                lab.runtime.endpoints.update("bedroom1", queues=("Media queue",))
                 data = normalize_group_data({"kind": "queue", "name": "Media queue", "extension": "405",
                     "origin": "manual", "policy": {"max_wait": 5, "no_agent_wait": 5}}, identity=queue_id)
                 lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="group",

@@ -9,7 +9,7 @@ PhoneDirectory = _load_intercom_module("phone_directory").PhoneDirectory
 
 def test_public_resolution_rejects_cross_namespace_aliases():
     rows = [roster.RosterEntry("desk", name="Reception", extension="204"),
-            roster.RosterEntry("204", name="Other desk", number="Reception")]
+            roster.RosterEntry("other-desk", name="204", number="Reception")]
     directory = PhoneDirectory(rows)
     for selector in ("204", "Reception"):
         with pytest.raises(roster.RosterError, match="Ambiguous"):
@@ -62,6 +62,7 @@ def test_internal_extension_precedes_only_an_external_contacts_number():
 
 
 def test_extension_does_not_override_another_accounts_explicit_public_name():
-    rows = [roster.RosterEntry("Office", extension="101"), roster.RosterEntry("101", name="Other account")]
+    rows = [roster.RosterEntry("Office", extension="101"), roster.RosterEntry("101", name="Other account",
+            metadata={'endpoint_kind': 'sip_account', 'endpoint_id': '101'})]
     with pytest.raises(roster.RosterError, match="Ambiguous"):
         PhoneDirectory(rows).resolve("101")

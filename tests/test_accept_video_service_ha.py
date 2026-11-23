@@ -87,7 +87,7 @@ async def test_public_sip_browser_answer_declares_atomic_video_choice_on_udp(lab
     source = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     source.bind(("127.0.0.2", 0))
     source.setblocking(False)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent SIP camera",
         username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=20)],

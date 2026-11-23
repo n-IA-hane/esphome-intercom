@@ -295,13 +295,13 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("lifetime_task", conference_audio)
         self.assertIn("remove_call_listener()", conference_audio)
 
-    def test_missing_roster_formats_do_not_force_implicit_16k_default(self) -> None:
-        endpoint_routing = ENDPOINT_ROUTING.read_text()
-        body = _function_body(endpoint_routing, "roster_entry_formats")
-        self.assertIn("if entry is None:", body)
-        self.assertIn("return []", body)
-        self.assertIn('if value in (None, ""):', body)
-        self.assertIn("if not raw.strip():", body)
+    def test_sip_offer_profile_delegates_capability_selection_to_the_media_engine(self) -> None:
+        body = _function_body(ENDPOINT_ROUTING.read_text(), "sip_target_rtp_audio_profile")
+        calls = [ast.unparse(node.func) for node in ast.walk(ast.parse(body)) if isinstance(node, ast.Call)]
+        self.assertEqual(calls.count("negotiator.sip_offer_plan"), 1)
+        self.assertNotIn("AudioFormat", calls)
+        self.assertNotIn("device_formats", calls)
+        self.assertIn("_binding_audio_evidence", calls)
 
     def test_services_register_async_handlers_not_coroutine_returning_lambdas(
         self,
@@ -327,16 +327,43 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("if not live_projection and not terminal_projection:", projection)
 
     def test_softphone_rtp_latches_source_port_and_ssrc(self) -> None:
-        audio_ws = (
-            ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
-        ).read_text()
-        frames = (ROOT / "custom_components" / "voip_stack" / "audio_ws_frames.py").read_text()
-        self.assertIn("self.source = source", frames)
-        self.assertIn("self.ssrc = packet.ssrc", frames)
-        self.assertIn("self.remote_port = source[1]", frames)
-        self.assertIn("packet.ssrc != self.ssrc", frames)
-        self.assertIn("(incoming.remote_host, incoming.remote_port)", audio_ws)
-        self.assertIn("session.signaling_host", audio_ws)
+        from collections import defaultdict
+        from types import SimpleNamespace
+        from .voip_phase1_support import _load_intercom_module, rtp, sdp
+
+        frames = _load_intercom_module("audio_ws_frames")
+        audio = _load_intercom_module("rtp_audio_receiver")
+        payload = _load_intercom_module("rtp_payload")
+        fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+        decoder, encoder = audio.RtpAudioReceiver(fmt), payload.RtpPayloadEncoder(fmt)
+        receiver = frames.BrowserAudioReceiver("192.0.2.10", 40000)
+        session = SimpleNamespace(call_id="source-latching", recv_format=fmt,
+            remote_rtp_host="192.0.2.10", signaling_host="192.0.2.10",
+            local_audio_direction="sendrecv", on_dtmf=None)
+        counters = defaultdict(int)
+        lock = SimpleNamespace(locked=lambda: False)
+
+        def receive(sequence, ssrc, port, host="192.0.2.10"):
+            raw = rtp.build_packet(rtp.RtpPacket(96, sequence, sequence * 320, ssrc, bytes(640)))
+            return receiver.decode(raw, (host, port), session, decoder=decoder,
+                encoder=encoder, dtmf_decoder=None, dtmf_send_lock=lock, counters=counters)
+
+        try:
+            self.assertIsNone(receive(1, 7, 45000, "192.0.2.99"))
+            self.assertEqual(counters["drop_addr"], 1)
+            self.assertIsNotNone(receive(1, 7, 45000))
+            self.assertEqual((receiver.source, receiver.ssrc), (("192.0.2.10", 45000), 7))
+            self.assertIsNone(receive(1, 7, 45002))
+            self.assertEqual(receiver.remote_port, 45000)
+            self.assertIsNotNone(receive(2, 7, 45002))
+            self.assertEqual(receiver.remote_port, 45002)
+            self.assertIsNone(receive(3, 9, 45006))
+            self.assertEqual(receiver.ssrc, 7)
+            self.assertIsNotNone(receive(4, 9, 45006))
+            self.assertEqual((receiver.remote_port, receiver.ssrc), (45006, 9))
+        finally:
+            decoder.close()
+            encoder.close()
 
     def test_video_rtp_setup_failure_releases_prebound_rtp_and_rtcp(self) -> None:
         io = VIDEO_WS.with_name("video_ws_io.py").read_text()
@@ -756,7 +783,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("EndpointKind.BROWSER", configured)
         self.assertIn("EndpointKind.SIP_ACCOUNT", configured)
         self.assertIn('device_id = str(call.data.get("device_id")', configured)
-        self.assertIn("resolve_service_phone(registry, device_id)", configured)
+        self.assertIn("resolve_service_phone(registry, device_id, hass=hass)", configured)
         self.assertNotIn('call.data.get("endpoint_id")', configured)
         self.assertNotIn('call.data.get("entity_id")', configured)
 

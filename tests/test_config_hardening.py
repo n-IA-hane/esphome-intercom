@@ -232,7 +232,7 @@ def test_phone_service_pickers_expose_only_compatible_integrations(
     assert "device" in selector
     filters = (selector.get("device") or {}).get("filter") or []
     assert {item["integration"] for item in filters} == expected_integrations
-    assert {item["model"] for item in filters} == {"SIP account", "Home Assistant softphone"}
+    assert {item["model"] for item in filters} == {"SIP account"}
     fields = document[service]["fields"]
     assert "endpoint_id" not in fields
     assert "entity_id" not in fields
@@ -243,16 +243,14 @@ def test_phone_service_pickers_expose_only_compatible_integrations(
 
 def test_purge_picker_is_limited_to_esphome_devices() -> None:
     document = yaml.safe_load(SERVICES_YAML.read_text())
-    selector = document["purge_devices"]["fields"]["device_id"]["selector"]
-
-    assert selector["device"]["filter"] == [{"integration": "esphome"}]
+    assert 'purge_devices' not in document
 
 
 def test_everyday_call_actions_hide_technical_fields_in_collapsed_sections() -> None:
     document = yaml.safe_load(SERVICES_YAML.read_text())
 
     expected_primary = {
-        "call": {"device_id", "destination", "send_video", "source_automation", "answer_timeout", "trunk_id"},
+        "call": {"device_id", "destination", "send_video", "receive_video", "source_automation", "answer_timeout", "trunk_id"},
         "answer": {"device_id", "send_video"},
         "decline": {"device_id"},
         "hangup": {"device_id"},

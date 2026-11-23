@@ -201,7 +201,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result.winner, winner.candidate)
         self.assertEqual(committed, ["winner"])
-        self.assertEqual(loser.closes, [dial_fork.LegCloseMode.CANCEL_OR_BYE])
+        self.assertEqual(loser.closes, [dial_fork.LegCloseMode.ANSWERED_ELSEWHERE])
         self.assertEqual(winner.closes, [])
 
     async def test_simultaneous_answers_use_configured_order(self) -> None:
@@ -363,6 +363,33 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             ("browser-control", dial_fork.LegCloseMode.CLOSE),
             closed,
         )
+
+    async def test_route_observers_do_not_keep_an_exhausted_unlimited_offer_open(self) -> None:
+        session = endpoint_session.EndpointCallSession("exhausted-offer", 1)
+        failed = FakeCandidate("failed", dial_fork.DialOutcome(dial_fork.DialDisposition.PROTOCOL_ERROR, 500))
+        waiting = asyncio.Event()
+        drained = asyncio.Event()
+        closed = []
+
+        async def watch_route():
+            waiting.set()
+            try:
+                await asyncio.Future()
+            finally:
+                drained.set()
+
+        async def close_route(mode):
+            closed.append(mode)
+
+        observer = dial_fork.DialCandidate("route-observer", watch_route, close_route,
+            control=True, keeps_offer_open=False)
+        result = await asyncio.wait_for(dial_fork.DialForkController(session,
+            (failed.candidate, observer), overall_timeout=float("inf")).run(lambda *_: True), 2)
+        self.assertTrue(waiting.is_set())
+        self.assertTrue(drained.is_set())
+        self.assertIsNone(result.winner)
+        self.assertIs(result.outcome.disposition, dial_fork.DialDisposition.PROTOCOL_ERROR)
+        self.assertEqual(closed, [dial_fork.LegCloseMode.CLOSE])
 
     async def test_failed_media_branches_do_not_cancel_ringing_browser(self) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 1)

@@ -122,6 +122,14 @@ async def test_routing_and_mixed_phone_changes_still_refresh(
     hass, camera, change, with_camera
 ):
     values = {**change, **({"send_video": True} if with_camera else {})}
+    if 'username' in change:
+        from copy import deepcopy
+        before = deepcopy(dict(phone_config.phone_subentry_by_endpoint_id(camera.entry, 'kitchen').data))
+        with pytest.raises(ValueError, match='native account configuration'):
+            phone_config.update_phone_subentry(hass, camera.entry, 'kitchen', values)
+        assert dict(phone_config.phone_subentry_by_endpoint_id(camera.entry, 'kitchen').data) == before
+        camera.refresh.assert_not_awaited()
+        return
     phone_config.update_phone_subentry(hass, camera.entry, "kitchen", values)
     await asyncio.wait_for(camera.completed.wait(), 1)
     camera.refresh.assert_awaited_once_with(hass)
@@ -199,7 +207,7 @@ async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_doe
         hass,
         camera.entry,
         data={
-            "endpoint_id": "sip:desk",
+            "endpoint_id": "desk",
             "kind": "sip_account",
             "name": "Desk",
             "username": "desk",
@@ -210,7 +218,13 @@ async def test_sip_account_identity_changes_refresh_but_ha_camera_preference_doe
     await asyncio.wait_for(camera.completed.wait(), 1)
     camera.completed.clear()
     camera.refresh.reset_mock()
-    phone_config.update_phone_subentry(hass, camera.entry, "sip:desk", change)
+    if 'username' in change:
+        from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
+        row = phone_config.phone_subentry_by_endpoint_id(camera.entry, 'desk')
+        await async_migrate_account_identities(hass, camera.entry,
+            account_updates={row.subentry_id: {**row.data, **change, 'username_source': 'user'}})
+    else:
+        phone_config.update_phone_subentry(hass, camera.entry, 'desk', change)
     await asyncio.wait_for(camera.completed.wait(), 1)
     if set(change) == {"send_video"}:
         camera.refresh.assert_not_awaited()

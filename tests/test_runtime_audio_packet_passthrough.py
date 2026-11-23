@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from .voip_phase1_support import _load_intercom_module, _reserved_udp_ports, audio_format, rtp, sdp
+from custom_components.voip_stack.core.media.bridge import payload_relay_compatible
 
 relay_module = _load_intercom_module('sip_rtp_bridge')
 PcmFrameConverter = _load_intercom_module('core.audio_pcm').PcmFrameConverter
@@ -43,7 +44,7 @@ async def test_real_short_packet_never_depends_on_decode_or_conversion(monkeypat
         assert relay.left_decoder is not None and relay.left_to_right is not None
         def forbidden(*args):
             raise AssertionError('Compatible10ms payload must cross without PCM processing')
-        monkeypatch.setattr(relay.left_decoder, 'decode', forbidden)
+        monkeypatch.setattr(relay.left_decoder, 'decode_packet', forbidden)
         monkeypatch.setattr(relay.left_to_right, 'convert', forbidden)
         payload = struct.pack('!160h', *range(160))
         await asyncio.get_running_loop().sock_sendto(source, rtp.build_packet(rtp.RtpPacket(96, 1, 0, 55, payload)), ('127.0.0.1', relay.left_port))
@@ -56,8 +57,8 @@ async def test_real_short_packet_never_depends_on_decode_or_conversion(monkeypat
 @pytest.mark.parametrize('durations,decode_calls', [([10, 20, 10], 1), ([16, 10, 4, 10], 3), ([5, 10, 5, 10], 3)])
 async def test_real_packet_mix_preserves_pcm_order_clock_and_pending(durations, decode_calls, monkeypatch):
     async with wire_relay() as (source, sink, relay):
-        decode = Mock(wraps=relay.left_decoder.decode)
-        monkeypatch.setattr(relay.left_decoder, 'decode', decode)
+        decode = Mock(wraps=relay.left_decoder.decode_packet)
+        monkeypatch.setattr(relay.left_decoder, 'decode_packet', decode)
         original = bytearray()
         timestamp = 0
         for index, duration in enumerate(durations):
@@ -87,14 +88,14 @@ def test_pcm_converter_pending_short_nominal_short_keeps_sample_order():
 def test_new_runtime_shortcut_does_not_bypass_stateful_or_vbr_codecs(encoding,rate,channels,size):
     incoming=sdp.RtpPcmFormat(96,encoding,rate,channels,10,max_frame_ms=20)
     outgoing=sdp.RtpPcmFormat(97,encoding,rate,channels,10,max_frame_ms=10)
-    assert not relay_module._audio_payload_relay_compatible(incoming,outgoing,payload_size=size)
+    assert not payload_relay_compatible(incoming,outgoing,payload_size=size)
 
 
 @pytest.mark.parametrize('size,minptime', [(319,0),(640,0),(672,0),(320,16)])
 def test_runtime_shortcut_keeps_sample_alignment_duration_and_bounds(size,minptime):
     incoming=sdp.RtpPcmFormat(96,'L16',16000,1,10,min_frame_ms=minptime,max_frame_ms=20)
     outgoing=sdp.RtpPcmFormat(97,'L16',16000,1,10,max_frame_ms=10)
-    assert not relay_module._audio_payload_relay_compatible(incoming,outgoing,payload_size=size)
+    assert not payload_relay_compatible(incoming,outgoing,payload_size=size)
 
 
 @pytest.mark.asyncio

@@ -103,10 +103,12 @@ export function isPagingAutoAnswer(snapshot = {}) {
 
 export function terminalPeerLabel(snapshot = {}) {
   const direction = String(snapshot.direction || "").trim().toLowerCase();
+  const dialed = String(snapshot.dialed_target || "").trim();
   const names = direction === "incoming"
     ? [snapshot.caller_name, snapshot.caller, snapshot.peer_name, snapshot.callee_name, snapshot.callee]
     : [snapshot.connected_party_name, snapshot.connected_party, snapshot.answered_by_name,
-      snapshot.peer_name, snapshot.callee_name, snapshot.callee, snapshot.caller_name, snapshot.caller];
+      snapshot.peer_name, snapshot.callee_name, snapshot.callee,
+      dialed, snapshot.caller_name, snapshot.caller];
   return String(names.find((value) => String(value || "").trim()) || "");
 }
 

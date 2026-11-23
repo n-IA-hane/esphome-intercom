@@ -31,7 +31,7 @@ def subscribe(*, tag="", event="dialog", expires=300, accept="application/dialog
 @pytest.fixture
 async def blf(lab):
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
-    lab.runtime.endpoints.update("sip:bedroom0", extension="101")
+    lab.runtime.endpoints.update("bedroom0", extension="101")
     registrar = SipRegistrar(enabled=True, accounts=[SipAccount("watcher", "Watcher", "test-only")],
                              local_ip="127.0.0.1", local_sip_port=5060)
     registrar.registrations["watcher"] = SipRegistration(
@@ -56,12 +56,14 @@ async def test_blf_tracks_ringing_answer_multiple_calls_and_final_idle(lab, blf)
     assert root.attrib == {"entity": "sip:101@127.0.0.1", "version": "0", "state": "full"}
     assert not root.findall("d:dialog", NS)
     first = lab.calls.upsert("first", state="ringing", owner="router", route_kind="sip",
-                             source_endpoint_id="other", dest_endpoint_id="sip:bedroom0")
-    lab.calls.claim_endpoint(first.call_id, "sip:bedroom0", role="destination")
+                             source_endpoint_id="other", dest_endpoint_id="bedroom0")
+    lab.calls.observe_leg(first.call_id, "first-wire", role="callee", state="ringing", endpoint_id="bedroom0")
+    lab.calls.claim_endpoint(first.call_id, "bedroom0", role="destination")
     publish_bridge_projection(lab.hass, first)
     ringing = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
     assert ringing.find("d:dialog/d:state", NS).text == "early"
     lab.calls.transition(first.call_id, state="in_call")
+    lab.calls.observe_leg(first.call_id, "first-wire", role="callee", state="in_call", endpoint_id="bedroom0")
     publish_bridge_projection(lab.hass, first)
     answered = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
     assert answered.find("d:dialog/d:state", NS).text == "confirmed"
@@ -69,8 +71,8 @@ async def test_blf_tracks_ringing_answer_multiple_calls_and_final_idle(lab, blf)
     await lab.hass.async_block_till_done()
     assert notifications.empty()
     second = lab.calls.upsert("second", state="connecting", owner="router", route_kind="sip",
-                              source_endpoint_id="sip:bedroom0")
-    lab.calls.claim_endpoint(second.call_id, "sip:bedroom0", role="source")
+                              source_endpoint_id="bedroom0")
+    lab.calls.claim_endpoint(second.call_id, "bedroom0", role="source")
     publish_bridge_projection(lab.hass, second)
     concurrent = ElementTree.fromstring((await asyncio.wait_for(notifications.get(), 1)).body)
     assert len(concurrent.findall("d:dialog", NS)) == 2
@@ -98,7 +100,7 @@ async def test_blf_refresh_keeps_dialog_version_and_removal_terminates_subscript
     refreshed.follow_up_scheduler()
     refreshed_notify = await asyncio.wait_for(notifications.get(), 1)
     assert ElementTree.fromstring(refreshed_notify.body).attrib["version"] == "1"
-    lab.runtime.endpoints.remove("sip:bedroom0")
+    lab.runtime.endpoints.remove("bedroom0")
     final = await asyncio.wait_for(notifications.get(), 1)
     assert dict(final.headers)["Subscription-State"] == "terminated;reason=noresource"
     assert not methods.subscriptions
@@ -122,12 +124,12 @@ async def test_dialog_filter_uses_monitored_phone_tags_and_does_not_mix_dialogs(
 
     methods, _notifications, send = blf
     lab.calls.upsert("parent", state="in_call", owner="bridge", source_endpoint_id="other",
-                     dest_endpoint_id="sip:bedroom0")
-    lab.calls.add_leg("parent", "wire", role="callee", state="in_call", endpoint_id="sip:bedroom0")
+                     dest_endpoint_id="bedroom0")
+    lab.calls.add_leg("parent", "wire", role="callee", state="in_call", endpoint_id="bedroom0")
     client = SimpleNamespace(dialog=object(), dialog_ids=sip.SipDialogIds("wire", "ha-tag", "phone-tag"),
                              on_refer=None, terminate=AsyncMock(), close=AsyncMock())
     lab.calls.attach_sip_client("parent", "wire", client, state="in_call")
-    lab.calls.claim_endpoint("parent", "sip:bedroom0", role="destination")
+    lab.calls.claim_endpoint("parent", "bedroom0", role="destination")
     for index, remote in enumerate(("ha-tag", "wrong")):
         result = await methods.handle(subscribe(
             call_id=f"filtered-{index}",
@@ -263,11 +265,13 @@ async def test_activity_projection_tracks_dialogs_and_occupied_slots(lab, blf):
 
     assert activity_snapshot(lab.runtime) == {"parked": [], "phones": []}
     session = lab.calls.upsert("activity", state="ringing", owner="router", route_kind="sip",
-                               source_endpoint_id="other", dest_endpoint_id="sip:bedroom0")
-    lab.calls.claim_endpoint(session.call_id, "sip:bedroom0", role="destination")
+                               source_endpoint_id="other", dest_endpoint_id="bedroom0")
+    lab.calls.observe_leg(session.call_id, "activity-wire", role="callee", state="ringing", endpoint_id="bedroom0")
+    lab.calls.claim_endpoint(session.call_id, "bedroom0", role="destination")
     assert activity_snapshot(lab.runtime)["phones"][0]["state"] == "ringing"
     assert activity_snapshot(lab.runtime)["phones"][0]["call_ids"] == [session.call_id]
     lab.calls.transition(session.call_id, state="in_call")
+    lab.calls.observe_leg(session.call_id, "activity-wire", role="callee", state="in_call", endpoint_id="bedroom0")
     assert activity_snapshot(lab.runtime)["phones"][0]["state"] == "busy"
     lot = ParkingLot(("701", "702"))
     lab.calls.adopt_component("parking", lot, closer=lot.close)
@@ -295,7 +299,8 @@ async def test_activity_subscription_updates_and_unsubscribes(lab, blf, monkeypa
     lot = ParkingLot(("701",), lambda: lab.hass.bus.async_fire(PARKING_CHANGED))
     lab.calls.adopt_component("parking", lot, closer=lot.close)
     session = lab.calls.upsert("activity-stream", state="in_call", owner="router", route_kind="sip")
-    lab.calls.claim_endpoint(session.call_id, "sip:bedroom0", role="destination")
+    lab.calls.observe_leg(session.call_id, "activity-wire", role="callee", state="in_call", endpoint_id="bedroom0")
+    lab.calls.claim_endpoint(session.call_id, "bedroom0", role="destination")
     parked = lot.reserve(session)
     await lab.hass.async_block_till_done()
     activity = [event["data"] for event in events if event["event_type"] == "voip_stack.activity"][-1]
@@ -347,11 +352,11 @@ async def test_connected_destination_precedes_requested_target_in_peer_projectio
     session = lab.calls.upsert(
         "projection-priority", state="in_call", owner="ha_softphone",
         source_endpoint_id=phone.endpoint_id, target_endpoint_id="old-requested-target",
-        dest_endpoint_id="sip:bedroom0",
+        dest_endpoint_id="bedroom0",
     )
     lab.calls.observe_leg(session.call_id, session.call_id, role="ha_softphone",
         state="in_call", endpoint_id=phone.endpoint_id, dialog=client)
-    assert snapshot(lab.runtime, phone.endpoint_id)[0].peer_endpoint_id == "sip:bedroom0"
+    assert snapshot(lab.runtime, phone.endpoint_id)[0].peer_endpoint_id == "bedroom0"
 
 
 async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_names(lab):
@@ -361,9 +366,9 @@ async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_nam
     client.dialog.remote_audio_direction='sendonly'
     client.dialog.local_audio_direction='recvonly'
     client.dialog.remote_target_uri='sip:desk@127.0.0.4:5090'
-    session=lab.calls.upsert('held-dialog',state='in_call',owner='bridge',dest_endpoint_id='sip:bedroom0')
-    lab.calls.observe_leg(session.call_id,session.call_id,role='callee',state='in_call',endpoint_id='sip:bedroom0',dialog=client)
-    states=snapshot(lab.runtime,'sip:bedroom0')
+    session=lab.calls.upsert('held-dialog',state='in_call',owner='bridge',dest_endpoint_id='bedroom0')
+    lab.calls.observe_leg(session.call_id,session.call_id,role='callee',state='in_call',endpoint_id='bedroom0',dialog=client)
+    states=snapshot(lab.runtime,'bedroom0')
     assert len(states)==1 and states[0].held
     root=ElementTree.fromstring(document('sip:101@127.0.0.1',1,states))
     target=root.find('d:dialog/d:local/d:target',NS)
@@ -383,7 +388,7 @@ async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_t
     source = PhoneEndpoint(endpoint_id="browser-casa", name="Casa", username="Casa",
         device_id="browser-casa-device", kind="browser", availability="available")
     lab.runtime.endpoints.register(source)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))

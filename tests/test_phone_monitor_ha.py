@@ -75,6 +75,7 @@ def incoming(monitor, call_id="incoming"):
             call_id, state="ringing", owner="router", caller="Office", callee="Kitchen",
             source_endpoint_id="office", dest_endpoint_id="kitchen",
         )
+        monitor.calls.add_leg(call.call_id, 'recipient-kitchen', role='callee', state='ringing', endpoint_id='kitchen')
         monitor.calls.claim_endpoint(call.call_id, "kitchen", role="destination")
         monitor.calls.claim_endpoint(call.call_id, "office", role="source")
     return call
@@ -93,6 +94,7 @@ async def test_snapshot_schema_and_subscription_are_passive(hass, monitor, monke
         "schema_version", "endpoint_id", "device_id", "name", "extension", "kind",
         "availability", "dnd", "state", "calls", "mailbox",
         "ring_group", "queues", "queue_states", "paging_groups",
+        'account_username', 'account_device_id', 'hardware_device_id',
     }
     assert kitchen["ring_group"] == ""
     assert kitchen["queues"] == []

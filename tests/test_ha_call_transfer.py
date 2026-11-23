@@ -82,7 +82,7 @@ async def test_public_transfer_service_defers_logical_offline_and_builtin_target
         assert not result["success"] and result["status"] == 486
         assert len(references) == 1
         assert (references[0].host, references[0].port) == ("127.0.0.1", lab.runtime.transport_config["sip_port"])
-        assert references[0].user == ("450" if destination == offline.name else destination)
+        assert references[0].user == (offline.username if destination == offline.name else destination)
         assert lab.calls.get_session(call_id).live
         assert lab.runtime.endpoints.get(offline.endpoint_id) == offline, "REFER must not execute or rewrite PhonePolicy"
         assert lab.calls.component("parking") is None, "Target classification must not create a parking application"
@@ -443,6 +443,6 @@ def test_named_phone_transfer_retains_local_dialplan_over_current_contact(kind):
              "metadata": {"endpoint_id": "logical-desk", "endpoint_kind": kind, "registered": True}},
         ]))))
     target = call_transfer._blind_target(runtime, "sip:original-peer@127.0.0.3:5070", "Logical desk")
-    assert target.uri == "sip:223@127.0.0.1:5090"
+    assert target.uri == "sip:physical-user@127.0.0.1:5090"
     assert call_transfer._blind_target(runtime, "sip:original-peer@127.0.0.3:5070",
         "sip:explicit-contact@127.0.0.2:5080;transport=tcp").uri == "sip:explicit-contact@127.0.0.2:5080;transport=tcp"

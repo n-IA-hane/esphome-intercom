@@ -485,8 +485,7 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     form = await lab.hass.config_entries.subentries.async_init(
         (entry.entry_id, "phone"), context={"source": "user"},
     )
-    # The native account editor opens directly. Former browser receivers use
-    # this same account form, with generated credentials when left unspecified.
+    # The native account editor creates the account and its mailbox together.
     assert form["step_id"] == "sip_account"
     values = {"name": "Study", "extension": "202", "voicemail_enabled": True}
     if credentials == "explicit":
@@ -498,7 +497,7 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
         assert invalid["errors"] == {"username": "phone_username_invalid"}
         assert not any(item.title == "Study" for item in entry.subentries.values())
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"](values))
-    assert result["type"] == "abort" and result["reason"] == "phone_configured"
+    assert result["type"] == "create_entry"
     created = next(item for item in entry.subentries.values() if item.title == "Study")
     assert created.data["kind"] == "sip_account"
     assert created.data["voicemail"] == {"enabled": True}
@@ -570,7 +569,7 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
     # is qualified by the socket/registered-phone suites instead.
     from custom_components.voip_stack import sip_runtime
     monkeypatch.setattr(sip_runtime, "select_registered_outbound_flow", lambda *_args, **_kwargs: None)
-    for identity in ("browser", "sip:bedroom0", "sip:bedroom1"):
+    for identity in ("browser", "bedroom0", "bedroom1"):
         endpoint = lab.runtime.endpoints.require(identity)
         _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
             "endpoint_id": endpoint.endpoint_id, "name": endpoint.name,
@@ -607,7 +606,7 @@ async def test_no_answer_routes_browser_into_mailbox_without_second_sip_call(bro
         assert session.token == token and session.owner == "voicemail"
         assert len(lab.phones[0].invites) == 1 and not lab.phones[1].invites
         assert any(request.method == "CANCEL" for request in lab.phones[0].requests)
-        assert not lab.runtime.endpoints.require("sip:bedroom0").active_call_id
+        assert not lab.runtime.endpoints.require("bedroom0").active_call_id
         assert lab.runtime.endpoints.require("browser").active_call_id == session.call_id
         received = asyncio.Event()
         detach = app.media.decoder.add_pcm_observer(lambda *_args: received.set())
@@ -656,7 +655,7 @@ async def test_sip_phone_deposits_through_real_listener_without_browser(trunks, 
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user=account.username,
                            username=account.username, password=account.password,
                            local_sip_port=5060, local_rtp_port=audio.getsockname()[1],
@@ -1223,7 +1222,7 @@ async def test_removing_phone_without_voicemail_needs_no_media_directory(lab):
 
     lab.hass.config.media_dirs = {}
     assert lab.calls.component("media_archive") is None
-    await async_remove_mailbox(lab.hass, "sip:bedroom0")
+    await async_remove_mailbox(lab.hass, "bedroom0")
     assert lab.calls.component("media_archive") is None
 
 

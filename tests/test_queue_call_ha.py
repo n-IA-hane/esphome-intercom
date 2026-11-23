@@ -30,12 +30,12 @@ async def queue_lab(trunks, monkeypatch):
     from custom_components.voip_stack import call_forwarder
     monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_args: lab.roster)
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
-    for endpoint in lab.runtime.endpoints.endpoints:
-        lab.runtime.endpoints.update(endpoint.endpoint_id, availability="available")
+    assert all(lab.runtime.endpoints.require(name).availability.value == "available"
+               for name in ("bedroom0", "bedroom1"))
     manager = QueueManager(lab.hass, SimpleNamespace(runtime_data=lab.runtime,
         entry_id=lab.hass.config_entries.async_entries("voip_stack")[0].entry_id))
     identity = "d5cf849db68449f49f03552eeab34511"
-    manager.definitions[identity] = QueueDefinition(identity, "Reception", ("sip:bedroom0", "sip:bedroom1"), "401")
+    manager.definitions[identity] = QueueDefinition(identity, "Reception", ("bedroom0", "bedroom1"), "401")
     manager.policies[identity] = QueuePolicy(max_wait=5, ring_timeout=1, retry_delay=0.1, no_agent_wait=1, wrap_up=1)
     manager.agent_states[identity] = {member: "available" for member in manager.definitions[identity].members}
     lab.runtime.queues = manager
@@ -271,30 +271,32 @@ async def test_answered_queue_caller_never_confirms_an_unanswered_sip_candidate(
         session = lab.calls.get_session(call_id)
         await asyncio.wait_for(prepared.wait(), 2)
         assert session.answer_committed and session.state == "in_call"
-        assert "sip:bedroom0" in session.endpoint_claims
-        assert not any(leg.endpoint_id == "sip:bedroom0" for leg in session.legs.values())
+        assert "bedroom0" in session.endpoint_claims
+        assert not any(leg.endpoint_id == "bedroom0" for leg in session.legs.values())
         assert not lab.phones[0].invites
         source_projection = phone_states(lab.hass)[session.metadata["source_endpoint_id"]]
         assert any(call["state"] == "confirmed" for call in source_projection["calls"])
-        delivered = [phone_state_dto(update.phones["sip:bedroom0"], peer_readable=lambda _identity: True)
-            for update in updates if "sip:bedroom0" in update.phones]
+        delivered = [phone_state_dto(update.phones["bedroom0"], peer_readable=lambda _identity: True)
+            for update in updates if "bedroom0" in update.phones]
         assert delivered and not any(call["state"] == "confirmed" for phone in delivered for call in phone["calls"]), delivered
-        projected = phone_state_dto(phone_states(lab.hass)["sip:bedroom0"], peer_readable=lambda _identity: True)
-        assert projected["calls"] and projected["calls"][0]["state"] in {"trying", "proceeding"}, projected
-        assert projected["calls"][0]["pickup_available"] is False
+        projected = phone_state_dto(phone_states(lab.hass)["bedroom0"], peer_readable=lambda _identity: True)
+        # This barrier holds only the reservation: no SIP leg or INVITE exists
+        # yet. The answered queue source cannot turn that claim into a dialog.
+        assert not projected["calls"], projected
+        assert projected["state"] not in {"ringing", "in_call"}, projected
         release.set()
         await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
-        await wait_until(lambda: any(leg.endpoint_id == "sip:bedroom0" and leg.state == "remote_ringing"
+        await wait_until(lambda: any(leg.endpoint_id == "bedroom0" and leg.state == "remote_ringing"
             for leg in session.legs.values()))
-        projected = phone_state_dto(phone_states(lab.hass)["sip:bedroom0"], peer_readable=lambda _identity: True)
+        projected = phone_state_dto(phone_states(lab.hass)["bedroom0"], peer_readable=lambda _identity: True)
         assert projected["state"] == "ringing" and projected["calls"][0]["state"] == "early"
         assert projected["calls"][0]["id"] == call_id
         assert projected["calls"][0]["leg_id"] and projected["calls"][0]["pickup_available"] is True
-        leg = next(leg for leg in session.legs.values() if leg.endpoint_id == "sip:bedroom0")
+        leg = next(leg for leg in session.legs.values() if leg.endpoint_id == "bedroom0")
         assert leg.dialog.dialog is None and leg.dialog.last_sip_status_code == 180
         lab.phones[0].answer()
         await wait_for_bridge(lab, call_id)
-        projected = phone_state_dto(phone_states(lab.hass)["sip:bedroom0"], peer_readable=lambda _identity: True)
+        projected = phone_state_dto(phone_states(lab.hass)["bedroom0"], peer_readable=lambda _identity: True)
         assert projected["calls"][0]["state"] == "confirmed" and leg.dialog.dialog is not None
     finally:
         release.set()
@@ -319,7 +321,7 @@ async def test_queue_ringall_commits_one_agent_media_and_wraps_only_after_hangup
     client, audio = await dial_queue(lab)
     session = await wait_for_bridge(lab, client.dialog_ids.call_id)
     assert session.answer_committed
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+    assert session.metadata["dest_endpoint_id"] == "bedroom0"
     assert not lab.manager.waiting and not lab.manager.reservations
     assert not lab.manager.wrap_until
     assert any(request.method == "CANCEL" for request in lab.phones[1].requests)
@@ -341,16 +343,16 @@ async def test_queue_ringall_commits_one_agent_media_and_wraps_only_after_hangup
                 break
     await client.terminate()
     await wait_until(lambda: lab.calls.get_session(client.dialog_ids.call_id) is None)
-    assert lab.manager.wrap_until["sip:bedroom0"] > lab.manager.clock()
+    assert lab.manager.wrap_until["bedroom0"] > lab.manager.clock()
     assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_queue_busy_agent_waits_then_first_waiting_call_gets_the_freed_agent(queue_lab):
     lab = queue_lab
-    lab.manager.agent_states[lab.identity]["sip:bedroom1"] = "paused"
+    lab.manager.agent_states[lab.identity]["bedroom1"] = "paused"
     lab.calls.upsert("already-busy", state="in_call", owner="bridge")
-    lab.calls.claim_endpoint("already-busy", "sip:bedroom0", role="destination")
+    lab.calls.claim_endpoint("already-busy", "bedroom0", role="destination")
     client, _audio = await dial_queue(lab)
     assert not lab.phones[0].invites
     session = lab.calls.get_session(client.dialog_ids.call_id)
@@ -369,12 +371,12 @@ async def test_queue_busy_agent_waits_then_first_waiting_call_gets_the_freed_age
 async def test_two_real_waiting_callers_reach_the_same_agent_in_fifo_order(queue_lab):
     lab = queue_lab
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], wrap_up=0)
-    lab.manager.agent_states[lab.identity]["sip:bedroom1"] = "paused"
+    lab.manager.agent_states[lab.identity]["bedroom1"] = "paused"
     lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="source2", name="Other", username="other", kind=EndpointKind.SIP_ACCOUNT,
                                                 availability="available"))
     lab.roster.append(RosterEntry("other", address="127.0.0.3", metadata={"endpoint_id": "source2"}))
     lab.calls.upsert("already-busy", state="in_call", owner="bridge")
-    lab.calls.claim_endpoint("already-busy", "sip:bedroom0", role="destination")
+    lab.calls.claim_endpoint("already-busy", "bedroom0", role="destination")
     first, _audio = await dial_queue(lab)
     second, _other_audio = await lab.caller(name="Other", address="127.0.0.3")
     result = await second.invite(target="401", remote_host="127.0.0.1", remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
@@ -459,16 +461,16 @@ async def test_failed_queue_fallback_retains_cause_without_claiming_a_committed_
 async def test_queue_fallback_to_another_queue_preserves_original_exit_cause_at_commit(queue_lab):
     lab = queue_lab
     other = "478e08a5a14545e8ad795ec6a4332222"
-    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom1",), "402")
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom1",), "402")
     lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=1)
-    lab.manager.agent_states[other] = {"sip:bedroom1": "available"}
+    lab.manager.agent_states[other] = {"bedroom1": "available"}
     lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{other}")
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], max_wait=1,
         no_agent_wait=5, fallback_timeout="Support")
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
     client, _audio = await dial_queue(lab)
     session = await wait_for_bridge(lab, client.dialog_ids.call_id)
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert session.metadata["dest_endpoint_id"] == "bedroom1"
     exited = [event for event in lab.queue_events if event["event_type"] == "exited" and event["queue_id"] == lab.identity]
     assert len(exited) == 1
     assert exited[0]["reason"] == "queue_timeout" and exited[0]["outcome"] == "timeout"
@@ -490,7 +492,7 @@ async def test_live_sip_paging_group_sends_one_way_pcm_and_caller_bye_closes_eve
     lab.runtime.default_trunk_id = ""
     identity = "780e47a5b85c4563a3390db63be9fd3f"
     data = {"paging_group_id": identity, "name": "Paging", "extension": "402",
-            "members": ["sip:bedroom0", "sip:bedroom1"], "answer_timeout": 1, "timeout": 10}
+            "members": ["bedroom0", "bedroom1"], "answer_timeout": 1, "timeout": 10}
     entry = SimpleNamespace(subentries={identity: SimpleNamespace(subentry_type="paging", subentry_id=identity, data=data)})
     owner = paging.PagingRuntime(lab.hass, entry)
     lab.calls.adopt_component("paging", owner, closer=owner.close)
@@ -555,7 +557,7 @@ async def test_live_sip_paging_group_sends_one_way_pcm_and_caller_bye_closes_eve
 async def test_queue_bridge_owner_is_not_the_completion_barrier(queue_lab, monkeypatch):
     from custom_components.voip_stack import outbound_bridge_commit
     lab = queue_lab
-    lab.manager.agent_states[lab.identity]["sip:bedroom1"] = "paused"
+    lab.manager.agent_states[lab.identity]["bedroom1"] = "paused"
     preparing, release = asyncio.Event(), asyncio.Event()
     original = outbound_bridge_commit.async_start_sip_bridge_media
     async def start(relay):
@@ -574,7 +576,7 @@ async def test_queue_bridge_owner_is_not_the_completion_barrier(queue_lab, monke
         assert task is not None and not task.done()
         release.set()
         await asyncio.wait_for(asyncio.shield(task), 3)
-        assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+        assert session.metadata["dest_endpoint_id"] == "bedroom0"
         assert not lab.manager.waiting and not lab.manager.reservations
     finally:
         release.set()
@@ -598,9 +600,9 @@ async def test_runtime_shutdown_never_originates_the_waiting_call_fallback(queue
 async def test_queue_to_distinct_queue_commits_one_ticket_and_preserves_source_until_commit(queue_lab):
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
-    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom0",))
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
     lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=1)
-    lab.manager.agent_states[other] = {"sip:bedroom0": "available"}
+    lab.manager.agent_states[other] = {"bedroom0": "available"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", extension="405", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
@@ -614,7 +616,7 @@ async def test_queue_to_distinct_queue_commits_one_ticket_and_preserves_source_u
     assert result.status == "connected", result
     assert old.detached and old.ticket.closed
     await wait_for_bridge(lab, session.call_id)
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+    assert session.metadata["dest_endpoint_id"] == "bedroom0"
     assert original_media.closed.is_set()
     assert len(lab.phones[0].invites) == 1
     assert not lab.manager.waiting and not lab.manager.reservations
@@ -627,9 +629,9 @@ async def test_queue_to_distinct_queue_commits_one_ticket_and_preserves_source_u
 async def test_rejected_queue_transfer_leaves_original_ticket_media_and_claims_intact(queue_lab, blocked):
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
-    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom0",))
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
     lab.manager.policies[other] = QueuePolicy(max_wait=5, max_waiting=1, enabled=blocked != "disabled")
-    lab.manager.agent_states[other] = {"sip:bedroom0": "paused"}
+    lab.manager.agent_states[other] = {"bedroom0": "paused"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
     if blocked == "full":
@@ -657,9 +659,9 @@ async def test_rejected_queue_transfer_leaves_original_ticket_media_and_claims_i
 async def test_disabled_queue_forward_uses_its_fallback_before_retiring_source_queue(queue_lab, automatic):
     lab = queue_lab
     other = "1f37a89d29a9436c9ff348d94b1e7777"
-    lab.manager.definitions[other] = QueueDefinition(other, "Closed queue", ("sip:bedroom0",))
+    lab.manager.definitions[other] = QueueDefinition(other, "Closed queue", ("bedroom0",))
     lab.manager.policies[other] = QueuePolicy(enabled=False, fallback_disabled="bedroom1")
-    lab.manager.agent_states[other] = {"sip:bedroom0": "paused"}
+    lab.manager.agent_states[other] = {"bedroom0": "paused"}
     lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{other}")
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity],
@@ -682,7 +684,7 @@ async def test_disabled_queue_forward_uses_its_fallback_before_retiring_source_q
         assert not lab.phones[0].invites
         lab.phones[1].answer()
         assert (await asyncio.wait_for(asyncio.shield(task), 2)).status == "connected"
-        assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+        assert session.metadata["dest_endpoint_id"] == "bedroom1"
         exited = [event for event in lab.queue_events if event["event_type"] == "exited"]
         source = [event for event in exited if event["queue_id"] == lab.identity]
         target = [event for event in exited if event["queue_id"] == other]
@@ -700,9 +702,9 @@ async def test_disabled_queue_forward_uses_its_fallback_before_retiring_source_q
 async def test_disabled_queue_fallback_cycle_rejects_before_retiring_original_application(queue_lab):
     lab = queue_lab
     for identity, name, fallback in (("closed-b", "Closed B", "Closed C"), ("closed-c", "Closed C", "Closed B")):
-        lab.manager.definitions[identity] = QueueDefinition(identity, name, ("sip:bedroom0",))
+        lab.manager.definitions[identity] = QueueDefinition(identity, name, ("bedroom0",))
         lab.manager.policies[identity] = QueuePolicy(enabled=False, fallback_disabled=fallback)
-        lab.manager.agent_states[identity] = {"sip:bedroom0": "paused"}
+        lab.manager.agent_states[identity] = {"bedroom0": "paused"}
         lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{identity}")
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], no_agent_wait=5)
@@ -729,9 +731,9 @@ async def test_queue_disabled_after_staging_rolls_back_only_the_new_ticket(queue
     from custom_components.voip_stack.queue_call import QueueCall
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
-    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("sip:bedroom0",))
+    lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
     lab.manager.policies[other] = QueuePolicy(max_wait=5)
-    lab.manager.agent_states[other] = {"sip:bedroom0": "paused"}
+    lab.manager.agent_states[other] = {"bedroom0": "paused"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
@@ -780,15 +782,15 @@ async def test_round_robin_rings_one_phone_then_pauses_only_the_real_missed_offe
     session = lab.calls.get_session(client.dialog_ids.call_id)
     await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
     assert not lab.phones[1].invites
-    assert tuple(lab.manager.reservations) == ("sip:bedroom0",)
-    assert not lab.runtime.endpoints.get("sip:bedroom1").active_call_id
+    assert tuple(lab.manager.reservations) == ("bedroom0",)
+    assert not lab.runtime.endpoints.get("bedroom1").active_call_id
     await wait_for_bridge(lab, session.call_id)
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert session.metadata["dest_endpoint_id"] == "bedroom1"
     assert len(lab.phones[0].invites) == len(lab.phones[1].invites) == 1
-    assert lab.manager.agent_states[lab.identity]["sip:bedroom0"] == "paused"
-    assert lab.manager.agent_stats[lab.identity]["sip:bedroom0"]["consecutive_misses"] == 1
-    assert lab.manager.agent_stats[lab.identity]["sip:bedroom0"]["pause_reason"] == "no_answer"
-    assert lab.manager.agent_stats[lab.identity]["sip:bedroom1"]["consecutive_misses"] == 0
+    assert lab.manager.agent_states[lab.identity]["bedroom0"] == "paused"
+    assert lab.manager.agent_stats[lab.identity]["bedroom0"]["consecutive_misses"] == 1
+    assert lab.manager.agent_stats[lab.identity]["bedroom0"]["pause_reason"] == "no_answer"
+    assert lab.manager.agent_stats[lab.identity]["bedroom1"]["consecutive_misses"] == 0
     await client.terminate()
     await asyncio.wait_for(session.terminated.wait(), 2)
 
@@ -797,12 +799,12 @@ async def test_round_robin_rings_one_phone_then_pauses_only_the_real_missed_offe
 async def test_ordered_strategy_uses_saved_order_and_never_claims_unoffered_phone(queue_lab):
     lab = queue_lab
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], strategy="ordered",
-        agent_order=("sip:bedroom1", "sip:bedroom0"), auto_pause_after=1)
+        agent_order=("bedroom1", "bedroom0"), auto_pause_after=1)
     client, _audio = await dial_queue(lab)
     session = await wait_for_bridge(lab, client.dialog_ids.call_id)
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert session.metadata["dest_endpoint_id"] == "bedroom1"
     assert not lab.phones[0].invites and len(lab.phones[1].invites) == 1
-    assert not lab.runtime.endpoints.get("sip:bedroom0").active_call_id
+    assert not lab.runtime.endpoints.get("bedroom0").active_call_id
     await client.terminate()
     await asyncio.wait_for(session.terminated.wait(), 2)
 
@@ -817,8 +819,8 @@ async def test_caller_hangup_while_agent_rings_is_not_an_auto_pause_miss(queue_l
     await asyncio.wait_for(lab.phones[0].invited.wait(), 2)
     await client.terminate()
     await asyncio.wait_for(session.terminated.wait(), 2)
-    assert lab.manager.agent_states[lab.identity]["sip:bedroom0"] == "available"
-    assert lab.manager.agent_stats[lab.identity]["sip:bedroom0"]["consecutive_misses"] == 0
+    assert lab.manager.agent_states[lab.identity]["bedroom0"] == "available"
+    assert lab.manager.agent_stats[lab.identity]["bedroom0"]["consecutive_misses"] == 0
     assert not lab.phones[1].invites
 
 
@@ -914,7 +916,7 @@ async def test_browser_queue_candidate_rejects_only_its_offer_and_sip_sibling_ca
     lab.roster.append(RosterEntry("Candidate", metadata={"local_ha": True,
         "endpoint_id": candidate.endpoint_id, "endpoint_kind": "browser"}))
     lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
-        members=("sip:bedroom0", candidate.endpoint_id))
+        members=("bedroom0", candidate.endpoint_id))
     lab.manager.agent_states[lab.identity] = {identity: "available" for identity in lab.manager.definitions[lab.identity].members}
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
@@ -941,7 +943,7 @@ async def test_browser_queue_candidate_rejects_only_its_offer_and_sip_sibling_ca
         assert len(phone.invites) == 1
         phone.answer()
         session = await wait_for_bridge(lab, call_id)
-        assert session.metadata["dest_endpoint_id"] == "sip:bedroom0"
+        assert session.metadata["dest_endpoint_id"] == "bedroom0"
         await lab.hass.services.async_call("voip_stack", "hangup", {
             "device_id": source.device_id, "call_id": call_id,
         }, blocking=True)
@@ -975,7 +977,7 @@ async def test_queue_rejection_fallback_does_not_answer_until_target_accepts(que
     lab.phones[1].answer()
     assert await client.wait_for_final(timeout=2) == "in_call"
     session = await wait_for_bridge(lab, client.dialog_ids.call_id)
-    assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+    assert session.metadata["dest_endpoint_id"] == "bedroom1"
     assert not lab.phones[0].invites
     rejected = [event for event in lab.queue_events
         if event["event_type"] == "exited" and event["call_id"] == client.dialog_ids.call_id]
@@ -1078,7 +1080,7 @@ async def test_nonforwardable_source_with_bad_trunk_is_not_terminated(queue_lab)
         await client.terminate()
 
 
-async def bind_shared_queue_account(lab, endpoint_id="sip:bedroom0"):
+async def bind_shared_queue_account(lab, endpoint_id="bedroom0"):
     from custom_components.voip_stack.ha_bindings import HaCardBindings
 
     endpoint = lab.runtime.endpoints.require(endpoint_id)
@@ -1099,7 +1101,7 @@ async def bind_shared_queue_account(lab, endpoint_id="sip:bedroom0"):
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_external_call_does_not_claim_the_preferred_shared_account(queue_lab):
     lab = queue_lab
-    endpoint, bindings = await bind_shared_queue_account(lab, "sip:bedroom1")
+    endpoint, bindings = await bind_shared_queue_account(lab, "bedroom1")
     lab.runtime.preferred_phone_device_id = endpoint.device_id
     for phone in lab.phones:
         phone.auto_answer = False
@@ -1149,7 +1151,7 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
         lab.roster.append(RosterEntry(endpoint.name, metadata={"local_ha": True,
             "endpoint_id": endpoint.endpoint_id, "endpoint_kind": "browser"}))
         lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
-            members=("sip:bedroom0", endpoint.endpoint_id))
+            members=("bedroom0", endpoint.endpoint_id))
         lab.manager.agent_states[lab.identity] = {identity: "available" for identity in lab.manager.definitions[lab.identity].members}
         lab.phones[0].auto_answer = False
     client, audio = await dial_queue(lab)
@@ -1188,7 +1190,7 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
         assert (await asyncio.wait_for(asyncio.shield(forwarding), 2)).status == "connected"
         ended = [event for event in lab.queue_events if event["event_type"] == "offer_ended"]
         started = [event for event in lab.queue_events if event["event_type"] == "offer_started"]
-        assert {event["endpoint_id"] for event in ended} == {endpoint.endpoint_id, "sip:bedroom0"}
+        assert {event["endpoint_id"] for event in ended} == {endpoint.endpoint_id, "bedroom0"}
         assert sorted((e["attempt_id"], e["endpoint_id"]) for e in started) == sorted(
             (e["attempt_id"], e["endpoint_id"]) for e in ended)
         winning = [event for event in ended if event["endpoint_id"] == endpoint.endpoint_id]
@@ -1204,7 +1206,10 @@ async def test_browser_queue_winner_finishes_its_real_offer_only_after_media_com
             await asyncio.sleep(float(fmt.frame_ms) / 1000)
         await wait_until(lambda: any(any(frame) for frame in browser.frames))
         voiced = next(frame for frame in browser.frames if any(frame))
-        assert set(struct.unpack(f"<{len(voiced)//2}h", voiced)) == {2310}
+        from custom_components.voip_stack.core.audio_format import parse_audio_format_token
+        receive = parse_audio_format_token(browser.contracts[-1]["rx_format"])
+        assert len(voiced) == receive.nominal_frame_bytes
+        assert all(abs(value - 2310) <= 1 for value in struct.unpack(f"<{len(voiced)//2}h", voiced)[-64:])
         assert any(request.method == ("ACK" if shared_transport else "CANCEL") for request in lab.phones[0].requests)
         await client.terminate()
         await asyncio.wait_for(session.terminated.wait(), 2)
@@ -1267,22 +1272,22 @@ async def test_caller_member_does_not_mask_no_agents_but_other_busy_members_do(q
         lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
         monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
         monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
-    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity], members=(source_id, "sip:bedroom0"))
-    lab.manager.agent_states[lab.identity] = {source_id: "available", "sip:bedroom0": "logged_out" if other_agent == "logged_out" else "available"}
+    lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity], members=(source_id, "bedroom0"))
+    lab.manager.agent_states[lab.identity] = {source_id: "available", "bedroom0": "logged_out" if other_agent == "logged_out" else "available"}
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity],
         max_wait=2, no_agent_wait=0.1, retry_delay=0.05, fallback_no_agents="bedroom1")
     other_session = other_ticket = None
     if other_agent in {"busy", "reserved"}:
         other_session = lab.calls.upsert("other-owned-call", state="in_call", owner="bridge")
         if other_agent == "busy":
-            lab.calls.claim_endpoint(other_session.call_id, "sip:bedroom0", role="destination")
+            lab.calls.claim_endpoint(other_session.call_id, "bedroom0", role="destination")
         else:
             other_id = "eafcd6396efa4be7ad63e052992dce36"
-            lab.manager.definitions[other_id] = QueueDefinition(other_id, "Other queue", ("sip:bedroom0",))
+            lab.manager.definitions[other_id] = QueueDefinition(other_id, "Other queue", ("bedroom0",))
             lab.manager.policies[other_id] = QueuePolicy(max_wait=5)
-            lab.manager.agent_states[other_id] = {"sip:bedroom0": "available"}
+            lab.manager.agent_states[other_id] = {"bedroom0": "available"}
             other_ticket = lab.manager.enqueue(other_id, other_session.call_id, other_session.generation)
-            assert lab.manager.claim_turn(other_ticket) == ("sip:bedroom0",)
+            assert lab.manager.claim_turn(other_ticket) == ("bedroom0",)
     session = client = None
     try:
         if source is not None:

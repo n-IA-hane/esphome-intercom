@@ -51,7 +51,7 @@ def test_memberships_include_offline_phones_and_retained_native_config(monkeypat
         endpoint(endpoint_id="direct", name="Offline direct", kind="esphome", queues="Support")])
     monkeypatch.setattr(runtime_data, "runtime_data", lambda _hass: runtime)
     assert dict(membership.iter_phone_queue_memberships(object(), entry)) == {
-        "browser:one": ("Support",), "esphome:esp": ("700",), "direct": ("Support",)}
+        "browser:one": ("Support",), "esp_84c7bb000001": ("700",), "direct": ("Support",)}
 
 
 def test_pending_and_reconnect_snapshots_cannot_restore_removed_memberships():

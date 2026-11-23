@@ -24,6 +24,7 @@ class ControlLoadTest(unittest.IsolatedAsyncioTestCase):
                 return sip_listener.SipInviteResult(180, "Ringing", defer_final=True)
             return sip_listener.SipInviteResult(200, "OK", answer_sdp=sdp.build_answer_directional(
                 "127.0.0.1", "127.0.0.1", 41000, invite.send_format, invite.recv_format,
+                recv_formats=invite.recv_formats, dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp))
 
         server = None

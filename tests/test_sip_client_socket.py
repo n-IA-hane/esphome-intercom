@@ -35,6 +35,16 @@ from .voip_phase1_support import (
     unittest,
 )
 
+sip_server_invite = _load_intercom_module("sip_server_invite")
+sip_client_types = _load_intercom_module("sip_client_types")
+
+
+def _chosen_answer(invite, host, port):
+    """Serialize the real receiver contract supplied to the local handler."""
+    return sdp.build_answer_directional(host, host, port,
+        invite.send_format, invite.recv_format, recv_formats=invite.recv_formats,
+        dtmf_direction=invite.dtmf_direction, remote_sdp=invite.remote_sdp)
+
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
     async def test_malformed_numeric_messages_do_not_end_the_client_receiver(self):
@@ -119,10 +129,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
     def test_browser_audio_message_budget_reserves_renegotiable_encoder_pcm(self):
         view = _load_audio_ws_runtime_module()
         self.assertEqual(view._browser_audio_message_limit(None), 4096)
-        for encoding, rate, channels, duration, expected in (
-            ("OPUS", 48000, 2, 2.5, 5761),
-            ("OPUS", 48000, 2, 60, 5761),
-            ("L16", 16000, 1, 20, 5761),
+        for encoding, rate, channels, duration in (
+            ("OPUS", 48000, 2, 2.5),
+            ("OPUS", 48000, 2, 60),
+            ("L16", 16000, 1, 20),
+            ("L16", 48000, 2, 60),
+            ("L24", 48000, 2, 20),
         ):
             with self.subTest(encoding=encoding, duration=duration):
                 frame = sdp.RtpPcmFormat(96, encoding, rate, channels, duration)
@@ -130,13 +142,19 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                     call_id="budget", local_rtp_port=40000, remote_rtp_host="",
                     remote_rtp_port=0, send_format=frame, recv_format=frame,
                 )
-                self.assertEqual(view._browser_audio_message_limit(session), expected)
-                self.assertGreaterEqual(expected, frame.audio_format.nominal_frame_bytes + 1)
+                edge = view.plan_browser_audio(frame, frame)
+                self.assertEqual((edge.microphone.sample_rate, edge.microphone.frame_ms), (48000, 10))
+                self.assertEqual(frame.frame_ms, duration)
+                self.assertEqual(edge.microphone.nominal_frame_samples, 480)
+                self.assertGreaterEqual(view._browser_audio_message_limit(session), edge.microphone.nominal_frame_bytes + 1)
+                # One 10 ms capture quantum fits every supported PCM width and
+                # both channels, including a codec switch on the same socket.
+                self.assertLessEqual(view._browser_audio_message_limit(session), 4096)
         session.send_format=sdp.RtpPcmFormat(96,"L16",48000,1,10)
         before_claim=view._browser_audio_message_limit(session)
         session.send_format=sdp.RtpPcmFormat(98,"OPUS",48000,2,60)
         self.assertEqual(before_claim,view._browser_audio_message_limit(session))
-        self.assertGreaterEqual(before_claim,session.send_format.audio_format.nominal_frame_bytes+1)
+        self.assertGreaterEqual(before_claim,view.plan_browser_audio(session.send_format,session.recv_format).microphone.nominal_frame_bytes+1)
         session.local_rtp_port=0
         self.assertEqual(view._browser_audio_message_limit(session),4096)
         session.local_rtp_port=40000
@@ -318,7 +336,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         manager._dialog_endpoints = lambda: iter((owner,))  # type: ignore[method-assign] # noqa: SLF001
 
         self.assertTrue(await manager.async_send_dtmf_info("incoming", "7"))
-        owner.send_dtmf_info.assert_awaited_once_with("incoming", "7")
+        owner.send_dtmf_info.assert_awaited_once_with("incoming", "7", duration_ms=160)
 
     async def test_endpoint_manager_waits_for_owned_bye_and_preserves_other_dialog(self) -> None:
         sent = asyncio.Queue()
@@ -327,7 +345,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_ip="192.0.2.10", local_rtp_port=40000,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,
-            send_override=lambda raw, addr: sent.put_nowait((raw, addr)),
+            send_override=lambda raw, addr: not sent.put_nowait((raw, addr)),
         )
         for identity in ("parked", "unrelated"):
             request = sip.parse_message(sip.build_request("INVITE", "sip:700@192.0.2.10", [
@@ -536,12 +554,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
         offer = sdp.build_offer("192.0.2.10", "192.0.2.10", 41000, [fmt]).encode()
 
-        def capture(data: bytes, _addr: tuple[str, int]) -> None:
+        def capture(data: bytes, _addr: tuple[str, int]) -> bool:
             sent.append(data)
             if sum(
                 sip.parse_message(raw).status_code == 180 for raw in sent
             ) >= 2:
                 repeated.set()
+            return True
 
         async def on_invite(_invite):
             return sip_listener.SipInviteResult(180, "Ringing", defer_final=True)
@@ -572,8 +591,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         addr = ("192.0.2.10", 5060)
         try:
             with (
-                patch.object(sip_listener, "_SIP_T1", 0.005),
-                patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.1),
+                patch.object(sip_server_invite, "_SIP_T1", 0.005),
+                patch.object(sip_server_invite, "_INVITE_2XX_TIMEOUT", 0.1),
             ):
                 await endpoint._handle_datagram(invite, addr)
                 await asyncio.wait_for(repeated.wait(), timeout=0.1)
@@ -635,7 +654,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _invite: None,  # type: ignore[arg-type]
             on_refer=on_refer,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         call_id = "listener-refer"
         addr = ("192.0.2.10", 5060)
@@ -728,10 +747,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
 
         async def on_invite(_invite):
+            nonlocal answer
+            answer = _chosen_answer(_invite, endpoint.local_ip, endpoint.local_rtp_port)
             return sip_listener.SipInviteResult(
                 183,
                 "Session Progress",
                 answer_sdp=answer,
+                media_contract=_invite,
                 defer_final=True,
             )
 
@@ -740,7 +762,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=42000,
             supported_formats=[fmt],
             on_invite=on_invite,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         invite = sip.build_request(
             "INVITE",
@@ -1079,7 +1101,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=42000,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: self.fail("short timer reached call routing"),
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         invite = sip.build_request(
             "INVITE",
@@ -1110,7 +1132,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=42000,
             supported_formats=[fmt],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, addr: sent.append((data, addr)),
+            send_override=lambda data, addr: not sent.append((data, addr)),
         )
         request = sip.parse_message(
             sip.build_request(
@@ -2303,15 +2325,20 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 type=WSMsgType.TEXT, data='{"type":"audio_ready"}',
             ))
             await wait_until(lambda: bool(ws.binary))
-            self.assertEqual(
-                audio_ws.decode_audio_frame(ws.binary[0]),
-                sip_client.RtpPayloadDecoder(pcma).decode(early_payload),
-            )
-            for _ in range(6):
+            played = audio_ws.decode_audio_frame(ws.binary[0])
+            receive = audio_format.parse_audio_format_token(ws.json[0]["rx_format"])
+            self.assertEqual(len(played), receive.nominal_frame_bytes)
+            expected_level = int.from_bytes(sip_client.RtpPayloadDecoder(pcma).decode(early_payload)[-2:],
+                                            "little", signed=True)
+            self.assertTrue(all(abs(int.from_bytes(played[index:index + 2], "little", signed=True) - expected_level) <= 1
+                for index in range(len(played) - 128, len(played), 2)))
+            capture = audio_format.parse_audio_format_token(ws.json[0]["tx_format"])
+            browser_greeting = (3000).to_bytes(2, "little", signed=True) * capture.nominal_frame_samples
+            for _ in range(round(120 / capture.frame_ms)):
                 await ws.messages.put(
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
-                        data=audio_ws.encode_audio_frame(greeting_pcm),
+                        data=audio_ws.encode_audio_frame(browser_greeting),
                     )
                 )
             expected = sip_client.RtpPayloadDecoder(pcma).decode(greeting_payload)
@@ -2427,6 +2454,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await wait_until(lambda: bool(ws.json))
+            native = []
+            session.observe_audio(lambda side, pcm, fmt: native.append((side, pcm, fmt)))
             first_pcm = bytes(
                 (index % 251 for index in range(pcma.audio_format.nominal_frame_bytes))
             )
@@ -2454,7 +2483,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await wait_until(lambda: bool(ws.binary))
             expected_first = sip_client.RtpPayloadDecoder(pcma).decode(first_payload)
             self.assertEqual(len(ws.binary), 1)
-            self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]), expected_first)
+            self.assertIn(("right", expected_first, pcma.audio_format), native)
+            first_edge = audio_format.parse_audio_format_token(ws.json[0]["rx_format"])
+            self.assertEqual(len(audio_ws.decode_audio_frame(ws.binary[-1])), first_edge.nominal_frame_bytes)
 
             session.send_format = l16
             session.recv_format = l16
@@ -2476,21 +2507,22 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             )
             await loop.sock_sendto(remote, second_packet, ("127.0.0.1", local_port))
             await wait_until(lambda: len(ws.binary) >= 2)
-            self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]), second_pcm)
+            self.assertIn(("right", second_pcm, l16.audio_format), native)
+            edge = audio_format.parse_audio_format_token(ws.json[-1]["rx_format"])
+            self.assertEqual(len(audio_ws.decode_audio_frame(ws.binary[-1])), edge.nominal_frame_bytes)
 
-            await ws.messages.put(
-                types.SimpleNamespace(
-                    type=WSMsgType.BINARY,
-                    data=audio_ws.encode_audio_frame(second_pcm),
-                )
-            )
+            capture = audio_format.parse_audio_format_token(ws.json[-1]["tx_format"])
+            microphone = (1234).to_bytes(2, "little", signed=True) * capture.nominal_frame_samples
+            for _ in range(12):
+                await ws.messages.put(types.SimpleNamespace(type=WSMsgType.BINARY,
+                    data=audio_ws.encode_audio_frame(microphone)))
             await asyncio.sleep(0.05)
             if runtime.done():
                 self.fail(f"audio runtime ended during re-INVITE: {runtime.exception()!r}")
             decoded_tx = None
             deadline = loop.time() + 1.0
             decoder = sip_client.RtpPayloadDecoder(l16)
-            while loop.time() < deadline and decoded_tx != second_pcm:
+            while loop.time() < deadline:
                 data = await asyncio.wait_for(
                     loop.sock_recv(remote, 65535),
                     timeout=max(0.01, deadline - loop.time()),
@@ -2498,13 +2530,19 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 packet = rtp.parse_packet(data)
                 if packet.payload_type == l16.payload_type:
                     decoded_tx = decoder.decode(packet.payload)
-            self.assertEqual(decoded_tx, second_pcm)
+                    if all(abs(int.from_bytes(decoded_tx[index:index + 2], "little", signed=True) - 1234) <= 1
+                           for index in range(0, len(decoded_tx), 2)):
+                        break
+            self.assertIsNotNone(decoded_tx)
+            self.assertEqual(len(decoded_tx), l16.audio_format.nominal_frame_bytes)
+            self.assertTrue(all(abs(int.from_bytes(decoded_tx[index:index + 2], "little", signed=True) - 1234) <= 1
+                for index in range(0, len(decoded_tx), 2)))
 
             for _index in range(40):
                 await ws.messages.put(
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
-                        data=audio_ws.encode_audio_frame(second_pcm),
+                        data=audio_ws.encode_audio_frame(microphone),
                     )
                 )
             burst: list[rtp.RtpPacket] = []
@@ -2676,6 +2714,11 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await loop.sock_sendto(
                 remote, audio_packet, ("127.0.0.1", local_port)
             )
+            # This peer starts a new SSRC after a separate event source; the
+            # second fresh audio packet satisfies the guarded source transition.
+            await loop.sock_sendto(remote, rtp.build_packet(rtp.RtpPacket(
+                payload_type=pcma.payload_type, sequence=5, timestamp=1554, ssrc=7,
+                payload=sip_client.RtpPayloadEncoder(pcma).encode(pcm))), ("127.0.0.1", local_port))
             deadline = loop.time() + 1.0
             while not ws.binary and loop.time() < deadline:
                 await asyncio.sleep(0.01)
@@ -2740,7 +2783,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         close_task.cancel()
         await asyncio.sleep(0)
-        self.assertFalse(close_task.done())
+        self.assertTrue(close_task.done())
+        self.assertIsNotNone(client._close_task)
+        self.assertFalse(client._close_task.done())
         self.assertEqual(reservation.releases, 1)
         self.assertEqual(audio_socket.fileno(), -1)
         self.assertIsNone(client.audio_rtp_socket)
@@ -2750,6 +2795,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         tcp_writer.release.set()
         with self.assertRaises(asyncio.CancelledError):
             await close_task
+        await client.close()
 
         self.assertEqual(reservation.releases, 1)
         self.assertEqual(audio_socket.fileno(), -1)
@@ -3099,10 +3145,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(read_cancelled.wait(), 1)
             closer.cancel()
             await asyncio.sleep(0)
-            self.assertFalse(closer.done())
+            self.assertTrue(closer.done())
+            self.assertIsNotNone(client._close_task)
+            self.assertFalse(client._close_task.done())
             release_read.set()
             with self.assertRaises(asyncio.CancelledError):
                 await closer
+            await client.close()
             self.assertIsNone(client._dialog_dispatcher)
         finally:
             release_read.set()
@@ -3355,12 +3404,14 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 server_audio,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
                 video_port=server_video,
                 video_format=invite.recv_video_format,
                 video_direction="sendrecv",
             )
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=invite)
 
         server = sip_listener.SipUdpServer(
             host=local,
@@ -3442,12 +3493,14 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 server_audio,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
                 video_port=server_video,
                 video_format=low_answer,
                 video_direction="sendrecv",
             )
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=invite)
 
         server = sip_listener.SipUdpServer(
             host=local,
@@ -3838,7 +3891,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                         "error_type=ConnectionRefusedError", "\n".join(logs.output)
                     )
                     self.assertIn(
-                        "reason=connection_rejected_before_send", "\n".join(logs.output)
+                        "SIP initial target unavailable", "\n".join(logs.output)
                     )
                     self.assertEqual(client.dialog.local_audio_direction, "sendrecv")
                     self.assertEqual(client.dialog.local_video_direction,
@@ -4051,13 +4104,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                                 "transport=tcp", invites[0].header("Contact")
                             )
                             self.assertIn(
-                                "reason=connection_rejected_before_send",
+                                "SIP initial target unavailable",
                                 "\n".join(logs.output),
                             )
                     else:
                         self.assertEqual(invites, [])
                         self.assertNotIn(
-                            "reason=connection_rejected_before_send",
+                            "SIP initial target unavailable",
                             "\n".join(logs.output),
                         )
                 finally:
@@ -4401,7 +4454,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40002,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 32)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
 
         register = (
@@ -4429,14 +4482,16 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         answer = sdp.build_answer_directional("192.168.1.10", "192.168.1.10", 40000, rtp_fmt, rtp_fmt)
 
         async def on_invite(_invite):
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
+            nonlocal answer
+            answer = _chosen_answer(_invite, endpoint.local_ip, endpoint.local_rtp_port)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=_invite)
 
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.168.1.10",
             local_rtp_port=40000,
             supported_formats=[fmt],
             on_invite=on_invite,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
             signaling_transport="TCP",
         )
         invite = sip.build_request(
@@ -4475,16 +4530,19 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             rtp_fmt,
         )
 
-        def capture(data: bytes, _addr: tuple[str, int]) -> None:
+        def capture(data: bytes, _addr: tuple[str, int]) -> bool:
             sent.append(data)
             message = sip.parse_message(data)
             if message.status_code == 200 and sum(
                 sip.parse_message(raw).status_code == 200 for raw in sent
             ) >= 2:
                 second_2xx.set()
+            return True
 
         async def on_invite(_invite):
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
+            nonlocal answer
+            answer = _chosen_answer(_invite, endpoint.local_ip, endpoint.local_rtp_port)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=_invite)
 
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.168.1.10",
@@ -4510,9 +4568,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         try:
             with (
-                patch.object(sip_listener, "_SIP_T1", 0.005),
-                patch.object(sip_listener, "_SIP_T2", 0.01),
-                patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.1),
+                patch.object(sip_server_invite, "_SIP_T1", 0.005),
+                patch.object(sip_server_invite, "_SIP_T2", 0.01),
+                patch.object(sip_server_invite, "_INVITE_2XX_TIMEOUT", 0.1),
             ):
                 await endpoint._handle_datagram(invite, addr)
                 await asyncio.wait_for(second_2xx.wait(), timeout=0.2)
@@ -4548,10 +4606,11 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         retransmitted = asyncio.Event()
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
 
-        def capture(data: bytes, _addr: tuple[str, int]) -> None:
+        def capture(data: bytes, _addr: tuple[str, int]) -> bool:
             sent.append(data)
             if sip.parse_message(data).status_code == 200:
                 retransmitted.set()
+            return True
 
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.0.2.20",
@@ -4587,9 +4646,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         try:
             with (
-                patch.object(sip_listener, "_SIP_T1", 0.005),
-                patch.object(sip_listener, "_SIP_T2", 0.01),
-                patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.1),
+                patch.object(sip_server_invite, "_SIP_T1", 0.005),
+                patch.object(sip_server_invite, "_SIP_T2", 0.01),
+                patch.object(sip_server_invite, "_INVITE_2XX_TIMEOUT", 0.1),
             ):
                 endpoint._arm_invite_2xx(
                     dialog,
@@ -4637,7 +4696,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         request = sip.parse_message(
             sip.build_request(
@@ -4664,9 +4723,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         endpoint.active_dialogs["ack-timeout-call"] = dialog
 
         with (
-            patch.object(sip_listener, "_SIP_T1", 0.001),
-            patch.object(sip_listener, "_SIP_T2", 0.002),
-            patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.006),
+            patch.object(sip_server_invite, "_SIP_T1", 0.001),
+            patch.object(sip_server_invite, "_SIP_T2", 0.002),
+            patch.object(sip_server_invite, "_INVITE_2XX_TIMEOUT", 0.006),
         ):
             endpoint._arm_invite_2xx(
                 dialog,
@@ -4705,7 +4764,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[fmt],
             on_invite=on_invite,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         invite = sip.build_request(
             "INVITE",
@@ -4734,7 +4793,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
         self.assertEqual(sip.parse_message(sent[-1]).status_code, 180)
 
-        self.assertTrue(endpoint.send_final_response("dedupe-call", 200, "OK", answer_sdp=answer))
+        chosen = endpoint.pending_invites["dedupe-call"].identity
+        answer = _chosen_answer(chosen, endpoint.local_ip, endpoint.local_rtp_port)
+        self.assertTrue(endpoint.send_final_response("dedupe-call", 200, "OK", answer_sdp=answer, media_contract=chosen))
         await endpoint._handle_datagram(invite, addr)
         replay = sip.parse_message(sent[-1])
         self.assertEqual(replay.status_code, 200)
@@ -4759,10 +4820,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
 
         async def on_invite(_invite):
+            nonlocal answer
+            answer = _chosen_answer(_invite, endpoint.local_ip, endpoint.local_rtp_port)
             return sip_listener.SipInviteResult(
                 183,
                 "Session Progress",
                 answer_sdp=answer,
+                media_contract=_invite,
                 defer_final=True,
             )
 
@@ -4771,7 +4835,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[fmt],
             on_invite=on_invite,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         invite = sip.build_request(
             "INVITE",
@@ -4803,7 +4867,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         options = sip.build_request(
             "OPTIONS",
@@ -4835,7 +4899,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         options = sip.build_request(
             "OPTIONS",
@@ -4876,7 +4940,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=on_invite,
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         invite = sip.build_request(
             "INVITE",
@@ -4908,7 +4972,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
         offer = sdp.build_offer("192.0.2.10", "192.0.2.10", 40900, [fmt]).encode()
 
-        def capture(data: bytes, _addr: tuple[str, int]) -> None:
+        def capture(data: bytes, _addr: tuple[str, int]) -> bool:
             sent.append(data)
             finals = [
                 message
@@ -4917,6 +4981,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             ]
             if len(finals) >= 2:
                 retransmitted.set()
+            return True
 
         async def on_invite(_invite):
             return sip_listener.SipInviteResult(486, "Busy Here", decline_reason="busy")
@@ -4943,9 +5008,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
         try:
             with (
-                patch.object(sip_listener, "_SIP_T1", 0.002),
-                patch.object(sip_listener, "_SIP_T2", 0.004),
-                patch.object(sip_listener, "_INVITE_NON2XX_TIMEOUT", 0.1),
+                patch.object(sip_server_invite, "_SIP_T1", 0.002),
+                patch.object(sip_server_invite, "_SIP_T2", 0.004),
+                patch.object(sip_server_invite, "_INVITE_NON2XX_TIMEOUT", 0.1),
             ):
                 await endpoint._handle_datagram(invite, ("192.0.2.10", 5060))
                 await asyncio.wait_for(retransmitted.wait(), timeout=0.2)
@@ -5003,7 +5068,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=on_invite,
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         invite = sip.build_request(
             "INVITE",
@@ -5020,7 +5085,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
         task = asyncio.create_task(endpoint._handle_datagram(invite, ("192.168.1.48", 5060)))
         await started.wait()
-        self.assertTrue(endpoint.send_final_response("fast-answer-call", 200, "OK", answer_sdp=answer))
+        chosen = endpoint.pending_invites["fast-answer-call"].identity
+        answer = _chosen_answer(chosen, endpoint.local_ip, endpoint.local_rtp_port)
+        self.assertTrue(endpoint.send_final_response("fast-answer-call", 200, "OK", answer_sdp=answer, media_contract=chosen))
         release.set()
         await task
 
@@ -5049,7 +5116,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=on_invite,
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         headers = [
             ("Via", "SIP/2.0/UDP 192.168.1.48:5060;branch=z9hG4bKcancelwait"),
@@ -5087,7 +5154,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         addr = ("192.168.1.48", 5060)
 
@@ -5161,6 +5228,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 42000,
                 negotiated.send,
                 negotiated.recv,
+                recv_formats=negotiated.recv_formats,
+                dtmf_direction=negotiated.dtmf_direction,
                 remote_sdp=original_offer,
             ),
             5151,
@@ -5173,13 +5242,15 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 42000,
                 updated.send_format,
                 updated.recv_format,
+                recv_formats=updated.recv_formats,
+                dtmf_direction=updated.dtmf_direction,
                 remote_sdp=updated.remote_sdp,
             )
 
             async def commit() -> None:
                 applied_ports.append(updated.remote_rtp_port)
 
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, commit=commit)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=updated, commit=commit)
 
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.168.1.10",
@@ -5187,7 +5258,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_media_update=on_media_update,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         addr = ("192.168.1.48", 5060)
         original = sip.parse_message(
@@ -5332,7 +5403,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_media_update=on_media_update,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         addr = ("192.0.2.10", 5060)
         initial = sip.parse_message(
@@ -5424,13 +5495,15 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 42000,
                 updated.send_format,
                 updated.recv_format,
+                recv_formats=updated.recv_formats,
+                dtmf_direction=updated.dtmf_direction,
                 remote_sdp=updated.remote_sdp,
             )
 
             async def commit() -> None:
                 commits.append(updated.remote_rtp_port)
 
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, commit=commit)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=updated, commit=commit)
 
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.0.2.20",
@@ -5438,7 +5511,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[fmt],
             on_invite=on_invite,
             on_media_update=on_media_update,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         addr = ("192.0.2.10", 5060)
 
@@ -5550,7 +5623,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[fmt],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
             enable_video=True,
         )
         addr = ("192.168.1.48", 5060)
@@ -5588,7 +5661,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
             on_info=on_info,
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         addr = ("192.168.1.48", 5060)
         original = sip.parse_message(
@@ -5632,7 +5705,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, _addr: sent.append(data),
+            send_override=lambda data, _addr: not sent.append(data),
         )
         request = sip.parse_message(
             sip.build_request(
@@ -5677,16 +5750,18 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 41000,
                 invite.send_format,
                 invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
             )
-            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer)
+            return sip_listener.SipInviteResult(200, "OK", answer_sdp=answer, media_contract=invite)
 
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.0.2.10",
             local_rtp_port=41000,
             supported_formats=[pcm],
             on_invite=on_invite,
-            send_override=lambda data, addr: sent.append((data, addr)),
+            send_override=lambda data, addr: not sent.append((data, addr)),
         )
         route_field = (
             "<sip:edge@192.0.2.11:5080;lr>, "
@@ -5753,7 +5828,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, addr: sent.append((data, addr)),
+            send_override=lambda data, addr: not sent.append((data, addr)),
         )
         original = sip.parse_message(
             sip.build_request(
@@ -5825,7 +5900,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             supported_formats=[pcm],
             on_invite=on_invite,
             on_terminated=on_terminated,
-            send_override=lambda data, _addr: sent.append(sip.parse_message(data)),
+            send_override=lambda data, _addr: not sent.append(sip.parse_message(data)),
             max_pending_invites=1,
             deferred_invite_timeout=0.05,
         )
@@ -5873,7 +5948,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         unlimited = sip_listener.SipUdpEndpoint(
             local_ip="192.168.1.10", local_rtp_port=40000,
             supported_formats=[pcm], on_invite=on_invite,
-            send_override=lambda data, _addr: sent.append(sip.parse_message(data)),
+            send_override=lambda data, _addr: not sent.append(sip.parse_message(data)),
         )
         try:
             await unlimited._handle_datagram(invite("unlimited", 3), ("192.168.1.48", 5060))
@@ -5893,7 +5968,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=40000,
             supported_formats=[pcm],
             on_invite=lambda _: None,  # type: ignore[arg-type]
-            send_override=lambda data, _addr: sent.append(sip.parse_message(data)),
+            send_override=lambda data, _addr: not sent.append(sip.parse_message(data)),
         )
         body = sdp.build_offer(
             "192.168.1.48",
@@ -6178,7 +6253,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 ("X-Voip-Stack-Decline-Reason", "DND"),
             ),
         )
-        self.assertEqual(sip_client._sip_decline_reason(msg), "DND")
+        self.assertEqual(sip_client_types._sip_decline_reason(msg), "DND")
 
     def test_roster_target_matching_ignores_spaces_and_underscores(self) -> None:
         entries = [

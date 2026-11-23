@@ -34,7 +34,7 @@ async def test_outgoing_number_displays_identity_without_rewriting_request_uri(
 
     source = PhoneEndpoint("identity-browser", "Casa", "browser", device_id="identity-browser-device")
     lab.runtime.endpoints.register(source)
-    lab.runtime.endpoints.update("sip:bedroom0", name=name or "204", extension="204", availability="available")
+    lab.runtime.endpoints.update("bedroom0", name=name or "204", extension="204", availability="available")
     entry = replace(lab.roster[1], id="204", name=name, extension="204")
     lab.roster[1] = entry
     lab.runtime.directory.replace([*lab.roster, RosterEntry("Remote reception", name="Unrelated directory contact")])

@@ -354,7 +354,12 @@ async def test_wait_for_digits_ignores_other_call_and_generation(application):
 
 async def test_local_announcement_decodes_negotiated_rtp_dtmf_once(application):
     app, registry, peer, _released = application
-    app.invite = replace(app.invite, remote_sdp=app.invite.remote_sdp.replace(b"RTP/AVP 96", b"RTP/AVP 96 100") + b"a=rtpmap:100 telephone-event/8000\r\na=fmtp:100 0-15\r\n")
+    from custom_components.voip_stack.core.media import negotiator
+    offer = app.invite.remote_sdp.replace(b"RTP/AVP 96", b"RTP/AVP 96 100") + b"a=rtpmap:100 telephone-event/8000\r\na=fmtp:100 0-15\r\n"
+    events = negotiator.negotiate_dtmf(offer,
+        send_clock_rate=app.invite.send_format.rtp_clock_rate,
+        receive_clock_rate=app.invite.recv_format.rtp_clock_rate)
+    app.invite = replace(app.invite, remote_sdp=offer, dtmf_direction=events)
     try:
         await app.answer()
         received = []

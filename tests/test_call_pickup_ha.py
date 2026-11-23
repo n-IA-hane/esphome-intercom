@@ -198,7 +198,7 @@ async def test_browser_picks_up_local_phone_using_original_session(trunks, monke
         start_local_softphone_call,
     )
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
-    from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+    from custom_components.voip_stack.roster import RosterEntry
 
     runtime = trunks
     entry = config_entry(runtime.hass)
@@ -208,7 +208,7 @@ async def test_browser_picks_up_local_phone_using_original_session(trunks, monke
     for name in ("local-a", "local-b", "local-c"):
         runtime.runtime.endpoints.register(
             PhoneEndpoint(
-                endpoint_id=name,
+                endpoint_id=name, username=name,
                 name=name,
                 device_id="device-" + name,
                 kind=EndpointKind.BROWSER,
@@ -219,11 +219,7 @@ async def test_browser_picks_up_local_phone_using_original_session(trunks, monke
         runtime.roster.append(
             RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name})
         )
-    runtime.hass.states.async_set(
-        "sensor.voip_phonebook",
-        "ready",
-        {"roster_json": dump_roster_json(runtime.roster)},
-    )
+    runtime.runtime.directory.replace(runtime.roster)
     monkeypatch.setattr(
         softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1")
     )
@@ -287,7 +283,7 @@ async def test_sip_phone_picks_up_local_browser_call(
     for name in ("local-a", "local-b"):
         runtime.runtime.endpoints.register(
             PhoneEndpoint(
-                endpoint_id=name,
+                endpoint_id=name, username=name,
                 name=name,
                 device_id="device-" + name,
                 kind=EndpointKind.BROWSER,
@@ -367,7 +363,7 @@ async def test_sip_phone_picks_up_local_browser_call(
 @pytest.mark.parametrize("picker_codec,expected_route", [
     ("PCMA", "direct"), ("L16", "ha_transcoding"),
 ])
-async def test_sip_pickup_publishes_committed_relay_media_route(
+async def test_sip_pickup_uses_committed_relay_without_private_device_commands(
     trunks, registered_phones, monkeypatch, picker_codec, expected_route
 ):
     from types import SimpleNamespace
@@ -391,7 +387,7 @@ async def test_sip_pickup_publishes_committed_relay_media_route(
               "name": "Picker", "kind": "sip_account", "audio_codecs": [picker_codec]},
     ))
     runtime.runtime.endpoints.register(PhoneEndpoint(
-        endpoint_id="browser-target", name="browser-target", device_id="browser-device",
+        endpoint_id="browser-target", username="browser-target", name="browser-target", device_id="browser-device",
         kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}),
     ))
     runtime.roster.append(RosterEntry(
@@ -408,13 +404,13 @@ async def test_sip_pickup_publishes_committed_relay_media_route(
     monkeypatch.setattr(esphome_actions, "async_call_action", sink)
     monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
     projected_routes = []
-    publish = call_projection.publish_esp_media_route
+    publish = call_projection.publish_media_route
 
     def observe(hass, call_id, route):
         projected_routes.append(route)
         publish(hass, call_id, route)
 
-    monkeypatch.setattr(call_projection, "publish_esp_media_route", observe)
+    monkeypatch.setattr(call_projection, "publish_media_route", observe)
     caller, _other, picker = registered_phones
 
     async def wait_for(predicate):
@@ -440,18 +436,9 @@ async def test_sip_pickup_publishes_committed_relay_media_route(
         assert session.metadata.get("committed_media_route") == expected_route
         assert projected_routes == (["ha_transcoding", "direct"]
                                     if expected_route == "direct" else ["ha_transcoding"])
-        await wait_for(lambda: sum(call.args[3]["route"] == expected_route
-                                  for call in sink.call_args_list) == 2)
-        picker_call_id = next(leg.sip_call_id for leg in session.legs.values()
-                              if leg.endpoint_id == "transfer_c" and leg.sip_call_id)
-        assert {(call.args[1]["device_id"], call.args[2], call.args[3]["call_id"],
-                 call.args[3]["route"]) for call in sink.call_args_list
-                if call.args[3]["route"] == expected_route} == {
-            ("device-transfer_a", "set_media_route", session.call_id, expected_route),
-            ("device-transfer_c", "set_media_route", picker_call_id, expected_route),
-        }
-        assert all(call.args[1]["device_id"] != "browser-device"
-                   for call in sink.call_args_list)
+        sink.assert_not_awaited()
+        assert any(leg.endpoint_id == "transfer_c" and leg.sip_call_id
+                   for leg in session.legs.values())
         assert not runtime.runtime.endpoints.get("browser-target").active_call_id
     finally:
         await asyncio.to_thread(caller.hangup)
@@ -466,7 +453,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
     trunks, registered_phones, pickup_path
 ):
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
-    from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+    from custom_components.voip_stack.roster import RosterEntry
 
     runtime = trunks
     entry = config_entry(runtime.hass)
@@ -475,7 +462,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
     )
     runtime.runtime.endpoints.register(
         PhoneEndpoint(
-            endpoint_id="browser-target",
+            endpoint_id="browser-target", username="browser-target",
             name="browser-target",
             device_id="browser-device",
             kind=EndpointKind.BROWSER,
@@ -489,11 +476,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
             metadata={"local_ha": True, "endpoint_id": "browser-target"},
         )
     )
-    runtime.hass.states.async_set(
-        "sensor.voip_phonebook",
-        "ready",
-        {"roster_json": dump_roster_json(runtime.roster)},
-    )
+    runtime.runtime.directory.replace(runtime.roster)
     caller, original, picker = registered_phones
     runtime.runtime.endpoints.update("transfer_a", device_id="pickup-source-device")
 
@@ -528,7 +511,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
     else:
         if pickup_path == "browser_service":
             runtime.runtime.endpoints.register(PhoneEndpoint(
-                endpoint_id="browser-picker", name="browser-picker", device_id="picker-device",
+                endpoint_id="browser-picker", username="browser-picker", name="browser-picker", device_id="picker-device",
                 kind=EndpointKind.BROWSER, availability="available",
                 capabilities=frozenset({"audio", "dtmf"}),
             ))
@@ -607,11 +590,11 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
             PhoneEndpoint,
             EndpointKind,
         )
-        from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+        from custom_components.voip_stack.roster import RosterEntry
 
         runtime.runtime.endpoints.register(
             PhoneEndpoint(
-                endpoint_id="browser-picker",
+                endpoint_id="browser-picker", username="browser-picker",
                 name="browser-picker",
                 device_id="browser-picker-device",
                 kind=EndpointKind.BROWSER,
@@ -625,11 +608,7 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
                 metadata={"local_ha": True, "endpoint_id": "browser-picker"},
             )
         )
-        runtime.hass.states.async_set(
-            "sensor.voip_phonebook",
-            "ready",
-            {"roster_json": dump_roster_json(runtime.roster)},
-        )
+        runtime.runtime.directory.replace(runtime.roster)
         monkeypatch.setattr(
             softphone_originate,
             "_ha_advertise_host",
@@ -742,7 +721,7 @@ async def test_sip_pickup_wins_a_ringing_group_without_redialing_caller(register
     runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
     members = [] if mixed == "browser_only" else ["transfer_b"]
     if mixed:
-        runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id="group-browser", name="Group browser",
+        runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id="group-browser", username="group-browser", name="Group browser",
             device_id="group-browser-device", kind=EndpointKind.BROWSER, availability="available"))
         runtime.roster.append(RosterEntry("group-browser", metadata={"local_ha": True, "endpoint_id": "group-browser"}))
         members.append("group-browser")
@@ -798,13 +777,11 @@ async def test_early_replaces_matches_all_tags_before_picking_up(
         from unittest.mock import AsyncMock
         from custom_components.voip_stack import softphone_originate
         from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
-        from custom_components.voip_stack.roster import dump_roster_json
 
-        source = PhoneEndpoint(endpoint_id="browser-replaces", name="Browser replaces",
+        source = PhoneEndpoint(endpoint_id="browser-replaces", username="browser-replaces", name="Browser replaces",
             device_id="browser-replaces-device", kind="browser", availability="available")
         runtime.runtime.endpoints.register(source)
-        runtime.hass.states.async_set("sensor.voip_phonebook", "ready",
-            {"roster_json": dump_roster_json(runtime.roster)})
+        runtime.runtime.directory.replace(runtime.roster)
         monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
         monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
         await runtime.hass.services.async_call("voip_stack", "call", {
@@ -981,7 +958,7 @@ async def test_browser_service_can_join_an_existing_sip_group(trunks, registered
     from custom_components.voip_stack.store import store_manual_roster_entries
     runtime = trunks
     caller, _old, ringing = registered_phones
-    browser = PhoneEndpoint(endpoint_id="pickup-browser", device_id="pickup-browser-device", name="Pickup browser",
+    browser = PhoneEndpoint(endpoint_id="pickup-browser", username="pickup-browser", device_id="pickup-browser-device", name="Pickup browser",
                             kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
     runtime.runtime.endpoints.register(browser)
     group = RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": ["transfer_c"]})
@@ -1126,7 +1103,7 @@ async def test_declined_browser_pickup_preserves_real_group_and_next_call(trunks
     caller = registered_phones[0]
     browsers = []
     for name in ("group-a", "group-b"):
-        endpoint = PhoneEndpoint(endpoint_id=name, name=name, device_id=name + "-device",
+        endpoint = PhoneEndpoint(endpoint_id=name, username=name, name=name, device_id=name + "-device",
                                  kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
         runtime.runtime.endpoints.register(endpoint)
         runtime.roster.append(RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name}))
@@ -1198,11 +1175,11 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
                                  if row.metadata.get("endpoint_id") == "sip:" + name)
         runtime.roster[destination_index] = RosterEntry(name,
             sip_uri=f"sip:{name}@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
-            metadata={"endpoint_id": "sip:" + name, "endpoint_kind": "sip_account", "registered": True})
-    browser = PhoneEndpoint(endpoint_id="route-browser", name="Route browser", device_id="route-browser-device",
+            metadata={"endpoint_id": name, "endpoint_kind": "sip_account", "registered": True})
+    browser = PhoneEndpoint(endpoint_id="route-browser", username="route-browser", name="Route browser", device_id="route-browser-device",
                             kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
     runtime.runtime.endpoints.register(browser)
-    runtime.roster.append(RosterEntry(browser.name, metadata={"local_ha": True, "endpoint_id": browser.endpoint_id}))
+    runtime.roster.append(RosterEntry(browser.username, name=browser.name, metadata={"local_ha": True, "endpoint_id": browser.endpoint_id}))
     runtime.roster.append(RosterEntry("RouteGroup", metadata={"group_type": "ring", "members": ["bedroom0", browser.name]}))
     from custom_components.voip_stack.store import store_manual_roster_entries
     store_manual_roster_entries(runtime.hass, runtime.roster)
@@ -1246,7 +1223,7 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
         # the PBX has consumed that progress and published this leg as ringing;
         # otherwise the pickup can legitimately fail before testing arbitration.
         await wait_for(lambda: any(
-            leg.endpoint_id == "sip:bedroom0" and leg.state == "remote_ringing"
+            leg.endpoint_id == "bedroom0" and leg.state == "remote_ringing"
             for leg in session.legs.values()
         ))
         controls = [t for t in asyncio.all_tasks() if t.get_name() == "voip-dial-fork-control-browser:route-control"]
@@ -1257,12 +1234,12 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
         await asyncio.to_thread(picker.command, "/dial pickup.bedroom0")
         assert await asyncio.wait_for(route_requested, 5), "real forward must be accepted while confirmation is pending"
         await wait_for(lambda: commands[0].done() or session.state == "in_call")
-        assert session.metadata.get("dest_endpoint_id") != "sip:bedroom0", (
+        assert session.metadata.get("dest_endpoint_id") != "bedroom0", (
             "the old SIP answer must not commit after an accepted forward"
         )
         await asyncio.wait_for(commands[0], 6)
         await wait_for(lambda: alternate.invited.is_set() and session.state == "in_call")
-        assert session.metadata["dest_endpoint_id"] == "sip:bedroom1"
+        assert session.metadata["dest_endpoint_id"] == "bedroom1"
         assert not tickets[0].accepted
         assert runtime.calls.resource_for(session.call_id, "pickup") is None
         assert runtime.calls.resource_for(session.call_id, "fork_answer") is None

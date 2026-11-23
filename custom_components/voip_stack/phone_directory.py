@@ -157,6 +157,22 @@ class PhoneDirectory:
             if any(str(value or "").strip().casefold() == raw for value in values if value):
                 identity = str(metadata.get("endpoint_id") or entry.id).casefold()
                 primary[identity] = entry
+        if len(primary) > 1 and raw.isdecimal() and any(str(row.extension).strip().casefold() == raw for row in primary.values()):
+            primary = {identity: entry for identity, entry in primary.items()
+                       if (getattr(entry, 'metadata', {}).get('endpoint_kind') in {'sip_account', 'esphome', 'browser', 'ha_softphone'}
+                           or str(entry.extension).strip().casefold() == raw
+                           or str(entry.name).strip().casefold() == raw
+                           or str(getattr(entry, 'number', '')).strip().casefold() != raw)}
+        if include_internal_ids:
+            references = dict(primary)
+            for entry in rows:
+                metadata = getattr(entry, 'metadata', {}) or {}
+                if any(str(metadata.get(key) or '').strip().casefold() == raw for key in ('endpoint_id', 'device_id')):
+                    references[str(metadata.get('endpoint_id') or entry.id).casefold()] = entry
+            if len(references) > 1:
+                raise RosterError('Ambiguous directory reference')
+            if references:
+                return next(iter(references.values()))
         if len(primary) > 1:
             raise RosterError("The configured dial destination is ambiguous")
         if primary:

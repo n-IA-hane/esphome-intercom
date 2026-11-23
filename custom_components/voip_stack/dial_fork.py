@@ -113,6 +113,7 @@ class DialCandidate:
     control: bool = False
     confirm: Callable[[], Awaitable[bool]] | None = None
     before_close: Callable[[LegCloseMode], None] | None = None
+    keeps_offer_open: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -692,6 +693,9 @@ class DialForkController:
                     return ForkResult(DialOutcome(DialDisposition.CANCELLED, 487), attempted=attempted)
                 if branch_result is None and branch_task.done():
                     branch_result = branch_task.result()
+                if (branches and branch_result is not None and branch_result.winner is None
+                        and not any(control_tasks[task].keeps_offer_open for task in pending_controls)):
+                    break
                 timeout = max(0.0, deadline - loop.time())
                 if timeout <= 0 and not any(task.done() for task in pending_controls):
                     break

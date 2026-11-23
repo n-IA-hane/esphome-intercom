@@ -756,7 +756,7 @@ async def test_immediate_sip_failure_obeys_only_matching_phone_policy(
     from custom_components.voip_stack.core import sip
 
     runtime = trunks
-    endpoint = runtime.runtime.endpoints.get("sip:bedroom0")
+    endpoint = runtime.runtime.endpoints.get("bedroom0")
     runtime.runtime.endpoints.update(
         endpoint.endpoint_id,
         availability="available",
@@ -773,7 +773,7 @@ async def test_immediate_sip_failure_obeys_only_matching_phone_policy(
         "bedroom0",
         sip_uri=f"sip:bedroom0@127.0.0.1:{phone.transport.get_extra_info('sockname')[1]}",
         metadata={
-            "endpoint_id": "sip:bedroom0",
+            "endpoint_id": "bedroom0",
             "endpoint_kind": "sip_account",
             "registered": True,
         },

@@ -31,7 +31,7 @@ async def browser_route_lab(trunks, monkeypatch):
     source = PhoneEndpoint("route-browser", "Calling account", "browser", username="351123456",
         extension="351123456", device_id="route-browser-device")
     lab.runtime.endpoints.register(source)
-    for identity in ("sip:bedroom0", "sip:bedroom1"):
+    for identity in ("bedroom0", "bedroom1"):
         lab.runtime.endpoints.update(identity, availability="available")
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
@@ -128,10 +128,10 @@ async def test_normal_account_mobility_policy_keeps_external_call_permission(bro
     from custom_components.voip_stack.phone_policy import PhonePolicy
 
     lab, source = browser_route_lab
-    lab.runtime.endpoints.update("sip:bedroom0", policy=PhonePolicy.from_data({
+    lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
         "always": {"kind": "contact", "target": "12345"}}))
     if blocked:
-        lab.runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = ("sip:bedroom0",)
+        lab.runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = ("bedroom0",)
     clients = Mock(wraps=sip_client.SipCallClient)
     monkeypatch.setattr(sip_client, "SipCallClient", clients)
     try:
@@ -146,7 +146,7 @@ async def test_normal_account_mobility_policy_keeps_external_call_permission(bro
                 "device_id": source.device_id, "destination": "bedroom0"}, blocking=True)
             assert sip.parse_sip_uri(lab.phones[0].invites[-1].uri).user == "12345"
             session, = lab.calls.sessions.values()
-            assert session.metadata["policy_endpoint_ids"] == ("sip:bedroom0",)
+            assert session.metadata["policy_endpoint_ids"] == ("bedroom0",)
     finally:
         active = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
         if active:

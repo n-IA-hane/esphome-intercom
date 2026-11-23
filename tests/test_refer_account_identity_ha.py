@@ -14,6 +14,7 @@ import custom_components.voip_stack  # noqa: F401
 
 from .voip_phase1_support import (
     audio_format,
+    sdp,
     sip,
     sip_listener,
     sip_registrar,
@@ -135,7 +136,7 @@ async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=F
     for username in PASSWORDS:
         endpoints.register(
             PhoneEndpoint(
-                endpoint_id="account:" + username,
+                endpoint_id=username,
                 name=username,
                 kind=EndpointKind.SIP_ACCOUNT,
                 username=username,
@@ -172,7 +173,7 @@ async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=F
         )
         result["INVITE_principal_binding_validated"] = True
         calls.upsert(
-            invite.call_id, state="in_call", source_endpoint_id="account:Alice"
+            invite.call_id, state="in_call", source_endpoint_id="Alice"
         )
         calls.add_leg(
             invite.call_id,
@@ -180,15 +181,17 @@ async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=F
             role="caller",
             state="in_call",
             sip_call_id=invite.call_id,
-            endpoint_id="account:Alice",
+            endpoint_id="Alice",
         )
         return sip_listener.SipInviteResult(
             200,
             "OK",
-            answer_sdp=(
-                "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=loopback\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-                "m=audio 41000 RTP/AVP 96\r\na=rtpmap:96 L16/16000/1\r\na=ptime:20\r\na=sendrecv\r\n"
+            answer_sdp=sdp.build_answer_directional(
+                "127.0.0.1", "127.0.0.1", 41000, invite.send_format, invite.recv_format,
+                recv_formats=invite.recv_formats, dtmf_direction=invite.dtmf_direction,
+                remote_sdp=invite.remote_sdp,
             ),
+            media_contract=invite,
         )
 
     async def referred(cid, target):
@@ -483,7 +486,7 @@ async def state_scene():
     for username in PASSWORDS:
         endpoints.register(
             PhoneEndpoint(
-                endpoint_id="account:" + username,
+                endpoint_id=username,
                 name=username,
                 kind=EndpointKind.SIP_ACCOUNT,
                 username=username,
@@ -523,7 +526,7 @@ async def state_scene():
     session = calls.upsert(
         "wire-owned",
         state="in_call",
-        source_endpoint_id="account:Alice",
+        source_endpoint_id="Alice",
         inbound_trunk_id="T",
     )
     leg = calls.add_leg(
@@ -532,7 +535,7 @@ async def state_scene():
         role="caller",
         state="in_call",
         sip_call_id="wire-owned",
-        endpoint_id="account:Alice",
+        endpoint_id="Alice",
     )
     app = SipApplicationMethods(hass, registrar)
     return SimpleNamespace(
@@ -589,10 +592,10 @@ def test_dialog_credentials_fail_closed_without_borrowing_another_principal(inva
                     role="callee",
                     state="in_call",
                     sip_call_id="wire-owned",
-                    endpoint_id="account:Bob",
+                    endpoint_id="Bob",
                 )
             elif invalid == "endpoint_removed":
-                scene.endpoints.remove("account:Alice", force=True)
+                scene.endpoints.remove("Alice", force=True)
             elif invalid == "account_disabled":
                 scene.registrar.accounts["alice"] = replace(
                     scene.registrar.accounts["alice"], enabled=False
@@ -645,7 +648,7 @@ def test_trunk_credentials_require_the_matching_owned_leg(
             if credentials:
                 assert credentials.auth_username == "proxy-user"
             # A local principal never falls through to bridge trunk metadata.
-            scene.leg.endpoint_id = "account:Alice"
+            scene.leg.endpoint_id = "Alice"
             scene.leg.trunk_id = ""
             scene.registrar.remove_registration("Alice")
             assert (

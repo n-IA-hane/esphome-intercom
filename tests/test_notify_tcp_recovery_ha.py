@@ -28,7 +28,7 @@ async def test_closed_tcp_subscription_recovers_only_by_its_route_and_renews_aft
                              local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(lab.hass, registrar)
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
-    lab.runtime.endpoints.update("sip:bedroom0", extension="101")
+    lab.runtime.endpoints.update("bedroom0", extension="101")
 
     async def receive(reader, writer, origin):
         tasks.add(asyncio.current_task())
@@ -116,8 +116,8 @@ async def test_closed_tcp_subscription_recovers_only_by_its_route_and_renews_aft
             while source in manager.tcp_server._writers or ("127.0.0.3", contact_port) in manager.tcp_server._writers:
                 await asyncio.sleep(.001)
         call = lab.calls.upsert("tcp-observed-call", state="connecting", owner="router", route_kind="sip",
-            source_endpoint_id="sip:bedroom0", dest_endpoint_id="sip:bedroom1")
-        lab.calls.claim_endpoint(call.call_id, "sip:bedroom0", role="source")
+            source_endpoint_id="bedroom0", dest_endpoint_id="bedroom1")
+        lab.calls.claim_endpoint(call.call_id, "bedroom0", role="source")
         publish_bridge_projection(lab.hass, call)
         if outbound:
             await drained()

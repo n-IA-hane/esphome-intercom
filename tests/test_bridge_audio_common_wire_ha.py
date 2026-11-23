@@ -37,7 +37,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
 ):
     lab = trunks
     target = lab.phones[0]
-    metadata = {"endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True}
+    metadata = {"endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True}
     if known:
         metadata.update(sip_capabilities_known=True,
             sip_audio_tx_formats=[f"L16/{rate}/1" for rate in (48000,16000)],
@@ -45,7 +45,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
             sip_audio_tx_geometry_complete=True, sip_audio_rx_geometry_complete=True,
             sip_audio_receiver_ptime=10, sip_audio_receiver_maxptime=20)
     lab.roster[1] = replace(lab.roster[1], metadata=metadata)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     observed = {}
 
     def answer():
@@ -73,7 +73,7 @@ async def test_bridge_prefers_common_audio_without_losing_conversion_fallbacks(
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     audio.bind(("127.0.0.2", 0))
     audio.setblocking(False)
-    account = sip_test_account(lab, "sip:bedroom1") if caller_discovery is None else None
+    account = sip_test_account(lab, "bedroom1") if caller_discovery is None else None
     caller = SipCallClient(local_ip="127.0.0.2", local_name="managed_caller" if caller_discovery else "Asymmetric caller",
         username=account.username if account is not None else "",
         password=account.password if account is not None else "",

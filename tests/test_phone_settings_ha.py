@@ -31,19 +31,18 @@ async def phones(hass, monkeypatch):
         transport_config={}, assist_config={}, trunk_config={}, endpoints=registry,
         phones=PhoneAdapterRegistry(hass, registry),
     )
-    for name in ("Kitchen", "Bedroom"):
+    for name in ("Kitchen", "Bedroom", 'ESP'):
         phone_config._add_phone_subentry(hass, entry, data={
-            "endpoint_id": name.lower(), "kind": "browser", "name": name,
+            "endpoint_id": name.lower(), 'username': name.lower(), 'password': 'fixture-phone-password',
+            "kind": "sip_account", "name": name,
         }, title=name)
     phone_config.sync_registry_from_entry(hass, entry)
+    from custom_components.voip_stack.group_config import reconcile_group_records
+    reconcile_group_records(hass, entry)
     er.async_get(hass).async_get_or_create("event", "voip_stack", "voip_stack_call_event")
-    for name in ("Kitchen", "Bedroom"):
+    for name in ("Kitchen", "Bedroom", 'ESP'):
         registry.update(name.lower(), device_id="device-" + name.lower(),
             entity_ids={"sensor." + name.lower() + "_state"})
-    registry.register(PhoneEndpoint(
-        endpoint_id="esphome:stable", name="ESP", kind="esphome", device_id="device-esp",
-        entity_ids={"sensor.esp_state"},
-    ))
     push = AsyncMock()
     monkeypatch.setattr(voip_stack, "_refresh_directory", push)
     await services.async_register_services(hass, {
@@ -61,9 +60,16 @@ async def settings(hass, device="device-kitchen", **values):
 
 @pytest.mark.parametrize("selector", ["Banco@Hotel", "Banco%40Hotel", "office", "204", "device-kitchen", "kitchen"])
 async def test_phone_settings_resolves_the_selected_phone(hass, phones, selector):
-    phones.registry.update("kitchen", name="Banco@Hotel", username="office", extension="204")
+    from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
+    row = phone_config.phone_subentry_by_endpoint_id(phones.entry, 'kitchen')
+    await async_migrate_account_identities(hass, phones.entry,
+        account_updates={row.subentry_id: {**row.data, 'name': 'Banco@Hotel', 'username': 'office', 'extension': '204'}})
+    if selector == 'kitchen':
+        with pytest.raises(ServiceValidationError):
+            await settings(hass, device=selector, forward_to='Bedroom')
+        return
     await settings(hass, device=selector, forward_to="Bedroom")
-    assert phones.registry.require("kitchen").policy.always.target == "bedroom"
+    assert phones.registry.require("office").policy.always.target == "bedroom"
 
 
 async def test_native_device_selector_wins_over_another_phones_name(hass, phones):
@@ -71,22 +77,22 @@ async def test_native_device_selector_wins_over_another_phones_name(hass, phones
     phones.registry.update("kitchen", name=device_id)
     phones.registry.update("bedroom", device_id=device_id)
     await settings(hass, device=device_id, forward_to="ESP")
-    assert phones.registry.require("bedroom").policy.always.target == "esphome:stable"
+    assert phones.registry.require("bedroom").policy.always.target == "esp"
     assert phones.registry.require("kitchen").policy == PhonePolicy()
 
 
 async def test_legacy_source_reference_rejects_cross_namespace_ambiguity(hass, phones):
-    phones.registry.update("bedroom", name="Other desk")
-    phones.registry.update("kitchen", name="bedroom")
+    phones.registry.update('bedroom', extension='shared-reference')
+    phones.registry.update('kitchen', extension='shared-reference')
     with pytest.raises(ServiceValidationError, match="[Aa]mbiguous"):
-        await settings(hass, device="bedroom", ringing_timeout=20)
+        await settings(hass, device='shared-reference', ringing_timeout=20, no_answer_action='hangup')
     assert all(phones.registry.require(key).policy == PhonePolicy() for key in ("kitchen", "bedroom"))
     phones.push.assert_not_awaited()
 
 
 async def test_forward_destination_keeps_public_alias_over_another_device_id(hass, phones):
     phones.registry.update("bedroom", name="Public destination")
-    phones.registry.update("esphome:stable", device_id="Public destination")
+    phones.registry.update("esp", device_id="Public destination")
     await settings(hass, forward_to="Public destination")
     assert phones.registry.require("kitchen").policy.always.target == "bedroom"
 
@@ -163,12 +169,13 @@ async def test_partial_update_preserves_other_rules_and_empty_clears(hass, phone
 async def test_esp_policies_do_not_create_duplicate_phone_subentries(hass, phones):
     before = set(phones.entry.subentries)
     await settings(hass, "device-esp", unavailable_to="Bedroom")
-    saved = phone_config.esphome_phone_policy(phones.entry, "esphome:stable")
+    row = phone_config.phone_subentry_by_endpoint_id(phones.entry, 'esp')
+    saved = phone_config.persisted_phone_policy(row.data)
     assert saved.unavailable.target == "bedroom"
-    assert phones.registry.require("esphome:stable").policy == saved
+    assert phones.registry.require("esp").policy == saved
     assert set(phones.entry.subentries) == before
     await settings(hass, "device-esp", unavailable_to="")
-    assert phone_config.esphome_phone_policy(phones.entry, "esphome:stable") == PhonePolicy()
+    assert phone_config.persisted_phone_policy(row.data) == PhonePolicy()
 
 
 async def test_self_and_chained_loops_are_rejected_before_persistence(hass, phones):
@@ -204,15 +211,15 @@ async def test_esp_policy_update_does_not_reload_sip_transport(hass, phones, mon
 
 async def test_legacy_offline_forward_is_visible_and_can_be_cleared(hass, phones):
     phone_config._add_phone_subentry(hass, phones.entry, data={
-        "endpoint_id": "sip:legacy", "kind": "sip_account", "name": "Old desk",
+        "endpoint_id": "old-desk", "kind": "sip_account", "name": "Old desk",
         "username": "old-desk", "offline_policy": "forward",
         "offline_forward_target": "Bedroom",
     }, title="Old desk")
     phone_config.sync_registry_from_entry(hass, phones.entry)
-    phones.registry.update("sip:legacy", device_id="device-old-desk")
-    assert phones.registry.require("sip:legacy").policy.unavailable.target == "Bedroom"
+    phones.registry.update("old-desk", device_id="device-old-desk")
+    assert phones.registry.require("old-desk").policy.unavailable.target == "Bedroom"
     await settings(hass, "device-old-desk", unavailable_to="")
-    stored = phone_config.phone_subentry_by_endpoint_id(phones.entry, "sip:legacy")
+    stored = phone_config.phone_subentry_by_endpoint_id(phones.entry, "old-desk")
     reloaded = phone_config.endpoint_from_subentry(phones.entry, stored)
     assert reloaded.policy.unavailable is None
     assert reloaded.offline_policy.value == "unavailable"
@@ -301,7 +308,7 @@ async def test_paging_membership_updates_canonical_groups_and_one_projection(has
     # An offline ESP uses the same server membership owner, without another phone record.
     previous = set(phones.entry.subentries)
     await paging_memberships(hass, ["solo"], phone="device-esp", context=admin)
-    assert solo.data["members"] == ["esphome:stable"]
+    assert solo.data["members"] == ["esp"]
     assert set(phones.entry.subentries) == previous
 
 
@@ -341,16 +348,16 @@ async def test_paging_memberships_are_projected_from_canonical_groups(hass, phon
     from custom_components.voip_stack.phone_state import phone_states, phone_state_dto
     from custom_components.voip_stack.websocket_api import _ha_softphone_state
 
-    first = add_paging(hass, phones, "first", ["kitchen", "esphome:stable"])
+    first = add_paging(hass, phones, "first", ["kitchen", "esp"])
     add_paging(hass, phones, "second", ["kitchen"])
     states = phone_states(hass, dialogs={})
     assert states["kitchen"]["paging_groups"] == ["first", "second"]
-    assert states["esphome:stable"]["paging_groups"] == ["first"]
+    assert states["esp"]["paging_groups"] == ["first"]
     assert states["bedroom"]["paging_groups"] == []
-    dto = phone_state_dto(states["esphome:stable"], peer_readable=lambda _: True)
+    dto = phone_state_dto(states["esp"], peer_readable=lambda _: True)
     assert dto["paging_groups"] == ["first"]
     dto["paging_groups"].clear()
-    assert first.data["members"] == ["kitchen", "esphome:stable"]
+    assert first.data["members"] == ["kitchen", "esp"]
     assert _ha_softphone_state(hass, "kitchen")["paging_groups"] == ["first", "second"]
     await paging_memberships(hass, [])
     assert _ha_softphone_state(hass, "kitchen")["paging_groups"] == []
@@ -403,8 +410,8 @@ async def test_existing_phone_observer_emits_one_paging_delta_for_mirror(hass, p
     try:
         await paging_memberships(hass, ["first"], phone="device-esp")
         assert len(seen) == 1
-        assert set(seen[0].phones) == {"esphome:stable"}
-        assert seen[0].phones["esphome:stable"]["paging_groups"] == ["first"]
+        assert set(seen[0].phones) == {"esp"}
+        assert seen[0].phones["esp"]["paging_groups"] == ["first"]
         await paging_memberships(hass, ["first"], phone="device-esp")
         assert len(seen) == 1
     finally:

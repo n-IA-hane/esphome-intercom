@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from .codecs import PREFERRED_PAYLOADS, STATIC_RTPMAP
+from .codecs import PREFERRED_PAYLOADS, STATIC_RTPMAP, STATIC_VIDEO_RTPMAP
 
 # (encoding in upper case, RTP clock rate, channels)
 RtpMapping = tuple[str, int, int]
@@ -36,8 +36,7 @@ def _frozen(numbers: Mapping[int, RtpMapping]) -> Mapping[int, RtpMapping]:
     for number, mapping in numbers.items():
         if not 0 <= number <= LAST_DYNAMIC:
             raise PayloadConflict(f"payload number {number} is out of range")
-        from ..sdp_video import video_static_rtp_mapping
-        static = STATIC_RTPMAP.get(number) or video_static_rtp_mapping(number)
+        static = STATIC_RTPMAP.get(number) or STATIC_VIDEO_RTPMAP.get(number)
         if static is not None and static != mapping:
             raise PayloadConflict(f"static payload {number} is {static} and cannot mean {mapping}")
     return MappingProxyType(dict(numbers))
@@ -93,7 +92,6 @@ class PayloadMap:
     def for_offer(cls, mappings: Iterable[RtpMapping], previous: PayloadMap | None = None,
                   *, preferences: Mapping[RtpMapping, int] | None = None) -> PayloadMap:
         """Number the mappings of a local offer without reusing retired meanings."""
-        from ..sdp_video import video_static_rtp_payload
         history = dict(previous.receive_history) if previous else {}
         used = dict(history)
         by_mapping = {mapping: number for number, mapping in used.items()}
@@ -109,7 +107,8 @@ class PayloadMap:
         for mapping in wanted:
             number = by_mapping.get(mapping, static_numbers.get(mapping))
             if number is None:
-                number = video_static_rtp_payload(mapping)
+                number = next((payload for payload, meaning in STATIC_VIDEO_RTPMAP.items()
+                               if meaning == mapping), None)
             reserve(mapping, number)
         # Explicit local numbers outrank conventional defaults, regardless of
         # the order in which an automatic alternative enters the catalog.

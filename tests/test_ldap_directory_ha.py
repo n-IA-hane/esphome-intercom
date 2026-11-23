@@ -97,11 +97,11 @@ async def collect(reader, identity):
 def directory():
     return PhoneDirectory([
         RosterEntry("kitchen", name="Kitchen", extension="101", sip_uri="sip:kitchen@pbx.example.org",
-                    metadata={"endpoint_id": "esphome:kitchen", "endpoint_kind": "esphome", "registered": False,
+                    metadata={"endpoint_id": "kitchen", "endpoint_kind": "esphome", "registered": False,
                               "password": "must-never-be-published"}),
         RosterEntry("reception", name="Réception", number="+39 010-1234", sip_uri="sip:reception@pbx.example.org"),
         RosterEntry("test", name="Test", extension="667", sip_uri="sip:test@pbx.example.org",
-                    metadata={"endpoint_id": "browser:test", "endpoint_kind": "browser"}),
+                    metadata={"endpoint_id": "test", "endpoint_kind": "browser"}),
         RosterEntry("open_door", name="Open door", extension="202", sip_uri="sip:open_door@pbx.example.org",
                     metadata={"virtual_endpoint": "automation"}),
         RosterEntry("hidden", name="Hidden", enabled=False),
@@ -111,7 +111,7 @@ def directory():
 @pytest.fixture
 async def server(socket_enabled):
     async def authenticate(username, password):
-        return "esphome:kitchen" if username == "kitchen" and password == b"fixture-only-password" else None
+        return "kitchen" if username == "kitchen" and password == b"fixture-only-password" else None
     value = LdapDirectoryServer(directory(), authenticate)
     await value.async_start("127.0.0.1", 0)
     yield value
@@ -183,17 +183,17 @@ def test_directory_single_record_identity_atomic_update_and_offline():
     value = directory()
     events = []
     unsubscribe = value.subscribe(lambda: events.append(value.generation))
-    original = value.get("esphome:kitchen")
+    original = value.get("kitchen")
     assert original and original.metadata["registered"] is False
     assert not value.upsert(original)
     renamed = replace(original, name="New name")
     assert value.upsert(renamed)
-    assert len(value.snapshot()) == 5 and value.get("esphome:kitchen").name == "New name"
+    assert len(value.snapshot()) == 5 and value.get("kitchen").name == "New name"
     previous = value.snapshot()
     with pytest.raises(RosterError):
         value.replace([renamed, renamed])
     assert value.snapshot() == previous
-    assert value.remove("esphome:kitchen") and not value.remove("esphome:kitchen")
+    assert value.remove("kitchen") and not value.remove("kitchen")
     unsubscribe()
     assert len(events) == 2
 
@@ -340,7 +340,7 @@ async def test_ldap3_real_client_filter_offline_scope_and_types(server):
                                      SUBTREE, attributes=["cn", "uid", "telephoneNumber", "labeledURI", "ou"])
             assert len(connection.entries) == 1
             entry = connection.entries[0]
-            assert entry.cn.value == "Kitchen" and entry.uid.value == "esphome:kitchen"
+            assert entry.cn.value == "Kitchen" and entry.uid.value == "kitchen"
             dn = entry.entry_dn
             assert connection.search(dn, "(objectClass=*)", BASE_SCOPE, attributes=["cn"], types_only=True)
             assert connection.entries[0].cn.values == []
@@ -356,7 +356,7 @@ async def test_revoke_endpoint_cancels_pending_auth_without_storing_password(soc
     async def authenticate(username, password):
         entered.set()
         await release.wait()
-        return "esphome:kitchen"
+        return "kitchen"
     value = LdapDirectoryServer(directory(), authenticate)
     await value.async_start("127.0.0.1", 0)
     reader, writer = await asyncio.open_connection("127.0.0.1", value.port)
@@ -364,7 +364,7 @@ async def test_revoke_endpoint_cancels_pending_auth_without_storing_password(soc
         writer.write(bind())
         await writer.drain()
         await asyncio.wait_for(entered.wait(), 1)
-        await value.async_revoke_endpoint("esphome:kitchen", username="kitchen")
+        await value.async_revoke_endpoint("kitchen", username="kitchen")
         assert await asyncio.wait_for(reader.read(), 1) == b""
     finally:
         writer.close()
@@ -373,7 +373,7 @@ async def test_revoke_endpoint_cancels_pending_auth_without_storing_password(soc
 
 
 async def test_partial_frame_timeout_connection_limit_and_shutdown(socket_enabled):
-    auth = AsyncMock(return_value="esphome:kitchen")
+    auth = AsyncMock(return_value="kitchen")
     value = LdapDirectoryServer(directory(), auth, limits=Limits(connections=1, frame_seconds=0.05))
     await value.async_start("127.0.0.1", 0)
     reader, writer = await connected(value)
@@ -397,15 +397,17 @@ async def test_partial_frame_timeout_connection_limit_and_shutdown(socket_enable
 
 async def test_anonymous_opt_in_dn_escaping_and_directory_updates(socket_enabled):
     value = LdapDirectoryServer(directory(), AsyncMock(return_value=None), allow_anonymous=True)
-    value.directory.upsert(RosterEntry("contact:desk, east", name="East", extension="303"))
+    value.directory.upsert(RosterEntry("desk, east", name="East", extension="303",
+        sip_uri="sip:desk%2C%20east@pbx.example.org",
+        metadata={"endpoint_kind": "sip_account", "endpoint_id": "desk, east"}))
     await value.async_start("127.0.0.1", 0)
     reader, writer = await asyncio.open_connection("127.0.0.1", value.port)
     try:
-        writer.write(search(1, base=r"uid=contact:desk\2c east,ou=contact," + BASE, scope=0))
+        writer.write(search(1, base=r"uid=desk\2c east,ou=sip_account," + BASE, scope=0))
         await writer.drain()
         assert len(await collect(reader, 1)) == 2
-        value.directory.remove("contact:desk, east")
-        writer.write(search(2, base=r"uid=contact:desk\, east,ou=contact," + BASE, scope=0))
+        value.directory.remove("desk, east")
+        writer.write(search(2, base=r"uid=desk\, east,ou=sip_account," + BASE, scope=0))
         await writer.drain()
         assert response((await collect(reader, 2))[-1])[2] == 32
     finally:
@@ -427,7 +429,7 @@ async def test_openldap_ldapsearch_independent_client(server, tmp_path):
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     output, errors = await asyncio.wait_for(process.communicate(), 5)
     assert process.returncode == 0, errors.decode()
-    assert b"cn: Kitchen" in output and b"uid: esphome:kitchen" in output
+    assert b"cn: Kitchen" in output and b"uid: kitchen" in output
     assert b"labeleduri: sip:kitchen@pbx.example.org" in output
 
 
@@ -458,7 +460,7 @@ async def test_one_level_scope_exact_dn_and_reused_message_id(server):
 
 
 async def test_close_is_idempotent_and_listener_can_restart(socket_enabled):
-    value = LdapDirectoryServer(directory(), AsyncMock(return_value="esphome:kitchen"))
+    value = LdapDirectoryServer(directory(), AsyncMock(return_value="kitchen"))
     await value.async_start("127.0.0.1", 0)
     reader, writer = await connected(value)
     await asyncio.gather(value.async_close(), value.async_close())
@@ -496,7 +498,7 @@ async def test_optional_tls_listener_uses_standard_ssl_and_same_auth(socket_enab
     server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server_context.load_cert_chain(cert_file, key_file)
     client_context = ssl.create_default_context(cafile=str(cert_file))
-    value = LdapDirectoryServer(directory(), AsyncMock(return_value="esphome:kitchen"))
+    value = LdapDirectoryServer(directory(), AsyncMock(return_value="kitchen"))
     await value.async_start("127.0.0.1", 0, ssl_context=server_context)
     reader, writer = await asyncio.open_connection("127.0.0.1", value.port, ssl=client_context, server_hostname="localhost")
     try:

@@ -69,11 +69,11 @@ async def test_account_binding_validation_overlays_existing_account_draft(physic
         unique_id="physical_phone:" + data["phone_id"])
     state.lab.hass.config_entries.async_add_subentry(state.lab.entry, saved)
     state.lab.runtime.physical_phones = SimpleNamespace(catalog=state.catalog)
-    original = phone_subentry_by_endpoint_id(state.lab.entry, "sip:front")
+    original = phone_subentry_by_endpoint_id(state.lab.entry, "481")
     proposal = {**phone_subentry_data(original), "name": "Renamed front"}
     before = dict(saved.data)
-    prepared = await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "sip:front",
-        account_physical_bindings(state.lab.entry, "sip:front"), account_data=proposal)
+    prepared = await async_prepare_account_bindings(state.lab.hass, state.lab.entry, "481",
+        account_physical_bindings(state.lab.entry, "481"), account_data=proposal)
     assert prepared[0][1]["lines"] == before["lines"]
     assert dict(saved.data) == before and original.data["name"] == "Front desk"
 
@@ -91,13 +91,13 @@ def physical_flow(phone_lab, monkeypatch):
     prepare_frontend_dependency(lab.hass)
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data,
         "phone_provisioning": {"enabled": True}})
-    for identity, name, extension in [("sip:front", "Front desk", "481"), ("sip:office", "Office", "482")]:
+    for identity, name, extension in [("481", "Front desk", "481"), ("482", "Office", "482")]:
         data = sip_account_phone_data({"username": extension, "password": "fixture-owner-secret",
                                       "display_name": name, "extension": extension}, endpoint_id=identity)
         _add_phone_subentry(lab.hass, lab.entry, data=data, title=name)
     sync_registry_from_entry(lab.hass, lab.entry)
     from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
-    for identity in ("sip:front", "sip:office"):
+    for identity in ("481", "482"):
         async_ensure_endpoint_device(lab.hass, lab.entry, lab.runtime.endpoints.get(identity), lab.runtime.endpoints)
     catalog = AssetCatalog()
     monkeypatch.setattr(physical_phone_flow, "PhoneProfileCatalog", lambda _hass: catalog)
@@ -174,8 +174,8 @@ def identity(**values):
 
 
 def bindings(**values):
-    return {"lines": [{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"}],
-            "keys": [{"slot": "1", "function": "blf", "line": "1", "target": "sip:office", "label": ""}],
+    return {"lines": [{"slot": "1", "endpoint_id": "481", "transport": "udp"}],
+            "keys": [{"slot": "1", "function": "blf", "line": "1", "target": "482", "label": ""}],
             **values}
 
 
@@ -193,15 +193,15 @@ async def test_manual_editor_has_native_multiple_objects_and_creates_only_invent
         assert config["multiple"] is True and config["fields"]
     assert "fixture-owner-secret" not in repr(form)
     result = await submit(state, form, bindings(lines=[
-        {"slot": "2", "endpoint_id": "sip:office", "transport": "tcp"},
-        {"slot": "1", "endpoint_id": "sip:front", "transport": "udp"},
+        {"slot": "2", "endpoint_id": "482", "transport": "tcp"},
+        {"slot": "1", "endpoint_id": "481", "transport": "udp"},
     ]))
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
     data = physical_phone_data(physical_record(state))
     assert [line["slot"] for line in data["lines"]] == ["2", "1"]
     assert data["mac"] == "001122334455" and data["catalog_commit"] == PIN
     assert data["follow_ha_language"] is True and data["language"] == "en"
-    assert data["keys"][0]["target"] == "sip:office"
+    assert data["keys"][0]["target"] == "482"
     assert len(data["provisioning_token"]) >= 32
     assert {endpoint.endpoint_id for endpoint in state.lab.runtime.endpoints.endpoints} == before
     state.reload.assert_not_awaited()
@@ -283,7 +283,7 @@ async def test_native_speed_dial_lists_the_callable_ring_group_and_provisions_it
     key_selector = next(v for k, v in form["data_schema"].schema.items() if k.schema == "keys")
     choices = key_selector.serialize()["selector"]["object"]["fields"]["target"]["selector"]["select"]["options"]
     assert "Reception ring" in choices and "Disabled group" not in choices
-    first = lab.runtime.endpoints.require("sip:front")
+    first = lab.runtime.endpoints.require("481")
     instruction = {"function": "Speed dial", "target": "Reception ring"}
     saved = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
         "lines": [{"slot": "2", "account_device": first.device_id, "transport": "udp"}],
@@ -303,8 +303,8 @@ async def test_native_speed_dial_lists_the_callable_ring_group_and_provisions_it
 @pytest.mark.parametrize("kind,capability", [("keys", "clear_keys"), ("lines", "disable_lines")])
 async def test_removal_is_saved_only_when_the_selected_profile_can_clear_it(physical_flow, kind, capability):
     state = physical_flow
-    initial = bindings(lines=[{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"},
-                              {"slot": "2", "endpoint_id": "sip:office", "transport": "udp"}])
+    initial = bindings(lines=[{"slot": "1", "endpoint_id": "481", "transport": "udp"},
+                              {"slot": "2", "endpoint_id": "482", "transport": "udp"}])
     form = await binding_editor(state)
     result = await submit(state, form, initial)
     assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
@@ -339,7 +339,7 @@ async def test_managed_lines_reject_tls_without_a_local_tls_listener(physical_fl
 
     state = physical_flow
     form = await binding_editor(state)
-    tls_bindings = bindings(lines=[{"slot": "1", "endpoint_id": "sip:front", "transport": "tls"}])
+    tls_bindings = bindings(lines=[{"slot": "1", "endpoint_id": "481", "transport": "tls"}])
     with pytest.raises(InvalidData):
         await submit(state, form, tls_bindings)
     selectors = {key.schema: value for key, value in form["data_schema"].schema.items()}
@@ -351,7 +351,7 @@ async def test_managed_lines_reject_tls_without_a_local_tls_listener(physical_fl
 
     # Stored/imported data must pass the same guard before generating credentials.
     data = normalize_physical_phone({**identity(), **tls_bindings})
-    endpoint = state.lab.runtime.endpoints.get("sip:front")
+    endpoint = state.lab.runtime.endpoints.get("481")
     state.lab.registrar.update_accounts([SipAccount(endpoint.username, endpoint.name, "fixture-secret")])
     manager = PhysicalPhoneProvisioner(state.lab.hass, state.lab.entry)
     try:
@@ -381,9 +381,9 @@ async def test_discovery_source_user_data_is_initialization_and_token_stays_priv
 
 
 @pytest.mark.parametrize("bad", [
-    {"lines": [{"slot": "1", "endpoint_id": "sip:front"}, {"slot": "1", "endpoint_id": "sip:office"}]},
-    {"lines": [{"slot": "7", "endpoint_id": "sip:front"}]},
-    {"lines": [{"slot": "0", "endpoint_id": "sip:front"}]},
+    {"lines": [{"slot": "1", "endpoint_id": "481"}, {"slot": "1", "endpoint_id": "482"}]},
+    {"lines": [{"slot": "7", "endpoint_id": "481"}]},
+    {"lines": [{"slot": "0", "endpoint_id": "481"}]},
     {"lines": [{"slot": "1", "endpoint_id": "browser:missing"}]},
     {"keys": [{"slot": "4", "function": "line", "line": "1"}]},
     {"keys": [{"slot": "1", "function": "line", "line": "2"}]},
@@ -407,7 +407,7 @@ async def test_binding_validation_uses_profile_and_existing_owners(physical_flow
 
 async def test_queue_alias_is_saved_as_stable_queue_identity(physical_flow):
     state = physical_flow
-    queue = SimpleNamespace(queue_id="stable-queue", name="Support", extension="700", members={"sip:front"})
+    queue = SimpleNamespace(queue_id="stable-queue", name="Support", extension="700", members={"481"})
     state.lab.runtime.queues = SimpleNamespace(resolve=lambda value: queue if value in {queue.queue_id, queue.name} else None)
     form = await binding_editor(state)
     result = await submit(state, form, bindings(keys=[{
@@ -974,8 +974,8 @@ async def test_device_fields_reopen_with_registry_choices_and_store_canonical_id
         assert device.selector_type == "device"
         assert device.config["filter"] == [{"integration": "voip_stack", "manufacturer": "VoIP Stack",
                                             "model": "SIP account", "model_id": "sip_account"}]
-    office = state.lab.runtime.endpoints.get("sip:office").device_id
-    front = state.lab.runtime.endpoints.get("sip:front").device_id
+    office = state.lab.runtime.endpoints.get("482").device_id
+    front = state.lab.runtime.endpoints.get("481").device_id
     selected = {
         "lines": [{"slot": "1", "account_device": front, "transport": "udp"}],
         "keys": [{"slot": "2", "function": "Phone status (BLF)", "line": "1", "target_device": office}],
@@ -983,8 +983,8 @@ async def test_device_fields_reopen_with_registry_choices_and_store_canonical_id
     result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], selected)
     assert result["reason"] == "reconfigure_successful"
     saved = physical_record(state)
-    assert saved.data["lines"] == [{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"}]
-    assert saved.data["keys"][0]["target"] == "sip:office"
+    assert saved.data["lines"] == [{"slot": "1", "endpoint_id": "481", "transport": "udp"}]
+    assert saved.data["keys"][0]["target"] == "482"
     assert saved.data["keys"][0]["function"] == "blf"
     assert saved.data["catalog_commit"] == PIN
     form = await reconfigure(state, "bindings")
@@ -993,7 +993,7 @@ async def test_device_fields_reopen_with_registry_choices_and_store_canonical_id
     assert values["keys"][0] == {**selected["keys"][0], "label": "", "_original_slot": "2"}
     values["keys"][0]["target_device"] = front
     await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
-    assert physical_record(state).data["keys"][0]["target"] == "sip:front"
+    assert physical_record(state).data["keys"][0]["target"] == "481"
     state.reload.assert_not_awaited()
 
 
@@ -1029,7 +1029,7 @@ async def test_esphome_line_is_a_blf_target_and_preserves_its_own_credential(phy
     blf_models = {f["model_id"] for f in fields["keys"]["target_device"]["selector"].config["filter"]}
     assert line_models == {"sip_account"}
     assert blf_models == {"sip_account", "esphome_sip_account"}
-    front = lab.runtime.endpoints.require("sip:front").device_id
+    front = lab.runtime.endpoints.require("481").device_id
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], {
         "lines": [{"slot": "1", "account_device": front, "transport": "udp"}],
         "keys": [{"slot": "2", "function": "Phone status (BLF)", "line": "1", "target_device": service.id}],
@@ -1067,14 +1067,14 @@ async def test_single_position_edits_devices_inline_and_clears_only_supported_as
     result = await submit(state, await start(state), identity(profile_id=profile))
     assert result["reason"] == "phone_configured"
     form = await reconfigure(state, "bindings")
-    front = state.lab.runtime.endpoints.get("sip:front").device_id
-    office = state.lab.runtime.endpoints.get("sip:office").device_id
+    front = state.lab.runtime.endpoints.get("481").device_id
+    office = state.lab.runtime.endpoints.get("482").device_id
     chosen = {"line": {"account_device": front}, "key": {"function": "blf", "target_device": office}}
     result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], chosen)
     assert result["reason"] == "reconfigure_successful"
     saved = physical_record(state)
-    assert saved.data["lines"] == [{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"}]
-    assert saved.data["keys"] == [{"slot": "1", "line": "1", "function": "blf", "target": "sip:office", "label": ""}]
+    assert saved.data["lines"] == [{"slot": "1", "endpoint_id": "481", "transport": "udp"}]
+    assert saved.data["keys"] == [{"slot": "1", "line": "1", "function": "blf", "target": "482", "label": ""}]
     form = await reconfigure(state, "bindings")
     serialized = FlowManagerIndexView(state.lab.hass.config_entries.subentries)._prepare_result_json(form)
     line, key = serialized["data_schema"]
@@ -1118,7 +1118,7 @@ async def test_single_position_queue_choice_is_scoped_to_queue_devices(physical_
     group = ConfigSubentry(subentry_type="group", title=data["name"], data=data, unique_id="group:stable-queue")
     state.lab.hass.config_entries.async_add_subentry(state.lab.entry, group)
     sync_group_devices(state.lab.hass, state.lab.entry)
-    queue = QueueDefinition(data["group_id"], "Support", ("sip:front",), "700")
+    queue = QueueDefinition(data["group_id"], "Support", ("481",), "700")
     manager = QueueManager(state.lab.hass, state.lab.entry)
     manager.definitions[queue.queue_id] = queue
     manager.policies[queue.queue_id] = QueuePolicy()
@@ -1132,7 +1132,7 @@ async def test_single_position_queue_choice_is_scoped_to_queue_devices(physical_
     fields = {field.schema: selector for field, selector in section.schema.schema.items()}
     assert {item["model"] for item in fields["queue_device"].config["filter"]} == {"Call queue"}
     assert {item["model"] for item in fields["target_device"].config["filter"]} == {"SIP account"}
-    selected = {"line": {"account_device": state.lab.runtime.endpoints.get("sip:front").device_id},
+    selected = {"line": {"account_device": state.lab.runtime.endpoints.get("481").device_id},
                 "key": {"function": "queue_login", "queue_device": queue_device.id}}
     result = await state.lab.hass.config_entries.subentries.async_configure(form["flow_id"], selected)
     assert result["reason"] == "reconfigure_successful"

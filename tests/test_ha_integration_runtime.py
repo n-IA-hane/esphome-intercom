@@ -12,10 +12,12 @@ from homeassistant import loader
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
+from homeassistant.helpers import entity_registry as er
 import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from .support.ha_frontend import prepare_frontend_dependency
+from .test_managed_phones_ha import phone_lab as phone_lab, managed as managed
 
 
 DOMAIN = "voip_stack"
@@ -281,50 +283,31 @@ async def test_transfer_service_returns_the_refer_subscription_result(
     await registry.terminate_call_wait("active-call", reason="test_complete")
 
 
-async def test_default_phone_call_state_keeps_its_historical_entity_id(
-    hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from homeassistant.helpers import entity_registry as er
-
-    from custom_components.voip_stack.sensor import (
-        LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID,
-        _migrate_default_call_state_entity,
-    )
-
-    entry = MockConfigEntry(domain=DOMAIN, data={})
+async def test_default_phone_call_state_keeps_its_historical_entity_id(hass):
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
+    entry = MockConfigEntry(domain=DOMAIN, version=7, minor_version=3, data={})
     entry.add_to_hass(hass)
+    sub = ConfigSubentry(subentry_type='phone', title='Casa', unique_id='phone:default',
+        data={'kind':'sip_account','name':'Casa','username':'Casa','password':'fixture-historical-secret',
+              'ha_bindings':[{'source':'migration','reference':'legacy_ha_phone:default'}]})
+    hass.config_entries.async_add_subentry(entry, sub)
     registry = er.async_get(hass)
-    old = registry.async_get_or_create(
-        "sensor",
-        DOMAIN,
-        LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID,
-        suggested_object_id="voip_stack_call_state",
-        config_entry=entry,
-    )
-    duplicate = registry.async_get_or_create(
-        "sensor",
-        DOMAIN,
-        "phone_endpoint_default_call_state",
-        suggested_object_id="casa_stato_chiamata",
-        config_entry=entry,
-    )
-    monkeypatch.setattr(
-        "custom_components.voip_stack.sensor.endpoint_config_subentry_id",
-        lambda *_args: None,
-    )
-
-    _migrate_default_call_state_entity(
-        hass,
-        entry,
-        SimpleNamespace(endpoint_id="default", device_id=""),
-    )
-
+    old = registry.async_get_or_create('sensor', DOMAIN, 'voip_stack_ha_softphone_call_state',
+        suggested_object_id='voip_stack_call_state', config_entry=entry)
+    registry.async_update_entity(old.entity_id, name='Chosen call state')
+    duplicate = registry.async_get_or_create('sensor', DOMAIN, 'phone_endpoint_Casa_call_state', config_entry=entry)
+    from custom_components.voip_stack.phone_config import PhoneIdentityConflict
+    with pytest.raises(PhoneIdentityConflict):
+        await async_migrate_account_identities(hass, entry)
+    assert registry.async_get(old.entity_id).unique_id == 'voip_stack_ha_softphone_call_state'
+    assert registry.async_get(duplicate.entity_id).id == duplicate.id
+    registry.async_remove(duplicate.entity_id)
+    await async_migrate_account_identities(hass, entry)
     migrated = registry.async_get(old.entity_id)
-    assert migrated is not None
-    assert migrated.unique_id == "phone_endpoint_default_call_state"
-    assert migrated.entity_id == old.entity_id
-    assert registry.async_get(duplicate.entity_id) is None
+    assert migrated.id == old.id and migrated.entity_id == old.entity_id
+    assert migrated.unique_id == 'phone_endpoint_Casa_call_state'
+    assert migrated.name == 'Chosen call state'
 
 
 async def test_initial_phone_becomes_preferred_when_multiple_phones_exist() -> None:
@@ -445,135 +428,94 @@ async def test_entry_runtime_owns_call_projection_and_detached_tasks(
     assert runtime.tasks == set()
 
 
-@pytest.mark.parametrize("advertised_host", ["192.0.2.10", "198.51.100.20", None])
-async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(
-    hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
-    advertised_host: str | None,
-) -> None:
-    from custom_components.voip_stack import peer_snapshot, phonebook_runtime
-    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+@pytest.mark.parametrize('advertised_host', ['192.0.2.10', '198.51.100.20', None])
+async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(managed, monkeypatch, advertised_host):
+    from aioesphomeapi import DeviceInfo
+    from homeassistant.components.esphome.entry_data import RuntimeEntryData
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.voip_stack import esphome_provisioning
     from custom_components.voip_stack.phonebook_coordinator import entry_phonebook
-    from custom_components.voip_stack.phonebook_runtime import push_roster_json_to_esps
-    from custom_components.voip_stack.runtime_data import VoipStackRuntime
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.store import store_manual_roster_entries
-
-    entry = MockConfigEntry(domain=DOMAIN, data={})
-    entry.add_to_hass(hass)
-    runtime = entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},
-        endpoints=EndpointRegistry(), phones=MagicMock())
-    monkeypatch.setattr(peer_snapshot, "async_build_peer_snapshot", AsyncMock(return_value=[]))
-    monkeypatch.setattr(phonebook_runtime, "_get_voip_devices", AsyncMock(return_value=[
-        {"host": advertised_host, "name": "P4", "route_id": "p4"},
-        {"host": "192.0.2.11", "name": "S3", "route_id": "s3"},
-    ]))
-    deliveries = []
-    async def record(call):
-        deliveries.append((call.service, call.data["roster_json"]))
-
-    hass.services.async_register("esphome", "p4_set_roster_json", record)
-    hass.services.async_register("esphome", "s3_set_roster_json", record)
-    coordinator = entry_phonebook(hass, runtime)
-    casa = RosterEntry("Casa", number="410")
-    store_manual_roster_entries(hass, [casa])
+    from .test_phone_services_ha import directory_actions
+    lab = managed
+    lab.runtime.transport_config['advertise_host'] = advertised_host or ''
+    monkeypatch.setattr(esphome_provisioning.network, 'async_get_source_ip', AsyncMock(return_value='127.0.0.1'))
+    directory_actions(lab.native.runtime_data)
+    other = MockConfigEntry(domain='esphome', data={'host':'127.0.0.3','device_name':'second_node'})
+    other.add_to_hass(lab.hass)
+    device = dr.async_get(lab.hass).async_get_or_create(config_entry_id=other.entry_id,
+        identifiers={('esphome','84c7bb000002')}, connections={(dr.CONNECTION_NETWORK_MAC,'84:c7:bb:00:00:02')}, name='Second phone')
+    sent = []
+    async def execute(service, data):
+        sent.append((service.name, dict(data)))
+    other.runtime_data = RuntimeEntryData(entry_id=other.entry_id, title=other.title,
+        client=SimpleNamespace(is_connected=True, execute_service=execute), store=MagicMock(),
+        device_info=DeviceInfo(name='second_node',friendly_name='Second phone',mac_address='84:C7:BB:00:00:02'),
+        services=dict(lab.native.runtime_data.services), available=True)
+    other.runtime_data.first_connect_done.set()
+    state = er.async_get(lab.hass).async_get_or_create('sensor','esphome','84c7bb000002-voip_state',config_entry=other,device_id=device.id)
+    lab.hass.states.async_set(state.entity_id,'idle')
+    coordinator = entry_phonebook(lab.hass,lab.runtime)
+    store_manual_roster_entries(lab.hass,[RosterEntry('Casa',name='Casa',number='410')])
+    lab.controller.configure_directory_service({'enabled':True,'ldap_port':1389,'base_dn':'ou=phonebook,dc=voip','tls':False},epoch='fixture-directory')
+    lab.controller.start()
     try:
         await coordinator.async_start()
-        assert not deliveries
-        coordinator.enable_delivery()
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        counts = [sum(name=='refresh_ldap_directory' for name,_ in calls) for calls in (lab.sent,sent)]
+        assert all(value>=1 for value in counts)
         first = coordinator.roster_json
-        await asyncio.gather(push_roster_json_to_esps(hass, first), push_roster_json_to_esps(hass, first))
-        assert deliveries == [("p4_set_roster_json", first), ("s3_set_roster_json", first)]
-
-        store_manual_roster_entries(hass, [casa, RosterEntry("Test", number="411")])
         await coordinator.async_refresh(deliver=True)
-        changed = coordinator.roster_json
-        assert changed != first
-        assert deliveries[-2:] == [("p4_set_roster_json", changed), ("s3_set_roster_json", changed)]
-        hass.services.async_remove("esphome", "p4_set_roster_json")
-        hass.services.async_register("esphome", "p4_set_roster_json", record)
-        await hass.async_block_till_done()
-        assert deliveries.count(("p4_set_roster_json", changed)) == 2
-        assert deliveries.count(("s3_set_roster_json", changed)) == 1
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert [sum(name=='refresh_ldap_directory' for name,_ in calls) for calls in (lab.sent,sent)] == counts
+        store_manual_roster_entries(lab.hass,[RosterEntry('Casa',name='Casa',number='410'),RosterEntry('Test',name='Test',number='411')])
+        await coordinator.async_refresh(deliver=True)
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert coordinator.roster_json!=first
+        changed = [sum(name=='refresh_ldap_directory' for name,_ in calls) for calls in (lab.sent,sent)]
+        assert changed==[value+1 for value in counts]
+        replay=[]
+        async def restored(service,data): replay.append((service.name,dict(data)))
+        lab.native.runtime_data.client=SimpleNamespace(is_connected=True,execute_service=restored)
+        lab.controller.schedule()
+        await lab.hass.async_block_till_done(wait_background_tasks=True)
+        assert sum(name=='refresh_ldap_directory' for name,_ in replay)==1
+        assert sum(name=='refresh_ldap_directory' for name,_ in sent)==changed[1]
+        assert not any('roster_json' in values for calls in (lab.sent,sent,replay) for _name,values in calls)
     finally:
         await coordinator.async_close()
 
 
-async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
-    hass: HomeAssistant,
-) -> None:
-    from custom_components.voip_stack.peer import Peer
-    from custom_components.voip_stack.runtime_data import VoipStackRuntime
-    from custom_components.voip_stack.phonebook_coordinator import PhonebookCoordinator
-
-    runtime = VoipStackRuntime(
-        transport_config={},
-        assist_config={},
-        trunk_config={},
-        endpoints=MagicMock(),
-        phones=MagicMock(),
-    )
-    entry = MockConfigEntry(domain=DOMAIN, data={})
-    entry.add_to_hass(hass)
-    entry.runtime_data = runtime
-
-    state_entity = "text_sensor.s3_voip_state"
-    extension_entity = "text.s3_voip_extension"
-    groups_entity = "text.s3_voip_ring_groups"
-    conference_entity = "text.s3_voip_conference_groups"
-    conference_ring_entity = "switch.s3_voip_conference_ring"
-    entities = {
-        "voip_state": state_entity,
-        "voip_extension": extension_entity,
-        "voip_ring_groups": groups_entity,
-        "voip_conference_groups": conference_entity,
-        "voip_conference_ring": conference_ring_entity,
-    }
-    for entity_id, value in (
-        (state_entity, "idle"),
-        (extension_entity, "669"),
-        (groups_entity, "home"),
-        (conference_entity, "all"),
-        (conference_ring_entity, "on"),
-    ):
-        hass.states.async_set(entity_id, value)
-
-    sensor = PhonebookCoordinator(hass, runtime)
-    sensor._tracked_entities = set(entities.values())
-    original = Peer(
-        name="S3",
-        host="192.0.2.11",
-        endpoint_id="esphome:s3",
-        endpoint_kind="esphome",
-        extension="669",
-        ring_group="home",
-        conference_group="all",
-        conference_ring=True,
-        device={"device_id": "s3", "route_id": "s3", "entities": entities},
-    )
-
-    assert sensor._stable_phonebook_peers([original]) == [original]
-    sensor._rehydrate_services.clear()
-    runtime.phonebook_delivered_roster["s3_set_roster_json"] = "current"
-
-    for entity_id in entities.values():
-        hass.states.async_set(entity_id, "unavailable")
-    assert sensor._stable_phonebook_peers([]) == []
-    assert "s3_set_roster_json" not in runtime.phonebook_delivered_roster
-
-    hass.states.async_set(state_entity, "idle")
-    restoring = Peer(
-        name="S3",
-        host="192.0.2.11",
-        endpoint_id="esphome:s3",
-        endpoint_kind="esphome",
-        device={"device_id": "s3", "route_id": "s3", "entities": entities},
-    )
-    assert sensor._stable_phonebook_peers([restoring]) == [original]
-    assert sensor._rehydrate_services == {"s3_set_roster_json"}
-
-    sensor._tracked_entities.clear()
-    assert sensor._stable_phonebook_peers([]) == []
+async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(managed):
+    from custom_components.voip_stack.phone_config import update_phone_subentry
+    from custom_components.voip_stack.phone_queue_membership import async_set_phone_memberships
+    from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot
+    from .test_managed_phones_ha import phone_record, bind_account
+    lab=managed
+    await lab.controller.async_sync()
+    phone=phone_record(lab)
+    update_phone_subentry(lab.hass,lab.entry,phone.username,{'extension':'669','conference_group':'all','conference_ring':True})
+    await async_set_phone_memberships(lab.hass,lab.entry,phone.username,'ring_group',['home'])
+    await bind_account(lab,phone_record(lab))
+    original,=await async_build_peer_snapshot(lab.hass)
+    lab.native.runtime_data.available=False
+    lab.native.runtime_data.client.is_connected=False
+    await lab.controller.async_sync()
+    current,=await async_build_peer_snapshot(lab.hass)
+    assert current.endpoint_id==original.endpoint_id and current.extension=='669'
+    for contact in lab.registrar.registered_contacts(phone.username): lab.registrar.remove_contact(contact.flow_key)
+    assert await async_build_peer_snapshot(lab.hass)==[]
+    lab.native.runtime_data.available=True
+    lab.native.runtime_data.client.is_connected=True
+    await lab.controller.async_sync()
+    assert await async_build_peer_snapshot(lab.hass)==[]
+    restored=phone_record(lab)
+    assert restored.password==phone.password and restored.extension=='669'
+    assert restored.ring_group=='home' and restored.conference_group=='all' and restored.conference_ring
+    await bind_account(lab,restored)
+    peer,=await async_build_peer_snapshot(lab.hass)
+    assert peer.endpoint_id==original.endpoint_id and peer.extension=='669'
 
 
 async def test_stale_esphome_state_event_uses_entry_generation(
@@ -814,7 +756,7 @@ async def test_new_entry_bootstraps_one_normal_named_account(
     created = async_bootstrap_browser_phone(hass, entry)
 
     assert created is not None
-    assert phone_endpoint_id(created) == "sip:" + created.subentry_id
+    assert phone_endpoint_id(created) == "Casa al Mare"
     assert created.data[CONF_PHONE_KIND] == "sip_account"
     assert created.data["username"] == "Casa al Mare" and created.data["password"]
     assert not created.data.get("ha_bindings")
@@ -834,7 +776,7 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.version == 7 and entry.minor_version == 3
+    assert entry.version == 7 and entry.minor_version == 4
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
 
@@ -1105,8 +1047,8 @@ async def test_retired_native_phones_migrate_without_removing_supported_phones(h
     )
 
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 3
-    assert dict(entry.data) == {"sip_port": 5060}
+    assert entry.version == 7 and entry.minor_version == 4
+    assert dict(entry.data) == {'sip_port': 5060, 'sip_registrar_enabled': True}
     assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
     assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None
     assert registry.async_get(tracker.entity_id) is tracker

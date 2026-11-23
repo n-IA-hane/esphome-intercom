@@ -9,7 +9,6 @@ import wave
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import callback
 
 from custom_components.voip_stack.core import rtp, sip
@@ -17,7 +16,6 @@ from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.sip_transfer import SipReferTarget
 from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_RECEIVED, get_archive
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
-from custom_components.voip_stack.phone_policy import PhonePolicy
 from custom_components.voip_stack.sip_client import SipCallClient, SipDatagramQueueProtocol
 from custom_components.voip_stack.sip_registrar import SipAccount
 from custom_components.voip_stack.store import config_entry
@@ -47,16 +45,12 @@ async def test_accepted_refer_immediate_bye_keeps_opposite_audio_and_application
         EndpointKind.SIP_ACCOUNT, username=account.username))
     lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     entry = config_entry(lab.hass)
-    mailbox_id = "sip:bedroom1"
+    mailbox_id = "bedroom1"
     if destination == "voicemail":
-        lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
-            subentry_type="phone", title="Bedroom mailbox", unique_id="phone:bedroom1",
-            data={"name": "bedroom1", "endpoint_id": mailbox_id, "username": "bedroom1",
-                  "kind": "sip_account", "voicemail": {"enabled": True, "max_seconds": 5}},
-        ))
-        lab.runtime.endpoints.update(mailbox_id, policy=PhonePolicy.from_data({
-            "always": {"kind": "voicemail", "target": mailbox_id},
-        }))
+        from custom_components.voip_stack.phone_config import update_phone_subentry
+        update_phone_subentry(lab.hass, entry, mailbox_id, {
+            'voicemail': {'enabled': True, 'max_seconds': 5},
+            'call_policy': {'always': {'kind': 'voicemail', 'target': mailbox_id}}})
     recording, accepted = asyncio.Event(), asyncio.Event()
     saved = asyncio.Queue()
 

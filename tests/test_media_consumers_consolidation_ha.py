@@ -177,7 +177,7 @@ async def test_caller_hangup_cancels_pending_conference_invite_and_cleans_late_2
             out_converter=PcmFrameConverter(CONFERENCE_FORMAT, CONFERENCE_FORMAT))
         assert manager._own_membership(room.name, call_id, ha_softphone=False)
     owner = lab.calls.get_session("conference-owner")
-    owner.metadata["source_endpoint_id"] = "sip:bedroom0"
+    owner.metadata["source_endpoint_id"] = "bedroom0"
     resident = lab.calls.get_session("conference-resident")
     transport, peer = await asyncio.get_running_loop().create_datagram_endpoint(
         IndependentSipPeer, local_addr=("127.0.0.1", 0))
@@ -244,7 +244,7 @@ async def test_answered_conference_member_moves_to_its_own_session_lifetime(trun
     room = ConferenceRoom(lab.hass, name="Answered room", local_ip="127.0.0.1")
     manager.rooms[room.name] = room
     owner = lab.calls.upsert("joined-owner", state="in_call", owner="bridge", caller="Owner", callee=room.name)
-    owner.metadata["source_endpoint_id"] = "sip:bedroom0"
+    owner.metadata["source_endpoint_id"] = "bedroom0"
     room.legs[owner.call_id] = _ConferenceLeg(call_id=owner.call_id, caller="Owner", role="owner",
         remote_host="127.0.0.1", remote_port=0, local_out=asyncio.Queue(),
         in_converter=PcmFrameConverter(CONFERENCE_FORMAT, CONFERENCE_FORMAT),

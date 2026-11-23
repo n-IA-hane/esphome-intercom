@@ -11,6 +11,7 @@ from custom_components.voip_stack import assist_runtime
 from custom_components.voip_stack.router import RouteAction, RouteDecision
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.core import rtp, sdp
+from custom_components.voip_stack.core.audio_format import parse_audio_format_token
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from .test_queue_call_ha import queue_lab as queue_lab, lab as lab, trunks as trunks
 from .test_sip_capabilities_ha import wait_until
@@ -307,16 +308,23 @@ async def test_assist_browser_ready_commits_duplex_audio_and_failed_bind_can_ret
                 await asyncio.sleep(float(fmt.frame_ms) / 1000)
             await wait_until(lambda: any(any(frame) for frame in browser.frames))
             nonzero = next(frame for frame in browser.frames if any(frame))
-            assert set(struct.unpack(f"<{len(nonzero)//2}h", nonzero)) == {2310}
+            receive = parse_audio_format_token(browser.contracts[-1]["rx_format"])
+            assert len(nonzero) == receive.nominal_frame_bytes
+            # The native source crosses the real 48 kHz SRC once. Preserve
+            # its level after the finite filter startup, without padding it.
+            assert all(abs(value - 2310) <= 1 for value in struct.unpack(f"<{len(nonzero)//2}h", nonzero)[-64:])
             from aiohttp import WSMsgType
-            for _ in range(8):
-                browser.incoming.put_nowait(SimpleNamespace(type=WSMsgType.BINARY, data=encode_audio_frame(struct.pack("<320h", *([-1230] * 320)))))
-                await asyncio.sleep(0.02)
+            capture = parse_audio_format_token(browser.contracts[-1]["tx_format"])
+            for _ in range(round(160 / capture.frame_ms)):
+                browser.incoming.put_nowait(SimpleNamespace(type=WSMsgType.BINARY,
+                    data=encode_audio_frame(struct.pack(f"<{capture.nominal_frame_samples}h",
+                        *([-1230] * capture.nominal_frame_samples)))))
+                await asyncio.sleep(capture.frame_ms / 1000)
             async with asyncio.timeout(2):
                 while True:
                     packet = rtp.parse_packet(await lab.hass.loop.sock_recv(audio, 4096))
                     if any(packet.payload):
-                        assert set(struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)) == {-1230}
+                        assert all(abs(value + 1230) <= 1 for value in struct.unpack(f"!{len(packet.payload)//2}h", packet.payload)[-64:])
                         break
         await client.terminate()
         await asyncio.wait_for(session.terminated.wait(), 2)
@@ -391,7 +399,7 @@ async def test_browser_assist_to_browser_keeps_the_original_socket_and_duplex_au
         initial = await lab.calls.forward_call(call_id=session.call_id, destination="Assistant", on_failure="resume")
         assert (await asyncio.wait_for(asyncio.shield(initial), 2)).status == "connected"
         await asyncio.wait_for(started.wait(), 2)
-        source, source_live, source_owner = await connect("source-browser", "source-client")
+        source, _source_live, source_owner = await connect("source-browser", "source-client")
         application = lab.calls.resource_for(session.call_id, "assist_application")
         media, context = application.media, application.conversation.context
         original_transport = media.transport
@@ -419,16 +427,16 @@ async def test_browser_assist_to_browser_keeps_the_original_socket_and_duplex_au
         for sender, receiver, sample in ((source, target, 2310), (target, source, -1230)):
             receiver.frames.clear()
             # The WS contract accepts source frames in its own negotiated quantum.
-            live = source_live if sender is source else _target_live
-            count = live.recv_format.audio_format.nominal_frame_bytes // 2
+            capture = parse_audio_format_token(sender.contracts[-1]["tx_format"])
+            count = capture.nominal_frame_samples
             for _ in range(10):
                 sender.incoming.put_nowait(SimpleNamespace(type=WSMsgType.BINARY,
                     data=encode_audio_frame(struct.pack(f"<{count}h", *([sample] * count)))))
-                await asyncio.sleep(float(live.recv_format.frame_ms) / 1000)
+                await asyncio.sleep(capture.frame_ms / 1000)
             # The FIR has a finite startup transient; polyphase gain and s16
             # quantization can differ by one LSB after conversion to 48k.
-            output = source_live if receiver is source else _target_live
-            await wait_until(lambda: any(len(frame) == output.send_format.audio_format.nominal_frame_bytes
+            output = parse_audio_format_token(receiver.contracts[-1]["rx_format"])
+            await wait_until(lambda: any(len(frame) == output.nominal_frame_bytes
                 and all(abs(value - sample) <= 1 for value in struct.unpack(f"<{len(frame)//2}h", frame))
                 for frame in receiver.frames))
         await lab.calls.terminate_call_wait(session.call_id, reason="local_hangup")

@@ -17,18 +17,18 @@ pytestmark = pytest.mark.ha
 
 
 async def account(lab, identity, username, extension, **settings):
-    from custom_components.voip_stack.phone_config import endpoint_from_subentry
+    from custom_components.voip_stack.phone_config import endpoint_from_subentry, phone_subentry_data
     from custom_components.voip_stack.websocket_api import _async_load_ha_softphone_store
 
     data = {"endpoint_id": identity, "kind": "sip_account", "name": username.title(),
             "username": username, "extension": extension,
             "password": "fixture-account-password", "enabled": True, **settings}
     sub = ConfigSubentry(subentry_type="phone", title=data["name"],
-                         unique_id="phone:" + identity, data=data)
+                         unique_id="phone:" + identity, data={key:value for key,value in data.items() if key!='endpoint_id'})
     lab.hass.config_entries.async_add_subentry(lab.entry, sub)
     lab.runtime.endpoints.register(endpoint_from_subentry(lab.entry, sub))
     await _async_load_ha_softphone_store(lab.hass, lab.entry, endpoint_id=identity,
-                                        endpoint_data=dict(sub.data))
+                                        endpoint_data=phone_subentry_data(sub))
     return sub
 
 
@@ -66,24 +66,24 @@ async def test_rejected_text_edit_keeps_saved_runtime_and_client_state(phone_lab
     from custom_components.voip_stack.text import PhoneEndpointSettingText, _SETTINGS
 
     lab = phone_lab
-    first = await account(lab, "sip:a", "201", "201")
-    await account(lab, "sip:b", "202", "202")
+    first = await account(lab, "201", "201", "201")
+    await account(lab, "202", "202", "202")
     before = deepcopy(dict(first.data))
-    projection = deepcopy(lab.runtime.softphones["sip:a"])
-    endpoint = lab.runtime.endpoints.require("sip:a")
+    projection = deepcopy(lab.runtime.softphones["201"])
+    endpoint = lab.runtime.endpoints.require("201")
     entity = PhoneEndpointSettingText(lab.hass, endpoint, lab.runtime.endpoints,
                                       setting=next(item for item in _SETTINGS if item.key == field))
     entity.hass = lab.hass
     with pytest.raises(ValueError):
         await entity.async_set_value("202")
     assert dict(first.data) == before
-    assert lab.runtime.endpoints.require("sip:a") == endpoint
-    assert lab.runtime.softphones["sip:a"] == projection
+    assert lab.runtime.endpoints.require("201") == endpoint
+    assert lab.runtime.softphones["201"] == projection
     rebuilt = EndpointRegistry()
     for sub in lab.entry.subentries.values():
         rebuilt.register(endpoint_from_subentry(lab.entry, sub))
-    assert rebuilt.resolve("201").endpoint_id == "sip:a"
-    assert rebuilt.resolve("202").endpoint_id == "sip:b"
+    assert rebuilt.resolve("201").endpoint_id == "201"
+    assert rebuilt.resolve("202").endpoint_id == "202"
 
 
 @pytest.mark.parametrize("preference", ["auto_answer", "send_video", "dnd"])
@@ -94,7 +94,7 @@ async def test_preference_patch_preserves_native_edit_while_listener_waits(phone
     )
 
     lab = phone_lab
-    sub = await account(lab, "sip:a", "201", "201", send_video=True, dnd=True)
+    sub = await account(lab, "201", "201", "201", send_video=True, dnd=True)
     capture_applied_signatures(lab)
     isolate_listener_integrations(monkeypatch)
     await lab.runtime.trunk_update_lock.acquire()
@@ -106,10 +106,10 @@ async def test_preference_patch_preserves_native_edit_while_listener_waits(phone
         for _ in range(4):
             await asyncio.sleep(0)
         assert not listener.done()
-        assert lab.runtime.softphones["sip:a"]["extension"] == "201"
+        assert lab.runtime.softphones["201"]["extension"] == "201"
         kind = {"auto_answer": PhoneEndpointAutoAnswerSwitch,
                 "send_video": PhoneEndpointSendVideoSwitch, "dnd": PhoneEndpointDndSwitch}[preference]
-        switch = kind(lab.hass, lab.runtime.endpoints.require("sip:a"), lab.runtime.endpoints)
+        switch = kind(lab.hass, lab.runtime.endpoints.require("201"), lab.runtime.endpoints)
         switch.hass = lab.hass
         await switch.async_turn_on()
         assert sub.data["extension"] == "301"
@@ -121,7 +121,7 @@ async def test_preference_patch_preserves_native_edit_while_listener_waits(phone
         lab.runtime.trunk_update_lock.release()
         if listener is not None:
             await listener
-    assert lab.runtime.endpoints.require("sip:a").extension == "301"
+    assert lab.runtime.endpoints.require("201").extension == "301"
 
 
 async def test_competing_account_alias_edits_commit_only_one_candidate(phone_lab):
@@ -129,11 +129,11 @@ async def test_competing_account_alias_edits_commit_only_one_candidate(phone_lab
     from custom_components.voip_stack.websocket_api import async_set_ha_softphone_settings
 
     lab = phone_lab
-    first = await account(lab, "sip:a", "201", "201")
-    second = await account(lab, "sip:b", "202", "202")
+    first = await account(lab, "201", "201", "201")
+    second = await account(lab, "202", "202", "202")
     outcomes = await asyncio.gather(*(
         async_set_ha_softphone_settings(lab.hass, endpoint_id=identity, extension="301")
-        for identity in ("sip:a", "sip:b")), return_exceptions=True)
+        for identity in ("201", "202")), return_exceptions=True)
     assert sum(isinstance(result, ValueError) for result in outcomes) == 1
     assert sorted(sub.data["extension"] for sub in (first, second)).count("301") == 1
     for sub in (first, second):
@@ -146,7 +146,7 @@ async def test_partial_account_edits_share_every_existing_route_namespace(phone_
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
 
     lab = phone_lab
-    sub = await account(lab, "sip:a", "201", "201")
+    sub = await account(lab, "201", "201", "201")
     target = "301"
     if owner in {"ring", "queue", "paging", "contact"}:
         data = {"name": "Other", "extension": target}
@@ -168,22 +168,22 @@ async def test_partial_account_edits_share_every_existing_route_namespace(phone_
         target = "voicemail.201"
     before = deepcopy(dict(sub.data))
     with pytest.raises(ValueError):
-        update_phone_subentry(lab.hass, lab.entry, "sip:a", {"extension": target})
+        update_phone_subentry(lab.hass, lab.entry, "201", {"extension": target})
     assert dict(sub.data) == before
-    assert lab.runtime.endpoints.require("sip:a").extension == "201"
+    assert lab.runtime.endpoints.require("201").extension == "201"
 
 
 async def test_existing_ring_group_is_reused_as_membership_but_not_as_account_alias(phone_lab):
     from custom_components.voip_stack.phone_config import update_phone_subentry
 
     lab = phone_lab
-    sub = await account(lab, "sip:a", "201", "201")
+    sub = await account(lab, "201", "201", "201")
     lab.hass.config_entries.async_add_subentry(lab.entry, ConfigSubentry(subentry_type="group",
         title="Staff", unique_id="group:staff", data={"group_id": "staff", "kind": "ring", "name": "Staff"}))
-    update_phone_subentry(lab.hass, lab.entry, "sip:a", {"ring_group": "Staff"})
+    update_phone_subentry(lab.hass, lab.entry, "201", {"ring_group": "Staff"})
     assert sub.data["ring_group"] == "Staff"
     with pytest.raises(ValueError):
-        update_phone_subentry(lab.hass, lab.entry, "sip:a", {"username": "staff"})
+        update_phone_subentry(lab.hass, lab.entry, "201", {"username": "staff"})
     assert sub.data["username"] == "201"
 
 
@@ -191,16 +191,16 @@ async def test_clearing_conference_membership_clears_ring_without_call_events(ph
     from custom_components.voip_stack.websocket_api import CALL_EVENT, async_set_ha_softphone_settings
 
     lab = phone_lab
-    sub = await account(lab, "sip:a", "201", "201", conference_group="Staff", conference_ring=True)
+    sub = await account(lab, "201", "201", "201", conference_group="Staff", conference_ring=True)
     events = []
     unsubscribe = lab.hass.bus.async_listen(CALL_EVENT, lambda event: events.append(event.data))
     try:
-        await async_set_ha_softphone_settings(lab.hass, endpoint_id="sip:a", conference_group="")
+        await async_set_ha_softphone_settings(lab.hass, endpoint_id="201", conference_group="")
         await lab.hass.async_block_till_done()
     finally:
         unsubscribe()
     assert sub.data["conference_group"] == "" and sub.data["conference_ring"] is False
-    assert lab.runtime.endpoints.require("sip:a").conference_ring is False
+    assert lab.runtime.endpoints.require("201").conference_ring is False
     assert events == []
 
 
@@ -217,7 +217,8 @@ async def test_v7_uses_the_softphone_name_once_and_preserves_its_groups(hass):
     hass.config_entries.async_add_subentry(entry, sub)
     assert await async_migrate_entry(hass, entry)
     assert sub.data["username"] == "Casa"
-    assert all(phone_subentry_data(sub)[key] == value for key, value in data.items() if key != "kind")
+    assert all(phone_subentry_data(sub)[key] == value for key, value in data.items() if key not in {"kind", "endpoint_id"})
+    assert phone_subentry_data(sub)["endpoint_id"] == "Casa"
     saved = deepcopy(dict(sub.data))
     assert await async_migrate_entry(hass, entry)
     assert dict(sub.data) == saved and entry.version == 7
@@ -230,9 +231,9 @@ async def test_recreate_waits_for_deleted_accounts_existing_aliases_to_drain(pho
     from .support.ha_frontend import prepare_frontend_dependency
 
     lab = phone_lab
-    old = await account(lab, "sip:old", "alice", "201")
+    old = await account(lab, "alice", "alice", "201")
     lab.runtime.endpoints = async_setup_endpoint_registry(lab.hass, lab.entry)
-    lab.runtime.endpoints.claim_call("sip:old", "existing-call-token")
+    lab.runtime.endpoints.claim_call("alice", "existing-call-token")
     lab.hass.config_entries.async_remove_subentry(lab.entry, old.subentry_id)
     sync_registry_from_entry(lab.hass, lab.entry)
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
@@ -245,13 +246,14 @@ async def test_recreate_waits_for_deleted_accounts_existing_aliases_to_drain(pho
     assert rejected["type"] == "form" and rejected["errors"]
     assert not lab.entry.subentries
     assert lab.runtime.endpoints.resolve("alice").active_call_id == "existing-call-token"
-    lab.runtime.endpoints.release_call("sip:old", "existing-call-token")
+    lab.runtime.endpoints.release_call("alice", "existing-call-token")
     await lab.hass.async_block_till_done()
     created = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
-    assert created["type"] == "abort" and created["reason"] == "phone_configured"
+    assert created["type"] == "create_entry"
     sync_registry_from_entry(lab.hass, lab.entry)
     current = lab.runtime.endpoints.resolve("alice")
-    assert current.endpoint_id != "sip:old" and not current.active_call_id
+    assert current.endpoint_id == "alice" and not current.active_call_id
+    assert next(row for row in lab.entry.subentries.values() if row.subentry_type == "phone").subentry_id != old.subentry_id
 
 
 @pytest.mark.parametrize("busy", [False, True])
@@ -261,10 +263,10 @@ async def test_native_delete_reserves_aliases_before_parent_listener_reconciles(
     from .support.ha_frontend import prepare_frontend_dependency
 
     lab = phone_lab
-    old = await account(lab, "sip:old", "alice", "201")
+    old = await account(lab, "alice", "alice", "201")
     lab.runtime.endpoints = async_setup_endpoint_registry(lab.hass, lab.entry)
     if busy:
-        lab.runtime.endpoints.claim_call("sip:old", "existing-call-token")
+        lab.runtime.endpoints.claim_call("alice", "existing-call-token")
     capture_applied_signatures(lab)
     isolate_listener_integrations(monkeypatch)
     entered = asyncio.Event()
@@ -282,7 +284,7 @@ async def test_native_delete_reserves_aliases_before_parent_listener_reconciles(
         await asyncio.wait_for(entered.wait(), 1)
         await asyncio.sleep(0)
         assert not listeners[0].done()
-        assert "sip:old" not in lab.runtime.endpoints.pending_removals
+        assert "alice" not in lab.runtime.endpoints.pending_removals
         lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
         prepare_frontend_dependency(lab.hass)
         form = await lab.hass.config_entries.subentries.async_init(
@@ -292,18 +294,18 @@ async def test_native_delete_reserves_aliases_before_parent_listener_reconciles(
         rejected = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
         assert rejected["type"] == "form" and rejected["errors"]
         assert not lab.entry.subentries
-        assert lab.runtime.endpoints.resolve("alice").endpoint_id == "sip:old"
+        assert lab.runtime.endpoints.resolve("alice").endpoint_id == "alice"
     finally:
         lab.runtime.trunk_update_lock.release()
         await asyncio.gather(*listeners)
         unsubscribe()
     if busy:
-        assert lab.runtime.endpoints.require("sip:old").active_call_id == "existing-call-token"
-        lab.runtime.endpoints.release_call("sip:old", "existing-call-token")
+        assert lab.runtime.endpoints.require("alice").active_call_id == "existing-call-token"
+        lab.runtime.endpoints.release_call("alice", "existing-call-token")
         await lab.hass.async_block_till_done()
-    assert lab.runtime.endpoints.get("sip:old") is None
+    assert lab.runtime.endpoints.get("alice") is None
     created = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
-    assert created["type"] == "abort" and created["reason"] == "phone_configured"
+    assert created["type"] == "create_entry"
     assert len(lab.entry.subentries) == 1
 
 
@@ -316,8 +318,8 @@ async def test_alias_handover_waits_for_native_edit_to_reconcile_before_save(pho
     from .support.ha_frontend import prepare_frontend_dependency
 
     lab = phone_lab
-    first = await account(lab, "sip:a", "201", "201", name="First")
-    second = await account(lab, "sip:b", "202", "202", name="Second")
+    first = await account(lab, "first-account", "first-account", "201", name="First")
+    second = await account(lab, "second-account", "second-account", "202", name="Second")
     lab.runtime.endpoints = async_setup_endpoint_registry(lab.hass, lab.entry)
     capture_applied_signatures(lab)
     isolate_listener_integrations(monkeypatch)
@@ -329,23 +331,23 @@ async def test_alias_handover_waits_for_native_edit_to_reconcile_before_save(pho
         entered.set()
         await async_config_entry_updated(hass, entry)
 
-    entity = PhoneEndpointSettingText(lab.hass, lab.runtime.endpoints.require("sip:a"), lab.runtime.endpoints,
+    entity = PhoneEndpointSettingText(lab.hass, lab.runtime.endpoints.require("first-account"), lab.runtime.endpoints,
         setting=next(item for item in _SETTINGS if item.key == "extension"))
     entity.hass = lab.hass
     lab.hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
     prepare_frontend_dependency(lab.hass)
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "phone"),
         context={"source": SOURCE_RECONFIGURE, "subentry_id": first.subentry_id})
-    values = {"name": "First", "username": "201", "extension": "202", "enabled": True}
+    values = {"name": "First", "username": "first-account", "extension": "202", "enabled": True}
     unsubscribe = lab.entry.add_update_listener(actual_update)
     await lab.runtime.trunk_update_lock.acquire()
     before = deepcopy(dict(first.data))
     try:
         lab.hass.config_entries.async_update_subentry(lab.entry, second,
-            data={**second.data, "username": "203", "extension": "203"})
+            data={**second.data, "extension": "203"})
         await asyncio.wait_for(entered.wait(), 1)
         assert not listeners[0].done()
-        assert lab.runtime.endpoints.require("sip:b").username == "202"
+        assert lab.runtime.endpoints.require("second-account").extension == "202"
         if writer == "text":
             with pytest.raises(ValueError):
                 await entity.async_set_value("202")
@@ -353,12 +355,12 @@ async def test_alias_handover_waits_for_native_edit_to_reconcile_before_save(pho
             rejected = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], values)
             assert rejected["type"] == "form" and rejected["errors"]
         assert dict(first.data) == before
-        assert lab.runtime.endpoints.require("sip:a").extension == "201"
+        assert lab.runtime.endpoints.require("first-account").extension == "201"
     finally:
         lab.runtime.trunk_update_lock.release()
         await asyncio.gather(*listeners)
         unsubscribe()
-    assert lab.runtime.endpoints.require("sip:b").username == "203"
+    assert lab.runtime.endpoints.require("second-account").extension == "203"
     if writer == "text":
         await entity.async_set_value("202")
     else:
@@ -376,27 +378,27 @@ async def test_failed_registry_sync_does_not_mark_phone_configuration_applied(ph
     from custom_components.voip_stack.phone_config import async_setup_endpoint_registry, sync_registry_from_entry
 
     lab = phone_lab
-    old = await account(lab, "sip:old", "alice", "201")
+    old = await account(lab, "alice", "alice", "201")
     lab.runtime.endpoints = async_setup_endpoint_registry(lab.hass, lab.entry)
     capture_applied_signatures(lab)
     original_signature = lab.runtime.entry_phone_signature
     original_records = deepcopy(lab.runtime.entry_phone_records)
-    lab.runtime.endpoints.claim_call("sip:old", "existing-call-token")
+    lab.runtime.endpoints.claim_call("alice", "existing-call-token")
     lab.hass.config_entries.async_remove_subentry(lab.entry, old.subentry_id)
     sync_registry_from_entry(lab.hass, lab.entry)
-    replacement = ConfigSubentry(subentry_type="phone", title="Alice", unique_id="phone:sip:new",
-        data={**old.data, "endpoint_id": "sip:new"})
+    replacement = ConfigSubentry(subentry_type="phone", title="Alice", unique_id="phone:alice",
+        data={**old.data, "endpoint_id": "alice"})
     lab.hass.config_entries.async_add_subentry(lab.entry, replacement)
     isolate_listener_integrations(monkeypatch)
     with pytest.raises(ValueError):
         await async_config_entry_updated(lab.hass, lab.entry)
     assert lab.runtime.entry_phone_signature == original_signature
     assert lab.runtime.entry_phone_records == original_records
-    lab.runtime.endpoints.release_call("sip:old", "existing-call-token")
+    lab.runtime.endpoints.release_call("alice", "existing-call-token")
     await lab.hass.async_block_till_done()
     await async_config_entry_updated(lab.hass, lab.entry)
     assert lab.runtime.entry_phone_signature == entry_phone_signature(lab.entry)
-    assert lab.runtime.endpoints.resolve("alice").endpoint_id == "sip:new"
+    assert lab.runtime.endpoints.resolve("alice").endpoint_id == "alice"
 
 
 async def test_configured_settings_use_the_canonical_entry_before_projection_bootstrap(phone_lab):
@@ -404,14 +406,14 @@ async def test_configured_settings_use_the_canonical_entry_before_projection_boo
     from custom_components.voip_stack.websocket_api import async_set_ha_softphone_settings
 
     lab = phone_lab
-    sub = _add_phone_subentry(lab.hass, lab.entry, title="Desk", data={"endpoint_id": "sip:desk",
+    sub = _add_phone_subentry(lab.hass, lab.entry, title="Desk", data={"endpoint_id": "desk",
         "kind": "sip_account", "name": "Desk", "username": "desk", "password": "fixture-kept-password"})
     sync_registry_from_entry(lab.hass, lab.entry)
-    assert "sip:desk" not in lab.runtime.softphones
-    await async_set_ha_softphone_settings(lab.hass, endpoint_id="sip:desk", auto_answer=True)
+    assert "desk" not in lab.runtime.softphones
+    await async_set_ha_softphone_settings(lab.hass, endpoint_id="desk", auto_answer=True)
     assert sub.data["auto_answer"] is True
     assert sub.data["password"] == "fixture-kept-password"
-    assert lab.runtime.softphones["sip:desk"]["auto_answer"] is True
+    assert lab.runtime.softphones["desk"]["auto_answer"] is True
 
 
 async def test_unconfigured_settings_have_a_service_error_and_create_no_hidden_configuration(phone_lab):
@@ -420,9 +422,9 @@ async def test_unconfigured_settings_have_a_service_error_and_create_no_hidden_c
     from custom_components.voip_stack.websocket_api import async_set_ha_softphone_settings
 
     lab = phone_lab
-    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="sip:retired", name="Retired", kind="sip_account",
+    lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id="retired", name="Retired", kind="sip_account",
                                                 username="retired"))
     with pytest.raises(ServiceValidationError, match="configured"):
-        await async_set_ha_softphone_settings(lab.hass, endpoint_id="sip:retired", auto_answer=True)
+        await async_set_ha_softphone_settings(lab.hass, endpoint_id="retired", auto_answer=True)
     assert not lab.entry.subentries
-    assert "sip:retired" not in lab.runtime.softphones
+    assert "retired" not in lab.runtime.softphones

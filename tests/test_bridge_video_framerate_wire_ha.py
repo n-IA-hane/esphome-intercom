@@ -48,7 +48,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
     monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     camera = lab.phones[0]
     remote_video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     remote_video.bind(("127.0.0.1", 0))
@@ -87,7 +87,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
         if source_calls else receiver_hint)
     receiver = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=caller_fps,
         image_attributes=sdp.parse_imageattr(caller_hint)[1] if caller_hint else None)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Bounded JPEG receiver",
         username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=10)],
@@ -226,7 +226,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
     monkeypatch.setattr("custom_components.voip_stack.endpoint_group_calls.roster_from_peers", lambda *_args: lab.roster)
     monkeypatch.setattr(invite_router, "_roster_from_peers", lambda *_args: lab.roster)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     receiver = lab.phones[0]
 
     def answer():
@@ -244,7 +244,7 @@ async def test_bridge_reoffer_answers_current_receiver_budget(lab, monkeypatch, 
         receiver.answered.set()
 
     monkeypatch.setattr(receiver, "answer", answer)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Independent camera caller",
         username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=35000, supported_formats=[AudioFormat(16000, frame_ms=10)],

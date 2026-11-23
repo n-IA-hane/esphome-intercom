@@ -253,7 +253,7 @@ def test_legacy_store_fills_only_settings_missing_from_entry_options() -> None:
     }
 
 
-def test_new_sip_account_identity_is_opaque_and_username_independent() -> None:
+def test_new_sip_account_identity_is_the_literal_username() -> None:
     raw = {
         "username": "desk",
         "display_name": "Desk",
@@ -262,18 +262,9 @@ def test_new_sip_account_identity_is_opaque_and_username_independent() -> None:
     first = phone_config.sip_account_phone_data(raw)
     second = phone_config.sip_account_phone_data(raw)
 
-    assert first[phone_config.CONF_PHONE_ENDPOINT_ID].startswith("sip:")
-    assert first[phone_config.CONF_PHONE_ENDPOINT_ID] != "sip:desk"
-    assert (
-        first[phone_config.CONF_PHONE_ENDPOINT_ID]
-        != second[phone_config.CONF_PHONE_ENDPOINT_ID]
-    )
-    renamed = dict(first)
-    renamed[phone_config.CONF_PHONE_USERNAME] = "renamed-desk"
-    assert (
-        renamed[phone_config.CONF_PHONE_ENDPOINT_ID]
-        == first[phone_config.CONF_PHONE_ENDPOINT_ID]
-    )
+    assert first[phone_config.CONF_PHONE_ENDPOINT_ID] == second[phone_config.CONF_PHONE_ENDPOINT_ID] == 'desk'
+    renamed = phone_config.sip_account_phone_data({**raw, 'username': 'renamed-desk'})
+    assert renamed[phone_config.CONF_PHONE_ENDPOINT_ID] == 'renamed-desk'
 
 
 def test_renamed_registered_sip_account_becomes_offline_until_new_register() -> None:
@@ -471,9 +462,8 @@ def test_sip_account_services_share_contact_assist_and_group_namespace() -> None
     )
 
     for changes in (
-        {phone_config.CONF_PHONE_USERNAME: "front-desk"},
+        {phone_config.CONF_PHONE_USERNAME: "410"},
         {phone_config.CONF_PHONE_EXTENSION: "999"},
-        {phone_config.CONF_PHONE_NAME: "Staff"},
         {phone_config.CONF_PHONE_RING_GROUP: "Reception"},
     ):
         with pytest.raises(ValueError, match="conflicts"):
@@ -481,6 +471,8 @@ def test_sip_account_services_share_contact_assist_and_group_namespace() -> None
                 entry,
                 [dict(base, **changes)],
             )
+    for changes in ({phone_config.CONF_PHONE_USERNAME: 'front-desk'}, {phone_config.CONF_PHONE_NAME: 'Staff'}):
+        phone_config.validate_sip_account_namespace(entry, [dict(base, **changes)])
 
 
 @pytest.mark.parametrize("username", [

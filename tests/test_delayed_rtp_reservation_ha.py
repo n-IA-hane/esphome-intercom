@@ -43,7 +43,7 @@ async def test_initial_delayed_offer_is_bound_before_sdp_without_decoders(trunks
     monkeypatch.setattr(RtpAudioReceiver, "__init__", initialize)
     from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     target = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
     uri = f"sip:bedroom0@127.0.0.1:{target[1]}"
 
@@ -344,10 +344,10 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
     lab = trunks
     phone = lab.phones[0]
     lab.roster[1] = replace(lab.roster[1], metadata={
-        "endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True,
+        "endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True,
         "sip_audio_tx_formats": ["L16/16000/1/20"], "sip_audio_rx_formats": ["L16/16000/1/20"],
     })
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     target = "bedroom0"
     if route_kind == "group":
         lab.roster.append(RosterEntry("ReservedGroup", metadata={"group_type": "ring", "members": ["bedroom0"]}))
@@ -355,7 +355,7 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.2", 0))
     media.setblocking(False)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Delayed reservation caller",
         local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=media.getsockname()[1],
@@ -458,7 +458,7 @@ async def test_delayed_bind_failure_rejects_before_sdp_and_releases_all(trunks, 
         return sock
 
     monkeypatch.setattr(media_ports, "bind_sip_audio_socket", bind)
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     caller = SipCallClient(local_ip="127.0.0.2", local_name="Bind failure caller",
         local_uri_user=account.username, username=account.username, password=account.password,
         local_sip_port=0, local_rtp_port=40000)

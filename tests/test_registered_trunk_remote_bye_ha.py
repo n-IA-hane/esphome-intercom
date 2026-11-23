@@ -40,7 +40,8 @@ async def test_registered_phone_trunk_auth_growth_remote_tcp_bye(trunks, registe
     async def accept(invite):
         invites.append(invite)
         answer = sdp.build_answer_directional('127.0.0.1', '127.0.0.1', audio_port,
-            invite.send_format, invite.recv_format, remote_sdp=invite.remote_sdp)
+            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats,
+            dtmf_direction=invite.dtmf_direction, remote_sdp=invite.remote_sdp)
         return SipInviteResult(200, 'OK', answer_sdp=answer)
 
     server = SipEndpointManager(host='127.0.0.1', port=port, local_ip='127.0.0.1',
@@ -54,6 +55,7 @@ async def test_registered_phone_trunk_auth_growth_remote_tcp_bye(trunks, registe
     runtime.runtime.default_trunk_id = 'work'
     runtime.runtime.endpoints.update('transfer_a', policy=PhonePolicy(outbound_trunk_id='work'))
     runtime.roster.append(RosterEntry('External', number='12345'))
+    runtime.runtime.directory.replace(runtime.roster)
     caller = registered_phones[0]
     try:
         await async_start_sip_trunk(runtime.hass, local_ip='127.0.0.1')

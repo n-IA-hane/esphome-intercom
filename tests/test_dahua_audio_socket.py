@@ -12,7 +12,7 @@ import pytest
 
 from .voip_phase1_support import (
     _load_audio_ws_runtime_module, _load_intercom_module,
-    rtp, sdp, sip, sip_client,
+    audio_format, rtp, sdp, sip, sip_client,
 )
 
 
@@ -89,7 +89,7 @@ async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(mon
     monkeypatch.setattr(view, "debug_mode", lambda _: False)
     monkeypatch.setattr(view, "_ha_softphone_store", lambda *_args: hass.store)
     monkeypatch.setattr(view, "_publish_ha_softphone_state", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(view, "publish_esp_media_route", lambda *_args: None)
+    monkeypatch.setattr(view, "publish_media_route", lambda *_args: None)
     monkeypatch.setattr(view, "_listen_for_call_end", lambda *_args: (asyncio.Event(), lambda: None))
     monkeypatch.setattr(view, "require_runtime_data", lambda _: SimpleNamespace(
         sip=None, media=SimpleNamespace(sessions_for=lambda _: sessions),
@@ -106,7 +106,7 @@ async def test_browser_runtime_preserves_negotiated_fractional_playout_clock(mon
     ), 1)
 
     assert delays[:4] == pytest.approx([frame_ms / 1000] * 4)
-    assert browser.json[0]["selected_tx_format"] == fmt.audio_format.wire_token()
+    assert browser.json[0]["selected_tx_format"] == "48000:s16le:1:10"
     assert len(packets) >= 4
     parsed = [rtp.parse_packet(packet) for packet in packets[:4]]
     assert all(len(packet.payload) == fmt.audio_format.nominal_frame_bytes for packet in parsed)
@@ -205,7 +205,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         if not user_agent:
             assert f"a=rtpmap:{pcm_rx_pt} L16/8000/1".encode() in requests[0].body
         assert b"a=rtpmap:0 PCMU/8000" in requests[0].body
-        assert (b"b=RS:0\r\nb=RR:0" in requests[0].body) is symmetric
+        assert b"b=RS:0\r\nb=RR:0" in requests[0].body
         hass.store["call_id"] = client.dialog.call_id
         registry = SimpleNamespace(
             resource_for=lambda *_args: None,
@@ -225,6 +225,9 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             hass, browser, session, endpoint_id="default", playback=playback,
         ))
         await asyncio.wait_for(browser.ready.wait(), 1)
+        capture = audio_format.parse_audio_format_token(browser.json[0]["tx_format"])
+        receive = audio_format.parse_audio_format_token(browser.json[0]["rx_format"])
+        assert (capture.sample_rate, capture.frame_ms) == (48000, 10)
 
         async def send(pt, sequence, timestamp, payload):
             packet = rtp.build_packet(rtp.RtpPacket(
@@ -245,15 +248,16 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                 frame = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
                 value = encoded ^ 0xFF
                 expected = (((value & 0x0F) * 8 + 132) << ((value >> 4) & 7)) - 132
-                assert struct.unpack("<160h", frame) == (expected,) * 160
+                assert len(frame) == receive.nominal_frame_bytes
+                assert all(abs(value - expected) <= 2 for value in struct.unpack(f"<{len(frame)//2}h", frame)[-64:])
 
         await send(pcm_rx_pt, 1, 0, struct.pack("<320h", *([1000] * 320)))
-        expected_bytes = session.recv_format.audio_format.nominal_frame_bytes
+        expected_bytes = receive.nominal_frame_bytes
         if user_agent:
             first = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
             assert len(first) == expected_bytes
             samples = struct.unpack(f"<{len(first) // 2}h", first)
-            assert all(abs(sample - 1000) <= 2 for sample in samples[16:])
+            assert all(abs(sample - 1000) <= 2 for sample in samples[-64:])
         else:
             # The manual contact offers L16/8000. An answer's conflicting
             # PCM mapping must not silently reinterpret that payload as Dahua PCM.
@@ -265,7 +269,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         await send(0, 2, 160, b"\xff" * 160)
         second = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
         assert len(second) == expected_bytes
-        assert all(abs(sample) <= 2 for sample in struct.unpack(f"<{len(second) // 2}h", second)[16:])
+        assert all(abs(sample) <= 2 for sample in struct.unpack(f"<{len(second) // 2}h", second)[-64:])
 
         await send(111, 3, 320, b"\xff" * 160)
         with pytest.raises(TimeoutError):
@@ -295,11 +299,15 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         # Queue less than the production 200 ms limit before measuring. This
         # tests the encoder and its pacing, not synthetic microphone scheduler
         # starvation when the test process first loads a receive resampler.
-        for samples in expected_frames:
-            await browser.messages.put(SimpleNamespace(
-                type=WSMsgType.BINARY,
-                data=audio_ws.encode_audio_frame(struct.pack("<160h", *samples)),
-            ))
+        for frame, expected in enumerate(expected_frames):
+            count = capture.sample_rate // 50  # The same independent 20 ms signal.
+            samples = ([expected[-1]] * count if symmetric else
+                [int(5500 * math.sin(2 * math.pi * (430 + frame * 37) * index / capture.sample_rate))
+                 for index in range(count)])
+            for offset in range(0, count, capture.nominal_frame_samples):
+                chunk = samples[offset:offset + capture.nominal_frame_samples]
+                await browser.messages.put(SimpleNamespace(type=WSMsgType.BINARY,
+                    data=audio_ws.encode_audio_frame(struct.pack(f"<{len(chunk)}h", *chunk))))
 
         async def microphone_and_door():
             for index in range(len(expected_frames)):
@@ -317,7 +325,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         arrival_times = []
         decoded_frames = []
         try:
-            for expected in expected_frames:
+            for frame_index, expected in enumerate(expected_frames):
                 async with asyncio.timeout(1):
                     while True:
                         outgoing, address = await loop.sock_recvfrom(remote, 2048)
@@ -339,7 +347,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                     assert len(packet.payload) == 640
                     decoded = struct.unpack("<320h", packet.payload)
                     assert all(abs(value - expected[-1]) <= 3 for value in decoded[64:])
-                    assert browser.json[0]["tx_format"].startswith("8000:")
+                    assert browser.json[0]["tx_format"] == "48000:s16le:1:10"
                 else:
                     assert packet.payload_type == 0
                     assert len(packet.payload) == 160
@@ -348,7 +356,21 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
                         u = value ^ 0xff
                         magnitude = (((u & 15) << 3) + 132) << ((u >> 4) & 7)
                         decoded.append(132 - magnitude if u & 128 else magnitude - 132)
-                    assert max(abs(actual - wanted) for actual, wanted in zip(decoded, expected)) <= 128
+                    # The 48k microphone crosses the real FIR before mu-law.
+                    # Fit only its phase, then retain the independent frequency,
+                    # level and mu-law quantization budget after filter startup.
+                    frequency = 430 + frame_index * 37
+                    stable = decoded[64:]
+                    sine = [math.sin(2 * math.pi * frequency * index / 8000) for index in range(len(stable))]
+                    cosine = [math.cos(2 * math.pi * frequency * index / 8000) for index in range(len(stable))]
+                    aa, bb = sum(value * value for value in sine), sum(value * value for value in cosine)
+                    ab = sum(left * right for left, right in zip(sine, cosine))
+                    ay = sum(left * right for left, right in zip(sine, stable))
+                    by = sum(left * right for left, right in zip(cosine, stable))
+                    a, b = (ay * bb - by * ab) / (aa * bb - ab * ab), (by * aa - ay * ab) / (aa * bb - ab * ab)
+                    assert abs(math.hypot(a, b) - 5500) <= 128
+                    assert math.sqrt(sum((value - a * left - b * right) ** 2
+                        for value, left, right in zip(stable, sine, cosine)) / len(stable)) <= 128
                     assert sum(sample * sample for sample in decoded) / 160 > 10_000_000
                 decoded_frames.append(tuple(decoded))
                 received = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))

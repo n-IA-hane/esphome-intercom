@@ -289,6 +289,7 @@ def test_bridge_termination_delegates_cleanup_to_the_session(
     invite = SimpleNamespace(caller="Kitchen", target="Desk")
     registry.pending_invites["call-1"] = invite
     registry.sessions["call-1"] = SimpleNamespace(
+        call_id="call-1",
         legs={},
         caller="Kitchen",
         callee="Desk",
@@ -335,6 +336,7 @@ def test_pending_softphone_termination_uses_owning_endpoint(
     invite = SimpleNamespace(caller="Door", target="HA")
     registry.pending_invites["call-2"] = invite
     registry.sessions["call-2"] = SimpleNamespace(
+        call_id="call-2",
         legs={},
         caller="Door",
         callee="HA",
@@ -368,6 +370,7 @@ def test_early_router_cancel_publishes_one_terminal_event(
     registry.preanswered = None
     registry.active_media = {}
     registry.sessions["call-3"] = SimpleNamespace(
+        call_id="call-3",
         legs={},
         caller="Door",
         callee="Ring group",
@@ -399,6 +402,7 @@ def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
         target="HA",
     )
     registry.sessions["call-4"] = SimpleNamespace(
+        call_id="call-4",
         legs={},
         caller="Door",
         callee="HA",

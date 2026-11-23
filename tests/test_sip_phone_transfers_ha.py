@@ -11,10 +11,12 @@ import struct
 import wave
 
 import pytest
+from homeassistant.config_entries import ConfigSubentry
 
 from custom_components.voip_stack.endpoint_routing import roster_from_peers
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.sip_registrar import SipAccount
+from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.trunk_runtime import async_stop_sip_trunk
 from tools.ha_softphone_matrix import BareSip
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
@@ -25,6 +27,7 @@ pytestmark = [pytest.mark.ha, pytest.mark.skipif(shutil.which("baresip") is None
 @pytest.fixture
 async def registered_phones(trunks, tmp_path, request):
     lab = trunks
+    entry = config_entry(lab.hass)
     # Keep the PBX relay pool separate from peer RTP and OS ephemeral sockets.
     assert not lab.runtime.rtp_port_pool.get("used")
     lab.runtime.transport_config["rtp_port"] = 12000 + 2 * secrets.randbelow(2000)
@@ -33,6 +36,8 @@ async def registered_phones(trunks, tmp_path, request):
         module_path = Path(os.environ.get("VOIP_TEST_BARESIP_MODULE_PATH", "/usr/lib/baresip/modules"))
         for module in ("avcodec.so", "fakevideo.so"):
             assert (module_path / module).is_file(), f"Video peer requires {module_path / module}"
+        lab.hass.config_entries.async_update_entry(entry,
+            data={**entry.data, "experimental_sip_video": True})
         lab.runtime.transport_config["experimental_sip_video"] = True
         for endpoint in lab.calls.component("udp_listener")._dialog_endpoints():
             endpoint.enable_video = True
@@ -43,11 +48,16 @@ async def registered_phones(trunks, tmp_path, request):
     registrar = lab.calls.component("registrar")
     registrar.enabled = True
     names = ("transfer_a", "transfer_b", "transfer_c")
-    registrar.update_accounts([SipAccount(name, name, "isolated-test-only") for name in names])
+    registrar.update_accounts([*registrar.accounts.values(),
+        *(SipAccount(name, name, "isolated-test-only") for name in names)])
+    from custom_components.voip_stack.phone_config import endpoint_from_subentry
     for name in names:
-        lab.runtime.endpoints.register(PhoneEndpoint(
-            endpoint_id=name, name=name, username=name, kind=EndpointKind.SIP_ACCOUNT,
-        ))
+        configured = ConfigSubentry(subentry_type="phone", title=name, unique_id="phone:" + name,
+            data={"kind": "sip_account", "name": name, "username": name,
+                  "username_source": "user", "password": "isolated-test-only",
+                  "video_enabled": name in video_names})
+        lab.hass.config_entries.async_add_subentry(entry, configured)
+        lab.runtime.endpoints.register(endpoint_from_subentry(entry, configured))
     peers = []
     try:
         for index, name in enumerate(names):

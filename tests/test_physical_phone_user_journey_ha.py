@@ -23,7 +23,7 @@ async def test_one_form_adoption_uses_native_identity_and_optional_account(physi
     optional_account = next(value for key, value in form["data_schema"].schema.items() if key.schema == "account_device")
     assert optional_account.selector_type == "device"
     assert "account_device" not in form["data_schema"]({"profile_id": "fanvil/x3u-pro"})
-    device = state.lab.runtime.endpoints.get("sip:front").device_id
+    device = state.lab.runtime.endpoints.get("481").device_id
     result = await submit(state, form, identity(**({"account_device": device} if assigned else {})))
     assert result["type"] == "abort" and result["reason"] == "phone_configured"
     (record,) = [value for key, value in state.lab.entry.subentries.items() if key not in before]
@@ -32,7 +32,7 @@ async def test_one_form_adoption_uses_native_identity_and_optional_account(physi
     assert "phone_id" not in record.data
     data = physical_phone_data(record)
     assert data["phone_id"] == record.subentry_id and not data["keys"]
-    assert data["lines"] == ([{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"}] if assigned else [])
+    assert data["lines"] == ([{"slot": "1", "endpoint_id": "481", "transport": "udp"}] if assigned else [])
 
 
 @pytest.mark.parametrize("scenario", [
@@ -48,8 +48,8 @@ async def test_physical_key_rows_keep_explicit_new_slots_and_reorder_managed_key
     caps["key_slots"] = [{**caps["key_slots"][0], "slot": str(pos)} for pos in range(1, 8)]
     caps["clear_keys"] = True
     line = {"slot": "2", "line": "1", "function": "line", "label": "Reception"}
-    watch = {"slot": "7", "line": "2", "function": "blf", "target": "sip:front", "label": "Night BLF"}
-    dial = {"slot": "1", "line": "1", "function": "speed_dial", "target": "sip:office", "label": "Speed"}
+    watch = {"slot": "7", "line": "2", "function": "blf", "target": "481", "label": "Night BLF"}
+    dial = {"slot": "1", "line": "1", "function": "speed_dial", "target": "482", "label": "Speed"}
     old_keys = [line, watch]
     submitted, expected = {
         "sparse_drag": ([watch, line], [dict(watch, slot="2"), dict(line, slot="7")]),
@@ -63,7 +63,7 @@ async def test_physical_key_rows_keep_explicit_new_slots_and_reorder_managed_key
         "explicit_swap": ([dict(line, slot="7"), dict(watch, slot="2")], [dict(watch, slot="2"), dict(line, slot="7")]),
         "replace_same_slot": ([watch, dict(dial, slot="2")], [dict(dial, slot="2"), watch]),
         "change_and_drag": ([watch, dict(line, slot="5"), dial], [dict(watch, slot="1"), dict(line, slot="5"), dict(dial, slot="7")]),
-        "target_edit_and_drag": ([dict(watch, target="sip:office"), line], [dict(watch, slot="2", target="sip:office"), dict(line, slot="7")]),
+        "target_edit_and_drag": ([dict(watch, target="482"), line], [dict(watch, slot="2", target="482"), dict(line, slot="7")]),
         "unknown_origin": ([line, watch], None),
         "duplicate_origin": ([line, watch], None),
         "legacy_payload": ([watch, line], [line, watch]),
@@ -78,8 +78,8 @@ async def test_physical_key_rows_keep_explicit_new_slots_and_reorder_managed_key
         caps["key_slots"][1]["functions"] = ["line"]
     original = normalize_physical_phone({
         **identity(), "phone_id": "legacy-physical", "catalog_commit": "a" * 40,
-        "lines": [{"slot": "1", "endpoint_id": "sip:front", "transport": "udp"},
-                  {"slot": "2", "endpoint_id": "sip:office", "transport": "tcp"}],
+        "lines": [{"slot": "1", "endpoint_id": "481", "transport": "udp"},
+                  {"slot": "2", "endpoint_id": "482", "transport": "tcp"}],
         "keys": old_keys,
     })
     record = ConfigSubentry(subentry_type="physical_phone", title=original["name"], data=deepcopy(original),
@@ -144,9 +144,9 @@ async def test_native_add_key_uses_bound_sip_accounts_and_display_order(physical
     if case == "restricted_positions":
         caps["key_slots"][1] = dict(template, slot="2", functions=["line"])
     caps["clear_keys"] = True
-    lines = [{"slot":"2", "endpoint_id":"sip:front", "transport":"udp"}]
+    lines = [{"slot":"2", "endpoint_id":"481", "transport":"udp"}]
     if case in {"two_lines", "choose_line"}:
-        lines.append({"slot":"4", "endpoint_id":"sip:office", "transport":"tcp"})
+        lines.append({"slot":"4", "endpoint_id":"482", "transport":"tcp"})
     if case == "no_lines":
         lines = []
     old_slots = {"free_hole":[1,4], "new_drag":[1,3], "restricted_positions":[1,4],

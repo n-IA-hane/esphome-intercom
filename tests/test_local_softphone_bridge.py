@@ -55,7 +55,7 @@ def _load_runtime_module():
     package.__path__ = [str(PKG_DIR)]
     sys.modules[package_name] = package
     core_package = types.ModuleType(f"{package_name}.core")
-    core_package.__path__ = []
+    core_package.__path__ = [str(PKG_DIR / "core")]
     sys.modules[core_package.__name__] = core_package
     sys.modules[f"{package_name}.core.audio_format"] = _load_module("audio_format")
     sys.modules[f"{package_name}.const"] = _load_module("const")
@@ -270,7 +270,7 @@ class LocalSoftphoneBridgeTest(unittest.TestCase):
             self.bridge.answer("call-1", "kitchen", "wall-tablet-b")
 
     def test_active_video_send_toggle_preserves_peer_receive_direction(self) -> None:
-        self.start(request_video=False)
+        self.start(request_video=True)
         self.bridge.answer("call-1", "kitchen", "kitchen-card")
 
         enabled = self.bridge.set_video_send("call-1", "office", True)
@@ -285,6 +285,12 @@ class LocalSoftphoneBridgeTest(unittest.TestCase):
         self.bridge.answer("audio", "hall", "hall-card")
         with self.assertRaises(bridge_module.LocalBridgeError):
             self.bridge.set_video_send("audio", "office", True)
+
+    def test_callee_camera_cannot_override_callers_absent_receive_intent(self) -> None:
+        self.start(request_video=False)
+        self.bridge.answer("call-1", "kitchen", "kitchen-card")
+        with self.assertRaises(bridge_module.LocalMediaNotNegotiatedError):
+            self.bridge.set_video_send("call-1", "kitchen", True)
 
     def test_originating_card_can_be_pinned_before_call_events(self) -> None:
         events = []

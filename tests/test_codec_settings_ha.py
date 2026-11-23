@@ -57,11 +57,11 @@ async def test_browser_outbound_sdp_uses_effective_account_codec_policy(lab, mon
     entry = configure(lab, account_audio)
     if destination_audio is not None:
         lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title="Bedroom",
-            data={"endpoint_id": "sip:bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
+            data={"endpoint_id": "bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
                   "audio_codecs": destination_audio}, unique_id="phone:sip:bedroom0"))
     source = PhoneEndpoint("codec-browser", "Codec browser", "browser", device_id="codec-browser-device")
     lab.runtime.endpoints.register(source)
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
@@ -111,7 +111,7 @@ async def test_sip_target_leg_uses_destination_account_codec_policy(lab, monkeyp
 
     entry = configure(lab)
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type="phone", title="Bedroom",
-        data={"endpoint_id": "sip:bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
+        data={"endpoint_id": "bedroom0", "username": "bedroom0", "name": "Bedroom", "kind": "sip_account",
               "audio_codecs": ["PCMA"]}, unique_id="phone:sip:bedroom0"))
     peer = lab.phones[0]
 

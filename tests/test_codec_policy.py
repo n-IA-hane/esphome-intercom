@@ -60,7 +60,8 @@ async def test_inbound_dialog_keeps_its_codec_policy_for_reinvite():
     initial=endpoint._parse_invite(request,('127.0.0.1',5099))
     assert initial.send_format.encoding==initial.recv_format.encoding=='PCMU'
     assert initial.video_format is None
-    pending=sip_listener._PendingInvite(request,('127.0.0.1',5099),'local','UDP',codec_policy=initial.codec_policy)
+    pending=sip_listener._PendingInvite(request,('127.0.0.1',5099),'local','UDP',
+        codec_policy=initial.codec_policy,identity=initial,media_contract=initial)
     dialog=endpoint._activate_dialog('codec-policy',pending,request,('127.0.0.1',5099))
     assert dialog.codec_policy==policy
     policy=CodecPolicy(('OPUS',),('H264',))

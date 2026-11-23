@@ -822,7 +822,7 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertEqual(video["connection_ip"], "192.0.2.30")
 
     def test_negotiate_l16_48k(self) -> None:
-        offer = sdp.build_offer(
+        offer = sdp.build_offer_directional(
             "192.168.1.20",
             "192.168.1.20",
             40000,
@@ -830,6 +830,9 @@ class SdpPcmProfileTest(unittest.TestCase):
                 audio_format.AudioFormat(48000, "s16le", 1, 10),
                 audio_format.AudioFormat(16000, "s16le", 1, 20),
             ],
+            # An independent 10 ms receiver cannot be inferred from the
+            # transmitter's 48 kHz/10 and 16 kHz/20 packet capabilities.
+            [audio_format.AudioFormat(rate, "s16le", 1, 10) for rate in (48000, 16000)],
         )
         self.assertNotIn("a=fmtp:96", offer)
         self.assertIn("telephone-event/8000", offer)
@@ -1081,16 +1084,14 @@ class SdpPcmProfileTest(unittest.TestCase):
 
         for direction in ("sendrecv", "inactive"):
             with self.subTest(direction=direction):
-                with self.assertRaisesRegex(sdp.SdpError, "one RTP payload"):
-                    sdp.build_answer_directional(
-                        "192.0.2.20",
-                        "192.0.2.20",
-                        41000,
-                        send,
-                        recv,
-                        remote_sdp=remote_offer(direction),
-                        audio_direction="inactive",
-                    )
+                answer = sdp.build_answer_directional(
+                    "192.0.2.20", "192.0.2.20", 41000, send, recv,
+                    remote_sdp=remote_offer(direction), audio_direction="inactive",
+                )
+                parsed = sdp.parse_sdp(answer)
+                self.assertEqual(parsed["direction"], "inactive")
+                self.assertEqual(set(parsed["payload_order"]), {96, 97})
+                self.assertEqual({fmt.sample_rate for fmt in sdp.offered_pcm_formats(answer)}, {16000, 48000})
 
     def test_inactive_answer_negotiation_uses_local_offer_capability_direction(self) -> None:
         local_send = audio_format.AudioFormat(48000, "s16le", 1, 10)
@@ -1315,7 +1316,7 @@ class SdpPcmProfileTest(unittest.TestCase):
 
     def test_bounded_sip_udp_queue_keeps_freshest_datagram(self) -> None:
         queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=2)
-        protocol = sip_client._SipClientProtocol(queue)
+        protocol = sip_client.SipDatagramQueueProtocol(queue)
         protocol.datagram_received(b"one", ("127.0.0.1", 1))
         protocol.datagram_received(b"two", ("127.0.0.1", 2))
         protocol.datagram_received(b"three", ("127.0.0.1", 3))
@@ -1351,6 +1352,10 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
 
     def test_offer_caps_payloads_to_compact_udp_safe_profile_without_losing_esp_baseline(self) -> None:
+        from custom_components.voip_stack.sip_invite_exchange import InviteExchange
+        from custom_components.voip_stack.core.sip_transport import (
+            SIP_UDP_MAX_REQUEST_BYTES, SIP_UDP_SAFE_REQUEST_BYTES,
+        )
         browser_tx_formats = [
             audio_format.AudioFormat(rate, fmt, 1, frame_ms)
             for rate in sorted(audio_format.SUPPORTED_SAMPLE_RATES)
@@ -1375,7 +1380,36 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         offered = sdp.offered_pcm_formats(offer)
         self.assertLessEqual(len(offered), 12)
-        self.assertLess(len(offer.encode()), 900)
+        self.assertEqual(len({fmt.payload_type for fmt in offered}), len(offered))
+        events = sdp.offered_dtmf_formats(offer)
+        self.assertEqual(len({fmt.payload_type for fmt in events}), len(events))
+        self.assertTrue(all(fmt.events == frozenset(range(16)) for fmt in events))
+        client = sip_client.SipCallClient(local_ip="192.168.1.10", local_name="HA",
+            local_sip_port=5060, local_rtp_port=40020)
+        client.dialog_ids = sip.SipDialogIds(call_id="complete-request-budget", local_tag="local",
+            remote_tag="", cseq=1, branch="z9hG4bK-complete-request")
+        client._pending_request_uri = "sip:peer@192.0.2.20:5060"
+        client._pending_remote_uri = client._pending_request_uri
+        client._pending_local_uri = "sip:HA@192.168.1.10:5060"
+        client._pending_contact_uri = client._pending_local_uri
+        client._pending_invite_body = offer.encode()
+        raw = client._build_pending_invite()
+        message = sip.parse_message(raw)
+        self.assertEqual(message.body, offer.encode())
+        self.assertEqual(int(message.header("Content-Length")), len(message.body))
+        self.assertLessEqual(len(raw), SIP_UDP_MAX_REQUEST_BYTES)
+        exchange = InviteExchange.for_target("peer", "192.0.2.20", 5060, client._pending_request_uri, "UDP")
+        exchange.request = raw
+        # RFC 3261 sizes the complete request. The existing transport owner
+        # covers reliable delivery and refused-TCP fallback, not an SDP-only cap.
+        self.assertEqual(exchange.needs_tcp("UDP"), len(raw) > SIP_UDP_SAFE_REQUEST_BYTES)
+        client.use_reused_signaling_flow(send=lambda _raw: True, responses=asyncio.Queue(),
+            close=lambda: None, udp_next_hop=("192.0.2.20", 5060))
+        registered_flow = client._reused_flow_send
+        self.assertIsNone(asyncio.run(client._prepare_invite_request_transport(exchange)))
+        self.assertEqual(client.signaling_transport, "UDP")
+        self.assertIs(client._reused_flow_send, registered_flow)
+        asyncio.run(client.close())
         # An unconfigured codec policy preserves the input catalog order.
         # CC-2/R1 describes the receiver's 20 ms preference, not a TX quantum.
         self.assertEqual(offered[0].audio_format, audio_format.AudioFormat(8000, "s16le", 1, 20))

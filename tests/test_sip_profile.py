@@ -540,7 +540,10 @@ class SipProfileTest(unittest.TestCase):
         client._invite_transaction_active = True
         client._received_provisional = True
 
-        client.cancel()
+        async def cancel_in_transaction_loop():
+            return client.cancel()
+
+        self.assertTrue(asyncio.run(cancel_in_transaction_loop()))
 
         raw, addr = client.transport.sent[0]  # type: ignore[union-attr]
         parsed = sip.parse_message(raw)
@@ -602,7 +605,7 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(bye.method, "BYE")
         self.assertIn("SIP/2.0/TCP 192.168.1.10:43123", bye.header("Via"))
 
-    def test_invite_carries_intercom_display_identity_headers(self) -> None:
+    def test_invite_uses_standard_display_names_without_private_identity_headers(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
                 self.sent: list[tuple[bytes, tuple[str, int]]] = []
@@ -635,25 +638,13 @@ class SipProfileTest(unittest.TestCase):
 
         raw, _ = transport.sent[0]
         parsed = sip.parse_message(raw)
-        self.assertGreater(len(raw), 1300)
-        self.assertIn("SIP/2.0/TCP ", parsed.header("Via"))
-        self.assertTrue(any(raw in writer.writes for writer in writers))
-        self.assertEqual(
-            parsed.header("X-Voip-Stack-Caller-Name"),
-            "Waveshare P4 Touch",
-        )
-        self.assertEqual(
-            parsed.header("X-Voip-Stack-Caller-Route"),
-            "waveshare-p4-touch",
-        )
-        self.assertEqual(parsed.header("X-Voip-Stack-Dest-Name"), "Cucina")
-        self.assertEqual(
-            parsed.header("X-Voip-Stack-Dest-Route"),
-            "cucina_phone",
-        )
+        self.assertLessEqual(len(raw), 1300)
+        self.assertIn("SIP/2.0/UDP ", parsed.header("Via"))
+        self.assertFalse(writers)
+        self.assertFalse(any(name.lower().startswith("x-voip-stack-") for name, _ in parsed.headers))
         self.assertEqual(
             parsed.header("From").split(";tag=", 1)[0],
-            '"Waveshare P4 Touch" <sip:waveshare-p4-touch@192.168.1.10:5060;transport=tcp>',
+            '"Waveshare P4 Touch" <sip:waveshare-p4-touch@192.168.1.10:5060;transport=udp>',
         )
         self.assertEqual(
             parsed.header("To"),

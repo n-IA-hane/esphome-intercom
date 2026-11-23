@@ -49,7 +49,7 @@ async def test_blf_cannot_watch_queue_membership_of_an_unrelated_operator(lab, b
     from custom_components.voip_stack.call_queues import QueueManager
     from custom_components.voip_stack.store import config_entry
     manager = QueueManager(lab.hass, config_entry(lab.hass))
-    manager.reconcile([("sip:bedroom0", ["Support"])])
+    manager.reconcile([("bedroom0", ["Support"])])
     lab.runtime.queues = manager
     methods, _notifications, send = blf
     result = await methods.handle(subscribe(target="queue-login+support"), ("127.0.0.3", 5060), "UDP", send)

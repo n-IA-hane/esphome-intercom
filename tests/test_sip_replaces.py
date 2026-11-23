@@ -56,6 +56,8 @@ class InitialTransitionTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(invite.replaces.call_id, "old%41")
                     return sip_listener.SipInviteResult(200, "OK", answer_sdp=sdp.build_answer_directional(
                         "127.0.0.1", "127.0.0.1", 41000, invite.send_format, invite.recv_format,
+                        recv_formats=invite.recv_formats,
+                        dtmf_direction=invite.dtmf_direction,
                         remote_sdp=invite.remote_sdp,
                     ), commit=commit, rollback=rollback)
                 def send(raw, _addr):
@@ -84,6 +86,8 @@ class InitialTransitionTest(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return sip_listener.SipInviteResult(200, "OK", answer_sdp=sdp.build_answer_directional(
                 "127.0.0.1", "127.0.0.1", 41000, invite.send_format, invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
             ), commit=commit, rollback=rollback)
         endpoint = self.endpoint(route, lambda raw, _addr: not sent.append(sip.parse_message(raw)))
@@ -115,6 +119,8 @@ class InitialTransitionTest(unittest.IsolatedAsyncioTestCase):
         async def route(invite):
             return sip_listener.SipInviteResult(200, "OK", answer_sdp=sdp.build_answer_directional(
                 "127.0.0.1", "127.0.0.1", 41000, invite.send_format, invite.recv_format,
+                recv_formats=invite.recv_formats,
+                dtmf_direction=invite.dtmf_direction,
                 remote_sdp=invite.remote_sdp,
             ), commit=commit, rollback=rollback)
         endpoint = self.endpoint(route, lambda _raw, _addr: True)

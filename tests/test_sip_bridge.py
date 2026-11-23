@@ -66,10 +66,22 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             send_rtp_format=pcm_16k,
         )
 
+        selected = sdp.negotiate_directional(invite.remote_sdp,
+            [pcm_48k.audio_format, pcm_16k.audio_format],
+            [pcm_48k.audio_format, pcm_16k.audio_format],
+            established=sdp.RtpPcmDirection(pcm_16k, pcm_16k),
+            local_capabilities=sip_listener.HA_AUDIO_CAPABILITIES)
+        self.assertIsNotNone(selected)
+        for fmt in (selected.send, selected.recv):
+            self.assertEqual((fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms),
+                             (97, "L16", 16000, 1, 20))
+        invite = dataclasses.replace(invite, send_format=selected.send, recv_format=selected.recv,
+            send_formats=selected.send_formats, recv_formats=selected.recv_formats)
+
         updated = sip_bridge.invite_rtp_peer(invite, established=established)
 
-        self.assertEqual(updated.inbound_rtp_format, pcm_16k)
-        self.assertEqual(updated.outbound_rtp_format, pcm_16k)
+        self.assertEqual(updated.inbound_rtp_format, selected.recv)
+        self.assertEqual(updated.outbound_rtp_format, selected.send)
 
     def test_audio_contract_is_renegotiated_when_removed_from_reoffer(self):
         pcm_48k = sdp.RtpPcmFormat(96, "L16", 48000, 1, 20)
@@ -443,17 +455,15 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rtp.parse_packet(forwarded).payload_type, 96)
             self.assertEqual(relay.left.port, browser_port)
 
-            dtmf_packet = rtp.build_packet(
-                rtp.RtpPacket(
-                    payload_type=101,
-                    sequence=2,
-                    timestamp=audio.nominal_frame_samples,
-                    ssrc=101,
-                    payload=bytes((1, 0x80, 0x01, 0x40)),
-                )
-            )
-            browser_transport.sendto(dtmf_packet, (local, relay_left_port))
-            browser_transport.sendto(dtmf_packet, (local, relay_left_port))
+            # Forward the actual 40 ms event progress and three distinct end
+            # retransmissions. An identical datagram remains a duplicate.
+            for sequence, duration in enumerate((80, 160, 240, 320, 320, 320, 320), 1):
+                dtmf_packet = rtp.build_packet(rtp.RtpPacket(
+                    payload_type=101, sequence=sequence, timestamp=0, ssrc=303,
+                    payload=bytes((1, 0x80 if sequence >= 5 else 0, duration >> 8, duration & 255)),
+                    marker=sequence == 1))
+                browser_transport.sendto(dtmf_packet, (local, relay_left_port))
+                browser_transport.sendto(dtmf_packet, (local, relay_left_port))
             await asyncio.wait_for(dtmf_received.wait(), timeout=1.0)
             self.assertEqual(dtmf_events, [("left", "1", "rtp_event")])
             relayed_dtmf: list[rtp.RtpPacket] = []
@@ -473,6 +483,8 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
                 3,
             )
             self.assertEqual(relay.right_dtmf_tx_events, 1)
+            self.assertEqual({int.from_bytes(packet.payload[2:], "big")
+                for packet in relayed_dtmf if packet.payload[1] & 128}, {320})
 
             destination_transport.sendto(frame(sequence=3, ssrc=202), (local, relay_right_port))
             returned, _ = await asyncio.wait_for(browser.queue.get(), timeout=1.0)
@@ -659,7 +671,10 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
                     dest_rtp,
                     invite.send_format,
                     invite.recv_format,
+                    recv_formats=invite.recv_formats, dtmf_direction=invite.dtmf_direction,
+                    remote_sdp=invite.remote_sdp,
                 ),
+                media_contract=invite,
             )
 
         async def ha_invite(invite):
@@ -701,7 +716,10 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
                     ha_rtp_left,
                     invite.send_format,
                     invite.recv_format,
+                    recv_formats=invite.recv_formats, dtmf_direction=invite.dtmf_direction,
+                    remote_sdp=invite.remote_sdp,
                 ),
+                media_contract=invite,
             )
 
         dest_server = sip_listener.SipUdpServer(

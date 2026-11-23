@@ -287,7 +287,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         local_branch = call_service[local_start:local_return]
         self.assertIn("caller_owner_id=str(", local_branch)
         self.assertIn('call.data.get("media_client_id")', local_branch)
-        self.assertIn("request_video=_local_video_capable(browser_endpoint)", local_branch)
+        self.assertIn("request_video=_local_video_receive_requested(call, browser_endpoint)", local_branch)
         self.assertIn("enable_caller_video_send=bool(", local_branch)
         self.assertIn('call.data.get("send_video", False)', local_branch)
 
@@ -302,7 +302,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
 
         self.assertIn('call.data.get("device_id")', body)
-        self.assertIn("resolve_service_phone(registry, device_id)", body)
+        self.assertIn("resolve_service_phone(registry, device_id, hass=hass)", body)
         function = ast.parse(body).body[0]
         adapter = next(
             node for node in function.body if isinstance(node, ast.Assign)
@@ -402,12 +402,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.dtmf_events,
         )
         self.assertIn(
-            'client.on_info_dtmf = lambda digit: _emit("right", digit, "sip_info")',
+            'client.on_info_dtmf_event = lambda digit, duration_ms=160: _emit("right", digit, "sip_info", duration_ms=duration_ms)',
             self.dtmf_events,
         )
         # The behavioral INFO tests validate both native dialog roles. A
         # listener-owned callee must not be hardcoded as the caller side.
-        self.assertIn("relay.relay_dtmf(side, digit)", self.dtmf_events)
+        self.assertIn("relay.relay_dtmf(side, digit, duration_ms=duration_ms)", self.dtmf_events)
         self.assertNotIn("send_dtmf_info", self.source)
         # Established bridge families keep DTMF through shared primitives.
         self.assertEqual(
@@ -618,10 +618,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         expected_gate = ') and bool(call.data.get("send_video", False))'
         self.assertIn(expected_gate, answer_service)
         self.assertIn('call.data.get("send_video", False)', call_service)
-        self.assertIn(
-            'video_direction=("sendrecv" if camera_send_enabled else "recvonly")',
-            call_service,
-        )
+        tree = ast.parse(call_service)
+        direction = next(node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "video_direction" for target in node.targets))
+        names = {node.id for node in ast.walk(direction) if isinstance(node, ast.Name)}
+        self.assertTrue({"camera_send_enabled", "receive_video_enabled"} <= names)
+        values = {node.value for node in ast.walk(direction) if isinstance(node, ast.Constant)}
+        self.assertTrue({"sendrecv", "recvonly", "sendonly", "inactive"} <= values)
         self.assertIn("allow_send=(", answer_service)
         self.assertIn(
             "camera_send_enabled\n                and browser_video_send_supported",
@@ -790,9 +793,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("RouteAction.GROUP", routeable)
         self.assertIn("if decision.action is RouteAction.GROUP:", on_invite)
         self.assertIn("return await route_local_group(", on_invite)
-        self.assertIn("ring_endpoint_ids = tuple(", self.inbound_local)
-        self.assertIn("runtime.browser_leg_for_member(", self.inbound_local)
-        self.assertIn("ring_endpoint_ids=ring_endpoint_ids", self.inbound_local)
+        local_tree = ast.parse(self.inbound_local)
+        group = next(node for node in local_tree.body if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "route_local_group")
+        calls = [ast.unparse(node.func) for node in ast.walk(group) if isinstance(node, ast.Call)]
+        self.assertEqual(calls.count("runtime.run_ring_group_call"), 1)
+        self.assertNotIn("runtime.start_sip_bridge_call", calls)
         self.assertIn("async def ring_conference_from_ha", self.endpoint_group_calls)
         self.assertIn(
             "pbx_runtime.ring_conference_members_from_ha = routing.groups.ring_conference_from_ha",
@@ -960,26 +966,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertLess(route_guard, admin_check)
         self.assertLess(admin_check, parse_uri)
 
-    def test_ha_direct_esp_calls_prefer_roster_audio_profile_over_device_registry(
-        self,
-    ) -> None:
-        call_service = SOFTPHONE_ORIGINATE.read_text()
-        tx_profile = call_service.split("remote_tx_formats =", 1)[1].split(
-            "remote_rx_formats =", 1
-        )[0]
-        rx_profile = call_service.split("remote_rx_formats =", 1)[1].split(
-            "sip_send_formats, sip_recv_formats", 1
-        )[0]
-        self.assertIn("_roster_entry_formats(", tx_profile)
-        self.assertIn('route.entry, "tx_formats"', tx_profile)
-        self.assertIn('_device_formats(dest_device, "tx_formats")', tx_profile)
-        self.assertIn("_roster_entry_formats(", rx_profile)
-        self.assertIn('route.entry, "rx_formats"', rx_profile)
-        self.assertIn('_device_formats(dest_device, "rx_formats")', rx_profile)
-        self.assertNotIn(
-            "if dest_device is not None\n        else _roster_entry_formats",
-            call_service,
-        )
+    def test_account_audio_uses_the_common_sip_offer_planner(self) -> None:
+        caller = ast.parse(SOFTPHONE_ORIGINATE.read_text())
+        calls = [ast.unparse(node.func) for node in ast.walk(caller) if isinstance(node, ast.Call)]
+        self.assertEqual(calls.count("_sip_target_rtp_audio_profile"), 1)
+        self.assertNotIn("_device_formats", calls)
+        self.assertNotIn("_roster_entry_formats", calls)
+        body = _owner_source(ENDPOINT_ROUTING, "sip_target_rtp_audio_profile")
+        planning = [ast.unparse(node.func) for node in ast.walk(ast.parse(body)) if isinstance(node, ast.Call)]
+        self.assertEqual(planning.count("negotiator.sip_offer_plan"), 1)
 
     def test_phonebook_sensor_exposes_only_the_central_roster_for_the_card(
         self,
@@ -988,8 +983,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         sensor = SENSOR.read_text()
         card = CARD_JS.read_text()
 
-        self.assertIn('"tx_formats": list(peer.tx_formats or [])', routing)
-        self.assertIn('"rx_formats": list(peer.rx_formats or [])', routing)
+        self.assertNotIn('"tx_formats":', routing)
+        self.assertNotIn('"rx_formats":', routing)
         self.assertIn('"group_type": group.group_type', routing)
         self.assertNotIn("def softphone_targets_from_roster", routing)
         self.assertNotIn("softphone_targets_json", sensor)
@@ -1772,7 +1767,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
         self.assertIn("confirm_for_sip_info = dtmf_format is None", invite)
         self.assertIn(
-            'return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")',
+            'return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="", media_contract=invite)',
             invite,
         )
         self.assertIn('183,\n        "Session Progress"', invite)
@@ -1842,7 +1837,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_declined_rtcp_mux_is_not_used_by_media_runtime(self) -> None:
         listener = (
-            ROOT / "custom_components" / "voip_stack" / "sip_listener.py"
+            ROOT / "custom_components" / "voip_stack" / "sip_server_invite.py"
         ).read_text()
         client = (
             ROOT / "custom_components" / "voip_stack" / "sip_client.py"

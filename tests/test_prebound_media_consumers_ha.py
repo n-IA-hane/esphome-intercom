@@ -38,10 +38,10 @@ def observe_reserved_sockets(monkeypatch):
 
 def ordinary_phone(lab):
     lab.roster[1] = replace(lab.roster[1], metadata={
-        "endpoint_id": "sip:bedroom0", "endpoint_kind": "sip_account", "registered": True,
+        "endpoint_id": "bedroom0", "endpoint_kind": "sip_account", "registered": True,
         "sip_audio_tx_formats": ["L16/16000/1/20"], "sip_audio_rx_formats": ["L16/16000/1/20"],
     })
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
 
 
 async def wait_for(predicate):
@@ -58,7 +58,7 @@ async def terminate_calls(lab):
 
 
 async def make_caller(lab, name="Independent caller"):
-    account = sip_test_account(lab, "sip:bedroom1")
+    account = sip_test_account(lab, "bedroom1")
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.2", 0))
     media.setblocking(False)

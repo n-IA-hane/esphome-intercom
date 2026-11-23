@@ -1,11 +1,12 @@
 """Receive codec alternatives retain offer PTs independently of transmit choice."""
 
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 
 from .voip_phase1_support import audio_format, sdp, sip, sip_client
+from custom_components.voip_stack.core.media.codecs import STATIC_RTPMAP, STATIC_VIDEO_RTPMAP
+from custom_components.voip_stack.core.media.payload_map import PayloadConflict, PayloadMap
 
 
 def _description(formats, *, ptime=20, direction="sendrecv"):
@@ -98,7 +99,8 @@ def test_answer_retains_each_receivers_own_packetization_bounds(alternatives, pe
     assert selected.send.max_frame_ms == peer_max
     assert selected.send.frame_ms == selected.recv.frame_ms == 10
     assert selected.send.channels == selected.recv.channels == 1
-    assert selected.recv_formats[0] == selected.recv
+    assert selected.recv in selected.recv_formats
+    assert {fmt.payload_type for fmt in selected.recv_formats} == {pt for pt, _ in offered}
 
 
 def _dialog(fmt):
@@ -112,7 +114,7 @@ def _dialog(fmt):
 
 
 def test_changed_receive_alternatives_trigger_media_generation_update():
-    original = _dialog(sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20))
+    original = _dialog(sdp.RtpPcmFormat(96, "PCM" if dahua else "L16", 16000, 1, 20))
     changed = replace(original, recv_formats=(*original.recv_formats, sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)))
     assert not sip_client.SipCallClient._same_dialog_media(original, changed)
     assert sip_client.SipCallClient._same_dialog_media(original, replace(original))
@@ -220,13 +222,13 @@ def test_retired_payload_identity_survives_intermediate_media_generation(local_o
 
 
 def test_payload_history_is_bounded_and_independent_of_active_receive_set():
-    formats = tuple(sdp.RtpPcmFormat(pt, "L16", 16000, 1, 20) for pt in range(128))
-    history = sip_client._validate_receive_payload_update(None, formats)
-    assert len(history) == 128
-    # The legacy adapter accepts arbitrary slots for this range-bound witness.
-    # Real SipDialog values now enforce RFC static assignments in PayloadMap.
-    current = SimpleNamespace(recv_payload_history=history, recv_formats=(formats[0],), recv_format=formats[0])
-    assert sip_client._validate_receive_payload_update(current, (formats[127],)) == history
-    assert current.recv_formats == (formats[0],)
-    with pytest.raises(sdp.SdpError, match="outside the RTP range"):
-        sip_client._validate_receive_payload_update(current, (replace(formats[0], payload_type=128),))
+    meanings = {pt: STATIC_RTPMAP.get(pt) or STATIC_VIDEO_RTPMAP.get(pt) or ("L16", 16000, 1)
+                for pt in range(128)}
+    original = PayloadMap(receive=meanings)
+    current = original.with_mappings(receive={127: meanings[127]}, send={})
+    assert len(current.receive_history) == 128 and dict(current.receive) == {127: meanings[127]}
+    assert len(original.receive) == 128
+    with pytest.raises(PayloadConflict, match="out of range"):
+        current.with_mappings(receive={128: meanings[127]}, send={})
+    with pytest.raises(PayloadConflict, match="cannot become"):
+        current.with_mappings(receive={96: ("L16", 8000, 1)}, send={})

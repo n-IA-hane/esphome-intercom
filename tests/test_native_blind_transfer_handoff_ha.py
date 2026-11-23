@@ -241,7 +241,7 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         else:
             assert current is original
             assert caller.dialog is not None
-        assert "sip:bedroom1" in current.endpoint_claims
+        assert "bedroom1" in current.endpoint_claims
         # Independent native endpoints author PCM RTP in both directions.
         samples = struct.pack(">320h", *([1234, -2345] * 160))
         source_socket = lab.phones[0].rtp_socket if transferor == "source" else audio

@@ -9,6 +9,10 @@ from custom_components.voip_stack.core.media import leg, negotiator
 
 Receiver = _load_intercom_module('rtp_audio_receiver').RtpAudioReceiver
 
+
+def _wide_receive_formats():
+    return [audio_format.AudioFormat(48000, frame_ms=ms) for ms in (20, 10)]
+
 # Original Asterisk231 offer, with only its media address replaced by TEST-NET.
 AST_OFFER = ('v=0\r\no=- 1725022972 1725022972 IN IP4 192.0.2.231\r\ns=Asterisk\r\n'
     'c=IN IP4 192.0.2.231\r\nt=0 0\r\nm=audio 18030 RTP/AVP 118 126 0 101 102 103\r\n'
@@ -20,9 +24,10 @@ AST_OFFER = ('v=0\r\no=- 1725022972 1725022972 IN IP4 192.0.2.231\r\ns=Asterisk\
 
 
 def _negotiate_with_ten_ms_receiver():
-    # R1 uses the leg's explicit default, not the order of its capability list.
+    # This receiver explicitly prefers 48 kHz. HA's ordinary receive preference
+    # is 16 kHz and is a different policy from this packet-budget witness.
     policy = replace(negotiator.policy_for_leg(list(audio_format.HA_SIP_PCM_TX_FORMATS),
-        list(audio_format.HA_SIP_PCM_RX_FORMATS)), default_packet_ms=10)
+        _wide_receive_formats()), default_packet_ms=10)
     selected = negotiator.as_direction(leg.answer_offer(AST_OFFER, policy), AST_OFFER)
     assert selected is not None
     return selected
@@ -48,7 +53,7 @@ def test_standard48k20_packet_uses_local_rx_budget_and_preserves_every_sample():
 def test_sdp_default_receiver_quantum_stays_independent_of_remote_packet_time(remote_ptime):
     offer = AST_OFFER.replace('a=ptime:10\r\n', f'a=ptime:{remote_ptime}\r\n')
     selected = sdp.negotiate_directional(offer, list(audio_format.HA_SIP_PCM_TX_FORMATS),
-                                       list(audio_format.HA_SIP_PCM_RX_FORMATS))
+                                       _wide_receive_formats())
     assert selected is not None
     assert (selected.send.frame_ms, selected.recv.frame_ms, selected.recv.max_frame_ms) == (10, 20, 20)
     samples = tuple(range(-480, 480))

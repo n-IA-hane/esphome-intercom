@@ -20,7 +20,7 @@ from custom_components.voip_stack.store import config_entry
 from tests.test_automation_originate_ha import lab as lab
 from tests.test_sip_capabilities_ha import CAPS as BASE_CAPS
 
-# This independent peer explicitly supports the concrete D1 quantum it answers.
+# The independent receiver requests 10 ms without defining the HA receiver's quantum.
 CAPS = BASE_CAPS + b"a=ptime:10\r\n"
 
 pytestmark = pytest.mark.ha
@@ -28,7 +28,7 @@ pytestmark = pytest.mark.ha
 
 async def bootstrap_camera_phone_configuration(lab):
     """Mirror canonical account/store setup before exercising persistent actions."""
-    from custom_components.voip_stack.phone_config import _add_phone_subentry, phone_subentry_data, sync_registry_from_entry
+    from custom_components.voip_stack.phone_config import _add_phone_subentry, phone_subentries, phone_subentry_data, sync_registry_from_entry
     from custom_components.voip_stack.endpoint_device import async_ensure_endpoint_device
     from custom_components.voip_stack.store import config_entry
     from custom_components.voip_stack.websocket_api import _async_load_ha_softphone_store
@@ -40,11 +40,18 @@ async def bootstrap_camera_phone_configuration(lab):
     saved = []
     for endpoint in tuple(lab.runtime.endpoints.endpoints):
         username = identities[endpoint.endpoint_id]
-        subentry = _add_phone_subentry(lab.hass, entry, title=endpoint.name, data={
+        data = {
             "endpoint_id": username, "kind": 'sip_account', "name": endpoint.name,
             "username": username, "password": "fixture-only", "extension": endpoint.extension,
             "send_video": endpoint.send_video, "video_enabled": True,
-        })
+        }
+        existing = next((row for row in phone_subentries(entry) if row.data.get("username") == username), None)
+        if existing is None:
+            subentry = _add_phone_subentry(lab.hass, entry, title=endpoint.name, data=data)
+        else:
+            data["password"] = existing.data["password"]
+            lab.hass.config_entries.async_update_subentry(entry, existing, data={**existing.data, **data})
+            subentry = entry.subentries[existing.subentry_id]
         saved.append((username, subentry))
     lab.runtime.endpoints.rekey_accounts(identities)
     sync_registry_from_entry(lab.hass, entry)
@@ -126,7 +133,7 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
                     if message.method == "INVITE":
                         receive = re.search(rb"a=rtpmap:(\d+) L16/48000(?:/1)?\r", message.body)[1].decode()
                         send = re.search(rb"a=rtpmap:(\d+) L16/16000(?:/1)?\r", message.body)[1].decode()
-                        assert b"a=ptime:10\r\n" in message.body
+                        assert b"a=ptime:20\r\n" in message.body
                         video_offer = message.body.partition(b"m=video")[2]
                         video = (("m=video 35002 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=recvonly\r\n"
                             if b"a=sendrecv" in video_offer else
@@ -195,7 +202,8 @@ async def test_camera_intent_follows_connected_wire_dialog_and_releases_each_gen
             client = lab.calls.sip_client_for(call_id)
             assert client.dialog is not None and client.dialog.local_video_direction == "inactive"
             assert client.dialog.send_format.sample_rate == 48000 and client.dialog.recv_format.sample_rate == 16000
-            assert client.dialog.send_format.frame_ms == client.dialog.recv_format.frame_ms == 10
+            assert client.dialog.send_format.frame_ms == 10
+            assert client.dialog.recv_format.frame_ms == 20
             audio_port = client.local_rtp_port
             audio_formats = (client.dialog.send_format, client.dialog.recv_format)
             if cycle == 0:

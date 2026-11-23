@@ -22,6 +22,7 @@ from .sdp_parser import (
     parse_video_sdp,
 )
 from .sdp_types import RtpH264Format, RtpVideoDirection, RtpVideoFormat
+from .media.codecs import STATIC_VIDEO_RTPMAP
 
 _RFC6184_DEFAULT_PROFILE_LEVEL_ID = "42000a"
 
@@ -732,24 +733,14 @@ def _unique_video_payloads(
     return tuple(selected.values())
 
 
-_STATIC_VIDEO_RTPMAP = {
-    26: "JPEG/90000",
-    34: "H263/90000",
-}
-
-
 def video_static_rtp_mapping(payload_type: int) -> tuple[str, int, int] | None:
-    """Expose the parser's static video identity facts to the dialog map owner."""
-    value = _STATIC_VIDEO_RTPMAP.get(payload_type)
-    if value is None:
-        return None
-    encoding, clock = value.split("/", 1)
-    return encoding, int(clock), 1
+    """Return static video identity from the shared codec registry."""
+    return STATIC_VIDEO_RTPMAP.get(payload_type)
 
 
 def video_static_rtp_payload(mapping: tuple[str, int, int]) -> int | None:
     """Return the same registry's preferred static number for an offered codec."""
-    return next((number for number in _STATIC_VIDEO_RTPMAP if video_static_rtp_mapping(number) == mapping), None)
+    return next((number for number, meaning in STATIC_VIDEO_RTPMAP.items() if meaning == mapping), None)
 
 _VIDEO_ENCODING_ALIASES = {
     "H264": "H264",
@@ -778,7 +769,8 @@ def offered_video_formats(
     for payload_type in parsed["payload_order"]:
         payload_type = int(payload_type)
         explicit_mapping = str(parsed["rtpmap"].get(payload_type) or "")
-        static_mapping = _STATIC_VIDEO_RTPMAP.get(payload_type)
+        static = STATIC_VIDEO_RTPMAP.get(payload_type)
+        static_mapping = f"{static[0]}/{static[1]}" if static is not None else None
         if payload_type < 96:
             # RFC 3551 static payload types cannot be reassigned by rtpmap.
             if static_mapping is None or (

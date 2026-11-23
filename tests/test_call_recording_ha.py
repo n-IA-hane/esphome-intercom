@@ -209,6 +209,8 @@ async def test_browser_to_sip_recording_captures_both_existing_media_paths(regis
         async def __anext__(self):
             return await self.messages.get()
         async def send_json(self, _value):
+            if "tx_format" in _value:
+                self.contract = _value
             self.ready.set()
         async def send_bytes(self, _value):
             pass
@@ -232,10 +234,12 @@ async def test_browser_to_sip_recording_captures_both_existing_media_paths(regis
             monkeypatch.setattr(CallRecording, 'bind_media', original_bind)
             await runtime.hass.services.async_call('voip_stack', 'start_recording',
                 {'device_id': endpoint.device_id}, blocking=True)
-        fmt = media.send_format.audio_format
-        frame = struct.pack(f'<{fmt.nominal_frame_samples}h',
-            *(int(5000 * math.sin(2 * math.pi * 650 * i / fmt.sample_rate)) for i in range(fmt.nominal_frame_samples)))
-        for _ in range(40):
+        from custom_components.voip_stack.core.audio_format import parse_audio_format_token
+        fmt = parse_audio_format_token(browser.contract['tx_format'])
+        for index in range(round(800 / fmt.frame_ms)):
+            frame = struct.pack(f'<{fmt.nominal_frame_samples}h',
+                *(int(5000 * math.sin(2 * math.pi * 650 * (i + index * fmt.nominal_frame_samples) / fmt.sample_rate))
+                  for i in range(fmt.nominal_frame_samples)))
             await browser.messages.put(SimpleNamespace(type=WSMsgType.BINARY, data=audio_ws.encode_audio_frame(frame)))
             await asyncio.sleep(fmt.frame_ms / 1000)
         result = await runtime.hass.services.async_call('voip_stack', 'stop_recording',

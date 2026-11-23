@@ -17,6 +17,28 @@ from tests.test_automation_originate_ha import lab as lab
 pytestmark = pytest.mark.ha
 
 
+def set_configured_video_policy(lab, username, enabled):
+    """Exercise persisted account policy through the canonical directory owner."""
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.phone_config import endpoint_from_subentry, phone_subentries
+    from custom_components.voip_stack.runtime_data import sip_registrar
+    from custom_components.voip_stack.store import config_entry
+
+    entry = config_entry(lab.hass)
+    subentry = next(row for row in phone_subentries(entry) if row.data.get("username") == username)
+    lab.hass.config_entries.async_update_subentry(entry, subentry,
+        data={**subentry.data, "video_enabled": enabled})
+    subentry = entry.subentries[subentry.subentry_id]
+    previous = lab.runtime.endpoints.require(username)
+    configured = endpoint_from_subentry(entry, subentry)
+    lab.runtime.endpoints.upsert(replace(configured, availability=previous.availability,
+        device_id=previous.device_id, entity_ids=previous.entity_ids,
+        active_call_id=previous.active_call_id))
+    registrar = sip_registrar(lab.hass)
+    lab.roster[:] = compose_directory_entries(lab.hass, [], registrar.registered_roster_entries())
+    lab.runtime.directory.replace(lab.roster)
+
+
 def source_account(lab, username, display_name):
     """Give the real SIP caller credentials, without granting trust by address."""
     from .test_trunk_calls_ha import sip_test_account
@@ -40,10 +62,12 @@ async def test_public_unknown_video_negotiates_without_relaxing_profile_validati
     lab.runtime.endpoints.register(source)
     capabilities = ["audio", "dtmf"] if policy == "known_audio_only" else []
     lab.roster[1] = replace(lab.roster[1], metadata={**lab.roster[1].metadata, "capabilities": capabilities})
+    if policy == "known_audio_only":
+        set_configured_video_policy(lab, "bedroom0", False)
     lab.runtime.directory.replace(lab.roster)
     from custom_components.voip_stack.roster import dump_roster_json
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
-    lab.runtime.endpoints.update("sip:bedroom0", availability="available")
+    lab.runtime.endpoints.update("bedroom0", availability="available")
     phone = lab.phones[0]
     answers, offered = [], []
 
@@ -176,12 +200,10 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
     lab.roster.append(RosterEntry("plain-source", address="127.0.0.2",
         metadata={"endpoint_id": source.endpoint_id, "endpoint_kind": "sip_account"}))
     assert not source.supports("video")
-    for name in ("sip:bedroom0", "sip:bedroom1"):
+    for name in ("bedroom0", "bedroom1"):
         lab.runtime.endpoints.update(name, availability="available")
     if known_audio_only:
-        lab.roster[2] = replace(lab.roster[2], metadata={
-            **lab.roster[2].metadata, "capabilities": ["audio", "dtmf"],
-        })
+        set_configured_video_policy(lab, "bedroom1", False)
     assert await endpoint_runtime.async_start_sip_endpoint(lab.hass)
     account = source_account(lab, "plain-source", "Standard source")
     first, destination = lab.phones
@@ -558,7 +580,9 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
 @pytest.mark.parametrize('video_enabled', [False, True])
 async def test_registered_sip_account_preserves_configured_video_policy_without_discovery(lab, video_enabled):
     """An absent peer must not erase the real account's explicit media policy."""
-    from custom_components.voip_stack.endpoint_routing import assemble_directory_entries, peer_video_codec
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.endpoint_routing import peer_video_codec
     from custom_components.voip_stack.phone_config import endpoint_from_data, sip_account_phone_data
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.store import config_entry
@@ -567,13 +591,15 @@ async def test_registered_sip_account_preserves_configured_video_policy_without_
     lab.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_SIP_VIDEO: True})
     data = sip_account_phone_data({'username': 'manual-policy', 'password': 'fixture-only'})
     data['video_enabled'] = video_enabled
+    lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(subentry_type='phone',
+        title='manual-policy', unique_id='phone:manual-policy', data=data))
     endpoint = endpoint_from_data(entry, data)
     lab.runtime.endpoints.register(endpoint)
-    rows = assemble_directory_entries(lab.hass, [], [RosterEntry(
+    rows = compose_directory_entries(lab.hass, [], [RosterEntry(
         id=endpoint.username, sip_uri='sip:opaque-manual@127.0.0.1:41000',
         metadata={'registered': True, 'sip_transport': 'udp'},
     )])
     row = next(row for row in rows if row.id == endpoint.username)
     assert endpoint.supports('video') is video_enabled
-    assert 'sip_video_codec' not in row.metadata
+    assert row.metadata.get('configured_video_enabled') is (None if video_enabled else False)
     assert peer_video_codec(None, row) == (None if video_enabled else '')

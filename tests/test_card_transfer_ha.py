@@ -11,6 +11,8 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
+from .test_queue_call_ha import queue_lab as queue_lab
+from .test_voicemail_ha import configured_tts_provider as configured_tts_provider
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 from custom_components.voip_stack.phone_directory import PhoneDirectory
@@ -23,6 +25,129 @@ async def wait_for(predicate):
     async with asyncio.timeout(10):
         while not predicate():
             await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_card_transfers_retained_sip_peer_to_mailbox_when_peer_rejects_refer(
+    queue_lab, monkeypatch, tmp_path,
+):
+    """UI transfer owns local mailbox adoption even when the peer returns 405."""
+    from homeassistant.core import callback
+    from custom_components.voip_stack.core import rtp, sip
+    from custom_components.voip_stack.endpoint_session import TerminationIntent
+    from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_RECEIVED, get_archive
+    from custom_components.voip_stack.phone_config import phone_subentries
+    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.websocket_api import CALL_EVENT
+    from .test_browser_logical_availability_ha import resources
+
+    lab = queue_lab
+    entry = config_entry(lab.hass)
+    lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+        "voicemail": {"enabled": True, "tts_entity_id": "tts.test", "language": "en"}})
+    mailbox = next(row for row in phone_subentries(entry) if row.data.get("username") == "bedroom1")
+    lab.hass.config_entries.async_update_subentry(entry, mailbox, data={**mailbox.data,
+        "voicemail": {"enabled": True, "max_seconds": 5}})
+    card = PhoneEndpoint(endpoint_id="mailbox-transfer-card", name="Mailbox card",
+        username="mailbox-transfer-card", device_id="mailbox-transfer-device", kind=EndpointKind.BROWSER,
+        availability="available", capabilities=frozenset({"audio", "dtmf"}))
+    lab.runtime.endpoints.register(card)
+    lab.roster.append(RosterEntry(card.endpoint_id, name=card.name,
+        metadata={"local_ha": True, "endpoint_id": card.endpoint_id, "endpoint_kind": "browser"}))
+    lab.runtime.directory.replace(lab.roster)
+    recording, saved, references = asyncio.Event(), asyncio.Queue(), []
+
+    @callback
+    def state(event):
+        if event.data.get("event_type") == "voicemail_recording":
+            recording.set()
+
+    @callback
+    def deposited(event):
+        saved.put_nowait(event.data)
+
+    remove_state = lab.hass.bus.async_listen(CALL_EVENT, state)
+    remove_saved = lab.hass.bus.async_listen(EVENT_VOICEMAIL_RECEIVED, deposited)
+    caller, audio = await lab.caller()
+    native_receive = caller.protocol.datagram_received
+
+    def receive(raw, address):
+        try:
+            message = sip.parse_message(raw)
+        except sip.SipError:
+            native_receive(raw, address)
+            return
+        if message.method == "REFER":
+            references.append(message)
+            caller.transport.sendto(sip.build_uas_response(message, 405, "Method Not Allowed"), address)
+        else:
+            native_receive(raw, address)
+
+    monkeypatch.setattr(caller.protocol, "datagram_received", receive)
+    archive = await get_archive(lab.hass)
+    try:
+        assert await caller.invite(target=card.username, remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3) == "ringing"
+        call_id = caller.dialog_ids.call_id
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": card.device_id, "call_id": call_id,
+            "media_client_id": "mailbox-transfer-owner"}, blocking=True)
+        assert await caller.wait_for_final(timeout=3) == "in_call"
+        result = await lab.hass.services.async_call("voip_stack", "transfer", {
+            "device_id": card.device_id, "call_id": call_id,
+            "destination": "voicemail.bedroom1"}, blocking=True, return_response=True)
+        assert result["success"], result
+        await asyncio.wait_for(recording.wait(), 4)
+        assert caller.dialog is not None and caller.dialog.call_id == call_id
+        assert len(references) <= 1  # Any provider-side attempt was rejected, never adopted.
+        position = 0
+        for sequence in range(20):
+            fmt = caller.dialog.send_format
+            assert fmt.encoding == "L16" and fmt.sample_rate == 16000
+            count = fmt.audio_format.nominal_frame_samples
+            values = [round(10000 * math.sin(2 * math.pi * 650 * (position + index) / 16000))
+                      for index in range(count)]
+            packet = rtp.build_packet(rtp.RtpPacket(fmt.payload_type, sequence, position, 0x425242,
+                struct.pack(f"!{count}h", *values)))
+            await lab.hass.loop.sock_sendto(audio, packet,
+                (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port))
+            position += count
+            await asyncio.sleep(fmt.frame_ms / 1000)
+        await caller.terminate()
+        deposited_message = await asyncio.wait_for(saved.get(), 4)
+        assert deposited_message["mailbox_id"] == "bedroom1"
+        path = archive.segment_path(deposited_message["message_id"], "bedroom1")
+        with wave.open(str(path), "rb") as recording_file:
+            rate = recording_file.getframerate()
+            assert (rate, recording_file.getsampwidth(), recording_file.getnchannels()) == (16000, 2, 1)
+            samples = struct.unpack(f"<{recording_file.getnframes()}h",
+                recording_file.readframes(recording_file.getnframes()))
+        assert len(samples) >= 3200
+        def power(frequency):
+            return abs(sum(value * complex(math.cos(2 * math.pi * frequency * index / rate),
+                math.sin(2 * math.pi * frequency * index / rate)) for index, value in enumerate(samples)))
+        assert power(650) > 10 * max(power(450), power(900))
+        await wait_for(lambda: not lab.calls.sessions)
+        assert resources(lab)["call_scoped_quiescent"] and not lab.runtime.rtp_port_pool.get("used")
+        next_caller, _audio = await lab.caller()
+        assert await next_caller.invite(target=card.username, remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3) == "ringing"
+        assert next_caller.dialog_ids.call_id != call_id
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": card.device_id, "call_id": next_caller.dialog_ids.call_id,
+            "media_client_id": "mailbox-next-owner"}, blocking=True)
+        assert await next_caller.wait_for_final(timeout=3) == "in_call"
+        await next_caller.terminate()
+        await wait_for(lambda: not lab.calls.sessions)
+        assert resources(lab)["call_scoped_quiescent"] and not lab.runtime.rtp_port_pool.get("used")
+    finally:
+        remove_state()
+        remove_saved()
+        for session in tuple(lab.calls.sessions.values()):
+            if session.live:
+                await lab.calls.request_termination(session.call_id, TerminationIntent("test_cleanup"))
+        await caller.close()
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
@@ -335,6 +460,8 @@ async def test_local_pair_transfer_to_sip_keeps_the_retained_phone(
                     return await self.messages.get()
 
                 async def send_json(self, value):
+                    if "tx_format" in value:
+                        self.contract = value
                     self.ready.set()
 
                 async def send_bytes(self, value):
@@ -348,8 +475,9 @@ async def test_local_pair_transfer_to_sip_keeps_the_retained_phone(
             )
             try:
                 await asyncio.wait_for(browser.ready.wait(), 2)
-                fmt = media.send_format.audio_format
-                for index in range(30):
+                from custom_components.voip_stack.core.audio_format import parse_audio_format_token
+                fmt = parse_audio_format_token(browser.contract["tx_format"])
+                for index in range(round(600 / fmt.frame_ms)):
                     samples = [
                         int(
                             7000
