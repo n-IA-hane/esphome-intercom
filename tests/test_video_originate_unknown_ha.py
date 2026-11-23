@@ -518,7 +518,7 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         lab.roster[:] = rows
         lab.runtime.directory.replace(lab.roster)
         route = ha_router_decision(lab.hass, '101', lab.roster, source_endpoint_id='caller')
-        assert route.action is RouteAction.DIRECT and route.entry.id == restored.username
+        assert route.action is RouteAction.FORWARD and route.entry.id == restored.username
         row = lab.runtime.directory.resolve('101')
         assert row.id == restored.username and row.extension == '101'
         assert row.metadata['endpoint_id'] == restored.username
