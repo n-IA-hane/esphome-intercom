@@ -337,7 +337,8 @@ class SipInviteTransactions:
         if failure is not None:
             return failure
         exchange.log_sent(self._pending_invite_body, self.signaling_transport)
-        remaining = max(0.0, self._invite_setup_deadline - asyncio.get_running_loop().time())
+        # The response budget starts at the first INVITE, after setup.
+        remaining = max(0.0, self.invite_sent_at + float(timeout) - asyncio.get_running_loop().time())
         self._invite_setup_deadline = None
         return await self._exchange_initial_responses(exchange, remaining)
 

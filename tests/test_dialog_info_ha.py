@@ -377,7 +377,8 @@ async def test_blf_hold_uses_negotiated_media_and_contact_with_rfc_parameter_nam
 
 
 @pytest.mark.parametrize("gruu", [False, True])
-async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_target(lab, blf, monkeypatch, gruu):
+async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_target(lab, blf, monkeypatch, gruu, tmp_path):
+    import json
     from dataclasses import replace
     from unittest.mock import AsyncMock
     from custom_components.voip_stack import softphone_originate
@@ -404,6 +405,7 @@ async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_t
         call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
         client = lab.calls.sip_client_for(call_id)
         assert client is not None and client.dialog is None and len(client.early_dialogs) == 1
+        assert tuple(client.early_dialogs.values()) == (None,)
         request = subscribe(tag=initial.to_tag, cseq=2)
         if gruu:
             request = replace(request, uri="sip:101@127.0.0.1:5060;transport=udp;gr=watched-instance")
@@ -415,15 +417,28 @@ async def test_direct_browser_notify_has_real_early_dialog_identity_and_caller_t
         dialog = root.find("d:dialog", NS)
         session = lab.calls.get_session(call_id)
         watched = lab.runtime.endpoints.resolve("101")
-        assert dialog is not None, {
+        from custom_components.voip_stack.dialog_info import snapshot_all
+
+        diagnostics = {
             "watched_endpoint": watched.endpoint_id if watched is not None else None,
             "owner": session.owner, "route_kind": session.route_kind,
             "source_endpoint_id": session.metadata.get("source_endpoint_id"),
+            "dest_endpoint_id": session.metadata.get("dest_endpoint_id"),
             "target_endpoint_id": session.metadata.get("target_endpoint_id"),
+            "bridge_dest_call_id": session.metadata.get("bridge_dest_call_id"),
+            "call_id": session.call_id, "wire_call_id": client.dialog_ids.call_id,
             "endpoint_claims": tuple(session.endpoint_claims),
             "legs": [(leg.endpoint_id, leg.role, leg.state) for leg in session.legs.values()],
             "early_dialogs": tuple(client.early_dialogs),
+            "subscriptions": [item.dialog_endpoint_id for item in methods.subscriptions.values()
+                              if item.event == "dialog"],
+            "retired_destinations": [resource.value.endpoint_id for resource in session.resources
+                                     if resource.name.startswith("retired_destination:")],
+            "projected_endpoints": {key: [(state.state, state.call_id) for state in values]
+                                    for key, values in snapshot_all(lab.runtime).items()},
         }
+        (tmp_path / "early-dialog-projection.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
+        assert dialog is not None, diagnostics
         assert dialog.find("d:state", NS).text == "early"
         wire = phone.invites[-1]
         assert dialog.attrib["call-id"] == wire.header("Call-ID")

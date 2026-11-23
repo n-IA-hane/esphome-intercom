@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from .automation_routing import automation_event_type, matches_call
@@ -150,22 +151,33 @@ def phone_failure_destination(endpoint, status):
     return None
 
 
-def dispatch_phone_failure(hass, session, endpoint, destination, *, on_failure="terminate"):
+def dispatch_phone_failure(hass, session, endpoint, destination, *, on_failure="terminate",
+                           failed_forward: asyncio.Task | None = None):
     """Continue the retained caller after one failed destination leg.
 
     The SIP watcher returns before the shared forwarder retires that watcher.
     The new work remains a task of the same session and generation.
     """
     if (destination is None or destination.kind is DestinationKind.HANGUP
-            or session is None or not session.live or session.state == 'in_call'
+            or session is None or not session.live
             or session.route_kind in {'group', 'ring', 'ring_group', 'conference'}):
+        return False
+    if session.state == 'in_call' and failed_forward is None:
+        return False
+    registry = runtime_data(hass).sip
+    if session.state == 'in_call' and not (
+        session.owner == 'router' and session.route_kind == 'transfer'
+        and registry.task_for(session.call_id, 'forward') is failed_forward
+        and failed_forward is asyncio.current_task() and not failed_forward.done()
+        and endpoint is not None
+        and session.metadata.get('dest_endpoint_id') == endpoint.endpoint_id
+    ):
         return False
     key = (endpoint.endpoint_id, destination.kind.value, destination.target)
     attempted = tuple(session.metadata.get('phone_failure_routes', ()))
     if key in attempted or len(attempted) >= 8:
         return False
     session.metadata['phone_failure_routes'] = (*attempted, key)
-    registry = runtime_data(hass).sip
     token, owner, state = session.token, session.owner, session.state
     async def forward():
         if not registry.is_generation_current(token.call_id, token.generation) or session.owner != owner or session.state != state:

@@ -165,7 +165,8 @@ async def test_standard_pcm_camera_intent_preserves_existing_audio_and_leases(la
             # later enables video, or a video-capable browser negotiates recvonly.
             lab.runtime.endpoints.update(source.endpoint_id, capabilities=frozenset(
                 {"audio", "dtmf", "video"} if initial_video_capable else {"audio", "dtmf"}))
-            await action("call", destination=receiver.name, send_video=False)
+            await action("call", destination=receiver.name, send_video=False,
+                         receive_video=initial_video_capable)
             initial_ack = await asyncio.wait_for(acks.get(), 2)
             call_id = initial_ack.header("Call-ID")
             call_ids.append(call_id)

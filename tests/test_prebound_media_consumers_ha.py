@@ -1,5 +1,7 @@
 """First RTP survives existing public automation, conference and pickup owners."""
 import asyncio
+from dataclasses import asdict
+import json
 import re
 import socket
 import struct
@@ -201,7 +203,7 @@ async def test_public_conference_auto_invite_reads_queued_first_rtp_after_leg_ex
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_packets(trunks, monkeypatch):
+async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_packets(trunks, monkeypatch, tmp_path, record_property):
     from custom_components.voip_stack import sip_rtp_bridge
     from custom_components.voip_stack.endpoint_routing import roster_from_peers
     from custom_components.voip_stack.phone_config import _add_phone_subentry, sync_registry_from_entry
@@ -242,6 +244,31 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
         local_sip_port=0, local_rtp_port=picker_media.getsockname()[1],
         supported_formats=[AudioFormat(16000, frame_ms=20)], codec_policy=CodecPolicy(audio=("L16",)))
     captured, consumed = {}, []
+    wire_evidence = {"source_packets": [], "picker_packets": []}
+    evidence_path = tmp_path / "pickup-media-contract.json"
+    record_property("pickup_media_contract", str(evidence_path))
+
+    def store_evidence():
+        for name, peer in (("source", caller), ("picker", picker)):
+            if peer.dialog is not None:
+                wire_evidence[name + "_contract"] = {
+                    "send": asdict(peer.dialog.send_format),
+                    "recv": asdict(peer.dialog.recv_format),
+                    "recv_formats": [asdict(fmt) for fmt in peer.dialog.recv_formats],
+                }
+        evidence_path.write_text(json.dumps(wire_evidence, indent=2) + "\n")
+
+    send_source_dialog = caller._send_dialog_request
+
+    def observe_source_dialog(raw, host, port):
+        sent = send_source_dialog(raw, host, port)
+        message = sip.parse_message(raw)
+        if sent and message.method == "ACK" and message.body:
+            wire_evidence["source_ack_sdp"] = message.body.decode()
+            store_evidence()
+        return sent
+
+    monkeypatch.setattr(caller, "_send_dialog_request", observe_source_dialog)
     source_pcm = struct.pack("!320h", *([2345] * 320))
     picker_pcm = struct.pack("!320h", *([-3456] * 320))
     original_source = caller.protocol.datagram_received
@@ -249,6 +276,7 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
     def source_signal(raw, address):
         response = sip.parse_message(raw)
         if response.status_code == 200 and "INVITE" in response.header("CSeq") and response.body and "source_raw" not in captured:
+            wire_evidence["source_offer_sdp"] = response.body.decode()
             port = int(re.search(rb"m=audio (\d+)", response.body)[1])
             pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", response.body)[1])
             captured.update(source_port=port, source_socket=sockets[port], source_fd=sockets[port].fileno())
@@ -288,6 +316,7 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
 
         async def picker_signal(exchange, response):
             if response.status_code == 200 and response.header("Call-ID") == picker.dialog_ids.call_id and "INVITE" in response.header("CSeq") and response.body:
+                wire_evidence["picker_answer_sdp"] = response.body.decode()
                 port = int(re.search(rb"m=audio (\d+)", response.body)[1])
                 pt = int(re.search(rb"a=rtpmap:(\d+) L16/16000", response.body)[1])
                 captured["picker_raw"] = rtp.build_packet(rtp.RtpPacket(pt, 4004, 320, 0x141421, picker_pcm))
@@ -310,10 +339,16 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
         assert adopted_relay.left_transport.get_extra_info("socket").fileno() == captured["source_fd"], "Pickup must keep the originally published source fd"
 
         async def receive_source():
-            return await lab.hass.loop.sock_recv(source_media, 4096)
+            raw = await lab.hass.loop.sock_recv(source_media, 4096)
+            wire_evidence["source_packets"].append(raw.hex())
+            store_evidence()
+            return raw
 
         async def receive_picker():
-            return await lab.hass.loop.sock_recv(picker_media, 4096)
+            raw = await lab.hass.loop.sock_recv(picker_media, 4096)
+            wire_evidence["picker_packets"].append(raw.hex())
+            store_evidence()
+            return raw
 
         async with asyncio.timeout(3):
             to_source = await receive_l16_samples(receive_source, len(picker_pcm), caller.dialog.recv_format.payload_type)

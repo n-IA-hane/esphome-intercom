@@ -901,10 +901,14 @@ async def test_noanswer_policy_tracks_destination_leg_of_answered_caller(
     caller, original, replacement = registered_phones
     await asyncio.to_thread(caller.dial, "700")
     session = next(iter(runtime.calls.sessions.values()))
+    token = session.token
+    source_dialog = runtime.calls.component("udp_listener").dialog_key(session.call_id)
     async with asyncio.timeout(4):
         while "Call established" not in replacement.read() or session.owner != "bridge":
             await asyncio.sleep(0.01)
     assert session.live and session.state == "in_call"
+    assert runtime.calls.get_session(token.call_id, generation=token.generation) is session
+    assert runtime.calls.component("udp_listener").dialog_key(session.call_id) == source_dialog
     assert caller.read().count("Call established") == 1
     assert "Call established" not in original.read()
     await asyncio.to_thread(replacement.hangup)

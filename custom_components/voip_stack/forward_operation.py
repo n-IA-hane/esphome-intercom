@@ -1166,7 +1166,7 @@ class ForwardOperation:
 
                 continuation = dispatch_phone_failure(
                     self.runtime.hass, session, failure_endpoint, failure_destination,
-                    on_failure=self.plan.on_failure)
+                    on_failure=self.plan.on_failure, failed_forward=asyncio.current_task())
                 if continuation:
                     # The same session owns the next route. Return without an
                     # await so finally releases this attempt's forward claim

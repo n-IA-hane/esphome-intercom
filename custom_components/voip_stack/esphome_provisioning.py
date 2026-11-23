@@ -321,11 +321,11 @@ class EspHomeProvisioner:
                 and device is not None and origin.entry_id == device.config_entry_id
                 and managed_phone_mode(self.hass, origin, phone.device_id, phone.mac) is True)
 
-    def _new_username(self, native, endpoint_id):
+    def _new_username(self, native):
         from .config_validation import entry_route_mappings, route_namespace_conflicts
 
         username = managed_device_username(native)
-        existing = entry_route_mappings(self.entry, self.entry.data, exclude_endpoint_ids=(endpoint_id,))
+        existing = entry_route_mappings(self.entry, self.entry.data)
         if route_namespace_conflicts(candidate_username=username, existing=existing):
             raise ManagedNameError("esphome_account_name_collision", value=username)
         return username
@@ -338,7 +338,7 @@ class EspHomeProvisioner:
         name = (previous.display_name if previous else managed_device_username(native)).strip()
         endpoint_id = previous.username if previous else managed_device_username(native)
         if previous is None:
-            username = self._new_username(native, endpoint_id)
+            username = self._new_username(native)
         else:
             username = previous.username
         if not name or len(name.encode()) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in name):

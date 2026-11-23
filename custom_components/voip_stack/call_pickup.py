@@ -718,7 +718,9 @@ async def _pickup_group_phone(call, endpoint, session):
             or not session.live
         ):
             outcome.set_result(False)
-        elif session.state == "in_call":
+        elif session.state == "in_call" and session.owner != "router":
+            # A parked caller is already answered while its new fork is still
+            # routing. Only the committed recipient can settle this pickup.
             outcome.set_result(
                 session.metadata.get("dest_endpoint_id") == endpoint.endpoint_id
             )

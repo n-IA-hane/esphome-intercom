@@ -176,7 +176,7 @@ async def test_forward_rejects_concurrent_owner_without_replacing_it(
 @pytest.mark.parametrize("direct_uri", [False, True])
 async def test_forbidden_external_forward_preserves_current_call(monkeypatch, direct_uri):
     from unittest.mock import AsyncMock
-    from custom_components.voip_stack import runtime_data
+    from custom_components.voip_stack import owned_sip_source, runtime_data
     from custom_components.voip_stack.endpoint_session import EndpointCallSession, SessionPhase
     from custom_components.voip_stack.router import RouteAction, RouteDecision
 
@@ -202,6 +202,7 @@ async def test_forbidden_external_forward_preserves_current_call(monkeypatch, di
     monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_: [])
     monkeypatch.setattr(call_forwarder, "_registered_roster_entries", lambda _: [])
     monkeypatch.setattr(runtime_data, "require_runtime_data", lambda _: access_runtime)
+    monkeypatch.setattr(owned_sip_source, "require_runtime_data", lambda _: access_runtime)
     monkeypatch.setattr(runtime_data, "sip_trunk", lambda _: None)
     artifacts = SimpleNamespace(task_for=Mock(return_value=None), artifacts_for=Mock(return_value=session.artifacts))
     monkeypatch.setattr(call_forwarder, "call_runtime_artifacts", lambda _: artifacts)

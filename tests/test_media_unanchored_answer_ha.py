@@ -41,11 +41,10 @@ def test_unanchored_answer_preserves_answer_order_and_one_common_mapping():
     selected = sdp.negotiate_answer_directional(answer, preferred, preferred,
         local_offer_sdp=None, local_capabilities=HA_AUDIO_CAPABILITIES)
     assert selected is not None
-    # The same public engine honors the supplied local preference, while all
-    # valid mappings in the peer description remain receivable.
+    # Without a local offer, the compatibility API has no accepted alias history.
     assert (selected.send.payload_type, selected.send.encoding, selected.send.frame_ms) == (96, "L16", 10)
     assert (selected.recv.payload_type, selected.recv.encoding, selected.recv.frame_ms) == (96, "L16", 20)
-    assert {(fmt.payload_type, fmt.encoding) for fmt in selected.recv_formats} == {(0, "PCMU"), (96, "L16")}
+    assert selected.recv_formats == (selected.recv,)
     assert selected.send_formats == ()
 
 

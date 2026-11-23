@@ -44,10 +44,10 @@ class OwnedSipSource:
     @classmethod
     def capture(cls, hass, session, endpoint_id=""):
         """Capture references only; keep the WS, descriptor and claims untouched."""
-        runtime = require_runtime_data(hass)
-        registry = runtime.sip
         if session is None or not session.live:
             return None
+        runtime = require_runtime_data(hass)
+        registry = runtime.sip
         if endpoint_id:
             endpoint = runtime.endpoints.get(endpoint_id)
             if endpoint is None or not endpoint.supports_ha_client:

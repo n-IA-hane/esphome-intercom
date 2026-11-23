@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import asyncio
 
 import pytest
+from custom_components.voip_stack.core import sip
 
 from .test_queue_call_ha import lab as lab, trunks as trunks, queue_lab as queue_lab
 from .test_sip_capabilities_ha import wait_until
@@ -86,19 +87,31 @@ async def test_verified_static_phone_can_page_without_changing_autoanswer(queue_
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-async def test_paging_without_recipients_releases_the_job_and_parent_session(queue_lab):
+async def test_paging_without_recipients_releases_the_job_and_parent_session(queue_lab, monkeypatch):
     lab = queue_lab
     owner = await prepare_paging(lab)
     for phone in lab.phones:
         phone.final_status = 486
     client, _audio = await lab.caller()
+    responses = []
+    receive = client.protocol.datagram_received
+
+    def observe(raw, address):
+        response = sip.parse_message(raw)
+        if response.is_response and response.status_code >= 300:
+            responses.append(response)
+        receive(raw, address)
+
+    monkeypatch.setattr(client.protocol, "datagram_received", observe)
     try:
         result = await client.invite(target="402", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3,
             audio_direction="sendonly")
         if result == "ringing":
             result = await client.wait_for_final(timeout=3)
-        assert result == "paging_ended"
+        assert result == "sip_480" and client.last_sip_status_code == 480
+        assert responses[-1].header("Reason") == 'SIP;cause=480;text="paging_ended"'
+        assert not responses[-1].header("X-Voip-Stack-Decline-Reason")
         await wait_until(lambda: not owner.jobs and not lab.calls.sessions)
         assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
     finally:

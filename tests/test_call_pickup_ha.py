@@ -581,81 +581,126 @@ async def test_directed_pickup_of_parking_return_keeps_answered_caller(
         )
     )
     assert runtime.runtime.endpoints.get("transfer_b").active_call_id == session.call_id
-    if picker_kind == "browser":
-        from unittest.mock import AsyncMock
-        from custom_components.voip_stack import softphone_originate
-        from custom_components.voip_stack.phone_endpoint import (
-            PhoneEndpoint,
-            EndpointKind,
-        )
-        from custom_components.voip_stack.roster import RosterEntry
+    token = session.token
+    browser_task = pickup_task = None
+    browser = None
+    try:
+        if picker_kind == "browser":
+            from unittest.mock import AsyncMock
+            from custom_components.voip_stack import softphone_originate
+            from custom_components.voip_stack.phone_endpoint import (
+                PhoneEndpoint,
+                EndpointKind,
+            )
+            from custom_components.voip_stack.roster import RosterEntry
 
-        runtime.runtime.endpoints.register(
-            PhoneEndpoint(
-                endpoint_id="browser-picker", username="browser-picker",
-                name="browser-picker",
-                device_id="browser-picker-device",
-                kind=EndpointKind.BROWSER,
-                availability="available",
-                capabilities=frozenset({"audio", "dtmf"}),
+            runtime.runtime.endpoints.register(
+                PhoneEndpoint(
+                    endpoint_id="browser-picker", username="browser-picker",
+                    name="browser-picker",
+                    device_id="browser-picker-device",
+                    kind=EndpointKind.BROWSER,
+                    availability="available",
+                    capabilities=frozenset({"audio", "dtmf"}),
+                )
             )
-        )
-        runtime.roster.append(
-            RosterEntry(
-                "browser-picker",
-                metadata={"local_ha": True, "endpoint_id": "browser-picker"},
+            runtime.roster.append(
+                RosterEntry(
+                    "browser-picker",
+                    metadata={"local_ha": True, "endpoint_id": "browser-picker"},
+                )
             )
-        )
-        runtime.runtime.directory.replace(runtime.roster)
-        monkeypatch.setattr(
-            softphone_originate,
-            "_ha_advertise_host",
-            AsyncMock(return_value="127.0.0.1"),
-        )
-        monkeypatch.setattr(
-            softphone_originate, "_resolve_target_device", AsyncMock(return_value=None)
-        )
-        from custom_components.voip_stack.call_pickup import PickupClaim
-        transfers = []
-        forward = runtime.calls.forward_call
-        async def observe_forward(**kwargs):
-            claim = runtime.calls.resource_for(session.call_id, "pickup")
-            assert isinstance(claim, PickupClaim)
-            assert claim.token == session.token and claim.endpoint_id == "browser-picker"
-            task = await forward(**kwargs)
-            transfers.append(task)
-            return task
-        monkeypatch.setattr(runtime.calls, "forward_call", observe_forward)
-        await runtime.hass.services.async_call(
-            "voip_stack",
-            "call",
-            {
-                "device_id": "browser-picker-device",
-                "destination": "pickup.transfer_b",
-                "media_client_id": "picker-owner",
-            },
-            blocking=True,
-        )
-        assert (
-            runtime.runtime.endpoints.get("browser-picker").active_call_id
-            == session.call_id
-        )
-        assert len(transfers) == 1 and transfers[0].result().status == "ringing"
-        assert runtime.calls.resource_for(session.call_id, "pickup") is None
-    else:
-        await asyncio.to_thread(picker.dial, "pickup.transfer_b")
-    await wait_for(lambda: session.state == "in_call")
-    if picker_kind == "sip":
-        relay = runtime.calls.resource_for(session.call_id, "relay")
-        assert relay.left_transport is source_transport
-        await wait_for(
-            lambda: relay.left_tx_packets > 20 and relay.right_tx_packets > 20
-        )
-    assert caller.read().count("Call established") == 1
-    assert "Call established" not in original.read()
-    await asyncio.to_thread(caller.hangup)
-    await wait_for(lambda: not runtime.calls.sessions)
-    assert not runtime.runtime.rtp_port_pool.get("used")
+            runtime.runtime.directory.replace(runtime.roster)
+            monkeypatch.setattr(
+                softphone_originate,
+                "_ha_advertise_host",
+                AsyncMock(return_value="127.0.0.1"),
+            )
+            monkeypatch.setattr(
+                softphone_originate, "_resolve_target_device", AsyncMock(return_value=None)
+            )
+            from custom_components.voip_stack import audio_ws_view
+            from custom_components.voip_stack.dial_fork import ForkAnswerGate
+            from custom_components.voip_stack.websocket_owner import MediaWebSocketOwner, async_release_media_owner
+            from .test_browser_paging_ha import Browser
+
+            gate = runtime.calls.resource_for(session.call_id, "fork_answer")
+            assert isinstance(gate, ForkAnswerGate) and not gate.closed
+            route = session.artifacts.pending_route
+            returning = runtime.calls.task_for(session.call_id, "forward")
+            assert returning is not None and not returning.done()
+            forward = AsyncMock(wraps=runtime.calls.forward_call)
+            monkeypatch.setattr(runtime.calls, "forward_call", forward)
+            pickup_task = asyncio.create_task(runtime.hass.services.async_call(
+                "voip_stack", "call", {
+                    "device_id": "browser-picker-device", "destination": "pickup.transfer_b",
+                    "media_client_id": "picker-owner"}, blocking=True))
+            await wait_for(lambda: runtime.calls.resource_for(session.call_id,
+                "softphone_media_endpoint:browser-picker") is not None)
+            connection = audio_ws_view._active_softphone_media_session(runtime.hass, "browser-picker")
+            assert connection is not None
+            browser = Browser()
+            owner_key = f"browser-picker|{session.call_id}"
+            owner = MediaWebSocketOwner(websocket=browser, client_id="picker-owner")
+            runtime.runtime.media.owners_for("audio")[owner_key] = owner
+            playback = runtime.calls.resource_for(session.call_id, "browser_playback")
+            playback.attach(browser)
+
+            async def run_browser():
+                try:
+                    await audio_ws_view._run_audio_session(runtime.hass, browser, connection,
+                        endpoint_id="browser-picker", playback=playback,
+                        handoff_requested=owner.handoff_requested)
+                finally:
+                    playback.detach(browser)
+                    await async_release_media_owner(runtime.runtime.media.owners_for("audio"),
+                        runtime.runtime.media.owner_lock_for("audio"), owner_key, owner)
+
+            browser_task = asyncio.create_task(run_browser())
+            await wait_for(lambda: bool(browser.contracts))
+            browser.ready()
+            await asyncio.wait_for(pickup_task, 4)
+            result = await asyncio.wait_for(asyncio.shield(returning), 4)
+            assert result.committed_for(session)
+            forward.assert_not_called()  # The account's existing fork owns pickup.
+            assert route["future"].result()["endpoint_id"] == "browser-picker"
+            assert gate.closed and runtime.calls.resource_for(session.call_id, "fork_answer") is None
+            assert runtime.calls.get_session(token.call_id, generation=token.generation) is session
+            assert set(session.endpoint_claims) == {"transfer_a", "browser-picker"}
+            assert runtime.runtime.endpoints.get("browser-picker").active_call_id == session.call_id
+            assert runtime.calls.resource_for(session.call_id, "pickup") is None
+            relay = runtime.calls.resource_for(session.call_id, "relay")
+            assert relay.left_transport is source_transport
+            await wait_for(lambda: any(any(frame) for frame in browser.frames))
+        else:
+            await asyncio.to_thread(picker.dial, "pickup.transfer_b")
+        await wait_for(lambda: session.state == "in_call")
+        if picker_kind == "sip":
+            relay = runtime.calls.resource_for(session.call_id, "relay")
+            assert relay.left_transport is source_transport
+            await wait_for(
+                lambda: relay.left_tx_packets > 20 and relay.right_tx_packets > 20
+            )
+        assert caller.read().count("Call established") == 1
+        assert "Call established" not in original.read()
+        await asyncio.to_thread(caller.hangup)
+        await wait_for(lambda: not runtime.calls.sessions)
+        assert not runtime.runtime.rtp_port_pool.get("used")
+        if browser_task is not None:
+            await asyncio.wait_for(browser_task, 4)
+            assert owner.released.is_set()
+    finally:
+        if pickup_task is not None and not pickup_task.done():
+            pickup_task.cancel()
+            await asyncio.gather(pickup_task, return_exceptions=True)
+        for active in tuple(runtime.calls.sessions.values()):
+            if active.live:
+                from custom_components.voip_stack.endpoint_session import TerminationIntent
+                await runtime.calls.request_termination(active.call_id, TerminationIntent("test_cleanup"))
+        if browser_task is not None and not browser_task.done():
+            browser.force_close()
+            browser_task.cancel()
+            await asyncio.gather(browser_task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

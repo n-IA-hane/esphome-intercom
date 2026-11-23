@@ -164,8 +164,10 @@ def snapshot_all(runtime):
                     local_uri, remote_uri = remote_uri, local_uri
                     local_target, remote_target = remote_target, local_target
                 state = leg.state if leg is not None else session.state
-                if leg is None and not source and contract is None:
-                    # A reservation is not a dialog owned by this phone.
+                has_dialog_key = bool(key is not None and getattr(key, "call_id", "")
+                                      and local_tag and remote_tag)
+                if leg is None and not source and contract is None and not has_dialog_key:
+                    # A reservation has neither a delivered leg nor received SIP dialog tags.
                     continue
                 audio_direction = getattr(
                     contract,
