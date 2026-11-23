@@ -80,14 +80,17 @@ substitutions:
   voip_tx_frame_ms: "20"
   voip_rx_frame_ms: "20"
 
-  # Prefer uncompressed PCM instead:
+  # Prefer uncompressed PCM with the single-format shortcut:
   # 1. Comment the five Opus substitutions above.
-  # 2. Uncomment the five substitutions below.
+  # 2. Uncomment the five substitutions below for 48 kHz / 10 ms in both directions.
   # voip_audio_codec: pcm
-  # voip_tx_sample_rate: "16000"
+  # voip_tx_sample_rate: "48000"
   # voip_rx_sample_rate: "48000"
-  # voip_tx_frame_ms: "20"
-  # voip_rx_frame_ms: "10"  # PCM 48 kHz must fit the RTP payload budget.
+  # voip_tx_frame_ms: "10"
+  # voip_rx_frame_ms: "10"
+  # Different PCM send/receive preferences require real alternatives in both
+  # directions. See the firmware README audio.codecs example for 16 kHz TX
+  # preferred with 48 kHz available, and 48 kHz RX preferred with 16 kHz available.
 
   # ---------------------------------------------------------------------------
   # Pinout: shared ES7210/ES8311 TDM bus

@@ -132,6 +132,12 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_identity_admin_audit_ha.py
+  tests/test_canonical_hardware_directory_ha.py
+  tests/test_answer_contract_direction_ha.py
+  tests/test_media_transfer_audit_ha.py
+  tests/test_media_rtp_audit_ha.py
+  tests/test_refer_deadline_audit_ha.py
   tests/test_blind_transfer_voicemail_audio_ha.py
   tests/test_identity_audit_regressions_ha.py
   tests/test_authorization_boundary_ha.py

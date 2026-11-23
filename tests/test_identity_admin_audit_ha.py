@@ -1,4 +1,4 @@
-"""Native account administration and recovery regressions from the second audit."""
+"""Native SIP account administration, memberships and recovery lifecycle."""
 
 from copy import deepcopy
 from dataclasses import replace
