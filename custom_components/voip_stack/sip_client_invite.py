@@ -614,6 +614,11 @@ class SipInviteTransactions:
 
 
     async def _handle_invite_success(self, exchange: InviteExchange, msg: sip.SipMessage) -> str:
+        try:
+            prepared = await self._prepare_response_signaling_target(msg, exchange.request_uri)
+        except (OSError, RuntimeError, TimeoutError, sip.SipError) as error:
+            return self._transport_failure(error, exchange.target, exchange.host, exchange.port)
+        self._commit_dialog_signaling_target(prepared)
         if not self._commit_200_ok(
             msg, exchange.target, exchange.host, exchange.port, exchange.request_uri,
             self._pending_local_uri, self._pending_remote_uri,
@@ -775,7 +780,7 @@ class SipInviteTransactions:
         if task is None:
             raise RuntimeError("no INVITE transaction owner is active")
         transaction = self._invite_transaction
-        if transaction is not None and not self._cancel_requested:
+        if transaction is not None and timeout is not None and not self._cancel_requested:
             transaction.reset_deadline(timeout)
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)

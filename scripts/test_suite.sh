@@ -195,6 +195,8 @@ ha_tests=(
   tests/test_assist_call_forward_ha.py
   tests/test_inbound_did_ha.py
   tests/test_inbound_did_bridge_ha.py
+  tests/test_inbound_did_direct_ha.py
+  tests/test_esphome_provisioning_batch_ha.py
   tests/test_paging_ha.py
   tests/test_paging_autoanswer_interop_ha.py
   tests/test_browser_paging_ha.py
@@ -227,6 +229,8 @@ ha_tests=(
   tests/test_trunk_transfer_access.py
   tests/test_automation_call.py
   tests/test_voicemail_ha.py
+  tests/test_voicemail_readiness_ha.py
+  tests/test_rtp_ownership_stress_ha.py
   tests/test_group_mailbox_ownership_ha.py
   tests/test_voicemail_transfer_ha.py
   tests/test_mwi_unregister_ha.py

@@ -146,7 +146,12 @@ async def route_invite(
         decision = RouteDecision(RouteAction.TRUNK, target=dial_target,
                                  trunk_id=requested_trunk, source="trunk")
     else:
-        decision = _inbound_route_decision(invite, peers, roster_entries)
+        # The trusted trunk's configured DID owner already selected and
+        # normalized its destination. An intentionally empty DID must not
+        # fall back to the registration username in the raw Request-URI.
+        decision = (_inbound_route_decision(invite, peers, roster_entries,
+                                           lookup_target=invite.called_number)
+                    if trunk_invite else _inbound_route_decision(invite, peers, roster_entries))
     if getattr(decision, "trunk_id", ""):
         invite = replace(invite, outbound_trunk_id=decision.trunk_id)
     if trunk_invite:
@@ -164,7 +169,7 @@ async def route_invite(
             )
             # Keep the original called address for routing automations. Only an
             # unmatched destination uses the configured inbound fallback.
-            if decision.entry is None and not _is_ha_target(invite.routing_target):
+            if decision.entry is None and not _is_ha_target(invite.called_number):
                 direct_fallback_target = default_target
                 fallback_invite = replace(
                     invite, target=default_target, target_route=default_target

@@ -379,7 +379,9 @@ class LocalCallMedia:
         try:
             transport.set_protocol(_LocalRtpProtocol(self))
             self.transport = transport
-            self._tx_task = self.hass.async_create_task(self._send_loop())
+            # The adopter commits retained codecs and RTP clocks in this same
+            # synchronous turn. HA's eager tasks must not send before it does.
+            self._tx_task = self.hass.async_create_task(self._send_loop(), eager_start=False)
             self._start_application()
         except BaseException:
             self.transport = None
@@ -390,24 +392,35 @@ class LocalCallMedia:
 
     def adopt_audio_state(self, state):
         """Take the live codec objects before the bound transport changes owner."""
+        self.prepare_audio_state(state)()
+
+    def prepare_audio_state(self, state):
+        """Prepare conversion while the source retains codecs, samples and UDP."""
         if self.transport is not None or self.closed.is_set():
             raise RuntimeError("Local audio ownership has already been acquired")
-        self.decoder.close()
-        self.encoder.close()
-        self.decoder, self.encoder = state.receiver, state.encoder
-        pending_rx = state.retarget_receiver(self.invite.recv_format.audio_format)
-        rx_converter = PcmFrameConverter(state.receiver.output_pcm, LOCAL_PCM_FORMAT)
-        tx_converter = state.converter_for(LOCAL_PCM_FORMAT)
-        self.rx_converter, self.tx_converter = rx_converter, tx_converter
-        self._dtmf_decoder = state.dtmf_decoder
-        self._dtmf_sdp = self.invite.remote_sdp
-        self.rtp_source = state.sender
-        self.remote_ssrc = state.receiver.source_ssrc
-        self.remote_rtp_host, self.remote_rtp_port = state.remote_host, state.remote_port
-        self._bind_receive_callback(self.decoder)
-        self._handoff_input = pending_rx
-        for frame in state.ready_tx:
-            self.tx_queue.put_nowait(frame)
+        output_pcm = self.invite.recv_format.audio_format
+        pending_rx, commit_rx = state.prepare_receiver(output_pcm)
+        rx_converter = PcmFrameConverter(output_pcm, LOCAL_PCM_FORMAT)
+        tx_converter, ready_tx, commit_tx = state.prepare_converter_for(LOCAL_PCM_FORMAT)
+        if self.tx_queue.maxsize and self.tx_queue.qsize() + len(ready_tx) > self.tx_queue.maxsize:
+            raise RuntimeError("Local audio cannot retain the prepared TX samples")
+        def commit():
+            commit_rx()
+            commit_tx()
+            self.decoder.close()
+            self.encoder.close()
+            self.decoder, self.encoder = state.receiver, state.encoder
+            self.rx_converter, self.tx_converter = rx_converter, tx_converter
+            self._dtmf_decoder = state.dtmf_decoder
+            self._dtmf_sdp = self.invite.remote_sdp
+            self.rtp_source = state.sender
+            self.remote_ssrc = state.receiver.source_ssrc
+            self.remote_rtp_host, self.remote_rtp_port = state.remote_host, state.remote_port
+            self._bind_receive_callback(self.decoder)
+            self._handoff_input = pending_rx
+            for frame in ready_tx:
+                self.tx_queue.put_nowait(frame)
+        return commit
 
     async def stop(self) -> None:
         """Stop pipeline and RTP exactly once."""

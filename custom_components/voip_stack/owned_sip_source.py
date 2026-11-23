@@ -327,8 +327,10 @@ class OwnedSipSource:
         media.video_relay = video_relay or (hold.relay if hold is not None else None)
         def install(transport, state, sock=None):
             if state is not None:
-                media.adopt_audio_state(state)
+                commit_audio = media.prepare_audio_state(state)
                 media.adopt_transport(transport)
+                state.transferred, state.transport = True, transport
+                commit_audio()
                 for data, addr in state.pending_packets:
                     media.handle_rtp(data, addr)
                 return None
@@ -358,11 +360,13 @@ class OwnedSipSource:
                         lambda: _RelayProtocol(relay, "left"), **({"sock": sock} if sock is not None
                             else {"local_addr": ("0.0.0.0", self.local_port)}))
                 return bind()
+            pending, commit_audio = relay.prepare_audio_state("left", state)
             protocol = _RelayProtocol(relay, "left")
             protocol.connection_made(transport)
             transport.set_protocol(protocol)
             relay.left_transport = transport
-            pending = relay.adopt_audio_state("left", state)
+            state.transferred, state.transport = True, transport
+            commit_audio()
             if pending:
                 relay._receive_deferred_pcm("left", relay.left_decoder, pending)
             for data, addr in state.pending_packets:

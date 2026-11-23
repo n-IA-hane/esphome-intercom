@@ -20,6 +20,7 @@ from .runtime_data import require_runtime_data
 from .voicemail_prompts import phrase
 
 _LOGGER = logging.getLogger(__name__)
+VOICEMAIL_MENU_SETUP_TIMEOUT = 30.0
 
 
 @dataclass(slots=True)
@@ -112,14 +113,15 @@ class VoicemailMenu(LocalCallApplication):
         registry = call_registry(self.hass)
         reason = "voicemail_menu_complete"
         try:
-            await self.answer()
-            self.media.private_dtmf = True
-            self.ivr = CallIVR(self.media, self.session.create_task)
-            for digit in self.early_digits:
-                self.ivr.feed(digit)
-            self.early_digits.clear()
-            if self.playback is not None:
-                await self.playback.wait_ready()
+            async with asyncio.timeout(VOICEMAIL_MENU_SETUP_TIMEOUT):
+                await self.answer()
+                self.media.private_dtmf = True
+                self.ivr = CallIVR(self.media, self.session.create_task)
+                for digit in self.early_digits:
+                    self.ivr.feed(digit)
+                self.early_digits.clear()
+                if self.playback is not None:
+                    await self.playback.wait_ready()
             if not await self._authorize():
                 return
             archive = await get_archive(self.hass)

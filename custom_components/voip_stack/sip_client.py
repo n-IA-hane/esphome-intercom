@@ -729,6 +729,46 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 return host.strip(), int(remote_sip_port)
         return proxy, int(remote_sip_port)
 
+    async def _prepare_dialog_signaling_target(self, remote_target: str, route_set: tuple[str, ...]):
+        """Resolve a borrowed UDP next hop without changing the winning dialog."""
+        if self._reused_udp_send_to is None or self.outbound_proxy:
+            return None
+        routing = sip.dialog_request_routing(remote_target, route_set)
+        uri = sip.parse_sip_uri(routing.next_hop_uri)
+        nominal = (uri.host, sip.sip_default_port(uri))
+        try:
+            ipaddress.ip_address(uri.host)
+        except ValueError:
+            if self._signaling_nominal == nominal and self._resolved_signaling_target is not None:
+                return nominal, self._resolved_signaling_target
+            async with asyncio.timeout(SIP_TIMER_F):
+                targets = await self.target_resolver.resolve(uri, transport=self.signaling_transport)
+            endpoints = (endpoint for target in targets for endpoint in target.endpoints())
+            current_host = (self._resolved_signaling_target or (self.local_ip, 0))[0]
+            family = ipaddress.ip_address(current_host).version
+            selected = next(((host, port) for host, port, protocol in endpoints
+                             if protocol == self.signaling_transport and ipaddress.ip_address(host).version == family), None)
+            if selected is None:
+                raise OSError("SIP dialog target has no address for its owned UDP socket")
+            return nominal, selected
+        return nominal, nominal
+
+    def _commit_dialog_signaling_target(self, prepared):
+        if prepared is not None:
+            self._signaling_nominal, self._resolved_signaling_target = prepared
+
+    async def _prepare_response_signaling_target(self, response, fallback_target):
+        """Retain the accepted-response routing fallbacks before async lookup."""
+        try:
+            target = sip.contact_target_uri(response) or fallback_target
+        except (TypeError, ValueError, sip.SipError):
+            target = fallback_target
+        try:
+            routes = sip.record_route_set(response, reverse=True) or self._preloaded_route_set()
+        except (TypeError, ValueError, sip.SipError):
+            routes = self._preloaded_route_set()
+        return await self._prepare_dialog_signaling_target(target, routes)
+
     def _preloaded_route_set(self) -> tuple[str, ...]:
         """Return the configured outbound proxy as one loose SIP route."""
 
@@ -816,10 +856,10 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         except (ValueError, TypeError, sip.SipError):
             return False
 
-    def _send_dialog_request(self, raw: bytes, host: str, port: int) -> bool:
+    def _send_dialog_request(self, raw: bytes, host: str, port: int, *, network_target=None) -> bool:
         try:
             if self._reused_flow_send is not None:
-                return (self._reused_udp_send_to(raw, self._signaling_target(host, int(port)))
+                return (self._reused_udp_send_to(raw, network_target or self._signaling_target(host, int(port)))
                         if self._reused_udp_send_to is not None else self._reused_flow_send(raw)) is not False
             if self.signaling_transport in {"TCP", "TLS"}:
                 if self.writer is None:
@@ -905,6 +945,18 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             self._pending_remote_host,
             self._pending_remote_sip_port,
         )
+        # The established reader is synchronous. Let the existing exceptional
+        # cleanup task resolve this losing branch, without replacing the winner.
+        if self._reused_udp_send_to is not None and not self.outbound_proxy:
+            routing = sip.dialog_request_routing(remote_target, route_set)
+            try:
+                ipaddress.ip_address(sip.parse_sip_uri(routing.next_hop_uri).host)
+            except ValueError:
+                duplicate = remote_tag in self._terminated_invite_branches
+                self._terminated_invite_branches.add(remote_tag)
+                return self._start_bye_request_transaction(host, port, remote_target,
+                    self._pending_local_uri, self._pending_remote_uri, route_set=route_set,
+                    remote_tag=remote_tag, ack_before_bye=True, ack_only=duplicate)
         acknowledged = self._send_ack(
             host,
             port,
@@ -2047,8 +2099,17 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self, request, host: str, port: int, *, method: str, timeout: float,
         active: Callable[[], bool], on_provisional=None, on_final=None, dialog_scoped=True,
         on_sent: Callable[[], None] | None = None,
+        network_target=None,
     ) -> sip.SipMessage | None:
         """Await this transaction's mailbox; only the dispatcher reads SIP."""
+        if network_target is None:
+            prepared = await self._prepare_dialog_signaling_target(request.routing.next_hop_uri, ())
+            if prepared is not None:
+                if not active():
+                    raise ConnectionAbortedError("SIP dialog changed during target resolution")
+                network_target = prepared[1]
+                if dialog_scoped:
+                    self._commit_dialog_signaling_target(prepared)
         dispatcher = self._ensure_dialog_dispatcher()
         def matches(message):
             return sip.response_matches_dialog_transaction(message, request.ids, method, creating_dialog=not dialog_scoped)
@@ -2060,7 +2121,8 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 on_sent()
         try:
             response = await async_run_dialog_request_transaction(
-                send=lambda: self._send_dialog_request(request.raw, host, port),
+                send=lambda: (self._send_dialog_request(request.raw, host, port, network_target=network_target)
+                              if network_target is not None else self._send_dialog_request(request.raw, host, port)),
                 read=mailbox.receive, matches=matches, active=active,
                 transport=self.signaling_transport, timeout=timeout, method=method,
                 on_provisional=on_provisional, on_final=on_final,
@@ -2836,6 +2898,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         cseq: int | None = None,
         remote_tag: str = "",
         body: bytes = b"",
+        network_target=None,
     ) -> bool:
         if not self._has_signaling_path():
             return False
@@ -2866,7 +2929,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             host,
             int(port),
         )
-        if not self._send_dialog_request(request.raw, next_host, next_port):
+        sent = (self._send_dialog_request(request.raw, next_host, next_port, network_target=network_target)
+                if network_target is not None else self._send_dialog_request(request.raw, next_host, next_port))
+        if not sent:
             _LOGGER.warning("SIP TX ACK dropped: signaling path unavailable")
             return False
         sip.mark_sip_event(self, "ACK")
@@ -2885,16 +2950,18 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         route_set: tuple[str, ...] = (),
         remote_tag: str = "",
         timeout: float = 1.5,
+        ack_before_bye: bool = False,
+        ack_only: bool = False,
     ) -> bool:
         if not self._has_signaling_path() or not request_uri or not local_uri or not remote_uri:
             return False
         try:
             request = build_dialog_request(
-                "BYE",
+                "ACK" if ack_only else "BYE",
                 call_id=self.dialog_ids.call_id,
                 local_tag=self.dialog_ids.local_tag,
                 remote_tag=remote_tag or self.dialog_ids.remote_tag,
-                cseq=self._next_dialog_cseq(),
+                cseq=self._invite_cseq if ack_only else self._next_dialog_cseq(),
                 local_uri=local_uri,
                 remote_uri=remote_uri,
                 remote_target_uri=request_uri,
@@ -2914,6 +2981,18 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             int(port),
         )
         async def run() -> None:
+            try:
+                prepared = await self._prepare_dialog_signaling_target(request_uri, route_set)
+            except (OSError, RuntimeError, TimeoutError, sip.SipError):
+                if ack_before_bye and not ack_only:
+                    self._terminated_invite_branches.discard(remote_tag)
+                raise
+            network_target = prepared[1] if prepared is not None else None
+            if ack_before_bye:
+                self._send_ack(host, port, request_uri, local_uri, remote_uri,
+                    route_set=route_set, remote_tag=remote_tag, network_target=network_target)
+            if ack_only:
+                return
             await self._run_built_dialog_request(
                 request,
                 next_host,
@@ -2921,6 +3000,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 method="BYE",
                 timeout=timeout,
                 active=lambda: self._has_signaling_path() and not self._closed,
+                network_target=network_target,
             )
 
         task = asyncio.create_task(

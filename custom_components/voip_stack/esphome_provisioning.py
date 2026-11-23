@@ -73,6 +73,7 @@ class EspHomeProvisioner:
         self._membership_changes = {}
         self._membership_delivered = {}
         self._identity_retry_signature = None
+        self._projected_source = None
 
     def _owned(self):
         return (not self._closed and runtime_data(self.hass) is self.runtime
@@ -313,8 +314,10 @@ class EspHomeProvisioner:
             revoked = {phone.username.casefold() for phone in managed_records(self.entry).values()
                        if (phone.device_id in self._removed_devices or phone.origin_entry_id in self._removed_origins)
                        and self._exclusive_account(phone, rows.get(phone.device_id))}
-            registrar.update_accounts([account for account in sip_accounts(self.hass)
-                                       if account.username.casefold() not in revoked])
+            accounts = [account for account in sip_accounts(self.hass)
+                        if account.username.casefold() not in revoked]
+            if {account.username.casefold(): account for account in accounts} != registrar.accounts:
+                registrar.update_accounts(accounts)
             registrar.enabled = bool(transport_config(self.hass).get(CONF_REGISTRAR_ENABLED))
 
     def _owned_contacts(self, phone):
@@ -377,7 +380,7 @@ class EspHomeProvisioner:
             raise ManagedNameError("esphome_account_name_collision", value=username)
         return username
 
-    def _phone(self, origin, device, native, previous):
+    def _phone(self, origin, device, native, previous, *, account):
         info = device_info(native)
         if previous is not None and (previous.mac != normalize_mac(info.mac_address)
                                      or previous.origin_entry_id != origin.entry_id):
@@ -390,7 +393,6 @@ class EspHomeProvisioner:
             username = previous.username
         if not name or len(name.encode()) > 1024 or any(ord(char) < 32 or ord(char) == 127 for char in name):
             raise ValueError("Display name exceeds the native phone contract")
-        account = managed_account_subentries(self.entry).get(device.id)
         phone = ManagedPhone(device_id=device.id, origin_entry_id=origin.entry_id,
             mac=normalize_mac(info.mac_address), password=previous.password if previous else generate_password(),
             username=username, endpoint_id=endpoint_id,
@@ -446,14 +448,14 @@ class EspHomeProvisioner:
             if not self._owned() or revision != self._revision:
                 return
             rows = managed_account_subentries(self.entry)
-            records = {hardware: phone for hardware, phone in managed_records(self.entry).items() if hardware in rows}
+            records = managed_records(self.entry, subentries=rows)
             from .sip_account_identity import legacy_esphome_references
             pending_legacy = set(self.entry.data.get('managed_esphome_phones', {}))
             pending_legacy.update(device.id for _origin, device, _old in legacy_esphome_references(self.hass, self.entry))
             devices = dr.async_get(self.hass)
             for device_id in rows.keys() - self.entry.data.get(CONF_ESPHOME_ENROLLMENTS, {}).keys():
                 if phone := records.get(device_id):
-                    save_managed_account(self.hass, self.entry, phone)
+                    save_managed_account(self.hass, self.entry, phone, row=rows[device_id])
             saved_receipts = self.entry.data.get(CONF_ESPHOME_ENROLLMENTS, {})
             receipts = dict(saved_receipts)
             changed = False
@@ -497,13 +499,12 @@ class EspHomeProvisioner:
                     if phone.active and mode is False:
                         async_sync_esphome_account_name_issue(self.hass, device_id)
                         records[device_id] = replace(phone, active=False)
-                        save_managed_account(self.hass, self.entry, records[device_id])
+                        save_managed_account(self.hass, self.entry, records[device_id], row=rows[device_id])
                         self._delivered.pop(device_id, None)
                         changed = True
             if receipts != saved_receipts:
                 self.hass.config_entries.async_update_entry(self.entry,
                     data={**self.entry.data, CONF_ESPHOME_ENROLLMENTS: receipts})
-            self._refresh_accounts()
             # Legacy direct phones also use the same permanent-removal owner.
             for device_id in self._removed_devices:
                 endpoint = self.runtime.endpoints.by_device_id(device_id)
@@ -512,6 +513,13 @@ class EspHomeProvisioner:
                     if not self._owned() or revision != self._revision:
                         return
                     changed = True
+            from .store import sip_account_dicts
+            logins = {str(account.get("username") or account.get("id") or "").casefold()
+                      for account in sip_account_dicts(self.hass)}
+            mac_owners = {}
+            for phone in records.values():
+                mac_owners.setdefault(phone.mac, set()).add(phone.device_id)
+            deliveries = []
             for origin in self.hass.config_entries.async_entries("esphome"):
                 if origin.entry_id in self._removed_origins:
                     continue
@@ -536,13 +544,12 @@ class EspHomeProvisioner:
                         continue
                     try:
                         previous = records.get(device.id)
-                        phone = self._phone(origin, device, native, previous)
+                        owner = rows.get(device.id)
+                        phone = self._phone(origin, device, native, previous, account=owner)
                         async_sync_esphome_account_name_issue(self.hass, device.id)
-                        if any(other.device_id != phone.device_id and other.mac == phone.mac for other in records.values()):
+                        if mac_owners.get(phone.mac, set()) - {phone.device_id}:
                             raise ValueError("MAC is already owned")
-                        from .store import sip_account_dicts
-                        if previous is None and any(str(account.get("username") or account.get("id") or "").casefold() == phone.username.casefold()
-                               for account in sip_account_dicts(self.hass)):
+                        if previous is None and phone.username.casefold() in logins:
                             raise EndpointCollisionError(field="username", value=phone.username,
                                 endpoint_id=phone.endpoint_id, conflicting_endpoint_id="configured SIP account")
                         registry = self.runtime.endpoints
@@ -550,29 +557,21 @@ class EspHomeProvisioner:
                         if old is not None and (old.username != phone.username or old.device_id != phone.device_id):
                             raise EndpointCollisionError(field='endpoint_id', value=phone.endpoint_id,
                                 endpoint_id=phone.endpoint_id, conflicting_endpoint_id=old.endpoint_id)
-                        owner = rows.get(device.id)
                         proposed = {**(phone_subentry_data(owner) if owner is not None else {}),
                             **phone.record(), "kind": EndpointKind.SIP_ACCOUNT.value,
                             "name": owner.data.get("name") if owner is not None else phone.display_name}
-                        registry.validate(endpoint_from_data(self.entry, proposed), replacing_endpoint_id=phone.endpoint_id)
+                        if phone != previous or old is None:
+                            registry.validate(endpoint_from_data(self.entry, proposed), replacing_endpoint_id=phone.endpoint_id)
                         changed |= previous != phone or old is None
                         records[device.id] = phone
                         if phone != previous:
                             rows[device.id] = save_managed_account(self.hass, self.entry, phone,
-                                username_source='esphome' if previous is None else None)
+                                username_source='esphome' if previous is None else None, row=owner)
+                        logins.add(phone.username.casefold())
+                        mac_owners.setdefault(phone.mac, set()).add(phone.device_id)
                         registry.subentry_ids[phone.endpoint_id] = rows[device.id].subentry_id
-                        sync_registry_from_entry(self.hass, self.entry)
-                        if phone != previous or old is None:
-                            self._sync_account_device(phone, rows[device.id])
                         async_sync_esphome_endpoint_collision_issue(self.hass, device.id)
-                        self._refresh_accounts()
-                        if not await self._deliver(phone, native):
-                            return
-                        if not self._owned() or revision != self._revision:
-                            return
-                        await self._deliver_memberships(phone.device_id, phone.record(), native)
-                        if not self._owned() or revision != self._revision:
-                            return
+                        deliveries.append((phone, native, phone != previous or old is None))
                     except ManagedNameError as error:
                         async_sync_esphome_account_name_issue(self.hass, device.id,
                             name=device.name_by_user or device.name or origin.title, error=error)
@@ -582,6 +581,35 @@ class EspHomeProvisioner:
                     except Exception as error:
                         # Third-party RPC errors may contain secret parameters.
                         _LOGGER.warning("Phone provisioning incomplete for %s (%s)", device.id, type(error).__name__)
+            if not self._owned() or revision != self._revision:
+                return
+            # Retain native immutable source references, not another phone model.
+            # Wall-clock modified_at can stay equal across distinct native edits.
+            source = (self.entry.data, tuple((row.subentry_id, row.unique_id, row.title, row.data)
+                      for row in self.entry.subentries.values()))
+            previous_source = self._projected_source
+            source_changed = (previous_source is None or source[0] is not previous_source[0]
+                or len(source[1]) != len(previous_source[1])
+                or any(current[:3] != previous[:3] or current[3] is not previous[3]
+                       for current, previous in zip(source[1], previous_source[1], strict=True)))
+            # Admit the complete batch before the first credential RPC can yield.
+            if changed or source_changed:
+                sync_registry_from_entry(self.hass, self.entry)
+                self._projected_source = source
+            self._refresh_accounts()
+            for phone, native, account_changed in deliveries:
+                try:
+                    if account_changed:
+                        self._sync_account_device(phone, rows[phone.device_id])
+                    if not await self._deliver(phone, native):
+                        return
+                    if not self._owned() or revision != self._revision:
+                        return
+                    await self._deliver_memberships(phone.device_id, phone.record(), native)
+                    if not self._owned() or revision != self._revision:
+                        return
+                except Exception as error:
+                    _LOGGER.warning("Phone provisioning incomplete for %s (%s)", phone.device_id, type(error).__name__)
             if not self._owned() or revision != self._revision:
                 return
             if self._removed_devices:

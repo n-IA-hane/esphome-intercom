@@ -618,55 +618,66 @@ class SipRtpRelay:
 
     def adopt_audio_state(self, side, state):
         """Move one live source's codecs, admission and clocks into this relay."""
+        pending_rx, commit = self.prepare_audio_state(side, state)
+        commit()
+        return pending_rx
+
+    def prepare_audio_state(self, side, state):
+        """Prepare all PCM conversion before acquiring the retained live source."""
         if side not in {"left", "right"} or self._stop_requested:
             raise RuntimeError("The RTP source cannot be adopted by this relay")
         opposite = "right" if side == "left" else "left"
         peer = getattr(self, side)
-        for suffix, replacement in (("decoder", state.receiver), ("encoder", state.encoder)):
-            old = getattr(self, f"{side}_{suffix}")
-            setattr(self, f"{side}_{suffix}", replacement)
-            if old is not None:
-                old.close()
         other_receiver = getattr(self, f"{opposite}_decoder")
         if other_receiver is None:
             other_peer = getattr(self, opposite)
             other_receiver = RtpAudioReceiver(other_peer.inbound_rtp_format,
                 other_peer.inbound_rtp_formats, receive_state=self._receive_states[opposite])
+            setattr(self, f"{opposite}_decoder", other_receiver)
         other_encoder = getattr(self, f"{opposite}_encoder")
         if other_encoder is None:
             other_peer = getattr(self, opposite)
             other_encoder = RtpPayloadEncoder(other_peer.outbound_rtp_format,
                 send_formats=other_peer.outbound_rtp_formats,
                 match_received_codec=other_peer.match_received_codec)
-        pending_rx = state.retarget_receiver(other_encoder.input_format)
-        incoming = PcmFrameConverter(state.receiver.output_pcm, other_encoder.input_format)
-        pending_return = other_receiver.retarget_output(state.encoder.fmt.audio_format)
-        outgoing = state.converter_for(other_receiver.output_pcm)
-        setattr(self, f"{opposite}_decoder", other_receiver)
-        setattr(self, f"{opposite}_encoder", other_encoder)
-        self._receive_states[side] = state.receiver.receive_state
-        self._dtmf_decoders[side] = state.dtmf_decoder
-        setattr(self, "left_to_right" if side == "left" else "right_to_left", incoming)
-        setattr(self, "right_to_left" if side == "left" else "left_to_right", outgoing)
-        self.left_to_right_passthrough = self.right_to_left_passthrough = False
-        peer.sequence, peer.timestamp, peer.ssrc = (state.sender.sequence,
-            state.sender.timestamp, state.sender.ssrc)
-        peer.clock_rate = state.sender.clock_rate or state.encoder.fmt.rtp_clock_rate
-        peer.host, peer.port, peer.rx_ssrc = state.remote_host, state.remote_port, state.receiver.source_ssrc
-        self._bind_receive_callbacks()
-        for frame in state.ready_tx:
-            fmt = state.encoder.fmt
-            rtp.use_audio_clock(peer, fmt.rtp_clock_rate)
-            self._send_audio_packet(side, rtp.build_packet(rtp.RtpPacket(payload_type=fmt.payload_type,
-                sequence=peer.sequence, timestamp=peer.timestamp, ssrc=peer.ssrc,
-                payload=state.encoder.encode(frame))))
-            peer.sequence = rtp.next_sequence(peer.sequence)
-            peer.timestamp = rtp.next_timestamp(peer.timestamp, fmt.rtp_timestamp_step)
-        state.sender.sequence, state.sender.timestamp, state.sender.ssrc, state.sender.clock_rate = (
-            peer.sequence, peer.timestamp, peer.ssrc, peer.clock_rate)
-        if pending_return:
-            self._receive_deferred_pcm(opposite, other_receiver, pending_return)
-        return pending_rx
+            setattr(self, f"{opposite}_encoder", other_encoder)
+        pending_rx, commit_rx = state.prepare_receiver(other_encoder.input_format)
+        incoming = PcmFrameConverter(other_encoder.input_format, other_encoder.input_format)
+        output_pcm = state.encoder.fmt.audio_format
+        pending_return, commit_return = other_receiver.prepare_retarget_output(output_pcm)
+        outgoing, ready_tx, commit_tx = state.prepare_converter_for(output_pcm)
+        def commit():
+            commit_rx()
+            commit_return()
+            commit_tx()
+            for suffix, replacement in (("decoder", state.receiver), ("encoder", state.encoder)):
+                old = getattr(self, f"{side}_{suffix}")
+                setattr(self, f"{side}_{suffix}", replacement)
+                if old is not None:
+                    old.close()
+            self._receive_states[side] = state.receiver.receive_state
+            self._dtmf_decoders[side] = state.dtmf_decoder
+            setattr(self, "left_to_right" if side == "left" else "right_to_left", incoming)
+            setattr(self, "right_to_left" if side == "left" else "left_to_right", outgoing)
+            self.left_to_right_passthrough = self.right_to_left_passthrough = False
+            peer.sequence, peer.timestamp, peer.ssrc = (state.sender.sequence,
+                state.sender.timestamp, state.sender.ssrc)
+            peer.clock_rate = state.sender.clock_rate or state.encoder.fmt.rtp_clock_rate
+            peer.host, peer.port, peer.rx_ssrc = state.remote_host, state.remote_port, state.receiver.source_ssrc
+            self._bind_receive_callbacks()
+            for frame in ready_tx:
+                fmt = state.encoder.fmt
+                rtp.use_audio_clock(peer, fmt.rtp_clock_rate)
+                self._send_audio_packet(side, rtp.build_packet(rtp.RtpPacket(payload_type=fmt.payload_type,
+                    sequence=peer.sequence, timestamp=peer.timestamp, ssrc=peer.ssrc,
+                    payload=state.encoder.encode(frame))))
+                peer.sequence = rtp.next_sequence(peer.sequence)
+                peer.timestamp = rtp.next_timestamp(peer.timestamp, fmt.rtp_timestamp_step)
+            state.sender.sequence, state.sender.timestamp, state.sender.ssrc, state.sender.clock_rate = (
+                peer.sequence, peer.timestamp, peer.ssrc, peer.clock_rate)
+            if pending_return:
+                self._receive_deferred_pcm(opposite, other_receiver, pending_return)
+        return pending_rx, commit
 
     def _receive_deferred_error(self, side, receiver, error):
         if getattr(self, f"{side}_decoder") is receiver and not self._stop_requested:

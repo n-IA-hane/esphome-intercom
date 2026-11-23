@@ -12,6 +12,7 @@ CONF_ESPHOME_ENROLLMENTS = "esphome_sip_enrollments"
 MANAGED_ACCOUNT_ID = "ha"
 REGISTER_HA_ACCOUNT = "register_ha_account"
 MANAGED_ACTIONS = frozenset({"set_ha_display_name", "set_account", REGISTER_HA_ACCOUNT})
+_UNSET = object()
 
 
 class ManagedNameError(ValueError):
@@ -91,10 +92,11 @@ def managed_account_subentries(entry):
             and isinstance(device_id := row.data.get("device_id"), str) and device_id}
 
 
-def managed_records(entry) -> dict[str, ManagedPhone]:
+def managed_records(entry, *, subentries=None) -> dict[str, ManagedPhone]:
     """Read configured native account associations without admitting upgrade input."""
     candidates = {}
-    for device_id, row in managed_account_subentries(entry).items():
+    rows = managed_account_subentries(entry) if subentries is None else subentries
+    for device_id, row in rows.items():
         identity = getattr(row, "unique_id", None)
         if isinstance(identity, str) and identity.startswith("phone:") and identity[6:]:
             candidates[device_id] = {**row.data, "endpoint_id": identity[6:],
@@ -116,12 +118,13 @@ def managed_records(entry) -> dict[str, ManagedPhone]:
     return records
 
 
-def save_managed_account(hass, entry, phone, *, username_source=None):
+def save_managed_account(hass, entry, phone, *, username_source=None, row=_UNSET):
     """The subentry owns the credential. Its native unique ID owns the endpoint ID."""
     from types import MappingProxyType
     from homeassistant.config_entries import ConfigSubentry
 
-    row = managed_account_subentries(entry).get(phone.device_id)
+    if row is _UNSET:
+        row = managed_account_subentries(entry).get(phone.device_id)
     data = phone.record()
     unique_id = "phone:" + data.pop("endpoint_id")
     data["kind"] = "sip_account"

@@ -240,7 +240,7 @@ class ReferCorrelationTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(refer.header("Call-ID"), invite.header("Call-ID"))
             self.assertFalse(sip.extract_tag(refer.header("To")))
             if borrowed:
-                self.assertIs(trunk._outbound_dialogs[refer.header("Call-ID")], client._reused_flow_responses)
+                self.assertIs(trunk._outbound_dialogs[refer.header("Call-ID")].responses, client._reused_flow_responses)
             target = sip_transfer.request_target_dialog(refer)
             self.assertEqual(target.call_id, invite.header("Call-ID"))
             self.assertEqual(target.local_tag, "peer")

@@ -9,6 +9,7 @@ import struct
 import pytest
 
 from custom_components.voip_stack import audio_ws_view, media_ports
+from custom_components.voip_stack.audio_ws_frames import DeferredAudioFrames
 from custom_components.voip_stack.core import rtp, sdp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.core.audio_pcm import PcmFrameConverter
@@ -21,6 +22,7 @@ from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpo
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.rtp_audio_handoff import RtpAudioHandoff
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
+from custom_components.voip_stack.sip_rtp_bridge import RtpPeer, SipRtpRelay
 from .test_automation_call import application as application
 from .test_browser_pcm_edge_ha import WebSocketBoundary
 from .test_queue_call_ha import queue_lab as queue_lab, wait_until
@@ -271,6 +273,67 @@ def test_receiver_retarget_carries_partial_native_pcm_without_reinterpreting_48k
         assert power(650) > 8 * max(power(450), power(900))
     finally:
         receiver.close()
+
+
+@pytest.mark.parametrize("owner", ["application", "relay"])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_failed_audio_preparation_does_not_acquire_or_close_source(application, monkeypatch, owner, cancel):
+    """A failure after receive preparation leaves the real source decoders usable."""
+    app, _registry, peer, _released = application
+    fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+    output = AudioFormat(48000, "s16le", 1, 10)
+    receiver = RtpAudioReceiver(fmt, output_pcm=output)
+    reference = RtpAudioReceiver(fmt, output_pcm=output)
+    encoder = RtpPayloadEncoder(fmt, input_format=replace(output, frame_ms=20))
+    tx_converter = PcmFrameConverter(output, encoder.input_format)
+    assert tx_converter.convert(tone(output)) == []
+    queue = asyncio.Queue()
+    source = tone(fmt.audio_format)
+    packet = rtp.RtpPacket(96, 1, 0, 12345, b"".join(source[index:index + 2][::-1] for index in range(0, len(source), 2)))
+    decoded = receiver.decode_rtp(packet, normalize_frames=True)
+    assert reference.decode_rtp(packet, normalize_frames=True) == decoded
+    queued = (DeferredAudioFrames(receiver, tuple(decoded), 0), None)
+    queue.put_nowait(queued)
+    native_decoder = receiver._decoders[96]
+    sender = rtp.AudioRtpSenderState(100, 320, 67890, 16000)
+    state = RtpAudioHandoff(receiver, encoder, None, sender, tx_converter,
+        "127.0.0.1", peer.getsockname()[1], queue)
+    if owner == "application":
+        successor = LocalCallMedia(app.hass, invite=replace(app.invite, send_format=fmt,
+            recv_format=fmt, recv_formats=(fmt,), send_formats=(fmt,)), local_rtp_port=0,
+            reservation=media_ports.RtpPortReservation.allocate(app.hass), on_complete=lambda _reason: None)
+    else:
+        target = sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)
+        peers = [RtpPeer("127.0.0.1", peer.getsockname()[1], current.payload_type,
+            current.audio_format, rtp_format=current, send_rtp_format=current,
+            inbound_rtp_formats=(current,), outbound_rtp_formats=(current,)) for current in (fmt, target)]
+        successor = SipRtpRelay(left=peers[0], right=peers[1], left_port=0, right_port=0)
+    def fail_tx(_state, _input_pcm):
+        if cancel:
+            raise asyncio.CancelledError()
+        raise RuntimeError("injected TX preparation failure")
+    try:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(RtpAudioHandoff, "prepare_converter_for", fail_tx)
+            with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+                if owner == "application":
+                    successor.adopt_audio_state(state)
+                else:
+                    successor.adopt_audio_state("left", state)
+        await successor.stop()
+        assert receiver.output_pcm == output
+        assert receiver._decoders[96] is native_decoder
+        assert queue.qsize() == 1 and queue.get_nowait() is queued
+        assert encoder.input_format == replace(output, frame_ms=20)
+        assert tx_converter.has_pending_pcm and not state.transferred
+        packet = replace(packet, sequence=2, timestamp=320)
+        assert receiver.decode_rtp(packet, normalize_frames=True) == reference.decode_rtp(packet, normalize_frames=True)
+        assert encoder.encode(tone(encoder.input_format))
+    finally:
+        await successor.stop()
+        receiver.close()
+        reference.close()
+        encoder.close()
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

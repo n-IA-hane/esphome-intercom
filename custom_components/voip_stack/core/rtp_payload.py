@@ -207,15 +207,23 @@ class RtpPayloadEncoder:
 
     def retarget_input(self, input_format):
         """Change PCM input while retaining the effective native encoder state."""
+        self.prepare_retarget_input(input_format)()
+
+    def prepare_retarget_input(self, input_format):
+        """Prepare input conversion without draining the current encoder FIFO."""
+        from copy import deepcopy
         from .audio_pcm import PcmFrameConverter
 
         if input_format == self.input_format:
-            return
+            return lambda: None
         converter = PcmFrameConverter(input_format, self.fmt.audio_format)
-        pending = self._converter.drain_pending_pcm() if self._converter is not None else b""
+        previous = deepcopy(self._converter)
+        pending = previous.drain_pending_pcm() if previous is not None else b""
         converter.prepend_pending_pcm(pending)
-        self.input_format = input_format
-        self._converter = converter if input_format != self.fmt.audio_format or pending else None
+        def commit():
+            self.input_format = input_format
+            self._converter = converter if input_format != self.fmt.audio_format or pending else None
+        return commit
 
     def follow_received(self, received: RtpPcmFormat) -> bool:
         """Follow a valid received codec only through the negotiated TX mapping.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from time import monotonic
 import asyncio
 import logging
@@ -101,31 +102,46 @@ class RtpAudioReceiver:
         converter. Only this transition converts the old consumer's PCM; future
         native frames go directly to the new consumer's PCM contract.
         """
+        ready, commit = self.prepare_retarget_output(output_pcm, pending_output=pending_output)
+        commit()
+        return ready
+
+    def prepare_retarget_output(self, output_pcm, *, pending_output=()):
+        """Prepare typed PCM retirement without consuming the live DSP state."""
         if self.output_pcm == output_pcm:
-            return list(pending_output)
+            return list(pending_output), lambda: None
         retired, fragment = list(pending_output), b""
-        if self._converter is not None:
+        previous = deepcopy(self._converter)
+        if previous is not None:
             if self._pending:
-                retired.extend(self._converter.convert(bytes(self._pending), final_fragment=True))
-            fragment = self._converter.drain_pending_pcm()
+                retired.extend(previous.convert(bytes(self._pending), final_fragment=True))
+            fragment = previous.drain_pending_pcm()
         elif self._pending:
             fragment = bytes(self._pending)
         converter = PcmFrameConverter(self.output_pcm, output_pcm)
         ready = []
         for pcm in (*retired, fragment):
-            if pcm:
-                ready.extend(converter.convert(pcm, final_fragment=True))
+            # A native fast-path packet may contain more than the preferred
+            # ptime, up to maxptime. Retire every complete processing quantum
+            # and its aligned final fragment without padding or truncation.
+            quantum = self.output_pcm.nominal_frame_bytes
+            for offset in range(0, len(pcm), quantum):
+                ready.extend(converter.convert(pcm[offset:offset + quantum], final_fragment=True))
         carry = converter.drain_pending_pcm()
         native = self._active_format.audio_format if self._active_format is not None else None
-        successor = PcmFrameConverter(native, output_pcm) if native is not None else None
+        # When native PCM already was the old consumer contract, the retiring
+        # converter is also the new native converter. Keep its filter history.
+        successor = (converter if native == self.output_pcm else PcmFrameConverter(native, output_pcm)
+                     if native is not None else None)
         if carry:
             if successor is None:
                 raise RuntimeError("Partial RTP PCM has no native format")
             successor.prepend_pending_pcm(carry)
-        self._pending.clear()
-        self.output_pcm = output_pcm
-        self._converter = successor
-        return ready
+        def commit():
+            self._pending.clear()
+            self.output_pcm = output_pcm
+            self._converter = successor
+        return ready, commit
 
     def reset_source(self):
         """Retire decode and partial PCM state on an admitted source transition."""
@@ -275,6 +291,8 @@ class RtpAudioReceiver:
                         (native.sample_rate, native.pcm_format, native.channels) ==
                         (selected.sample_rate, selected.pcm_format, selected.channels)):
                     decoded = [self.decode_packet(current.payload_type, current.payload)]
+                    if self._active_format is None:
+                        self._active_format = current_format
                 else:
                     decoded = self.decode(current.payload_type, current.payload, normalize_frames=normalize_frames)
                 if deliver_frames:

@@ -4,7 +4,11 @@ from collections import deque
 from dataclasses import dataclass
 import logging
 
+import numpy as np
+
 from .core import rtp
+from .core.audio_format import AudioFormat
+from .core.audio_pcm import _decode_frame, _encode_frame
 
 _LOGGER = logging.getLogger(f"{__package__}.audio_ws_view")
 
@@ -20,33 +24,29 @@ class DeferredAudioFrames:
     gap_ms: float
 
 
-def _conceal_pcm_frame(last_pcm: bytes, frame_bytes: int) -> bytes:
-    """Return one click-free s16le PLC frame which decays to silence."""
-    if frame_bytes < 2 or not last_pcm:
+def _conceal_pcm_frame(last_pcm: bytes, frame_bytes: int, audio_format=None) -> bytes:
+    """Decay each channel's last signed sample to silence in the actual PCM."""
+    audio_format = audio_format or AudioFormat()
+    stride = audio_format.container_bytes_per_sample * audio_format.channels
+    if frame_bytes % stride:
+        raise ValueError("concealed PCM must contain complete channel frames")
+    if frame_bytes < stride or not last_pcm:
         return bytes(frame_bytes)
-    last_sample = int.from_bytes(last_pcm[-2:], "little", signed=True)
-    samples = frame_bytes // 2
-    output = bytearray(frame_bytes)
-    for index in range(samples):
-        sample = round(last_sample * (samples - index - 1) / samples)
-        output[index * 2 : index * 2 + 2] = int(sample).to_bytes(
-            2, "little", signed=True
-        )
-    return bytes(output)
+    last = _decode_frame(last_pcm[-stride:], audio_format)
+    samples = frame_bytes // stride
+    gain = (samples - np.arange(samples) - 1) / samples
+    return _encode_frame(last * gain, audio_format)
 
 
-def _fade_in_pcm_frame(pcm: bytes, fade_samples: int) -> bytes:
-    """Fade in recovered s16le PCM so PLC recovery cannot click."""
-    samples = min(len(pcm) // 2, max(0, fade_samples))
+def _fade_in_pcm_frame(pcm: bytes, fade_samples: int, audio_format=None) -> bytes:
+    """Fade recovered channel frames together using their signed PCM format."""
+    audio_format = audio_format or AudioFormat()
+    samples = min(len(pcm) // (audio_format.container_bytes_per_sample * audio_format.channels), max(0, fade_samples))
     if samples == 0:
         return pcm
-    output = bytearray(pcm)
-    for index in range(samples):
-        offset = index * 2
-        sample = int.from_bytes(pcm[offset : offset + 2], "little", signed=True)
-        sample = round(sample * (index + 1) / samples)
-        output[offset : offset + 2] = int(sample).to_bytes(2, "little", signed=True)
-    return bytes(output)
+    output = _decode_frame(pcm, audio_format)
+    output[:, :samples] *= (np.arange(samples) + 1) / samples
+    return _encode_frame(output, audio_format)
 
 
 class BrowserPcmPlayout:
@@ -60,6 +60,7 @@ class BrowserPcmPlayout:
 
     def reconfigure(self, audio_format):
         self.frames.clear()
+        self.audio_format = audio_format
         self.frame_ms = max(1.0, float(audio_format.frame_ms))
         self.target_frames = max(1, int(_BROWSER_PLAYOUT_TARGET_MS // self.frame_ms))
         self.max_frames = max(
@@ -96,13 +97,13 @@ class BrowserPcmPlayout:
         if self.frames:
             pcm = self.frames.popleft()
             if self.plc_active:
-                pcm = _fade_in_pcm_frame(pcm, int(sample_rate) * 2 // 1000)
+                pcm = _fade_in_pcm_frame(pcm, self.audio_format.sample_rate * 2 // 1000, self.audio_format)
             self.plc_active = False
         else:
             pcm = (
                 self.silence_pcm
                 if self.plc_active
-                else _conceal_pcm_frame(self.last_pcm, len(self.silence_pcm))
+                else _conceal_pcm_frame(self.last_pcm, len(self.silence_pcm), self.audio_format)
             )
             self.plc_active = True
             self.counters["tx_playout_plc"] += 1

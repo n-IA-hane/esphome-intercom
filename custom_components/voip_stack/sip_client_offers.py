@@ -236,6 +236,14 @@ class SipLocalOffers:
                             if candidate is not None
                             else current.remote_target_uri or current.remote_uri
                         )
+                        try:
+                            async with asyncio.timeout_at(deadline):
+                                signaling = await self._prepare_dialog_signaling_target(ack_target, current.route_set)
+                        except (OSError, RuntimeError, TimeoutError, sip.SipError):
+                            return None
+                        if self.dialog is not current:
+                            return None
+                        self._commit_dialog_signaling_target(signaling)
                         acked = self._send_ack(
                             current.remote_host,
                             current.remote_sip_port,

@@ -355,6 +355,11 @@ class SipDialogRequests:
             elif cseq_method == "INVITE" and 200 <= msg.status_code < 300:
                 # The final 2xx won the race with CANCEL. RFC 3261 requires us
                 # to accept it, ACK it, then end the confirmed dialog with BYE.
+                try:
+                    prepared = await self._prepare_response_signaling_target(msg, self._pending_request_uri)
+                except (OSError, RuntimeError, TimeoutError, sip.SipError):
+                    return "transport_unreachable"
+                self._commit_dialog_signaling_target(prepared)
                 committed = self._commit_200_ok(
                     msg,
                     self._pending_target,

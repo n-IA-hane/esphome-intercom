@@ -2194,6 +2194,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             def close(self) -> None:
                 pass
 
+            def is_closing(self) -> bool:
+                return False
+
         trunk = sip_trunk.SipTrunkClient(
             config=sip_trunk.SipTrunkConfig(
                 enabled=True,
@@ -2233,7 +2236,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         receive_task = asyncio.create_task(trunk._receive_loop())
         trunk.queue.put_nowait((response, ("192.0.2.10", 5060)))
-        self.assertEqual(await asyncio.wait_for(responses.get(), timeout=1), response)
+        self.assertEqual(await asyncio.wait_for(responses.get(), timeout=1), (response, ("192.0.2.10", 5060)))
         receive_task.cancel()
         await asyncio.gather(receive_task, return_exceptions=True)
         trunk.close_outbound_dialog("dialog-1")

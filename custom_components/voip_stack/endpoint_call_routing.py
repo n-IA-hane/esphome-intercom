@@ -47,11 +47,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def inbound_route_decision(
-    dialer: EndpointDialer, invite: SipInvite, peers: list[Peer], entries: list[RosterEntry]
+    dialer: EndpointDialer, invite: SipInvite, peers: list[Peer], entries: list[RosterEntry],
+    *, lookup_target: str | None = None,
 ):
     # At this point HA owns routing. Resolve the stable HA alias to the user's
     # current peer name before consulting the canonical dial plan.
-    route_target = invite.routing_target
+    route_target = invite.routing_target if lookup_target is None else lookup_target
     target = (
         home_phone_name(dialer.hass) if dialer.route_resolver.is_ha_target(route_target) else route_target
     )

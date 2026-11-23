@@ -1151,8 +1151,23 @@ async def _run_audio_session(
         validate_handoff()
         state = session.audio_state
         state.remote_host, state.remote_port = incoming.remote_host, incoming.remote_port
-        # This callback is the ownership commit. A failure after entry belongs
-        # to the successor; this WS must never close the transferred codecs.
+        previous_protocol = transport.get_protocol()
+        try:
+            result = adopt(transport, state)
+        except BaseException:
+            if not state.transferred:
+                if transport.get_protocol() is not previous_protocol:
+                    transport.set_protocol(previous_protocol)
+                raise
+            # The successor committed before a later delivery failed. It owns
+            # cleanup; the old WS must not close these same codecs or UDP fd.
+            finish_handoff(state)
+            raise
+        finish_handoff(state)
+        return result
+
+    def finish_handoff(state):
+        nonlocal transport_detached
         transport_detached = True
         closed.set()
         if handoff_requested is not None:
@@ -1161,7 +1176,6 @@ async def _run_audio_session(
         session.audio_state = state
         state.transferred = True
         state.transport = transport
-        return adopt(transport, state)
 
     session.handoff_transport = handoff_transport
     session.validate_handoff = validate_handoff

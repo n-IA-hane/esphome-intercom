@@ -107,6 +107,15 @@ class SipTrunkConfig:
             object.__setattr__(self, "audio_configured", self.audio_codecs is not None)
 
 
+@dataclass(slots=True)
+class _UdpDialogFlow:
+    """One dialog's bounded inbox and destinations on the trunk-owned socket."""
+
+    transport: asyncio.DatagramTransport
+    responses: asyncio.Queue[tuple[bytes, tuple[str, int]]]
+    next_hops: set[tuple[str, int]]
+
+
 class SipTrunkClient:
     def __init__(
         self,
@@ -179,21 +188,28 @@ class SipTrunkClient:
         self._keepalive_call_id = f"keepalive-{self.call_id}"
         self._keepalive_cseq = 0
         self._keepalive_responses: asyncio.Queue[sip.SipMessage] = asyncio.Queue(maxsize=4)
-        self._outbound_dialogs: dict[str, asyncio.Queue[bytes]] = {}
+        self._outbound_dialogs: dict[str, _UdpDialogFlow] = {}
 
-    def open_outbound_dialog(self, call_id: str) -> tuple[Callable[[bytes], bool], asyncio.Queue[bytes]] | None:
+    def open_outbound_dialog(self, call_id: str) -> tuple[Callable[[bytes], bool], asyncio.Queue[tuple[bytes, tuple[str, int]]]] | None:
         """Attach an outbound dialog to the registered UDP flow."""
         if self.transport_name != "UDP" or not self.registered or self.transport is None or not call_id or call_id in self._outbound_dialogs:
             return None
-        responses: asyncio.Queue[bytes] = asyncio.Queue(maxsize=64)
-        self._outbound_dialogs[call_id] = responses
+        responses: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=64)
+        self._outbound_dialogs[call_id] = _UdpDialogFlow(self.transport, responses, set())
 
         def send(raw: bytes) -> bool:
-            if self.transport is None or not self.registered:
-                return False
-            send_sip_datagram(self.transport, raw, self.active_registrar_target)
-            return True
+            return self.send_outbound_dialog_to(call_id, raw, self.active_registrar_target)
         return send, responses
+
+    def send_outbound_dialog_to(self, call_id: str, raw: bytes, target: tuple[str, int]) -> bool:
+        """Send on a live dialog lease, independent of REGISTER refresh state."""
+        flow = self._outbound_dialogs.get(call_id)
+        if (flow is None or self._stopped or self.transport is not flow.transport
+                or flow.transport.is_closing()):
+            return False
+        flow.next_hops.add((self._normalize_ip(target[0]), int(target[1])))
+        send_sip_datagram(flow.transport, raw, target)
+        return True
 
     def bind_outbound_usage(self, call_id: str, usage_id: str) -> Callable[[], None]:
         """Attach a subscription dialog without opening another transport reader."""
@@ -1061,21 +1077,22 @@ class SipTrunkClient:
                     addr = self._remote_addr()
                 else:
                     raw, addr = await self.queue.get()
-                    if not self._udp_source_is_trusted(addr):
-                        _LOGGER.warning(
-                            "SIP trunk dropped UDP packet from untrusted source %s:%s",
-                            addr[0],
-                            addr[1],
-                        )
-                        continue
                 try:
                     msg = sip.parse_message(raw)
                 except Exception as err:
                     _LOGGER.debug("SIP trunk RX malformed from %s:%s: %s", addr[0], addr[1], err)
                     continue
-                dialog_responses = self._outbound_dialogs.get(msg.header("Call-ID"))
-                if dialog_responses is not None:
-                    if put_drop_oldest(dialog_responses, raw):
+                dialog_flow = self._outbound_dialogs.get(msg.header("Call-ID"))
+                if self.transport_name == "UDP" and not self._udp_source_is_trusted(addr):
+                    # A dialog can move to a Contact or Route outside the
+                    # registrar hosts. Admission belongs only to that lease;
+                    # the client still validates transaction and dialog tags.
+                    if (dialog_flow is None or
+                            (self._normalize_ip(addr[0]), int(addr[1])) not in dialog_flow.next_hops):
+                        _LOGGER.warning("SIP trunk dropped UDP packet from untrusted source %s:%s", *addr)
+                        continue
+                if dialog_flow is not None:
+                    if put_drop_oldest(dialog_flow.responses, (raw, addr)):
                         _LOGGER.debug("SIP trunk dialog queue full; dropped oldest message")
                     continue
                 if msg.is_response and msg.header("Call-ID") == self._keepalive_call_id:

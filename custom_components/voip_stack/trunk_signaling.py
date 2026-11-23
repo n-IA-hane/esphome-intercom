@@ -38,6 +38,7 @@ def reuse_registered_trunk_flow(
     client.use_reused_signaling_flow(
         send=send, responses=responses,
         close=lambda: trunk.close_outbound_dialog(call_id),
+        udp_send_to=lambda raw, target: trunk.send_outbound_dialog_to(call_id, raw, target),
     )
     bind_usage = getattr(trunk, "bind_outbound_usage", None)
     if bind_usage is not None:
