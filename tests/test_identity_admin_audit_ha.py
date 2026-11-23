@@ -556,6 +556,8 @@ async def test_pending_identity_retry_recovers_after_call_starts_during_prepare(
         session = lab.runtime.sip.create_session("call-during-pending-name-prepare")
         assert lab.runtime.sip.claim_endpoint(session.call_id, old, role="source")
         release.set()
+        assert lab.controller._task is not None
+        await asyncio.wait_for(asyncio.shield(lab.controller._task), 2)
         await lab.hass.async_block_till_done()
         assert account.data["username"] == old and session.live
         assert attempts == 1
@@ -563,6 +565,8 @@ async def test_pending_identity_retry_recovers_after_call_starts_during_prepare(
         if barrier is not None:
             await barrier
         await lab.hass.async_block_till_done()
+        assert lab.controller._task is not None
+        await asyncio.wait_for(asyncio.shield(lab.controller._task), 2)
         assert account.data["username"] == "Ingresso"
         assert attempts == 2
     finally:
@@ -620,6 +624,7 @@ async def test_existing_native_repair_retries_io_failure_without_restart_or_per_
     async_setup(lab.hass)
     manager = repairs_flow_manager(lab.hass)
     form = await manager.async_init("voip_stack", context={"issue_id": issue_id})
+    assert attempts == 1
     assert form["step_id"] == "confirm"
     result = await manager.async_configure(form["flow_id"], {})
     assert result["type"] == "create_entry", result

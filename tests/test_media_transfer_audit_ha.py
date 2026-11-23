@@ -152,17 +152,55 @@ async def test_unlimited_ring_card_answer_without_websocket_resumes_original_cal
                 await asyncio.gather(transfer, return_exceptions=True)
 
 
+@asynccontextmanager
+async def outgoing_reserved_card_call(runtime, card):
+    from custom_components.voip_stack.const import CONF_SIP_VIDEO
+    from .test_video_originate_unknown_ha import set_configured_video_policy
+
+    entry = config_entry(runtime.hass)
+    runtime.hass.config_entries.async_update_entry(entry,
+        data={**entry.data, CONF_SIP_VIDEO: True})
+    for username in (card.username, "bedroom0"):
+        set_configured_video_policy(runtime, username, True)
+    runtime.runtime.transport_config[CONF_SIP_VIDEO] = True
+    await runtime.hass.async_block_till_done()
+    call_id = ""
+    try:
+        # Requesting video allocates a real combined reservation. This peer
+        # declines video, leaving its live audio port owned by the SIP client.
+        await runtime.hass.services.async_call("voip_stack", "call", {
+            "device_id": card.device_id, "destination": "bedroom0",
+            "media_client_id": card.endpoint_id + "-owner",
+            "send_video": False, "receive_video": True}, blocking=True)
+        call_id = runtime.runtime.endpoints.require(card.endpoint_id).active_call_id
+        assert call_id
+        await wait_until(lambda: runtime.calls.get_session(call_id).state == "in_call")
+        session = runtime.calls.get_session(call_id)
+        client = runtime.calls.sip_client_for(call_id)
+        assert client is not None and client.dialog is not None
+        assert client.media_reservation is not None and client.audio_rtp_socket is not None
+        assert client.dialog.video_format is None
+        yield client, runtime.phones[0].rtp_socket, session
+    finally:
+        if call_id and (current := runtime.calls.get_session(call_id)) is not None and current.live:
+            await runtime.calls.request_termination(call_id, TerminationIntent("audit_test_cleanup"))
+        if call_id:
+            await wait_until(lambda: runtime.calls.get_session(call_id) is None)
+
+
 @pytest.mark.parametrize("trunks", [True], indirect=True)
 async def test_failed_application_adoption_keeps_original_reservation_and_udp_usable(queue_lab, card_accounts, monkeypatch):
     runtime = queue_lab
     card = await card_accounts("audit-adoption-card")
     worker = None
-    async with incoming_card_call(runtime, card) as (_caller, audio, session):
+    async with outgoing_reserved_card_call(runtime, card) as (_caller, audio, session):
         source = OwnedSipSource.capture(runtime.hass, session, card.endpoint_id)
         assert source is not None and source.active is None and source.reservation is not None
         reservation = source.reservation
         descriptor = runtime.calls.resource_for(session.call_id, "softphone_media")
-        original = reservation.audio_socket(source.local_port)
+        assert source.client is not None and reservation is source.client.media_reservation
+        assert source.local_port in reservation.ports
+        original = source.client.audio_rtp_socket
         assert original is not None and original.fileno() >= 0
         original_fd = original.fileno()
         async def installation_failure(_self):

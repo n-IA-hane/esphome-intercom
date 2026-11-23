@@ -309,6 +309,8 @@ async def test_upgrade_records_cannot_authenticate_until_native_account_migratio
 
 
 async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_offer(managed, socket_enabled):
+    import asyncio
+    import socket
     from urllib.parse import quote
     from custom_components.voip_stack.core import sip, sdp
     from custom_components.voip_stack.core.sip_auth import build_digest_authorization
@@ -318,6 +320,8 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
     from custom_components.voip_stack.peer_snapshot import async_build_peer_snapshot
     from custom_components.voip_stack.sip_runtime import uri_transport, enable_reused_signaling_flow
     from custom_components.voip_stack.media_ports import RtpPortReservation
+    from custom_components.voip_stack.sip_endpoint import SipEndpointManager
+    from custom_components.voip_stack.core.audio_format import HA_SIP_PCM_FORMATS
 
     lab = managed
     phone, _previous = await registered_account(lab)
@@ -331,7 +335,32 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
         ("Call-ID", "contact-profile"), ("CSeq", "1 REGISTER"),
         ("Contact", f"<sip:{user}@127.0.0.2:41000>"), ("Expires", "120"),
         ("User-Agent", "Dahua VTO2202F-P"), ("Authorization", auth)]))
-    assert (await lab.registrar.handle_register(request, ("127.0.0.2", 41000), "UDP")).status == 200
+    manager = SipEndpointManager(host="127.0.0.1", port=5060, local_ip="127.0.0.1",
+        local_rtp_port=40000, supported_formats=list(HA_SIP_PCM_FORMATS), on_invite=None,
+        on_register=lab.registrar.handle_register, udp_enabled=True, tcp_enabled=False)
+    lab.runtime.sip.attach_component("udp_listener", manager, closer=manager.stop)
+    assert await manager.start()
+    # Register over the same real listener that the selected outbound-flow
+    # adapter will borrow. No signaling-flow or admission guard is replaced.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as wire:
+        wire.bind(("127.0.0.2", 41000))
+        wire.setblocking(False)
+        loop = asyncio.get_running_loop()
+        async def send_register(cseq, authorization=""):
+            headers = [(name, value) for name, value in request.headers
+                if name.casefold() not in {"via", "cseq", "authorization", "content-length"}]
+            headers.extend([("Via", f"SIP/2.0/UDP 127.0.0.2:41000;branch=z9hG4bK-real-profile-{cseq};rport"),
+                            ("CSeq", f"{cseq} REGISTER")])
+            if authorization:
+                headers.append(("Authorization", authorization))
+            await loop.sock_sendto(wire, sip.build_request("REGISTER", uri, headers), ("127.0.0.1", 5060))
+            raw, _address = await asyncio.wait_for(loop.sock_recvfrom(wire, 65535), 2)
+            return sip.parse_message(raw)
+        challenge = await send_register(1)
+        assert challenge.status_code == 401
+        authenticated = build_digest_authorization(challenge_header=challenge.header("WWW-Authenticate"),
+            username=phone.username, password=phone.password, method="REGISTER", uri=uri)
+        assert (await send_register(2, authenticated)).status_code == 200
     contact, = lab.registrar.registered_contacts(phone.username)
     contact.capabilities = sdp.options_capabilities(OPTIONS + "m=video 0 RTP/AVP 26\r\na=sendrecv\r\n")
     peers = await async_build_peer_snapshot(lab.hass)
