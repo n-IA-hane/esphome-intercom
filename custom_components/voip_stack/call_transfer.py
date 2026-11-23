@@ -70,11 +70,15 @@ def _blind_target(
     if entries is None:
         entries = routing_snapshot(runtime)
     if hass is not None:
+        from .mailbox import resolve_mailbox_route
         from .parking import resolve_parking_route
 
         parking = resolve_parking_route(hass, raw)
         if parking is not None:
             return _local_transfer_target(runtime, parking.target, entries)
+        mailbox = resolve_mailbox_route(hass, raw, entries)
+        if mailbox is not None:
+            return _local_transfer_target(runtime, mailbox.target, entries)
     entry = find_entry(entries, raw)
     if entry is None and "@" in raw:
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))

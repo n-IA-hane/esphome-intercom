@@ -1096,6 +1096,8 @@ class ForwardOperation:
                     return TransferResult("failed_resumed", destination, "cancelled")
             raise
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
+            _LOGGER.debug("Forward attempt failed call_id=%s destination=%s",
+                          self.source.call_id, destination, exc_info=True)
             reason = (TerminalReason.TIMEOUT.value if isinstance(err, TimeoutError) else
                       str(err).strip() or TerminalReason.TRANSPORT_UNREACHABLE.value)
             sip_status = (

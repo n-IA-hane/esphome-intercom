@@ -697,9 +697,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn("RtpPortReservation.allocate(hass)", routing_sources)
         self.assertNotIn('bucket.get("sip_rtp_next_port"', routing_sources)
-        self.assertIn(
-            "for ports in data.release_port_pairs:", self.outbound_bridge_commit
-        )
+        # Native bridge and handoff tests verify release of the actual pool.
         self.assertNotIn(
             "_release_sip_rtp_port_pair(hass, (source_relay_port, dest_relay_port))",
             routing_sources,

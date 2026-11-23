@@ -29,6 +29,28 @@ from .test_trunk_calls_ha import trunks as trunks, lab as lab
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("control", ["", "source", "ambiguous"], ids=["no-card", "sip-control", "ambiguous"])
+async def test_source_capture_requires_an_actual_card_claim(queue_lab, control):
+    runtime = queue_lab
+    session = runtime.calls.upsert("capture-admission", owner="ha_softphone", state="in_call")
+    try:
+        if control == "ambiguous":
+            for identity in ("capture-card-a", "capture-card-b"):
+                runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id=identity,
+                    name=identity, kind=EndpointKind.BROWSER, availability="available"))
+                runtime.calls.claim_endpoint(session.call_id, identity, role="destination")
+            with pytest.raises(RuntimeError, match="no unique card owner"):
+                OwnedSipSource.capture(runtime.hass, session)
+        else:
+            if control:
+                runtime.calls.claim_endpoint(session.call_id, control, role="caller")
+            assert OwnedSipSource.capture(runtime.hass, session, control) is None
+        assert runtime.calls.resource_for(session.call_id, "owned_sip_source") is None
+    finally:
+        await runtime.calls.request_termination(session.call_id, TerminationIntent("test_cleanup"))
+
+
 def tone(fmt, *, offset=0):
     samples = [round(10000 * math.sin(2 * math.pi * 650 * (offset + i) / fmt.sample_rate))
                for i in range(fmt.nominal_frame_samples)]

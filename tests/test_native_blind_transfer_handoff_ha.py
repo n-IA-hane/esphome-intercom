@@ -135,14 +135,14 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
     await lab.hass.async_block_till_done(wait_background_tasks=True)
     assert registrar.accounts[account.username.casefold()].password == account.password
     audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    audio.bind(("127.0.0.2", 0))
+    audio.bind(("127.0.0.1", 0))
     audio.setblocking(False)
-    caller = SipCallClient(local_ip="127.0.0.2", local_name=account.username,
+    caller = SipCallClient(local_ip="127.0.0.1", local_name=account.username,
         local_uri_user=account.username, local_sip_port=0, local_rtp_port=audio.getsockname()[1],
         supported_formats=[AudioFormat(16000, frame_ms=20)],
         username=account.username, password=account.password)
     caller.transport, caller.protocol = await lab.hass.loop.create_datagram_endpoint(
-        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.2", 0))
+        lambda: SipDatagramQueueProtocol(caller.queue), local_addr=("127.0.0.1", 0))
     caller.local_sip_port = caller.transport.get_extra_info("sockname")[1]
     target, transfer = lab.phones[1], None
     target.auto_answer = False
@@ -162,7 +162,7 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
         for endpoint in lab.calls.component("udp_listener")._dialog_endpoints():
             endpoint.enable_video = True
             endpoint.enable_video_transcoding = video_case == "transcoded"
-        for host in ("127.0.0.2", "127.0.0.1", "127.0.0.1"):
+        for host in ("127.0.0.1", "127.0.0.1", "127.0.0.1"):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind((host, 0))
             sock.setblocking(False)
@@ -188,18 +188,21 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
                         caller._send_response_to_request(message, *address, 200, "OK")
                     elif message.is_response and (status is None or message.status_code == status):
                         return message, address
-        registering = SimpleNamespace(address=("127.0.0.2", caller.local_sip_port),
+        registering = SimpleNamespace(address=("127.0.0.1", caller.local_sip_port),
             transport=caller.transport, receive=receive_registration)
         binding = await register_phone(SimpleNamespace(a=registering, registrar=registrar, lab=lab,
             listener=("127.0.0.1", lab.runtime.transport_config["sip_port"])),
             username=account.username, outbound=False, discover=False)
-        assert binding.source_host == "127.0.0.2" and binding.source_port == caller.local_sip_port
+        assert binding.source_host == "127.0.0.1" and binding.source_port == caller.local_sip_port
         assert registrar.registered_contacts(account.username)
         state = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
             remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
         if state == "ringing":
             state = await caller.wait_for_final(timeout=3)
         assert state == "in_call"
+        if video_case:
+            assert caller.signaling_transport == "TCP"
+            assert caller.writer.get_extra_info("sockname")[0] == caller.local_ip
         await until(lambda: bool(registry.sessions))
         original = registry.get_session(caller.dialog_ids.call_id)
         original_relay = registry.resource_for(original.call_id, "relay")
@@ -223,6 +226,7 @@ async def test_refer_then_immediate_bye_retains_opposite_wire_and_duplex_media(
                 lab.runtime.transport_config["sip_port"], local_addr=(source_host, 0))
             try:
                 foreign_port = foreign.get_extra_info("sockname")[1]
+                assert foreign_port != caller.local_sip_port
                 dialog_target = SipTargetDialog(caller.dialog_ids.call_id,
                     caller.dialog_ids.remote_tag, caller.dialog_ids.local_tag)
                 request = sip.build_request("REFER", caller.dialog.remote_target_uri, [

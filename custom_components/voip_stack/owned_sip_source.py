@@ -48,8 +48,14 @@ class OwnedSipSource:
         registry = runtime.sip
         if session is None or not session.live:
             return None
+        if endpoint_id:
+            endpoint = runtime.endpoints.get(endpoint_id)
+            if endpoint is None or not endpoint.supports_ha_client:
+                return None
         existing = registry.resource_for(session.call_id, "owned_sip_source")
         if isinstance(existing, cls) and not existing.adopted:
+            if endpoint_id and endpoint_id != existing.endpoint_id:
+                raise RuntimeError("The card no longer owns this SIP call")
             existing.validate()
             return existing
         if session.owner != "ha_softphone" or session.state != "in_call":
@@ -57,7 +63,9 @@ class OwnedSipSource:
         if not endpoint_id:
             candidates = [key for key in session.endpoint_claims
                 if (endpoint := runtime.endpoints.get(key)) is not None and endpoint.supports_ha_client]
-            if len(candidates) != 1:
+            if not candidates:
+                return None
+            if len(candidates) > 1:
                 raise RuntimeError("The retained SIP call has no unique card owner")
             endpoint_id = candidates[0]
         if endpoint_id not in session.endpoint_claims:

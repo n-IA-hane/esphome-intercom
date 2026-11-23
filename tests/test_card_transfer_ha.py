@@ -34,9 +34,11 @@ async def test_card_transfers_retained_sip_peer_to_mailbox_when_peer_rejects_ref
     """UI transfer owns local mailbox adoption even when the peer returns 405."""
     from homeassistant.core import callback
     from custom_components.voip_stack.core import rtp, sip
+    from custom_components.voip_stack.directory_runtime import routing_snapshot
     from custom_components.voip_stack.endpoint_session import TerminationIntent
     from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_RECEIVED, get_archive
     from custom_components.voip_stack.phone_config import phone_subentries
+    from custom_components.voip_stack.roster import find_entry
     from custom_components.voip_stack.store import config_entry
     from custom_components.voip_stack.websocket_api import CALL_EVENT
     from .test_browser_logical_availability_ha import resources
@@ -56,6 +58,7 @@ async def test_card_transfers_retained_sip_peer_to_mailbox_when_peer_rejects_ref
     lab.roster.append(RosterEntry(card.endpoint_id, name=card.name,
         metadata={"local_ha": True, "endpoint_id": card.endpoint_id, "endpoint_kind": "browser"}))
     lab.runtime.directory.replace(lab.roster)
+    assert find_entry(routing_snapshot(lab.runtime), "voicemail.bedroom1") is None
     recording, saved, references = asyncio.Event(), asyncio.Queue(), []
 
     @callback
@@ -100,7 +103,7 @@ async def test_card_transfers_retained_sip_peer_to_mailbox_when_peer_rejects_ref
         assert result["success"], result
         await asyncio.wait_for(recording.wait(), 4)
         assert caller.dialog is not None and caller.dialog.call_id == call_id
-        assert len(references) <= 1  # Any provider-side attempt was rejected, never adopted.
+        assert references == []  # The PBX owns its local mailbox route without delegating REFER.
         position = 0
         for sequence in range(20):
             fmt = caller.dialog.send_format
