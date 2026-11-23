@@ -212,6 +212,7 @@ def itu_values(path):
     return values[:-1]
 
 
+@pytest.mark.diagnostic_reference
 @pytest.mark.parametrize("rate", [16, 24, 32, 40])
 def test_optin_itu_encoder_codewords_and_independent_decoder_audio(rate):
     root = reference_root() / "itu-g726/DISK1"
@@ -240,6 +241,7 @@ def test_optin_itu_encoder_codewords_and_independent_decoder_audio(rate):
     assert .95 < ratio < 1.05
 
 
+@pytest.mark.diagnostic_reference
 def test_optin_g723_decoder_reads_independent_fate_5300_and_sid_vectors():
     root = reference_root()
     decoder = g723.G723Decoder()

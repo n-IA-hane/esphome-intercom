@@ -278,6 +278,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev ldap-utils \
+            libopus-dev libspandsp-dev \
             sip-tester libavcodec-dev libavfilter-dev libavformat-dev \
             libswscale-dev libavdevice-dev libavutil-dev
           command -v ldapsearch
@@ -299,6 +300,7 @@ jobs:
       - name: Run Home Assistant suite
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/home-assistant.xml -ra
+          VOIP_PHONE_PROFILE_CATALOG_PATH: ${{ github.workspace }}/../voip-stack-phone-profiles
         run: PYTHON=python HA_PYTHON=python scripts/test_suite.sh ha --keep-going
       - name: Require executed Home Assistant tests
         run: python scripts/check_test_results.py test-results/home-assistant.xml
@@ -335,7 +337,9 @@ jobs:
       - name: Install browser and media fixtures
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev \
+            libopus-dev libspandsp-dev libavcodec-dev libavfilter-dev libavformat-dev \
+            libswscale-dev libavdevice-dev libavutil-dev
           python -m playwright install --with-deps chromium
           mkdir -p "$RUNNER_TEMP/browser-bin"
           python - <<'PY'
@@ -348,6 +352,11 @@ jobs:
               )
           PY
           echo "$RUNNER_TEMP/browser-bin" >> "$GITHUB_PATH"
+      - name: Build pinned independent SIP test peer
+        run: |
+          scripts/build_sip_test_peer.sh "$RUNNER_TEMP/sip-peer"
+          echo "$RUNNER_TEMP/sip-peer/bin" >> "$GITHUB_PATH"
+          echo "VOIP_TEST_BARESIP_MODULE_PATH=$RUNNER_TEMP/sip-peer/lib/baresip/modules" >> "$GITHUB_ENV"
       - name: Check call controls and decoded video in Chromium
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/browser.xml -ra -vv -o faulthandler_timeout=15

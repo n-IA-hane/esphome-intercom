@@ -28,9 +28,9 @@ cmake --install "$scratch/re-build"
 cmake -S "$scratch/baresip" -B "$scratch/baresip-build" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" \
   -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH="$prefix" -DCMAKE_INSTALL_RPATH="$prefix/lib" \
-  '-DMODULES=account;stdio;menu;g711;l16;auconv;auresamp;ausine;aubridge;sndfile;mwi;avcodec;fakevideo'
+  '-DMODULES=account;stdio;menu;g711;g722;opus;l16;auconv;auresamp;ausine;aubridge;sndfile;mwi;avcodec;fakevideo'
 cmake --build "$scratch/baresip-build" --parallel 2
 cmake --install "$scratch/baresip-build"
-for module in account stdio menu g711 l16 auconv auresamp ausine aubridge sndfile mwi avcodec fakevideo; do
+for module in account stdio menu g711 g722 opus l16 auconv auresamp ausine aubridge sndfile mwi avcodec fakevideo; do
   test -s "$prefix/lib/baresip/modules/$module.so"
 done
