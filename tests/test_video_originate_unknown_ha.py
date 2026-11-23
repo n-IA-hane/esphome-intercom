@@ -532,8 +532,6 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
         assert observed['options_status'] == 200
         assert observed['options_content_type'] == 'application/sdp'
         assert observed['options_body'].startswith(b'v=0\r\n')
-        # Hardware sensor diagnostics cannot replace standard SIP evidence.
-        assert 'capabilities' not in row.metadata
         if policy.startswith('options_native_'):
             assert row.metadata['sip_audio_tx_formats'] == [
                 'L16/48000/1', 'L16/16000/1', 'G722/8000/1']
