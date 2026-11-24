@@ -33,6 +33,8 @@ def _video_operations(relay):
             target.video_format, connection_held=target.connection_held
         ):
             result.append("inactive")
+        elif not video.processing_known_from(side):
+            result.append("unknown")
         else:
             result.append("converted" if video.transcodes_from(side) else "forwarded")
     return tuple(result)

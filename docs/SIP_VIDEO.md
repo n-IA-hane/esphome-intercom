@@ -17,7 +17,7 @@ offers two independent capabilities:
 - **Enable video transcoding** lets VoIP Stack use the FFmpeg binary already
   available to Home Assistant when two negotiated video legs have no direct
   codec match. This covers legacy receive codecs for the HA softphone and
-  H.264/JPEG conversion between HA-owned SIP legs.
+  H.264/VP8/JPEG conversion between HA-owned SIP legs.
 - **Allow browser camera transmission** exposes a **Send Camera** control in
   the card. The logical Home Assistant phone stores that choice in its config
   subentry and exposes it as a native switch; each attached browser still asks
@@ -44,7 +44,7 @@ display through a HACS update. Follow
 
 ![Doorbell video-call demonstration in the VoIP Dashboard](images/voip-dashboard-gate-demo.png)
 
-_Dashboard doorbell-call demonstration using an illustrative gate-camera feed._
+_Dashboard doorbell-call demonstration using a gate-camera feed._
 
 For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
@@ -65,6 +65,14 @@ and re-encode. An upstream H.264 call can be converted by HA to JPEG for an S3
 sink when video transcoding is enabled. Disabling conversion does not authorize
 an incompatible video contract; audio can remain active when video is rejected.
 
+The JPEG relay also checks actual RFC 2435 frame dimensions
+against the receiver's SDP constraints when the source omits `imageattr`.
+Compatible geometry keeps the existing direct path. A resize prepares and
+commits processing through the relay generation owned by the same call,
+changing only the affected direction. Queued packets and late worker output
+remain scoped to that generation; cancellation, re-offer or hangup cannot
+commit stale work.
+
 ## Capability matrix
 
 The browser path keeps H.264 and VP8 encoded media off the HA decoder. JPEG
@@ -74,12 +82,12 @@ one bounded FFmpeg worker before RTP packetization.
 
 | Negotiated SIP codec | Receive in card | Send browser camera | Server transcode |
 | --- | --- | --- | --- |
-| H.264 Baseline, Main or High | Direct when supported by the browser | Direct for packetization mode 1 | To H.264 or JPEG only when the other SIP leg requires it |
-| VP8 | Direct | Direct | To H.264 or JPEG only when the other SIP leg requires it |
-| JPEG over RTP | Direct | Direct, with bounded normalization when required | To H.264 or JPEG only when the other SIP leg requires it |
-| H.263 | Optional | No | To VP8 for the browser, or H.264/JPEG for a SIP leg |
-| H.263-1998 / H.263-2000 | Optional | No | To VP8 for the browser, or H.264/JPEG for a SIP leg |
-| H.265 / HEVC | Optional | No | To VP8 for the browser, or H.264/JPEG for a SIP leg |
+| H.264 Baseline, Main or High | Direct when supported by the browser | Direct for packetization mode 1 | To H.264, VP8 or JPEG only when the other SIP leg requires it |
+| VP8 | Direct | Direct | To H.264, VP8 or JPEG only when the other SIP leg requires it |
+| JPEG over RTP | Direct | Direct, with bounded normalization when required | To H.264, VP8 or JPEG only when the other SIP leg requires it |
+| H.263 | Optional | No | To VP8 for the browser, or H.264/VP8/JPEG for a SIP leg |
+| H.263-1998 / H.263-2000 | Optional | No | To VP8 for the browser, or H.264/VP8/JPEG for a SIP leg |
+| H.265 / HEVC | Optional | No | To VP8 for the browser, or H.264/VP8/JPEG for a SIP leg |
 | Audio-only or unsupported video | Audio continues | No | No |
 
 ## ESP32-S3 camera preview and SIP video
@@ -137,9 +145,9 @@ existing VoIP video sink and LVGL call surface. It decodes complete JPEG images
 and returns the display to its ordinary UI after the video session ends.
 A board may configure a camera source independently if it has one.
 
-Spotpear FULL configures a 240x240 receive envelope; Box V2 FULL configures
-320x240. Their device packages currently request up to 10 FPS, while the generic
-receive package has its own conservative defaults. Display plus VoIP selects
+Spotpear FULL and Box V2 FULL configure a square 240x240 receive envelope.
+Their device packages request up to 10 FPS. The generic receive package retains
+its separate 320x240 and 2 FPS defaults. Display plus VoIP selects
 this receive path on those supported FULL boards; no camera is inferred.
 
 The selected dimensions and `framerate` bound resource use and admission; they
@@ -408,20 +416,21 @@ dialogs:
 
 If the destination rejects video or preparation fails, HA returns `488 Not
 Acceptable Here` to the new offer and keeps the original audio call. A BYE
-during setup remains authoritative and releases the staged ports, sockets and
-transcoder slot. Immediate redial waits for an already stopping transcoder to
-release that single slot instead of failing the next video offer.
+during setup remains authoritative and releases that call's staged ports,
+sockets and conversion workers. Cleanup waits for those workers to stop before
+releasing their resources, independently of workers owned by another call.
 
 There is no intermediate recording or complete video file. FFmpeg receives
-and emits RTP continuously on loopback. The transcode path is intentionally
-bounded to one active call and at most one subprocess per incompatible active
-direction. Every subprocess uses one encoder thread. VP8 output uses at most
-1280x720, a 700 kbit/s target and 900 kbit/s maximum. SIP H.264 output follows
+and emits RTP continuously on loopback. Each call owns its relay and at most one
+conversion subprocess per incompatible active direction. Two simultaneous
+converted calls have been qualified, with independent cleanup; calls do not
+share a global transcoder slot. Every subprocess uses one encoder thread.
+VP8 output uses at most 1280x720, a 700 kbit/s target and 900 kbit/s maximum.
+SIP H.264 output follows
 the receiver's level envelope and uses a bounded low-latency baseline profile.
 SIP JPEG output uses at most 800x800. Cadence follows the negotiated receiver
 and codec limits; transcoding does not invent frames to meet a fixed rate.
-A second simultaneous transcode call remains audio-only
-instead of starting unbounded codec workers.
+Host resources still bound the total conversion load.
 
 VoIP Stack first uses the FFmpeg binary configured by Home Assistant and then
 falls back to `ffmpeg` on the host path. Home Assistant OS and Home Assistant
@@ -453,6 +462,10 @@ informational, not legal advice.
 
 ## Deliberate limits
 
+The FFmpeg adapter can accept VP9 and AV1 input in its adapter paths. Ordinary
+SIP codec policy does not advertise or select either codec. Adapter input
+support does not add a codec to a phone's SDP, the browser path or P4 firmware.
+
 This profile does not claim support for:
 
 - general hardware qualification of ESP32-S3 camera/display boards; the
@@ -460,9 +473,10 @@ This profile does not claim support for:
 - video through Assist, conference rooms or ring-group legs that traverse
   standard SIP/RTP endpoints (a local HA browser caller can retain direct
   browser video when another local browser phone wins the ring group);
-- SIP bridge transcode output other than H.264 or JPEG;
-- VP9, AV1, MxPEG or other proprietary payloads;
-- more than one simultaneous server-side transcode;
+- SIP bridge transcode output other than H.264, VP8 or JPEG;
+- VP9 or AV1 advertisement through ordinary SIP codec policy;
+- MxPEG or other proprietary payloads;
+- unrestricted server-side conversion capacity beyond the per-call worker bounds;
 - more than one browser owning the same active HA video stream;
 - SRTP, DTLS, ICE or TURN;
 - RTCP multiplexing, generic NACK retransmission or bandwidth adaptation;

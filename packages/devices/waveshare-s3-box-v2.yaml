@@ -24,8 +24,8 @@ substitutions:
   voip_audio_task_stacks_in_psram: 'true'
   voip_tx_task_stack_size: '12288'
   voip_rx_task_stack_size: '12288'
-  # Match the FULL LCD receive envelope; audio-only profiles omit the renderer.
-  s3_sip_jpeg_width: '320'
+  # Use a square JPEG budget for the round LCD; preserve the source aspect ratio.
+  s3_sip_jpeg_width: '240'
   s3_sip_jpeg_height: '240'
   s3_sip_jpeg_fps: '10'
   name: waveshare-s3-touch-lcd-185c-v2

@@ -891,6 +891,48 @@ class VideoTransportTest(unittest.TestCase):
         self.assertEqual([(item.packet_type, item.fmt) for item in parsed], [(206, 4)])
 
 
+class JpegHeaderFactsTest(unittest.TestCase):
+    def test_rfc2435_geometry_facts_are_bounded_without_reassembly(self):
+        header = b"\x00\x00\x01\x02\x01\x32\x32\x58"
+        facts = video_rtp.parse_jpeg_rtp_header(header)
+        self.assertEqual((facts.width, facts.height), (400, 704))
+        self.assertEqual(facts.fragment_offset, 258)
+        self.assertEqual(facts.payload_offset, 8)
+        for invalid in (header[:7], header[:6] + b"\x00\x58",
+                        header[:7] + b"\x00", b"\x01" + header[1:],
+                        header[:4] + b"\x41" + header[5:] + b"\x00\x00\x00\x00"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                video_rtp.parse_jpeg_rtp_header(invalid)
+
+    def test_header_cache_bootstraps_only_the_cutover_packet(self):
+        parser = video_rtp.JpegDepacketizer()
+        tables = bytes(range(1, 129))
+        header = b"\x00\x00\x00\x00\x01\x80\x32\x58"
+        scan = b"\x12\x34\x56"
+        full = header + b"\x00\x00\x00\x80" + tables + scan
+        facts, cached, _offset = parser.read_header(full)
+        self.assertEqual((facts.width, facts.height), (400, 704))
+        self.assertEqual(cached, tables)
+        self.assertEqual(parser._scan, bytearray())
+        first = rtp.build_packet(rtp.RtpPacket(26, 1, 9000, 77, full, True))
+        self.assertIs(parser.bootstrap_rtp(first, rtp.parse_packet(first)), first)
+        short = header + b"\x00\x00\x00\x00" + scan
+        parser.read_header(short)
+        # Preserve a real RTP prefix with CSRC, extension and padding too.
+        prefix = (struct.pack("!BBHII", 0xB1, 0x9A, 2, 18000, 77)
+                  + struct.pack("!IHH", 123, 0xBEDE, 1) + b"\x10\x00\x00\x00")
+        padding = b"\x00\x00\x00\x04"
+        original = prefix + short + padding
+        bootstrapped = parser.bootstrap_rtp(original, rtp.parse_packet(original))
+        self.assertEqual(bootstrapped, prefix + full + padding)
+        self.assertEqual(rtp.parse_packet(bootstrapped).payload, full)
+        self.assertEqual(original, prefix + short + padding)
+        self.assertEqual(parser._scan, bytearray())
+        parser.reset()
+        with self.assertRaises(ValueError):
+            parser.read_header(short)
+
+
 class H264SdpTest(unittest.TestCase):
     AUDIO_FORMATS = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
 

@@ -176,6 +176,8 @@ async def test_video_uses_committed_transcoder_direction_and_hold(monkeypatch):
     try:
         # This is the active generation, including same-codec JPEG geometry work.
         video._transcode.directions.add("left")
+        video._transcode.transcoders["left"] = SimpleNamespace(
+            ready=True, async_close=AsyncMock())
         assert diagnostics._video_operations(case.media) == ("converted", "forwarded")
         video.right.video_format = replace(video_fmt, direction="sendonly")
         assert diagnostics._video_operations(case.media) == ("inactive", "forwarded")
@@ -184,6 +186,56 @@ async def test_video_uses_committed_transcoder_direction_and_hold(monkeypatch):
         assert diagnostics._video_operations(case.media) == ("converted", "inactive")
     finally:
         await close(case)
+
+
+async def test_video_processing_updates_use_current_owner_without_route_events(monkeypatch):
+    case = setup(monkeypatch)
+    video_fmt = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+    video = SipVideoRtpRelay(
+        left=VideoRtpPeer("192.0.2.1", 40004, 40005, video_fmt),
+        right=VideoRtpPeer("192.0.2.2", 41004, 41005, video_fmt),
+        left_port=42004, right_port=42006,
+    )
+    known = {"left": True, "right": True}
+    monkeypatch.setattr(video, "processing_known_from", lambda side: known[side])
+    case.media.attach_video_relay(video)
+    publish = Mock(wraps=call_projection.publish_media_route)
+    monkeypatch.setattr(call_projection, "publish_media_route", publish)
+    try:
+        call_projection.publish_media_route(case.hass, case.session.call_id, case.media.media_route)
+        await settle(case)
+        sink = case.origins["caller"].runtime_data.client.execute_service
+        assert sink.call_args.args[1]["video"] == "forwarded,forwarded"
+        assert publish.call_count == 1
+
+        known["left"] = False
+        video.on_media_processing_changed()
+        await settle(case)
+        assert sink.call_args.args[1]["video"] == "unknown,forwarded"
+
+        known["left"] = True
+        video._transcode.directions.add("left")
+        video.on_media_processing_changed()
+        await settle(case)
+        assert sink.call_args.args[1]["video"] == "converted,forwarded"
+        assert publish.call_count == 1
+
+        # A rebinding and a media handoff retire the old observer independently.
+        stale = video.on_media_processing_changed
+        case.media.bind_video_processing_observer()
+        count = sink.await_count
+        stale()
+        await settle(case)
+        assert sink.await_count == count
+        stale = video.on_media_processing_changed
+        case.media.video_relay = None
+        stale()
+        await settle(case)
+        assert sink.await_count == count
+        assert publish.call_count == 1
+    finally:
+        await close(case)
+        await video.stop()
 
 
 async def test_exact_leg_ids_native_inventory_and_delivery_dedup(monkeypatch):

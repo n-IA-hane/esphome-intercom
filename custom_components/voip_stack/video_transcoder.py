@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from builtins import ExceptionGroup
-from collections import deque
 from collections.abc import Awaitable, Callable
 import contextlib
 import errno
@@ -229,17 +228,25 @@ def video_transcode_supported(
     )
 
 
-def jpeg_size_transcode_required(source: RtpVideoFormat | None, destination: RtpVideoFormat | None) -> bool:
-    """Compare the known incoming JPEG envelope with the receiver contract.
+def jpeg_size_transcode_required(source: RtpVideoFormat | None, destination: RtpVideoFormat | None,
+                                 *, dimensions: tuple[int, int] | None = None) -> bool:
+    """Compare admitted frame geometry, or initial SDP hints, with the receiver.
 
-    Missing/wildcard source metadata retains the existing legacy path. This
-    decision is used only by callers which already opted into transcoding.
+    Actual RTP dimensions override source hints. An unconstrained receiver
+    needs no resize; absent source hints alone never start a converter.
     """
     if source is None or destination is None or source.encoding != "JPEG" or destination.encoding != "JPEG":
         return False
-    incoming = source.image_attributes.recv if source.image_attributes is not None else None
     receiving = destination.image_attributes.recv if destination.image_attributes is not None else None
-    if incoming is None or incoming.wildcard or receiving is None or receiving.wildcard:
+    if receiving is None or receiving.wildcard:
+        return False
+    if dimensions is not None:
+        plan = sdp.jpeg_image_plan(destination, *dimensions)
+        if plan is None:
+            raise VideoTranscoderError("JPEG receiver has no usable image size")
+        return (plan.width, plan.height) != dimensions
+    incoming = source.image_attributes.recv if source.image_attributes is not None else None
+    if incoming is None or incoming.wildcard:
         return False
     for alternative in incoming.sets:
         width, height = alternative.x.maximum, alternative.y.maximum
@@ -464,13 +471,13 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
 class _TranscoderInputTimeline:
     """Join successive RTP sources on FFmpeg's single input timeline.
 
-    FFmpeg retains sequence and timestamp history across SSRC changes. Rebase
+    Input has already passed its owner's RTP admission. FFmpeg retains
+    sequence and timestamp history across SSRC changes. Rebase
     only the loopback copy, preserving loss, duplicates and reordering within
     each source. No public RTP/RTCP stream is rewritten here.
     """
 
     source: int | None = None
-    retired: deque[int] = field(default_factory=lambda: deque(maxlen=8))
     sequence_offset: int = 0
     timestamp_offset: int = 0
     last_sequence: int = 0
@@ -483,10 +490,7 @@ class _TranscoderInputTimeline:
         sequence, timestamp, source = struct.unpack_from("!HII", data, 2)
         changed = source != self.source
         if changed:
-            if source in self.retired:
-                return None
             if self.source is not None:
-                self.retired.append(self.source)
                 self.sequence_offset = (self.last_sequence + 1 - sequence) & 0xFFFF
                 elapsed = max(1, round((now - self.last_arrival) * clock_rate))
                 self.timestamp_offset = (

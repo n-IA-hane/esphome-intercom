@@ -890,6 +890,49 @@ def _jpeg_interchange_header(
     return bytes(out)
 
 
+@dataclass(frozen=True, slots=True)
+class JpegRtpHeader:
+    """Validated RFC 2435 frame facts, without copying or decoding the scan."""
+
+    fragment_offset: int
+    type_specific: int
+    jpeg_type_raw: int
+    quality: int
+    width: int
+    height: int
+    restart_interval: int
+    payload_offset: int
+
+    @property
+    def frame_contract(self) -> tuple[int, ...]:
+        return (self.type_specific, self.jpeg_type_raw, self.quality,
+                self.width, self.height, self.restart_interval)
+
+
+def parse_jpeg_rtp_header(payload: bytes) -> JpegRtpHeader:
+    """Read the common JPEG header used by relay admission and reassembly."""
+    if len(payload) < 8:
+        raise ValueError("truncated RFC 2435 header")
+    offset = int.from_bytes(payload[1:4], "big")
+    type_specific, jpeg_type_raw, quality = payload[0], payload[4], payload[5]
+    width, height = int(payload[6]) << 3, int(payload[7]) << 3
+    if type_specific or not width or not height:
+        raise ValueError("unsupported RFC 2435 geometry or field type")
+    jpeg_type, cursor, dri = jpeg_type_raw, 8, 0
+    if jpeg_type & 0x40:
+        if len(payload) < cursor + 4:
+            raise ValueError("truncated RFC 2435 restart header")
+        dri = int.from_bytes(payload[cursor:cursor + 2], "big")
+        cursor += 4
+        if not dri:
+            raise ValueError("invalid RFC 2435 restart interval")
+        jpeg_type &= ~0x40
+    if jpeg_type not in {0, 1}:
+        raise ValueError("unsupported RFC 2435 JPEG type")
+    return JpegRtpHeader(offset, type_specific, jpeg_type_raw, quality,
+                         width, height, dri, cursor)
+
+
 class JpegDepacketizer:
     """Reassemble RFC 2435 fragments into complete baseline JFIF frames."""
 
@@ -924,82 +967,86 @@ class JpegDepacketizer:
         self._scan.clear()
         self._dynamic_quantizers.clear()
 
+    def read_header(self, payload: bytes) -> tuple[JpegRtpHeader, bytes, int]:
+        """Validate/cache codec headers without accumulating a JPEG access unit."""
+        facts = parse_jpeg_rtp_header(payload)
+        cursor, quality = facts.payload_offset, facts.quality
+        if facts.fragment_offset:
+            return facts, b"", cursor
+        table_len = 0
+        if quality >= 128:
+            if len(payload) < cursor + 4:
+                raise ValueError("missing RFC 2435 quantization header")
+            if payload[cursor] != 0:
+                raise ValueError("invalid RFC 2435 quantization MBZ field")
+            precision = payload[cursor + 1]
+            table_len = int.from_bytes(payload[cursor + 2 : cursor + 4], "big")
+            cursor += 4
+            if precision or table_len not in {0, 64, 128}:
+                raise ValueError("unsupported RFC 2435 quantization header")
+            if table_len:
+                if len(payload) < cursor + table_len:
+                    raise ValueError("truncated RFC 2435 quantization tables")
+                quantizers = bytes(payload[cursor : cursor + table_len])
+                cursor += table_len
+            else:
+                quantizers = self._dynamic_quantizers.get(quality, b"")
+                if not quantizers:
+                    raise ValueError("unknown RFC 2435 quantization tables")
+        else:
+            quantizers = _jpeg_quantizers(quality)
+        # RFC 2435 types 0/1 require distinct luma/chroma matrices.
+        # FFmpeg's RTP/JPEG muxer is also commonly deployed without
+        # ``force_duplicated_matrix`` and then emits one table while
+        # warning about the violation.  Tolerate that receive-side
+        # quirk at this boundary, but keep every downstream helper and
+        # every locally generated packet on the strict 128-byte form.
+        if len(quantizers) == 64:
+            quantizers += quantizers
+        if len(quantizers) != 128 or 0 in quantizers:
+            raise ValueError("invalid RFC 2435 quantization tables")
+        if 128 <= quality < 255 and table_len:
+            cached_quantizers = self._dynamic_quantizers.get(quality)
+            if (
+                cached_quantizers is not None
+                and cached_quantizers != quantizers
+            ):
+                raise ValueError(
+                    "changed static RFC 2435 quantization tables"
+                )
+            self._dynamic_quantizers.setdefault(quality, quantizers)
+        return facts, quantizers, cursor
+
+    def bootstrap_rtp(self, data: bytes, packet: rtp.RtpPacket) -> bytes:
+        """Bootstrap a decoder at a processing cutover without re-encoding."""
+        facts, quantizers, _scan_offset = self.read_header(packet.payload)
+        if facts.fragment_offset or facts.quality < 128:
+            return data
+        cursor = facts.payload_offset
+        if int.from_bytes(packet.payload[cursor + 2:cursor + 4], "big"):
+            return data
+        payload = (packet.payload[:cursor] + b"\x00\x00\x00\x80" + quantizers
+                   + packet.payload[cursor + 4:])
+        # parse_packet already validated padding and located the payload. Keep
+        # CSRC/extensions and padding unchanged; only the bootstrap copy grows.
+        end = len(data) - (data[-1] if data[0] & 0x20 else 0)
+        begin = end - len(packet.payload)
+        return data[:begin] + payload + data[end:]
+
     def push(self, packet: rtp.RtpPacket) -> VideoAccessUnit | None:
         payload = packet.payload
-        if len(payload) < 8:
+        try:
+            facts, quantizers, cursor = self.read_header(payload)
+        except ValueError:
             self._drop()
             return None
-        offset = int.from_bytes(payload[1:4], "big")
-        type_specific = int(payload[0])
-        jpeg_type_raw = int(payload[4])
-        jpeg_type = jpeg_type_raw
-        quality = int(payload[5])
-        width = int(payload[6])
-        height = int(payload[7])
-        cursor = 8
-        dri = 0
-        if type_specific:
-            # RFC 2435 type-specific values 1..3 describe interlaced fields;
-            # emitting them as a progressive JFIF would corrupt geometry.
-            self._drop()
-            return None
-        if jpeg_type & 0x40:
-            if len(payload) < cursor + 4:
-                self._drop()
-                return None
-            dri = int.from_bytes(payload[cursor : cursor + 2], "big")
-            cursor += 4
-            if not dri:
-                self._drop()
-                return None
-            jpeg_type &= ~0x40
-        if jpeg_type not in {0, 1}:
-            self._drop()
-            return None
+        offset, type_specific = facts.fragment_offset, facts.type_specific
+        jpeg_type_raw, quality = facts.jpeg_type_raw, facts.quality
+        jpeg_type = jpeg_type_raw & ~0x40
+        width, height = facts.width >> 3, facts.height >> 3
+        dri = facts.restart_interval
         if offset == 0:
             try:
-                table_len = 0
-                if quality >= 128:
-                    if len(payload) < cursor + 4:
-                        raise ValueError("missing RFC 2435 quantization header")
-                    if payload[cursor] != 0:
-                        raise ValueError("invalid RFC 2435 quantization MBZ field")
-                    precision = payload[cursor + 1]
-                    table_len = int.from_bytes(payload[cursor + 2 : cursor + 4], "big")
-                    cursor += 4
-                    if precision or table_len not in {0, 64, 128}:
-                        raise ValueError("unsupported RFC 2435 quantization header")
-                    if table_len:
-                        if len(payload) < cursor + table_len:
-                            raise ValueError("truncated RFC 2435 quantization tables")
-                        quantizers = bytes(payload[cursor : cursor + table_len])
-                        cursor += table_len
-                    else:
-                        quantizers = self._dynamic_quantizers.get(quality, b"")
-                        if not quantizers:
-                            raise ValueError("unknown RFC 2435 quantization tables")
-                else:
-                    quantizers = _jpeg_quantizers(quality)
-                # RFC 2435 types 0/1 require distinct luma/chroma matrices.
-                # FFmpeg's RTP/JPEG muxer is also commonly deployed without
-                # ``force_duplicated_matrix`` and then emits one table while
-                # warning about the violation.  Tolerate that receive-side
-                # quirk at this boundary, but keep every downstream helper and
-                # every locally generated packet on the strict 128-byte form.
-                if len(quantizers) == 64:
-                    quantizers += quantizers
-                if len(quantizers) != 128 or 0 in quantizers:
-                    raise ValueError("invalid RFC 2435 quantization tables")
-                if 128 <= quality < 255 and table_len:
-                    cached_quantizers = self._dynamic_quantizers.get(quality)
-                    if (
-                        cached_quantizers is not None
-                        and cached_quantizers != quantizers
-                    ):
-                        raise ValueError(
-                            "changed static RFC 2435 quantization tables"
-                        )
-                    self._dynamic_quantizers.setdefault(quality, quantizers)
                 self._header = _jpeg_interchange_header(
                     jpeg_type=jpeg_type,
                     width_blocks=width,

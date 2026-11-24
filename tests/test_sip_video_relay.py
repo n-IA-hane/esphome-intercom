@@ -9,7 +9,7 @@ from unittest import mock
 
 import pytest
 
-from custom_components.voip_stack.core import rtp, sdp, video_rtcp
+from custom_components.voip_stack.core import rtp, sdp, video_rtcp, video_rtp
 from custom_components.voip_stack import sip_video_relay
 
 pytestmark = [pytest.mark.ha, pytest.mark.usefixtures("socket_enabled")]
@@ -31,6 +31,9 @@ class _Transport:
 
     def close(self) -> None:
         self.closed = True
+
+    def is_closing(self) -> bool:
+        return self.closed
 
 
 def _format(
@@ -1248,3 +1251,220 @@ async def test_owner_joins_provisional_generation(phase):
                 await asyncio.gather(stopping, return_exceptions=True)
             await relay.stop()
     assert not alive
+
+
+
+def _jpeg_wire_fragment(sequence, timestamp, *, size=(800, 800), offset=0, marker=True, length=32):
+    # RFC2435 fixed header, implicit Q50 tables; no production parser is copied.
+    payload = (b"\x00" + int(offset).to_bytes(3, "big")
+               + bytes((0, 50, (size[0] + 7) // 8, (size[1] + 7) // 8))
+               + b"\x11" * length)
+    return rtp.build_packet(rtp.RtpPacket(26, sequence, timestamp, 0x11223344, payload, marker))
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel", "bye", "reoffer", "overflow", "coalesce"])
+async def test_runtime_jpeg_geometry_preparation_is_owned(outcome):
+    bounded = RtpVideoFormat(payload_type=26, encoding="JPEG",
+        image_attributes=sdp.parse_imageattr("26 recv [x=[8:8:320],y=[8:8:240]]")[1])
+    # The two RTP directions are independent: retain right H264->VP8 while
+    # left JPEG->JPEG is activated only by the admitted oversized header.
+    left = VideoRtpPeer("127.0.0.1", 41000, 41001,
+                       RtpVideoFormat(payload_type=104, encoding="VP8"),
+                       local_video_format=RtpVideoFormat(payload_type=26, encoding="JPEG"))
+    right = VideoRtpPeer("127.0.0.1", 42000, 42001, bounded,
+                        local_video_format=_format(105))
+    if outcome == "coalesce":
+        left.video_format = bounded
+        right.local_video_format = RtpVideoFormat(payload_type=26, encoding="JPEG")
+    relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
+    relay.configure_transcoding(types.SimpleNamespace(data={}), "runtime-jpeg-owner")
+    relay.started, relay._transcode_registered = True, True
+    relay._maintain_nat = mock.Mock()
+    left_output, right_output = _Transport(), _Transport()
+    relay._transports = {("left", False): left_output, ("right", False): right_output}
+    entered, release = asyncio.Event(), asyncio.Event()
+    workers, builds, alive = [], [], set()
+
+    class Worker:
+        ready = True
+        def __init__(self, side):
+            self.side, self.close_calls, self.received = side, 0, []
+            workers.append(self)
+            alive.add(self)
+        def send_rtp(self, raw):
+            self.received.append(raw)
+        async def async_close(self):
+            self.close_calls += 1
+            alive.discard(self)
+
+    retained = Worker("right") if outcome != "coalesce" else None
+    retained_transport = _Transport() if retained is not None else None
+    relay._transcode = sip_video_relay._TranscodeGeneration(
+        {"right"} if retained is not None else set(),
+        {"right": retained} if retained is not None else {},
+        {("right", False): retained_transport} if retained is not None else {}, {})
+    original_identity = (relay.left, relay.right, relay.left_port, relay.right_port)
+
+    async def build(_loop, _left, _right, *, directions=None, **_kwargs):
+        selected = (relay.transcode_directions_for(_left, _right)
+                    if directions is None else set(directions))
+        builds.append(selected)
+        generation = sip_video_relay._TranscodeGeneration(
+            selected, {side: Worker(side) for side in selected},
+            {(side, False): _Transport() for side in selected}, {})
+        entered.set()
+        try:
+            await release.wait()
+            if outcome == "failure":
+                raise RuntimeError("owned converter startup failed")
+            return generation
+        except BaseException:
+            # A builder retains partial resources until its actual return.
+            await relay._close_transcode_generation(generation)
+            raise
+
+    with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
+         mock.patch.object(sip_video_relay, "_register_transcoder", new=mock.AsyncMock()), \
+         mock.patch.object(sip_video_relay, "_unregister_transcoder", new=mock.AsyncMock()):
+        try:
+            # Spoofed hosts and unnegotiated PTs cannot allocate a converter.
+            bad = _jpeg_wire_fragment(1, 9000, marker=outcome != "overflow",
+                                      size=(400, 704) if outcome == "coalesce" else (800, 800))
+            relay.handle_rtp("left", bad, ("198.51.100.77", left.port))
+            relay.handle_rtp("left", bytes((bad[0], 27)) + bad[2:], (left.host, left.port))
+            assert not builds and relay._jpeg_geometry_task is None
+            relay.handle_rtp("left", bad, (left.host, left.port))
+            await asyncio.wait_for(entered.wait(), 1)
+            task = relay._jpeg_geometry_task
+            assert task is not None and task in relay._preparation_tasks
+            assert not relay.processing_known_from("left")
+            assert not right_output.sent
+            if retained is not None:
+                assert relay._transcode.transcoders["right"] is retained and retained.close_calls == 0
+            if outcome == "coalesce":
+                relay.handle_rtp("left", _jpeg_wire_fragment(2, 18000), (left.host, left.port))
+                opposite = [
+                    _jpeg_wire_fragment(1, 9000, size=(320, 240)),
+                    _jpeg_wire_fragment(2, 18000, size=(240, 240)),
+                ]
+                for raw in opposite:
+                    relay.handle_rtp("right", raw, (right.host, right.port))
+                assert left_output.sent == [(raw, (left.host, left.port)) for raw in opposite]
+                assert relay._jpeg_geometry_task is task
+                assert builds == [{"left"}]
+            if outcome == "cancel":
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                assert not relay.transcodes_from("left") and not relay.processing_known_from("left")
+                assert not right_output.sent
+            elif outcome == "bye":
+                await relay.stop()
+            elif outcome == "reoffer":
+                changed = replace(right, video_format=replace(bounded,
+                    image_attributes=sdp.parse_imageattr("26 recv [x=[8:8:800],y=[8:8:800]]")[1]))
+                relay.stage_peer_reconfiguration("right", changed)
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+                assert all(worker.close_calls == 1 for worker in workers if worker.side == "left")
+                commit, _rollback = await relay.async_prepare_peer_generation(left=left, right=changed)
+                await commit()
+                assert relay.right is changed and not relay.transcodes_from("left")
+            else:
+                if outcome == "overflow":
+                    for index in range(2, sip_video_relay._TRANSCODE_STARTUP_MAX_PACKETS + 4):
+                        relay.handle_rtp("left", _jpeg_wire_fragment(index, 9000,
+                            offset=(index - 1) * 32, marker=False), (left.host, left.port))
+                    assert relay._transcode_startup_bytes["left"] <= sip_video_relay._TRANSCODE_STARTUP_MAX_BYTES
+                    assert len(relay._transcode_startup_rtp["left"]) <= sip_video_relay._TRANSCODE_STARTUP_MAX_PACKETS
+                    assert relay.transcode_startup_dropped > 0
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+                if outcome == "failure":
+                    assert not relay.transcodes_from("left") and not relay.processing_known_from("left")
+                    assert not right_output.sent
+                else:
+                    assert relay.transcodes_from("left")
+                    if outcome != "overflow":
+                        assert relay.processing_known_from("left")
+                    added = relay._transcode.transcoders["left"]
+                    if outcome == "coalesce":
+                        assert builds == [{"left"}]
+                        assert len([worker for worker in workers if worker.side == "left"]) == 1
+                        assert added.close_calls == 0
+                    if outcome == "overflow":
+                        assert not added.received
+                        relay.handle_rtp("left", _jpeg_wire_fragment(100, 9000, offset=999),
+                                         (left.host, left.port))
+                        assert not added.received
+                        fresh = _jpeg_wire_fragment(101, 18000)
+                        relay.handle_rtp("left", fresh, (left.host, left.port))
+                        assert added.received == [fresh]
+                        assert relay.processing_known_from("left")
+                    else:
+                        old_transport = relay._transcode.transports[("left", False)]
+                        stale = sip_video_relay._TranscodedOutputProtocol(relay, "left")
+                        stale.connection_made(old_transport)
+                        relay.handle_rtp("left", _jpeg_wire_fragment(3, 27000, size=(320, 240)),
+                                         (left.host, left.port))
+                        shrinking = relay._jpeg_geometry_task
+                        assert shrinking is not None
+                        await asyncio.gather(shrinking, return_exceptions=True)
+                        assert not relay.transcodes_from("left") and added.close_calls == 1
+                        count = len(right_output.sent)
+                        stale.datagram_received(_jpeg_wire_fragment(4, 27000, size=(240, 240)),
+                                                ("127.0.0.1", 9))
+                        assert len(right_output.sent) == count
+            if outcome != "bye":
+                assert relay.started
+                if retained is not None:
+                    assert relay._transcode.transcoders["right"] is retained
+                    assert relay._transcode.transports[("right", False)] is retained_transport
+                    assert retained.close_calls == 0 and not retained_transport.closed
+                else:
+                    assert not relay.transcodes_from("right")
+                assert (relay.left, relay.left_port, relay.right_port) == (
+                    original_identity[0], original_identity[2], original_identity[3])
+        finally:
+            release.set()
+            await relay.stop()
+    assert not alive and all(worker.close_calls == 1 for worker in workers)
+    assert not relay._preparation_tasks and relay._jpeg_geometry_task is None
+    assert not relay._provisional_transcodes
+
+
+
+async def test_compatible_jpeg_fragments_remain_raw_when_reordered():
+    import io
+    from PIL import Image
+
+    jpeg = RtpVideoFormat(payload_type=26, encoding="JPEG")
+    bounded = replace(jpeg,
+        image_attributes=sdp.parse_imageattr("26 recv [x=[8:8:320],y=[8:8:240]]")[1])
+    left = VideoRtpPeer("127.0.0.1", 41000, 41001, jpeg)
+    right = VideoRtpPeer("127.0.0.1", 42000, 42001, bounded)
+    relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
+    relay.configure_transcoding(types.SimpleNamespace(data={}), "jpeg-compatible-reordering")
+    relay.started = True
+    relay._maintain_nat = mock.Mock()
+    output = _Transport()
+    relay._transports = {("right", False): output}
+    output_image = io.BytesIO()
+    Image.new("RGB", (320, 240), "red").save(output_image, "JPEG", quality=50, optimize=False)
+    current = video_rtp.packetize_jpeg(output_image.getvalue(), payload_type=26,
+        sequence=100, timestamp=18000, ssrc=0x11223344, max_payload=200)
+    old = video_rtp.packetize_jpeg(output_image.getvalue(), payload_type=26,
+        sequence=100 - len(current), timestamp=9000, ssrc=0x11223344, max_payload=200)
+    assert len(current) >= 2
+    packets = [rtp.build_packet(packet)
+               for packet in [current[1], current[0], *current[2:], *old]]
+    with mock.patch.object(relay, "_build_transcode_generation", new=mock.AsyncMock()) as build:
+        try:
+            for raw in packets:
+                relay.handle_rtp("left", raw, (left.host, left.port))
+            assert output.sent == [(raw, (right.host, right.port)) for raw in packets]
+            assert relay.forwarded == len(packets) and relay.dropped == 0
+            assert not relay.transcoding and relay._jpeg_geometry_task is None
+            assert not relay._transcode_startup_rtp["left"]
+            build.assert_not_awaited()
+        finally:
+            await relay.stop()

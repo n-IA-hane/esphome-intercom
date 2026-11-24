@@ -1189,6 +1189,24 @@ class SipRtpRelay:
         if self.video_relay is not None and self.video_relay is not relay:
             raise RuntimeError("video relay already attached")
         self.video_relay = relay
+        self.bind_video_processing_observer()
+
+    def bind_video_processing_observer(self) -> None:
+        """Project the current video owner's processing through this relay."""
+        video = self.video_relay
+        if (video is None or self._stop_requested
+                or not hasattr(video, "on_media_processing_changed")):
+            return
+
+        def changed():
+            if (self.video_relay is not video or self._stop_requested
+                    or video.on_media_processing_changed is not changed):
+                return
+            callback = self.on_media_processing_changed
+            if callback is not None:
+                callback()
+
+        video.on_media_processing_changed = changed
 
     def _relay_dtmf_report(self, side, source, destination, report):
         """Translate progress and long-event segments without shortening a press."""

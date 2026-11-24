@@ -69,9 +69,37 @@ class TranscoderInputTimelineTests(unittest.TestCase):
         self.assertEqual(duplicate, later)
         reordered = timeline.translate(packet(12001, 700000000, 2), 1.6, 90000)
         self.assertEqual(struct.unpack_from("!H", reordered, 2)[0], 2)
-        self.assertIsNone(timeline.translate(wrapped, 1.7, 90000))
+        # Replay rejection belongs to the existing source admission owner.
+        # A fresh returning source is allowed only after its own probation.
+        owner = rtp.RtpReceiveState()
+        self.assertTrue(owner.admit(rtp.parse_packet(first), clock_rate=90000))
+        self.assertTrue(owner.admit(rtp.parse_packet(wrapped), clock_rate=90000))
+        self.assertFalse(owner.admit(rtp.parse_packet(packet(11999, 699991000, 2)), clock_rate=90000))
+        self.assertTrue(owner.admit(rtp.parse_packet(restarted), clock_rate=90000))
+        self.assertFalse(owner.admit(rtp.parse_packet(wrapped), clock_rate=90000))
         third = timeline.translate(packet(9, 500, 3), 1.8, 90000)
         self.assertEqual(struct.unpack_from("!HI", third, 2), (4, 0x100 + 63000))
+
+
+    def test_admitted_returning_source_reaches_input_timeline_without_a_second_ban(self) -> None:
+        owner = rtp.RtpReceiveState()
+        timeline = video_transcoder._TranscoderInputTimeline()
+        admitted, mapped = [], []
+        rows = [(11, 100), (11, 101), (22, 400), (22, 401), (11, 102), (11, 103)]
+        for index, (source, sequence) in enumerate(rows):
+            raw = rtp.build_packet(rtp.RtpPacket(26, sequence, sequence * 9000, source, b"JPEG", True))
+            accepted = owner.admit(rtp.parse_packet(raw), clock_rate=90000)
+            admitted.append(accepted)
+            if accepted:
+                output = timeline.translate(raw, 1.0 + index * 0.01, 90000)
+                self.assertIsNotNone(output, (source, sequence))
+                self.assertEqual(output[:2], raw[:2])
+                self.assertEqual(output[8:], raw[8:])
+                mapped.append(output)
+        self.assertEqual(admitted, [True, True, False, True, False, True])
+        self.assertEqual(len(mapped), 4)
+        replay = rtp.build_packet(rtp.RtpPacket(26, 100, 900000, 11, b"JPEG", True))
+        self.assertFalse(owner.admit(rtp.parse_packet(replay), clock_rate=90000))
 
 
 def _parse_multipart_jpegs(data: bytes) -> list[bytes]:

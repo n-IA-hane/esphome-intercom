@@ -177,6 +177,7 @@ def _bind_media_route_diagnostics(hass, registry, session) -> None:
         relay = resource.value
         if not resource.name.startswith("relay:") or not isinstance(relay, SipRtpRelay):
             return
+        relay.bind_video_processing_observer()
         name = f"media_route_projection:{id(resource):x}"
         if any(item.name == name for item in session.resources):
             return

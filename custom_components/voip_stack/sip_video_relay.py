@@ -12,6 +12,7 @@ from time import monotonic
 from typing import Any, Awaitable, Callable
 
 from .core import rtp
+from .core.video_rtp import JpegDepacketizer, parse_jpeg_rtp_header
 from .core.sip_stun import is_stun_message
 from .core.sdp import (
     RtpVideoFormat,
@@ -63,6 +64,15 @@ class VideoRtpPeer:
     rtcp_source_port: int | None = None
     connection_held: bool = False
     receive_state: Any = field(default_factory=rtp.RtpReceiveState, repr=False)
+    jpeg_geometry: tuple[int, int] | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_timestamp: int | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_frame_contract: tuple[int, ...] | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_frame_blocked: bool = field(default=False, init=False, repr=False, compare=False)
+    jpeg_resize_key: tuple | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_resize_required: bool | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_parser: JpegDepacketizer | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_ssrc: int | None = field(default=None, init=False, repr=False, compare=False)
+    jpeg_raw_bootstrap: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.advertised_host:
@@ -148,8 +158,16 @@ class _TranscodedOutputProtocol(asyncio.DatagramProtocol):
         self.relay = relay
         self.source_side = source_side
         self.rtcp = rtcp
+        self.transport = None
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
 
     def datagram_received(self, data: bytes, _addr) -> None:
+        if (self.relay._stop_requested or self.transport is None
+                or self.relay._transcode.transports.get((self.source_side, self.rtcp)) is not self.transport
+                or self.transport.is_closing()):
+            return
         if self.rtcp:
             self.relay.handle_transcoded_rtcp(self.source_side, data)
         else:
@@ -178,6 +196,7 @@ class SipVideoRtpRelay:
         left_rtcp_socket: socket.socket | None = None,
         right_rtcp_socket: socket.socket | None = None,
         on_release: Callable[[tuple[int, int]], None] | None = None,
+        on_media_processing_changed: Callable[[], None] | None = None,
     ) -> None:
         self.left = left
         self.right = right
@@ -208,6 +227,12 @@ class SipVideoRtpRelay:
         self._rtcp_ssrc = secrets.randbelow(0xFFFFFFFF) + 1
         self._fir_sequence = 0
         self._on_release = on_release
+        self.on_media_processing_changed = on_media_processing_changed
+        self._processing_snapshot = None
+        self._jpeg_geometry_task: asyncio.Task | None = None
+        self._jpeg_pending_directions: set[str] = set()
+        self._jpeg_failed_key = None
+        self._jpeg_failed_directions: set[str] = set()
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
         self._start_task: asyncio.Task[None] | None = None
@@ -269,7 +294,8 @@ class SipVideoRtpRelay:
         Repeating this operation restores the prior orientation for rollback.
         """
         if (not self.started or self._start_task is not None or self._stop_requested
-                or self._staged_peers):
+                or self._staged_peers
+                or (self._jpeg_geometry_task is not None and not self._jpeg_geometry_task.done())):
             raise RuntimeError("Only a settled video relay can change orientation")
         keys = {(side, rtcp) for side in ("left", "right") for rtcp in (False, True)}
         if keys != set(self._transports) or keys != set(self._sockets) or any(
@@ -366,6 +392,245 @@ class SipVideoRtpRelay:
             raise ValueError(f"unknown video relay side: {side}")
         return side in self._transcode.directions
 
+    def _bounded_jpeg(self, side):
+        source, destination = self._peers(side)
+        attributes = destination.send_format.image_attributes
+        return (source.recv_format.encoding == destination.send_format.encoding == "JPEG"
+                and attributes is not None and attributes.recv is not None
+                and not attributes.recv.wildcard)
+
+    def processing_known_from(self, side: str) -> bool:
+        """Report only settled processing, independently of SDP geometry hints."""
+        if side not in {"left", "right"}:
+            raise ValueError(f"unknown video relay side: {side}")
+        if side in self._jpeg_pending_directions:
+            return False
+        if (side in self._jpeg_failed_directions
+                and self._jpeg_failed_key == self._jpeg_processing_key()):
+            return False
+        if self._bounded_jpeg(side) and self._peers(side)[0].jpeg_frame_blocked:
+            return False
+        if side in self._transcode.directions:
+            worker = self._transcode.transcoders.get(side)
+            return worker is not None and bool(getattr(worker, "ready", False))
+        if self._bounded_jpeg(side):
+            source, destination = self._peers(side)
+            if source.jpeg_geometry is None or source.jpeg_frame_blocked:
+                return False
+            try:
+                return not self._jpeg_needs_resize(source, destination)
+            except (RuntimeError, ValueError):
+                return False
+        return True
+
+    @staticmethod
+    def _jpeg_needs_resize(source, destination, dimensions=None):
+        # Cache the plan on the existing stream owner. Repeated fragments and
+        # equal-size frames only compare their small header/contract facts.
+        dimensions = source.jpeg_geometry if dimensions is None else dimensions
+        key = (source.recv_format, destination.send_format, dimensions)
+        if key != source.jpeg_resize_key:
+            source.jpeg_resize_key = key
+            source.jpeg_resize_required = None
+            source.jpeg_resize_required = jpeg_size_transcode_required(
+                source.recv_format, destination.send_format, dimensions=dimensions)
+        if source.jpeg_resize_required is None:
+            raise ValueError("JPEG receiver has no usable image size")
+        return source.jpeg_resize_required
+
+    def _notify_media_processing(self):
+        snapshot = tuple((self.processing_known_from(side), self.transcodes_from(side))
+                         for side in ("left", "right"))
+        if snapshot == self._processing_snapshot:
+            return
+        self._processing_snapshot = snapshot
+        callback = self.on_media_processing_changed
+        if callback is not None and not self._stop_requested:
+            try:
+                callback()
+            except Exception:
+                _LOGGER.debug("Video media processing observer failed", exc_info=True)
+
+    def _jpeg_context_key(self):
+        return (id(self.left), id(self.right), id(self._transcode),
+                tuple((peer.recv_format, peer.send_format)
+                      for peer in (self.left, self.right)))
+
+    def _jpeg_processing_key(self):
+        # Startup errors are latched for this operation/source, not retried
+        # for every equal-operation geometry in an alternating JPEG stream.
+        return (self._jpeg_context_key(), self.left.jpeg_ssrc, self.right.jpeg_ssrc,
+                frozenset(self.transcode_directions_for(self.left, self.right)))
+
+    @staticmethod
+    def _reset_jpeg_observation(peer):
+        peer.jpeg_geometry = peer.jpeg_timestamp = peer.jpeg_frame_contract = None
+        peer.jpeg_frame_blocked = False
+        peer.jpeg_resize_key = peer.jpeg_resize_required = None
+        peer.jpeg_parser = None
+        peer.jpeg_ssrc = None
+        peer.jpeg_raw_bootstrap = False
+
+    @classmethod
+    def _retain_jpeg_observation(cls, previous, candidate):
+        """Carry codec facts for the same source; validate its SSRC on use."""
+        if candidate is previous:
+            return
+        cls._reset_jpeg_observation(candidate)
+        if (previous.advertised_host == candidate.advertised_host
+                and previous.signaling_host == candidate.signaling_host
+                and replace(previous.recv_format, direction="sendrecv")
+                == replace(candidate.recv_format, direction="sendrecv")):
+            for name in ("jpeg_geometry", "jpeg_timestamp", "jpeg_frame_contract", "jpeg_frame_blocked",
+                         "jpeg_resize_key", "jpeg_resize_required", "jpeg_parser", "jpeg_ssrc",
+                         "jpeg_raw_bootstrap"):
+                setattr(candidate, name, getattr(previous, name))
+
+    def _observe_jpeg_packet(self, side, source, destination, packet):
+        facts = parse_jpeg_rtp_header(packet.payload)
+        if source.jpeg_ssrc != packet.ssrc:
+            self._reset_jpeg_observation(source)
+            source.jpeg_ssrc = packet.ssrc
+        if source.jpeg_parser is None:
+            source.jpeg_parser = JpegDepacketizer()
+        dimensions = (facts.width, facts.height)
+        resize = self._jpeg_needs_resize(source, destination, dimensions)
+        latest = (source.jpeg_timestamp is None
+                  or ((packet.timestamp - source.jpeg_timestamp) & 0xFFFFFFFF) < 0x80000000)
+        if facts.fragment_offset == 0 and latest:
+            source.jpeg_timestamp = packet.timestamp
+            source.jpeg_frame_contract = facts.frame_contract
+            source.jpeg_geometry = dimensions
+            source.jpeg_frame_blocked = False
+        elif source.jpeg_geometry is None:
+            source.jpeg_geometry = dimensions
+        if source.jpeg_frame_blocked and packet.timestamp == source.jpeg_timestamp:
+            raise ValueError("JPEG frame was discarded during preparation")
+        try:
+            source.jpeg_parser.read_header(packet.payload)
+        except ValueError:
+            # An opaque relay never needed local decoder state. Require the
+            # cache only when this packet must cross a decoder/cutover path.
+            if resize or side in self._transcode.directions or side in self._jpeg_pending_directions:
+                if latest:
+                    source.jpeg_frame_blocked = True
+                raise
+        return facts, resize
+
+    def _discard_jpeg_startup(self, side):
+        count = len(self._transcode_startup_rtp[side])
+        self._transcode_startup_rtp[side].clear()
+        self._transcode_startup_bytes[side] = 0
+        self.dropped += count
+        self.transcode_startup_dropped += count
+
+    def _buffer_jpeg_processing(self, side, data, facts):
+        # Only the latest JPEG is useful while a worker starts. These packets
+        # have already passed RTP admission; never replay them through admit().
+        if facts.fragment_offset == 0:
+            self._discard_jpeg_startup(side)
+        if self._buffer_transcode_startup_rtp(side, data):
+            self._account_received(side, len(data))
+            return
+        self._discard_jpeg_startup(side)
+        self._peers(side)[0].jpeg_frame_blocked = True
+
+    def _flush_jpeg_processing(self):
+        for side in ("left", "right"):
+            pending = self._transcode_startup_rtp[side]
+            self._transcode_startup_rtp[side] = []
+            self._transcode_startup_bytes[side] = 0
+            source, destination = self._peers(side)
+            for data in pending:
+                try:
+                    packet = rtp.parse_packet(data)
+                    if (self._stop_requested or not remote_can_send(source.video_format)
+                            or not remote_can_receive(destination.video_format,
+                                                      connection_held=destination.connection_held)
+                            or packet.payload_type != int(source.recv_format.payload_type)):
+                        raise ValueError("queued JPEG direction or mapping changed")
+                    if self._bounded_jpeg(side):
+                        facts = parse_jpeg_rtp_header(packet.payload)
+                        if (source.jpeg_frame_blocked or source.jpeg_timestamp != packet.timestamp
+                                or source.jpeg_frame_contract != facts.frame_contract):
+                            raise ValueError("queued JPEG frame is no longer current")
+                        if (side not in self._transcode.directions
+                                and self._jpeg_needs_resize(source, destination)):
+                            raise ValueError("queued JPEG exceeds the receiver contract")
+                    self._deliver_admitted_rtp(side, data, packet, received=False)
+                except (OSError, RuntimeError, ValueError) as err:
+                    self.dropped += 1
+                    self.transcode_startup_dropped += 1
+                    self._record_rtp_drop(err)
+
+    def _queue_jpeg_processing(self, side, data, facts):
+        wanted = self.transcode_directions_for(self.left, self.right)
+        task = self._jpeg_geometry_task
+        running = task is not None and not task.done()
+        changing = wanted ^ self._transcode.directions
+        if not (side in changing or side in self._jpeg_pending_directions
+                or self._transcode_startup_rtp[side]):
+            return False
+        if not running:
+            if (not self.started or self._transcode_hass is None or self._staged_peers
+                    or self._preparation_tasks
+                    or facts.fragment_offset != 0
+                    or self._peers(side)[0].jpeg_timestamp is None
+                    or self._jpeg_failed_key == self._jpeg_processing_key()):
+                return False
+            self._jpeg_pending_directions = changing
+            task = asyncio.create_task(self._run_jpeg_processing(), name="voip-jpeg-processing-prepare")
+            self._jpeg_geometry_task = task
+            self._preparation_tasks.add(task)
+            task.add_done_callback(self._preparation_tasks.discard)
+        self._jpeg_pending_directions |= changing | {side}
+        self._buffer_jpeg_processing(side, data, facts)
+        self._notify_media_processing()
+        return True
+
+    async def _run_jpeg_processing(self):
+        left, right = self.left, self.right
+        try:
+            while (not self._stop_requested and not self._staged_peers
+                   and self.left is left and self.right is right):
+                key = self._jpeg_processing_key()
+                wanted = self.transcode_directions_for(self.left, self.right)
+                changing = wanted ^ self._transcode.directions
+                if not changing:
+                    break
+                self._jpeg_pending_directions = changing | {
+                    side for side in ("left", "right") if self._transcode_startup_rtp[side]}
+                rollback = None
+                try:
+                    commit, rollback = await self._prepare_peer_generation(
+                        left=self.left, right=self.right,
+                        processing_directions=wanted, processing_key=self._jpeg_context_key())
+                    await commit()
+                    self._jpeg_failed_key = None
+                    self._jpeg_failed_directions.clear()
+                except BaseException as error:
+                    if rollback is not None:
+                        await async_wait_for_cleanup(asyncio.create_task(rollback()))
+                    if isinstance(error, asyncio.CancelledError):
+                        raise
+                    if self._stop_requested or self._jpeg_processing_key() == key:
+                        self._jpeg_failed_key = key
+                        self._jpeg_failed_directions = changing
+                        _LOGGER.debug("JPEG processing preparation failed", exc_info=True)
+                        break
+                    # A newer admitted geometry supersedes this preparation.
+        finally:
+            self._jpeg_pending_directions.clear()
+            if self._jpeg_geometry_task is asyncio.current_task():
+                self._jpeg_geometry_task = None
+            if not self._stop_requested:
+                if self.left is left and self.right is right:
+                    self._flush_jpeg_processing()
+                else:
+                    for side in ("left", "right"):
+                        self._discard_jpeg_startup(side)
+                self._notify_media_processing()
+
     def transcode_directions_for(
         self,
         left: VideoRtpPeer,
@@ -383,9 +648,7 @@ class SipVideoRtpRelay:
             if video_formats_passthrough_compatible(
                 source.recv_format,
                 destination.send_format,
-            ) and not (self._transcode_hass is not None and jpeg_size_transcode_required(
-                source.recv_format, destination.send_format,
-            )):
+            ) and not (self._transcode_hass is not None and self._jpeg_needs_resize(source, destination)):
                 continue
             if not video_transcode_supported(
                 source.recv_format,
@@ -733,6 +996,7 @@ class SipVideoRtpRelay:
     async def stop(self) -> None:
         async with self._lifecycle_lock:
             self._stop_requested = True
+            self.on_media_processing_changed = None
             task = self._stop_task
             if task is None:
                 task = asyncio.create_task(
@@ -821,6 +1085,7 @@ class SipVideoRtpRelay:
             peer.rx_ssrc = None
             peer.receive_state = rtp.RtpReceiveState()
             peer.rtcp_source_port = None
+            self._retain_jpeg_observation(previous, peer)
             if side == "left":
                 self.left = peer
             else:
@@ -891,6 +1156,10 @@ class SipVideoRtpRelay:
 
         if self._stop_requested:
             raise RuntimeError("video relay is stopping")
+        geometry_task = self._jpeg_geometry_task
+        if geometry_task is not None and not geometry_task.done():
+            geometry_task.cancel()
+            await asyncio.gather(geometry_task, return_exceptions=True)
         task = asyncio.create_task(
             self._prepare_peer_generation(left=left, right=right),
             name=f"voip-video-generation-prepare-{self.left_port}-{self.right_port}",
@@ -920,22 +1189,28 @@ class SipVideoRtpRelay:
         *,
         left: VideoRtpPeer,
         right: VideoRtpPeer,
+        processing_directions: set[str] | None = None,
+        processing_key: tuple | None = None,
     ) -> tuple[Callable[[], Awaitable[None]], Callable[[], Awaitable[None]]]:
-        """Prepare one complete peer and transcoder generation atomically."""
+        """Share one atomic generation cutover for SDP and admitted RTP facts."""
 
         if not self.started:
             raise RuntimeError("video relay is not active")
         previous_left = self.left
         previous_right = self.right
         staged_left = self._staged_peers.get("left")
-        if left is not previous_left and (
+        processing_only = processing_directions is not None
+        if processing_only and (left is not previous_left or right is not previous_right or self._staged_peers):
+            raise RuntimeError("RTP processing cannot replace an SDP peer")
+        if not processing_only and left is not previous_left and (
             staged_left is None or staged_left.peer is not left
         ):
             raise RuntimeError("left video peer is not staged")
         staged_right = self._staged_peers.get("right")
-        if staged_right is None or staged_right.peer is not right:
+        if not processing_only and (staged_right is None or staged_right.peer is not right):
             raise RuntimeError("right video peer is not staged")
-        directions = self.transcode_directions_for(left, right)
+        directions = (self.transcode_directions_for(left, right) if processing_directions is None
+                      else set(processing_directions))
 
         # A direction/address change does not invalidate codec reference frames.
         # Retain the existing conversion processes when their contracts match.
@@ -955,6 +1230,8 @@ class SipVideoRtpRelay:
                 if settled:
                     return
                 settled = True
+                if processing_only:
+                    return
                 if self._staged_peers.get("left") is staged_left:
                     self._staged_peers.pop("left", None)
                 if self._staged_peers.get("right") is staged_right:
@@ -965,19 +1242,26 @@ class SipVideoRtpRelay:
                 if settled:
                     raise RuntimeError("video peer generation already settled")
                 if (
-                    self.left is not previous_left
+                    self._stop_requested
+                    or self.left is not previous_left
                     or self.right is not previous_right
                     or (
                         staged_left is not None
                         and self._staged_peers.get("left") is not staged_left
                     )
                     or self._staged_peers.get("right") is not staged_right
+                    or (processing_only and (
+                        self._jpeg_context_key() != processing_key
+                        or self.transcode_directions_for(self.left, self.right) != directions))
                 ):
                     await rollback_passthrough()
                     raise RuntimeError(
                         "video relay peer changed before generation commit"
                     )
                 settled = True
+                if processing_only:
+                    self._flush_jpeg_processing()
+                    return
                 if staged_left is not None:
                     self._staged_peers.pop("left", None)
                 self._staged_peers.pop("right", None)
@@ -985,6 +1269,8 @@ class SipVideoRtpRelay:
                 left.rtcp_source_port = None
                 right.rx_ssrc = None
                 right.rtcp_source_port = None
+                self._retain_jpeg_observation(previous_left, left)
+                self._retain_jpeg_observation(previous_right, right)
                 self.left = left
                 self.right = right
                 self._maintain_nat()
@@ -1022,7 +1308,10 @@ class SipVideoRtpRelay:
             return (not self._stop_requested and self._transcode is old
                 and self.left is previous_left and self.right is previous_right
                 and (staged_left is None or self._staged_peers.get("left") is staged_left)
-                and self._staged_peers.get("right") is staged_right)
+                and self._staged_peers.get("right") is staged_right
+                and (not processing_only or (
+                    self._jpeg_context_key() == processing_key
+                    and self.transcode_directions_for(self.left, self.right) == directions)))
 
         def clear_stages():
             for side, staged in (("left", staged_left), ("right", staged_right)):
@@ -1108,12 +1397,17 @@ class SipVideoRtpRelay:
                     candidate.rx_ssrc = None
                     candidate.receive_state = rtp.RtpReceiveState()
                     candidate.rtcp_source_port = None
+                    self._retain_jpeg_observation(previous, candidate)
             retired = self._take_transcode_resources(old, removed)
             self._adopt_transcode_resources(old, generation)
             self._provisional_transcodes.pop(id(generation), None)
             old.directions = directions
             self.left = left
             self.right = right
+            for side in removed:
+                source, destination = self._peers(side)
+                if source.recv_format.encoding == destination.send_format.encoding == "JPEG":
+                    source.jpeg_raw_bootstrap = True
             self._maintain_nat()
             for side in ("left", "right"):
                 self._keyframe_requests.pop(side, None)
@@ -1123,9 +1417,12 @@ class SipVideoRtpRelay:
                 self.arm_keyframe_request(side)
             await self._close_transcode_generation(retired)
             clear_stages()
-            for side in ("left", "right"):
-                self._transcode_startup_rtp[side].clear()
-                self._transcode_startup_bytes[side] = 0
+            if processing_only:
+                self._flush_jpeg_processing()
+            else:
+                for side in ("left", "right"):
+                    self._transcode_startup_rtp[side].clear()
+                    self._transcode_startup_bytes[side] = 0
             for staged_side, staged_peer in (
                 ("left", staged_left),
                 ("right", staged_right),
@@ -1203,7 +1500,6 @@ class SipVideoRtpRelay:
             staged.packets.append((data, tuple(addr)))
             staged.byte_count += len(data)
             return
-        output = self._transports.get(("right" if side == "left" else "left", False))
         try:
             if destination.connection_held:
                 self.drop_connection_hold += 1
@@ -1241,35 +1537,60 @@ class SipVideoRtpRelay:
             self._send_armed_keyframe_request(side, source)
             source.host = str(addr[0])
             source.port = int(addr[1])
-            if side in self._transcode.directions:
-                transcoder = self._transcode.transcoders.get(side)
-                if transcoder is None or not getattr(transcoder, "ready", True):
-                    if not self.started:
-                        if self._buffer_transcode_startup_rtp(side, data):
-                            self._account_received(side, len(data))
-                        return
-                    raise RuntimeError("directional FFmpeg transcoder is not ready")
-                transcoder.send_rtp(data)
-                self._account_received(side, len(data))
-                self.transcoded_input_packets += 1
-                return
-            if output is None or destination.port <= 0:
-                raise ValueError("destination RTP leg is not ready")
-            payload_type = int(destination.send_format.payload_type)
-            if not 0 <= payload_type <= 127:
-                raise ValueError("invalid destination RTP payload type")
-            outgoing = (
-                data
-                if payload_type == packet.payload_type
-                else bytes((data[0], (data[1] & 0x80) | payload_type)) + data[2:]
-            )
-            output.sendto(outgoing, (destination.host, int(destination.port)))
+            if self._bounded_jpeg(side):
+                facts, resize = self._observe_jpeg_packet(side, source, destination, packet)
+                current_frame = packet.timestamp == source.jpeg_timestamp
+                if current_frame and self._queue_jpeg_processing(side, data, facts):
+                    return
+                if side not in self._transcode.directions and resize:
+                    self._notify_media_processing()
+                    raise ValueError("actual JPEG exceeds the receiver contract")
+            self._deliver_admitted_rtp(side, data, packet)
+            self._notify_media_processing()
         except (OSError, RuntimeError, ValueError) as err:
             self.dropped += 1
             self._record_rtp_drop(err)
+            self._notify_media_processing()
             _LOGGER.debug("SIP video RTP relay drop side=%s: %s", side, err)
             return
-        self._account(side, len(data), len(outgoing))
+
+    def _deliver_admitted_rtp(self, side, data, packet, *, received=True):
+        """Deliver an already admitted packet, counting its input at most once."""
+        source, destination = self._peers(side)
+        destination_side = "right" if side == "left" else "left"
+        if side in self._transcode.directions:
+            transcoder = self._transcode.transcoders.get(side)
+            if transcoder is None or not getattr(transcoder, "ready", True):
+                if not self.started and received:
+                    if self._buffer_transcode_startup_rtp(side, data):
+                        self._account_received(side, len(data))
+                    return
+                raise RuntimeError("directional FFmpeg transcoder is not ready")
+            internal = (source.jpeg_parser.bootstrap_rtp(data, packet)
+                        if source.jpeg_parser is not None else data)
+            transcoder.send_rtp(internal)
+            if received:
+                self._account_received(side, len(data))
+            self.transcoded_input_packets += 1
+            return
+        output = self._transports.get((destination_side, False))
+        if output is None or destination.port <= 0 or destination.connection_held:
+            raise ValueError("destination RTP leg is not ready")
+        payload_type = int(destination.send_format.payload_type)
+        if not 0 <= payload_type <= 127:
+            raise ValueError("invalid destination RTP payload type")
+        outgoing = data
+        if source.jpeg_raw_bootstrap and source.jpeg_parser is not None:
+            if parse_jpeg_rtp_header(packet.payload).fragment_offset:
+                raise ValueError("JPEG passthrough restart needs a first fragment")
+            outgoing = source.jpeg_parser.bootstrap_rtp(data, packet)
+        if payload_type != packet.payload_type:
+            outgoing = bytes((outgoing[0], (outgoing[1] & 0x80) | payload_type)) + outgoing[2:]
+        output.sendto(outgoing, (destination.host, int(destination.port)))
+        source.jpeg_raw_bootstrap = False
+        if received:
+            self._account_received(side, len(data))
+        self._account_sent(destination_side, len(outgoing))
         self.forwarded += 1
 
     @staticmethod

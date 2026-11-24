@@ -261,6 +261,13 @@ def configure_answered_invite_video_relay(
         if invite.video_format is not None and remote_video is not None
         else None
     )
+    if (source_video is not None and source_video.encoding == "JPEG"
+            and source_video.image_attributes is None
+            and invite.answer_video_format is not None):
+        # A legacy answer on the other dialog cannot erase this receiver's
+        # independently negotiated image limits.
+        source_video = replace(source_video,
+                               image_attributes=invite.answer_video_format.image_attributes)
     source_directional = (
         sdp.video_offer_answer_directional(invite.video_format, source_video)
         if invite.video_format is not None and source_video is not None
