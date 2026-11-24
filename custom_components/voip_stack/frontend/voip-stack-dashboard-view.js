@@ -32,6 +32,10 @@ const STYLES = `
     -webkit-backdrop-filter:blur(15px) saturate(1.12); backdrop-filter:blur(15px) saturate(1.12); }
   .phone-view { flex:1 1 auto; min-height:0; overflow:hidden; }
   .phone-view voip-stack-card { display:block; height:100%; min-height:0; }
+  /* Options and its header share one scroll surface inside a small slot. */
+  ha-card.options-mode { min-height:0; overflow-y:auto; }
+  ha-card.options-mode .phone-view { flex:0 0 auto; overflow:visible; }
+  ha-card.options-mode .phone-view voip-stack-card { height:auto; }
   .header-tools { margin-left:auto; flex:none; display:flex; align-items:center; gap:8px; }
   .header-tools .action { width:44px; height:44px; padding:0; gap:0; }
   .header-tools .action > span:empty { display:none; }

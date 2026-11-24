@@ -164,9 +164,10 @@ def test_encoded_black_padding_is_preserved_instead_of_cropped_to_fake_centering
 
 
 @pytest.mark.parametrize("presenter", ["card", "dashboard"])
-@pytest.mark.parametrize("slot", [(320, 240), (500, 440)])
-def test_small_video_slot_keeps_only_the_left_handset_as_hangup(video_page, presenter, slot):
+@pytest.mark.parametrize("slot", [(320, 216), (320, 240), (500, 440)])
+def test_small_video_slot_keeps_only_the_left_handset_as_hangup(video_page, presenter, slot, tmp_path):
     page = video_page
+    page.evaluate("current={...current,send_video:true,video_camera_send_enabled:true}")
     geometry = show_video(page, presenter, slot, (640, 360))
     page.evaluate("""() => {
       window.hangups=0; window.parks=[]; card._hangup=()=>hangups++;
@@ -190,6 +191,45 @@ def test_small_video_slot_keeps_only_the_left_handset_as_hangup(video_page, pres
         controls.get_by_role("button", name=label, exact=True).click()
         if label == "Options":
             assert page.evaluate("card._settingsOpen") is (index == 0)
+            if index == 0:
+                checkbox = controls.get_by_role("checkbox", name="Send Camera", exact=True)
+                assert checkbox.is_checked()
+                def inspect():
+                    return page.evaluate("""() => {
+                      const rect=e=>e?.getBoundingClientRect().toJSON();
+                      const deep=(x,y)=>{let e=document.elementFromPoint(x,y),path=[];while(e){path.push({tag:e.localName,id:e.id,class:e.className});const next=e.shadowRoot?.elementFromPoint(x,y);if(!next||next===e)break;e=next;}return path;};
+                      const e=card._els,b=e.videoCameraCheckbox,r=b.getBoundingClientRect(),label=b.labels?.[0],l=label?.getBoundingClientRect();
+                      return {slot:rect(holder),card:rect(e.card),settings:rect(e.settingsPanel),checkbox:rect(b),label:rect(label),checked:b.checked,
+                        checkboxHit:deep(r.x+r.width/2,r.y+r.height/2),labelHit:l?deep(l.x+l.width/2,l.y+l.height/2):[],
+                        dashboard:typeof dashboard==='undefined'?null:{header:rect(dashboard.shadowRoot.querySelector('.dashboard-header')),phoneHost:rect(dashboard._els.phoneHost),headerHeight:dashboard.shadowRoot.querySelector('.dashboard-header').clientHeight,phoneHeight:dashboard._els.phoneHost.clientHeight,scrollHeight:dashboard._els.card.scrollHeight,clientHeight:dashboard._els.card.clientHeight},
+                        cardDOM:card.shadowRoot.innerHTML,dashboardDOM:typeof dashboard==='undefined'?null:dashboard.shadowRoot.innerHTML};
+                    }""")
+                before = inspect()
+                print(json.dumps({k:v for k,v in before.items() if not k.endswith('DOM')}))
+                (tmp_path / 'options-before.json').write_text(json.dumps(before, indent=2))
+                page.screenshot(path=str(tmp_path / 'options-before.png'))
+                # Wheel over this surface as a user would. A control visible
+                # only through a clipped strip is not a reachable option row.
+                area = before["slot"]
+                page.mouse.move(area["x"] + area["width"] / 2, area["bottom"] - 24)
+                for _ in range(8):
+                    state = inspect()
+                    box, label_box = state["checkbox"], state["label"]
+                    if all(area["top"] <= item["top"] and item["bottom"] <= area["bottom"]
+                           for item in (box, label_box)):
+                        break
+                    page.mouse.wheel(0, 100)
+                    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                try:
+                    checkbox.uncheck(timeout=1000)
+                    state = inspect()
+                    assert all(area["top"] <= item["top"] and item["bottom"] <= area["bottom"]
+                               for item in (state["checkbox"], state["label"]))
+                finally:
+                    (tmp_path / 'options-after.json').write_text(json.dumps(inspect(), indent=2))
+                    page.screenshot(path=str(tmp_path / 'options-after.png'))
+                assert not checkbox.is_checked()
+                assert page.evaluate("services.filter(item=>item.service==='set_send_video'&&item.data?.send_video===false).length") == 1
         if label in ("Keypad", "Contacts"):
             assert page.evaluate("card._keypadOpen()") is (label == "Keypad")
         assert page.evaluate("hangups") == 0
