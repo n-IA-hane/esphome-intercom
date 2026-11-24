@@ -1,6 +1,4 @@
 const CS = {
-  "Video call": "Videohovor",
-  "Audio call": "Zvukový hovor",
   "Hang up": "Zavěsit",
   "Transfer call": "Přepojit hovor",
   "Cancel transfer": "Zrušit přepojení",
@@ -260,8 +258,6 @@ const CS = {
 };
 
 const PT_BR = {
-  "Video call": "Chamada de vídeo",
-  "Audio call": "Chamada de áudio",
   "Mute microphone": "Silenciar microfone",
   "Unmute microphone": "Ativar microfone",
   "Phone provisioning": "Provisionamento do telefone",
@@ -521,8 +517,6 @@ const PT_BR = {
 };
 
 const DE = {
-  "Video call": "Videoanruf",
-  "Audio call": "Audioanruf",
   "Mute microphone": "Mikrofon stummschalten",
   "Unmute microphone": "Mikrofon einschalten",
   "Phone provisioning": "Telefonprovisionierung",
@@ -782,8 +776,6 @@ const DE = {
 };
 
 const IT = {
-  "Video call": "Videochiamata",
-  "Audio call": "Chiamata audio",
   "Calling {name}...": "Chiamata a {name}...",
   "In Call: {name}": "In chiamata con {name}",
   "Call with {name} ended.": "Chiamata con {name} terminata.",

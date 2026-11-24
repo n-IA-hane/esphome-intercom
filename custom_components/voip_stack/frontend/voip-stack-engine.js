@@ -2164,7 +2164,7 @@ class VoipStackEngine extends EventTarget {
         destination,
         call_id: context.call_id || "",
         send_video: Boolean(context.sendVideo),
-        receive_video: typeof context.receiveVideo === "boolean" ? context.receiveVideo : Boolean(context.sendVideo),
+        receive_video: typeof context.receiveVideo === "boolean" ? context.receiveVideo : true,
         media_client_id: this._mediaClientId,
       },
     };

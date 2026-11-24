@@ -101,7 +101,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _local_video_receive_requested(call, endpoint) -> bool:
-    requested = call.data.get("receive_video", call.data.get("send_video", False))
+    requested = call.data.get("receive_video", True)
     return bool(requested and endpoint is not None and endpoint.supports("video"))
 
 
@@ -666,7 +666,7 @@ async def _async_prepare_browser_sip_call(
         and call.data.get("send_video", False)
     )
     receive_video_enabled = bool(video_capable and
-        call.data.get("receive_video", call.data.get("send_video", False)))
+        call.data.get("receive_video", True))
     target_video_codec = str(
         target_video_contract
         or ""

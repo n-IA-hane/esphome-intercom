@@ -310,3 +310,34 @@ async def test_late_card_can_publicly_answer_and_cancel_noanswer(
         await client.close()
         await end_call(lab, caller)
     assert (await public_phone(lab))["state"] == "idle"
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+async def test_migrated_account_stream_uses_canonical_username(logical_browser, hass_ws_client):
+    """Legacy HA event references must not drop the account's browser update."""
+    from custom_components.voip_stack.browser_phone_data import _ha_softphone_store
+    from custom_components.voip_stack.browser_phone_runtime import _publish_ha_softphone_state
+
+    lab = logical_browser
+    entry = config_entry(lab.hass)
+    lab.hass.config_entries.async_update_entry(entry, data={
+        **entry.data, "legacy_phone_references": {"browser:old-native-id": "casa"},
+    })
+    client = await open_browser_ws(lab, hass_ws_client)
+    try:
+        _, subscription = await ws_request(
+            client, "voip_stack/subscribe_ha_softphone_state", endpoint_id="casa",
+        )
+        _ha_softphone_store(lab.hass, "casa")["last_sip_reason"] = "account-stream-witness"
+        _publish_ha_softphone_state(lab.hass, endpoint_id="casa")
+        await lab.hass.async_block_till_done()
+        async with asyncio.timeout(2):
+            while True:
+                message = await client.receive_json()
+                payload = message.get("event", {})
+                if message.get("id") == subscription and payload.get("last_sip_reason") == "account-stream-witness":
+                    assert payload["endpoint_id"] == "casa"
+                    break
+    finally:
+        await client.close()
+        await lab.hass.async_block_till_done()

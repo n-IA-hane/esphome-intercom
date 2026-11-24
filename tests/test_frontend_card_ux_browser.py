@@ -55,6 +55,7 @@ def test_italian_card_commands_match_dashboard_labels(card_page):
 
     page = card_page
     expect(page.get_by_role("button", name="Chiama", exact=True)).to_be_visible()
+    assert page.locator("voip-stack-card").evaluate("el => el.shadowRoot.querySelectorAll('.video-call').length") == 0
     expect(page.get_by_role("button", name="Opzioni", exact=True)).to_be_visible()
     shared = page.evaluate("""async () => {
       const {dashboardTranslate}=await import('/voip-stack-dashboard-model.js');

@@ -371,7 +371,7 @@ def websocket_subscribe_ha_softphone_state(
 
     @callback
     def forward_state(event: Event) -> None:
-        if str(event.data.get("endpoint_id") or "").strip() == requested_endpoint:
+        if str(event.data.get("account_username") or event.data.get("endpoint_id") or "").strip() == requested_endpoint:
             emit(event.data)
 
     @callback

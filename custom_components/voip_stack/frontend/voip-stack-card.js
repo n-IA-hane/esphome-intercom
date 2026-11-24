@@ -1903,7 +1903,6 @@ class VoipStackCard extends HTMLElement {
       els.microphoneBtn.hidden = true;
       this._syncVideoDurationTimer(false);
       els.callBtn.hidden = true;
-      if (els.videoCallBtn) els.videoCallBtn.hidden = true;
       els.placeholderBtn.hidden = true;
       els.autoAnswerRow.hidden = true;
       els.statusIndicator.className = "status-indicator unavailable";
@@ -2110,11 +2109,7 @@ class VoipStackCard extends HTMLElement {
       (softphoneMode && !keypadOpen && !this._getSoftphoneTargetDevice());
     els.callBtn.textContent = this._t(transferring ? "Transfer" : "Call");
     els.callBtn.setAttribute("aria-label", this._t(transferring ? "Transfer" : "Call"));
-    els.callBtn.title = this._t(transferring ? "Transfer" : "Audio call");
-    if (els.videoCallBtn) {
-      els.videoCallBtn.hidden = !showCall || transferring || !softphoneMode || !this._softphoneSupportsVideo();
-      els.videoCallBtn.disabled = els.callBtn.disabled;
-    }
+    els.callBtn.title = this._t(transferring ? "Transfer" : "Call");
     if (els.transferBtn) {
       els.transferBtn.hidden = espState !== "in_call" || !this._sessionCallId();
       els.transferBtn.disabled = !canControl || !!this._transferBusy || this._stopping;
@@ -2536,8 +2531,7 @@ class VoipStackCard extends HTMLElement {
     if (els.conferenceGroupInput) els.conferenceGroupInput.onchange = (event) => this._setGroupSetting("conference_group", event.target.value);
     if (els.conferenceRingCheckbox) els.conferenceRingCheckbox.onchange = (event) => this._setGroupSetting("conference_ring", event.target.checked);
     els.callBtn.onclick = () => this._transferDraft ? this._submitTransfer()
-      : this._startCall("", { receiveVideo: false, sendVideo: false });
-    if (els.videoCallBtn) els.videoCallBtn.onclick = () => this._startCall("", { receiveVideo: true });
+      : this._startCall();
     els.hangupBtn.onclick = () => this._hangup();
     els.answerBtn.onclick = () => this._answer();
     els.declineBtn.onclick = () => this._decline();
@@ -2763,11 +2757,12 @@ class VoipStackCard extends HTMLElement {
     this._activeDeviceInfo = sessionInfo;
     await voipStackEngine.prepareAudioCall({ needsMicrophone: true });
     if (operationId !== this._callOperationId) return;
-    const receiveVideo = typeof options.receiveVideo === "boolean" ? options.receiveVideo : options.sendVideo === true;
+    const videoCapable = this._softphoneSupportsVideo() && this._targetSupportsVideo(target);
+    const receiveVideo = videoCapable && options.receiveVideo !== false;
     let sendVideo = Boolean(
-      this._softphoneSupportsVideo() &&
+      videoCapable &&
       this._softphoneSnapshot?.video_camera_send_enabled &&
-      (typeof options.sendVideo === "boolean" ? options.sendVideo : receiveVideo && this._softphoneSnapshot?.send_video)
+      (typeof options.sendVideo === "boolean" ? options.sendVideo : this._softphoneSnapshot?.send_video)
     );
     if (sendVideo) {
       sendVideo = await voipStackEngine.prepareVideoCameraPermission({

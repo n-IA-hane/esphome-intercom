@@ -412,7 +412,7 @@ function elements() {{
   const names = [
     "audioCallSummary", "audioCallDuration",
     "microphoneBtn", "microphoneLabel", "microphoneIcon",
-    "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "videoCallBtn", "card",
+    "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "card",
     "declineBtn", "destRow", "destSelect", "destValue", "destValueWrap",
     "dndCheckbox", "dndRow", "err", "hangupBtn", "hangupDuration",
     "hangupPeer", "hangupState", "header", "headerName", "keypadBtn", "keypadLabel",
@@ -1158,6 +1158,8 @@ assert.equal(engine.mediaIntent, null);
 assert.equal(engine.ownedSoftphoneCalls.size, 0);
 await failedStart._startCall("Another endpoint");
 assert.equal(startAttempts.length, 2, "Retry must reach the call service again");
+assert.equal(startAttempts[0].options.receiveVideo, true, "A normal call accepts the peer camera without a second action");
+assert.equal(startAttempts[0].options.sendVideo, false, "Receiving video must not enable the local camera");
 assert.deepEqual(startAttempts.map(item => item.options.endpoint_id), ["browser:casa", "browser:casa"]);
 assert.deepEqual(startAttempts.map(item => item.options.device_id), ["device-casa", "device-casa"]);
 assert.equal(engine.mediaIntent, null);

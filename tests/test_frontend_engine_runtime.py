@@ -2182,7 +2182,7 @@ const requests=[];
 engine._hass={callWS:async request=>{requests.push(request.service_data);return {state:'idle',device_id:'browser-device',endpoint_id:'Desk'};}};
 const source={device_id:'browser-device',endpoint_id:'Desk',capabilities:['audio','video']};
 for(const [intent,expected] of [
- [{},{receive_video:false,send_video:false}],
+ [{},{receive_video:true,send_video:false}],
  [{receiveVideo:true,sendVideo:false},{receive_video:true,send_video:false}],
  [{receiveVideo:false,sendVideo:true},{receive_video:false,send_video:true}],
  [{receiveVideo:true,sendVideo:true},{receive_video:true,send_video:true}],

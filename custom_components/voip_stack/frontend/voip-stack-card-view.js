@@ -326,11 +326,6 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .card:not(.video-active) .voip-button.small { min-width: var(--voip-small-button-size, 80px); }
       .voip-button.call { background: #4caf50; color: white; }
-      .card:not(.video-active) .voip-button.video-call {
-        width: 44px; min-width: 44px; height: 44px; padding: 8px;
-        border-radius: 50%; background: #4caf50; color: white;
-      }
-      .video-call ha-icon { --mdc-icon-size: 24px; }
       .voip-button.answer { background: #4caf50; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.decline { background: #f44336; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.hangup { background: transparent; color: white; }
@@ -868,16 +863,7 @@ export function buildMainCardSkeleton(cardVersion) {
     callBtn.className = "voip-button call";
     callBtn.textContent = translate("Call");
     callBtn.setAttribute("aria-label", translate("Call"));
-    callBtn.title = translate("Audio call");
-    const videoCallBtn = document.createElement("button");
-    videoCallBtn.type = "button";
-    videoCallBtn.className = "voip-button video-call";
-    videoCallBtn.hidden = true;
-    videoCallBtn.setAttribute("aria-label", translate("Video call"));
-    videoCallBtn.title = translate("Video call");
-    const videoCallIcon = document.createElement("ha-icon");
-    videoCallIcon.setAttribute("icon", "mdi:video-outline");
-    videoCallBtn.appendChild(videoCallIcon);
+    callBtn.title = translate("Call");
     const placeholderBtn = document.createElement("button");
     placeholderBtn.type = "button";
     placeholderBtn.className = "voip-button";
@@ -887,7 +873,7 @@ export function buildMainCardSkeleton(cardVersion) {
     buttonContainer.appendChild(declineBtn);
     buttonContainer.appendChild(audioCallSummary);
     buttonContainer.append(hangupBtn, hangupCopy, hangupStats, hangupDuration);
-    buttonContainer.append(callBtn, videoCallBtn);
+    buttonContainer.append(callBtn);
     buttonContainer.appendChild(placeholderBtn);
     card.appendChild(buttonContainer);
 
@@ -1322,7 +1308,7 @@ export function buildMainCardSkeleton(cardVersion) {
       header, headerName,
       destRow, destValueWrap, destValue, destSelect, prevBtn, nextBtn, offlinePanel,
       keypadPanel, keypadInput, keypadKeys, keypadGrid,
-      answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, videoCallBtn, placeholderBtn,
+      answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
       audioCallSummary, audioCallDuration, microphoneBtn, microphoneLabel, microphoneIcon,
       transferLabel: transferBtn.querySelector(".settings-label"),
