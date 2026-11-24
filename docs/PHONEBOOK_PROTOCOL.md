@@ -222,8 +222,8 @@ Central roster services:
   administrator-only service response for diagnostics/backup.
 
 ESPHome also exposes native API actions such as
-`esphome.<slug>_add_contact`, `esphome.<slug>_remove_contact`,
-`esphome.<slug>_set_contacts` and `esphome.<slug>_flush_contacts`. These are
+`esphome.<slug>_add_contact`, `esphome.<slug>_remove_contact` and
+`esphome.<slug>_flush_contacts`. These are
 local ESP actions for manual static entries. In HA-managed installs, prefer the central
 `voip_stack.*` services above and let the directory coordinator deliver the
 current directory generation through LDAP. `sensor.voip_phonebook` exposes the
