@@ -499,6 +499,7 @@ def install_native_phone_contract(page):
     """Probe the dashboard's public child API without duplicating a softphone."""
     page.evaluate("""()=>{
       class NativePhone extends HTMLElement {
+        connectedCallback(){this.textContent='Native phone controls';}
         setConfig(value){this.config=value;this.presentation={video:false,settings:false,keypad:false,keypadAvailable:true,optionsAvailable:true};this.notify();}
         setDashboardMode(value){this.embedded=value;}
         set hass(value){this.boundHass=value;}
