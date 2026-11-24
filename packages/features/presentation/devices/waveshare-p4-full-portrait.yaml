@@ -280,7 +280,7 @@ lvgl:
   log_level: WARN
   rotation: 180
   top_layer:
-    widgets: ${ (_p4_widgets_2 if _fw_timers else []) }
+    widgets: ${ (_p4_widgets_2 if _fw_timers else []) + (_p4_media_diagnostics if _fw_voip else []) }
   pages: ${ _p4_widgets_4 + _p4_widgets_8 + _p4_widgets_12 + (_p4_widgets_16 if _fw_timers else []) + _p4_widgets_111
     + _p4_widgets_144 }
 globals:
@@ -430,6 +430,18 @@ packages:
   phone_hooks: ${ _p4_phone_hooks if _fw_voip else {} }
   phone_lifecycle: ${ _p4_phone_lifecycle if _fw_voip else {} }
 defaults:
+  _p4_media_diagnostics:
+  - label:
+      id: call_media_diagnostics_label
+      align: BOTTOM_LEFT
+      x: 24
+      y: -12
+      width: 70%
+      text: ''
+      text_color: 16777215
+      text_font: phone_media_diagnostics_font
+      long_mode: SCROLL
+      bg_opa: TRANSP
   _settings_round: false
   _settings_afe: true
   _settings_single_mic: false

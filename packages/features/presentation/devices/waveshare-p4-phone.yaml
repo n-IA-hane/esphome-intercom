@@ -28,6 +28,10 @@ packages:
       _voicemail_font_id: videophone_small_font
       _voicemail_y: 6
       _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj && id(videophone_terminal_notice).empty()
+      _phone_media_diagnostics_font_size: 22
+      _phone_media_diagnostics_update: |-
+        lv_label_set_text(id(videophone_media_diagnostics_label), x.c_str());
+        ${ 'lv_label_set_text(id(videophone_video_media_diagnostics_label), x.c_str());' if _p4_phone_has_video else '' }
   visibility: !include
     file: ../visibility.yaml
     vars:
@@ -203,6 +207,16 @@ defaults:
                 text: HANG UP
                 text_color: 16777215
                 text_font: videophone_small_font
+        - label:
+            id: videophone_video_media_diagnostics_label
+            align: LEFT_MID
+            x: 28
+            y: 18
+            width: 840
+            text: ''
+            text_color: 16777215
+            text_font: phone_media_diagnostics_font
+            long_mode: SCROLL
   _p4_phone_pages:
   - id: videophone_page
     bg_color: 461588
@@ -234,6 +248,16 @@ defaults:
         text_color: 16777215
         text_font: videophone_title_font
         long_mode: DOT
+    - label:
+        id: videophone_media_diagnostics_label
+        align: TOP_MID
+        y: 205
+        width: 1080
+        text: ''
+        text_align: CENTER
+        text_color: 9741240
+        text_font: phone_media_diagnostics_font
+        long_mode: SCROLL
     - obj:
         id: phone_contacts_container
         align: TOP_MID

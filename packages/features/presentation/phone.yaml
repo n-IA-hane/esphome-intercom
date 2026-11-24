@@ -29,3 +29,21 @@ packages:
       _phone_keypad_idle_text: ${ _keypad_idle_text | default('""') }
   contacts: ${ _phone_contacts_view }
   mwi: ${ _phone_mwi_badge if 'mwi' in firmware_features else {} }
+font:
+- file:
+    type: gfonts
+    family: Noto Sans
+    weight: 400
+  id: phone_media_diagnostics_font
+  size: ${ _phone_media_diagnostics_font_size | default(16) }
+  glyphsets:
+  - GF_Latin_Core
+text_sensor:
+- platform: voip_stack
+  id: phone_media_diagnostics
+  type: media_diagnostics
+  entity_category: diagnostic
+  on_value:
+  - lambda: |-
+      ${ _phone_media_diagnostics_update | default('lv_label_set_text(id(call_media_diagnostics_label), x.c_str());') }
+      ${ _phone_media_diagnostics_video_update | default('') }

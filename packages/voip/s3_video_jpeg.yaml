@@ -13,6 +13,7 @@ external_components:
       - esp_video_renderer
 esp_video_renderer:
   id: s3_video
+  fit_to_container: true
   # Keep JPEG work from preempting the official audio resampler worker.
   task_priority: 1
   width: ${s3_sip_jpeg_width}

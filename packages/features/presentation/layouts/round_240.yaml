@@ -981,6 +981,16 @@ defaults:
         text_font: font_state
         text_align: CENTER
     - label:
+        id: call_media_diagnostics_label
+        align: TOP_MID
+        y: 31%
+        width: 85%
+        text: ''
+        text_color: 16777215
+        text_font: phone_media_diagnostics_font
+        text_align: CENTER
+        long_mode: SCROLL
+    - label:
         id: call_in_call_peer_label
         align: CENTER
         text: ''

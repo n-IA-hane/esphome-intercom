@@ -220,6 +220,9 @@ def publish_media_route(hass: HomeAssistant, call_id: str, route: str) -> None:
     ):
         route = "ha_transcoding"
     session.update_metadata(committed_media_route=route)
+    from .pbx_media_diagnostics import publish_pbx_media_diagnostics
+
+    publish_pbx_media_diagnostics(hass, data, session)
 
 
 def stage_phone_termination_projection(
@@ -340,7 +343,7 @@ def publish_bridge_projection(
     intent: TerminationIntent | None = None,
     **details: Any,
 ) -> bool:
-    return publish_call_projection(
+    published = publish_call_projection(
         hass,
         session,
         CallProjectionEvent(
@@ -350,6 +353,12 @@ def publish_bridge_projection(
             details=MappingProxyType(dict(details)),
         ),
     )
+    if published and session.live and session.state == "in_call":
+        _bind_media_route_diagnostics(hass, require_runtime_data(hass).sip, session)
+        from .pbx_media_diagnostics import publish_pbx_media_diagnostics
+
+        publish_pbx_media_diagnostics(hass, require_runtime_data(hass), session)
+    return published
 
 
 def publish_phone_projection(

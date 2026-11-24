@@ -17,7 +17,7 @@ from .core import rtp
 from .core.sip_stun import is_stun_message
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
-from .core.media.bridge import payload_relay_compatible, plan_audio_flow
+from .core.media.bridge import AudioOperation, payload_relay_compatible, plan_audio_flow
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
     capture_temp_path,
@@ -491,6 +491,41 @@ class SipRtpRelay:
         """Describe the active audio processing, including capture conversion."""
         video_transcoding = self.video_relay is not None and self.video_relay.transcoding
         return "direct" if self.left_to_right_passthrough and self.right_to_left_passthrough and not video_transcoding else "ha_transcoding"
+
+    def _audio_diagnostic_formats(self):
+        """Read the admitted wire aliases and the current output encoders."""
+        return (
+            self.left_to_right_clock.source_format,
+            self.right_encoder.fmt if self.right_encoder is not None else self.right.outbound_rtp_format,
+            self.right_to_left_clock.source_format,
+            self.left_encoder.fmt if self.left_encoder is not None else self.left.outbound_rtp_format,
+        )
+
+    @property
+    def audio_operations(self) -> tuple[str, str]:
+        """Describe committed processing from left and right, independently."""
+        formats = self._audio_diagnostic_formats()
+        result = []
+        for source, target, incoming, outgoing in (
+            (self.left, self.right, formats[0], formats[1]),
+            (self.right, self.left, formats[2], formats[3]),
+        ):
+            if not source.can_send or not target.can_receive or target.connection_held:
+                result.append("inactive")
+            elif incoming is None:
+                result.append("unknown")
+            else:
+                operations = plan_audio_flow(incoming, outgoing).operations
+                resample = AudioOperation.RESAMPLE in operations
+                transcode = AudioOperation.TRANSCODE in operations
+                result.append(
+                    "resampled_codec_converted" if resample and transcode else
+                    "resampled" if resample else
+                    "codec_converted" if transcode else
+                    "repacketized" if AudioOperation.REPACKETIZE in operations else
+                    "forwarded"
+                )
+        return tuple(result)
 
     def _build_media_state(self, left: RtpPeer, right: RtpPeer) -> dict[str, Any]:
         """Prepare converters without changing the live relay."""
@@ -1463,7 +1498,9 @@ class SipRtpRelay:
                     _LOGGER.warning("RTP relay DTMF callback failed: %s", err)
             self._relay_dtmf_report(side, source, dest, report)
             return
-        previous_route = self.media_route if self.on_media_route_changed is not None else None
+        observing = self.on_media_route_changed is not None
+        previous_route = self.media_route if observing else None
+        previous_formats = self._audio_diagnostic_formats() if observing else None
         try:
             packet = rtp.parse_packet(data)
             decoder = self.left_decoder if side == "left" else self.right_decoder
@@ -1613,7 +1650,7 @@ class SipRtpRelay:
         callback = self.on_media_route_changed
         if callback is not None and not self._stop_requested:
             route = self.media_route
-            if route != previous_route:
+            if route != previous_route or self._audio_diagnostic_formats() != previous_formats:
                 try:
                     callback(route)
                 except Exception:
