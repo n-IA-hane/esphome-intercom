@@ -16,6 +16,7 @@ class OwnedTransport:
     def __init__(self, protocol):
         self.protocol = protocol
         self.packets = []
+        protocol.connection_made(self)
 
     def get_protocol(self):
         return self.protocol
