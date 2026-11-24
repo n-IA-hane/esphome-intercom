@@ -463,11 +463,11 @@ def test_ws3_full_public_profile_includes_qualified_jpeg_receive(tmp_path, entry
     resolved = yaml_util.load_yaml(resolved_path)
     renderer = resolved['esp_video_renderer']
     expected_rate = override or 10
-    assert (int(renderer['width']), int(renderer['height']), int(renderer['framerate'])) == (320, 240, expected_rate)
+    assert (int(renderer['width']), int(renderer['height']), int(renderer['framerate'])) == (240, 240, expected_rate)
     assert renderer['id'] == 's3_video' and 'voip' not in renderer
     video = resolved['voip_stack']['video']
     assert (video['codec'], video['sink']) == ('jpeg', renderer['id'])
-    assert (int(video['width']), int(video['height']), int(video['framerate'])) == (320, 240, expected_rate)
+    assert (int(video['width']), int(video['height']), int(video['framerate'])) == (240, 240, expected_rate)
     assert by_id(resolved['lvgl']['pages'], 'call_video_page')
     assert by_id(resolved['lvgl']['pages'], 'call_video_surface')
     assert resolved['voip_stack']['on_video_start'] == [{'script.execute': 'suspend_mww_for_video'}]
