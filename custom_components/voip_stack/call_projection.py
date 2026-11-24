@@ -181,20 +181,34 @@ def _bind_media_route_diagnostics(hass, registry, session) -> None:
         if any(item.name == name for item in session.resources):
             return
 
-        def changed(route, *, relay=relay, resource=resource):
-            if (relay.on_media_route_changed is not changed
-                    or not session.owns(token) or session.state != "in_call"
-                    or registry.get_session(token.call_id, generation=token.generation) is not session
-                    or not any(item is resource and item.value is relay for item in session.resources)):
+        def current():
+            return (session.owns(token) and session.state == "in_call"
+                    and registry.get_session(token.call_id, generation=token.generation) is session
+                    and any(item is resource and item.value is relay for item in session.resources))
+
+        def changed(route):
+            if relay.on_media_route_changed is not changed or not current():
                 return
             publish_media_route(hass, session.call_id, route)
 
-        def close(_reason, *, relay=relay, callback=changed):
-            if relay.on_media_route_changed is callback:
+        def processing_changed():
+            if relay.on_media_processing_changed is not processing_changed or not current():
+                return
+            from .pbx_media_diagnostics import publish_pbx_media_diagnostics
+
+            data = runtime_data(hass)
+            if data is not None:
+                publish_pbx_media_diagnostics(hass, data, session)
+
+        def close(_reason):
+            if relay.on_media_route_changed is changed:
                 relay.on_media_route_changed = None
+            if relay.on_media_processing_changed is processing_changed:
+                relay.on_media_processing_changed = None
 
         session.add_resource(name, changed, close, stage=CleanupStage.OBSERVER)
         relay.on_media_route_changed = changed
+        relay.on_media_processing_changed = processing_changed
 
     for resource in tuple(session.resources):
         bind(resource)

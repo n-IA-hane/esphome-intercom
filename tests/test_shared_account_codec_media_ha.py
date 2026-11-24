@@ -428,3 +428,84 @@ async def test_shared_account_codec_winner_media_and_reuse(
         for peer in peers:
             await peer.close()
         assert resources(lab)["call_scoped_quiescent"]
+
+
+@pytest.mark.parametrize("listener_mode", ["clean", "one-conflict", "all-conflicts"])
+async def test_external_codec_listener_handoff_is_owned(tmp_path, monkeypatch, socket_enabled, listener_mode):
+    import errno
+    import socket
+    import struct
+
+    from tests.support import shared_codec_peer as peer
+
+    case = next(value for value in peer.CASES if value.name == "G722")
+    payloads = peer.encoded_tone(case, 650)
+    packets = [
+        struct.pack("!BBHII", 0x80, case.payload, index,
+                    index * case.clock * case.peer_tx_ms // 1000, 0x12345678) + payload
+        for index, payload in enumerate(payloads)
+    ]
+    loop = asyncio.get_running_loop()
+    original_probe = peer._rtp_receiver_port
+    original_spawn = asyncio.create_subprocess_exec
+    original_send = loop.sock_sendto
+    foreign, children, ports, replayed = [], [], [], []
+
+    def choose_port():
+        # A deliberate foreign owner wins the gap after the real free probe.
+        assert not replayed
+        port = original_probe()
+        ports.append(port)
+        if listener_mode == "all-conflicts" or (listener_mode == "one-conflict" and len(ports) == 1):
+            for number in (port, port + 1):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.bind(("127.0.0.1", number))
+                foreign.append(sock)
+        return port
+
+    async def spawn(*args, **kwargs):
+        process = await original_spawn(*args, **kwargs)
+        children.append(process)
+        return process
+
+    async def send(sock, packet, address):
+        if address[0] == "127.0.0.1" and address[1] in ports:
+            replayed.append(packet)
+        return await original_send(sock, packet, address)
+
+    monkeypatch.setattr(peer, "_rtp_receiver_port", choose_port)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(loop, "sock_sendto", send)
+    try:
+        if listener_mode == "all-conflicts":
+            with pytest.raises(OSError) as error:
+                await peer.decode_named_rtp(case, packets, peer.audio_sdp(case, 40000), tmp_path)
+            assert error.value.errno == errno.EADDRINUSE
+            assert "exit=" in str(error.value) and "attempt=3/3" in str(error.value)
+            assert "bind failed" in str(error.value) and "Address already in use" in str(error.value)
+            assert len(children) == len(ports) == 3
+            assert not replayed
+        else:
+            decoded = await peer.decode_named_rtp(case, packets, peer.audio_sdp(case, 40000), tmp_path)
+            peer.measure_tone(decoded, case.pcm_rate, 650)
+            assert replayed == packets
+            assert len(children) == len(ports) == (2 if listener_mode == "one-conflict" else 1)
+        assert (tmp_path / "packets.hex").read_text() == "\n".join(packet.hex() for packet in packets) + "\n"
+        assert all(child.returncode is not None and child.stdout.at_eof() and child.stderr.at_eof()
+                   for child in children)
+        # Cleanup is scoped to the child and its streams, never foreign sockets.
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            for sock in foreign:
+                sock.settimeout(0.5)
+                sender.sendto(b"still-owned", sock.getsockname())
+                assert sock.recvfrom(64)[0] == b"still-owned"
+        finally:
+            sender.close()
+    finally:
+        for sock in foreign:
+            sock.close()
+        for child in children:
+            if child.returncode is None:
+                child.kill()
+                await child.wait()

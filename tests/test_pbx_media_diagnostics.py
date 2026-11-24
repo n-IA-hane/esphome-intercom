@@ -139,6 +139,8 @@ async def test_actual_alias_first_packet_changes_report_without_aggregate_route_
     case = setup(monkeypatch, media)
     media.left_transport = Mock()
     media.right_transport = Mock()
+    route_events = Mock(wraps=call_projection.publish_media_route)
+    monkeypatch.setattr(call_projection, "publish_media_route", route_events)
     try:
         call_projection.publish_media_route(case.hass, case.session.call_id, media.media_route)
         await settle(case)
@@ -150,6 +152,7 @@ async def test_actual_alias_first_packet_changes_report_without_aggregate_route_
         await settle(case)
         assert media.left_rx_packets == 1
         assert media.media_route == before == "ha_transcoding"
+        assert route_events.call_count == 1
         assert sink.call_args.args[1]["audio"] == "resampled,unknown"
         assert case.origins["callee"].runtime_data.client.execute_service.call_args.args[1]["audio"] == "unknown,resampled"
         count = sink.await_count
@@ -157,6 +160,7 @@ async def test_actual_alias_first_packet_changes_report_without_aggregate_route_
                             2, 160, 123, b"\0" * 320)), ("192.0.2.1", 40000))
         await settle(case)
         assert sink.await_count == count
+        assert route_events.call_count == 1
         assert media.right_decoder is None
     finally:
         await close(case)

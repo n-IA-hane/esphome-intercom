@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import errno
 import json
 import math
 import re
@@ -672,94 +673,120 @@ async def decode_named_rtp(case, packets, receive_sdp, directory):
         )
         (directory / "decoded.pcm").write_bytes(result.stdout)
         return result.stdout
-    port = _rtp_receiver_port()
-    source = receive_sdp.decode() if isinstance(receive_sdp, bytes) else receive_sdp
-    source = re.sub(r"(?m)^m=audio \d+", f"m=audio {port}", source)
-    path = directory / "actual-name.sdp"
-    path.write_text(source)
+    source_template = receive_sdp.decode() if isinstance(receive_sdp, bytes) else receive_sdp
     (directory / "packets.hex").write_text(
         "\n".join(packet.hex() for packet in packets) + "\n"
     )
-    process = await asyncio.create_subprocess_exec(
-        "ffmpeg",
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "debug",
-        "-protocol_whitelist",
-        "file,udp,rtp",
-        "-max_delay",
-        "0",
-        "-reorder_queue_size",
-        "0",
-        "-analyzeduration",
-        "0",
-        "-probesize",
-        "32",
-        "-i",
-        str(path),
-        "-t",
-        str(
-            max(
-                0.3,
-                sum(
-                    payload_duration_ms(case, parse_packet(raw)["payload"])
-                    for raw in packets
+    # The probe releases its own sockets before FFmpeg binds. Only an explicit
+    # bind conflict may retry this startup handoff; no media has been replayed.
+    for attempt in range(1, 4):
+        port = _rtp_receiver_port()
+        source = re.sub(r"(?m)^m=audio \d+", f"m=audio {port}", source_template)
+        path = directory / "actual-name.sdp"
+        path.write_text(source)
+        (directory / f"listener-attempt-{attempt}.sdp").write_text(source)
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "debug",
+            "-protocol_whitelist",
+            "file,udp,rtp",
+            "-max_delay",
+            "0",
+            "-reorder_queue_size",
+            "0",
+            "-analyzeduration",
+            "0",
+            "-probesize",
+            "32",
+            "-i",
+            str(path),
+            "-t",
+            str(
+                max(
+                    0.3,
+                    sum(
+                        payload_duration_ms(case, parse_packet(raw)["payload"])
+                        for raw in packets
+                    )
+                    / 1000
+                    - 0.12,
                 )
-                / 1000
-                - 0.12,
-            )
-        ),
-        "-ac",
-        "1",
-        "-ar",
-        str(case.pcm_rate),
-        "-f",
-        "s16le",
-        "pipe:1",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    logs = []
-    ready = asyncio.Event()
+            ),
+            "-ac",
+            "1",
+            "-ar",
+            str(case.pcm_rate),
+            "-f",
+            "s16le",
+            "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        logs = []
+        ready = asyncio.Event()
 
-    async def log():
-        count = 0
-        while line := await process.stderr.readline():
-            logs.append(line)
-            if b"end receive buffer size reported" in line:
-                count += 1
-                if count == 2:
-                    ready.set()
+        async def log():
+            count = 0
+            while line := await process.stderr.readline():
+                logs.append(line)
+                if b"end receive buffer size reported" in line:
+                    count += 1
+                    if count == 2:
+                        ready.set()
 
-    reader = asyncio.create_task(log())
-    output = asyncio.create_task(process.stdout.read())
-    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sender.setblocking(False)
-    try:
-        await asyncio.wait_for(ready.wait(), 3)
-        deadline = asyncio.get_running_loop().time()
-        for raw in packets:
-            await asyncio.get_running_loop().sock_sendto(
-                sender, raw, ("127.0.0.1", port)
+        reader = asyncio.create_task(log())
+        output = asyncio.create_task(process.stdout.read())
+        exited = asyncio.create_task(process.wait())
+        listening = asyncio.create_task(ready.wait())
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sender.setblocking(False)
+        try:
+            done, _ = await asyncio.wait(
+                (listening, exited), timeout=3, return_when=asyncio.FIRST_COMPLETED
             )
-            deadline += payload_duration_ms(case, parse_packet(raw)["payload"]) / 1000
-            await asyncio.sleep(max(0, deadline - asyncio.get_running_loop().time()))
-        await asyncio.sleep(0.05)
-        if process.returncode is None:
-            process.send_signal(signal.SIGINT)
-        await asyncio.wait_for(process.wait(), 3)
-        decoded = await asyncio.wait_for(output, 1)
-        assert decoded, b"".join(logs)[-2000:]
-        (directory / "decoded.pcm").write_bytes(decoded)
-        return decoded
-    finally:
-        sender.close()
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-        await asyncio.gather(reader, return_exceptions=True)
-        (directory / "ffmpeg.log").write_bytes(b"".join(logs))
+            if exited in done or process.returncode is not None:
+                await reader
+                detail = b"".join(logs).decode(errors="replace")
+                conflict = "bind failed" in detail and "Address already in use" in detail
+                message = (f"FFmpeg RTP listener exited before replay: exit={process.returncode}, "
+                           f"attempt={attempt}/3\n{detail}")
+                if conflict:
+                    if attempt < 3:
+                        continue
+                    raise OSError(errno.EADDRINUSE, message)
+                raise RuntimeError(message)
+            if listening not in done:
+                detail = b"".join(logs).decode(errors="replace")
+                raise TimeoutError(
+                    f"FFmpeg RTP listener not ready within 3s before replay: exit={process.returncode}\n{detail}"
+                )
+            deadline = asyncio.get_running_loop().time()
+            for raw in packets:
+                await asyncio.get_running_loop().sock_sendto(
+                    sender, raw, ("127.0.0.1", port)
+                )
+                deadline += payload_duration_ms(case, parse_packet(raw)["payload"]) / 1000
+                await asyncio.sleep(max(0, deadline - asyncio.get_running_loop().time()))
+            await asyncio.sleep(0.05)
+            if process.returncode is None:
+                process.send_signal(signal.SIGINT)
+            await asyncio.wait_for(process.wait(), 3)
+            decoded = await asyncio.wait_for(output, 1)
+            assert decoded, b"".join(logs)[-2000:]
+            (directory / "decoded.pcm").write_bytes(decoded)
+            return decoded
+        finally:
+            sender.close()
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            listening.cancel()
+            await asyncio.gather(reader, output, exited, listening, return_exceptions=True)
+            (directory / f"ffmpeg-attempt-{attempt}.log").write_bytes(b"".join(logs))
+            (directory / "ffmpeg.log").write_bytes(b"".join(logs))
 
 
 def measure_tone(pcm, rate, frequency, *, pcm_format="s16le", channels=1):

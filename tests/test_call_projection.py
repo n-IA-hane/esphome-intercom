@@ -213,13 +213,16 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         call_projection.publish_media_route(object(), previous.call_id, relay.media_route)
         await asyncio.gather(*tuple(previous.tasks))
         previous_callback = relay.on_media_route_changed
+        previous_processing_callback = relay.on_media_processing_changed
         assert callable(previous_callback)
+        assert callable(previous_processing_callback)
         assert previous.metadata["committed_media_route"] == "ha_transcoding"
 
         previous.release_resource(f"relay:{previous.call_id}", value=relay)
         runtime.attach_relay(current.call_id, relay)
         relay.left_to_right_passthrough = relay.right_to_left_passthrough = True
         previous_callback(relay.media_route)
+        previous_processing_callback()
         assert not previous.tasks
         assert previous.metadata["committed_media_route"] == "ha_transcoding"
         assert "committed_media_route" not in current.metadata
@@ -228,13 +231,17 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         call_projection.publish_media_route(object(), current.call_id, relay.media_route)
         await asyncio.gather(*tuple(current.tasks))
         current_callback = relay.on_media_route_changed
+        current_processing_callback = relay.on_media_processing_changed
         assert callable(current_callback) and current_callback is not previous_callback
+        assert callable(current_processing_callback) and current_processing_callback is not previous_processing_callback
         assert current.metadata["committed_media_route"] == "direct"
         await previous.terminate(TerminationIntent("forwarded"))
         assert relay.on_media_route_changed is current_callback
+        assert relay.on_media_processing_changed is current_processing_callback
 
         relay.left_to_right_passthrough = False
         previous_callback(relay.media_route)
+        previous_processing_callback()
         assert not previous.tasks and not current.tasks
         assert current.metadata["committed_media_route"] == "direct"
         assert sink.await_count == 0
@@ -244,11 +251,14 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         sink.assert_not_awaited()
 
         detached_callback = relay.on_media_route_changed
+        detached_processing_callback = relay.on_media_processing_changed
         assert callable(detached_callback)
+        assert callable(detached_processing_callback)
         current.release_resource(f"relay:{current.call_id}", value=relay)
         runtime.attach_relay(current.call_id, relay)
         relay.left_to_right_passthrough = True
         detached_callback(relay.media_route)
+        detached_processing_callback()
         assert not current.tasks
         assert current.metadata["committed_media_route"] == "ha_transcoding"
         assert sink.await_count == 0
@@ -256,20 +266,27 @@ async def test_media_route_binding_follows_relay_handoff_and_disposes_old_owner(
         call_projection.publish_media_route(object(), current.call_id, relay.media_route)
         await asyncio.gather(*tuple(current.tasks))
         current_callback = relay.on_media_route_changed
+        current_processing_callback = relay.on_media_processing_changed
         assert callable(current_callback) and current_callback is not detached_callback
+        assert callable(current_processing_callback) and current_processing_callback is not detached_processing_callback
         assert current.metadata["committed_media_route"] == "direct"
         assert sink.await_count == 0
         relay.left_to_right_passthrough = False
         previous_callback(relay.media_route)
         detached_callback(relay.media_route)
+        previous_processing_callback()
+        detached_processing_callback()
         assert not previous.tasks and not current.tasks
         assert current.metadata["committed_media_route"] == "direct"
         assert relay.on_media_route_changed is current_callback
+        assert relay.on_media_processing_changed is current_processing_callback
         assert sink.await_count == 0
 
         await relay.stop()
         assert relay.on_media_route_changed is None
+        assert relay.on_media_processing_changed is None
         current_callback(relay.media_route)
+        current_processing_callback()
         assert not current.tasks
         assert current.metadata["committed_media_route"] == "direct"
         assert sink.await_count == 0

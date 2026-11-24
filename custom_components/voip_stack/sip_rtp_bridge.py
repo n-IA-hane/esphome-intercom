@@ -355,6 +355,7 @@ class SipRtpRelay:
         on_dtmf_fallback: Callable[[str, str, int], Awaitable[bool]] | None = None,
         on_info_dtmf: Callable[[str, str, int], None] | None = None,
         on_media_route_changed: Callable[[str], None] | None = None,
+        on_media_processing_changed: Callable[[], None] | None = None,
     ) -> None:
         self.left = left
         self.right = right
@@ -370,6 +371,7 @@ class SipRtpRelay:
         self.on_dtmf_fallback = on_dtmf_fallback
         self.on_info_dtmf = on_info_dtmf
         self.on_media_route_changed = on_media_route_changed
+        self.on_media_processing_changed = on_media_processing_changed
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
         self._start_task: asyncio.Task[None] | None = None
@@ -1006,6 +1008,7 @@ class SipRtpRelay:
             if receiver is not None:
                 receiver.close()
         self.on_media_route_changed = None
+        self.on_media_processing_changed = None
         self._stop_signal.set()
 
     async def stop(self) -> None:
@@ -1498,9 +1501,9 @@ class SipRtpRelay:
                     _LOGGER.warning("RTP relay DTMF callback failed: %s", err)
             self._relay_dtmf_report(side, source, dest, report)
             return
-        observing = self.on_media_route_changed is not None
-        previous_route = self.media_route if observing else None
-        previous_formats = self._audio_diagnostic_formats() if observing else None
+        previous_route = self.media_route if self.on_media_route_changed is not None else None
+        previous_formats = (self._audio_diagnostic_formats()
+                            if self.on_media_processing_changed is not None else None)
         try:
             packet = rtp.parse_packet(data)
             decoder = self.left_decoder if side == "left" else self.right_decoder
@@ -1650,11 +1653,18 @@ class SipRtpRelay:
         callback = self.on_media_route_changed
         if callback is not None and not self._stop_requested:
             route = self.media_route
-            if route != previous_route or self._audio_diagnostic_formats() != previous_formats:
+            if route != previous_route:
                 try:
                     callback(route)
                 except Exception:
                     _LOGGER.debug("RTP media route observer failed", exc_info=True)
+        processing_callback = self.on_media_processing_changed
+        if (processing_callback is not None and not self._stop_requested
+                and self._audio_diagnostic_formats() != previous_formats):
+            try:
+                processing_callback()
+            except Exception:
+                _LOGGER.debug("RTP media processing observer failed", exc_info=True)
 
     def _encode_received_pcm(self, side, pcm_frames):
         """Use the same converter, encoder and RTP source for packets and CN."""
