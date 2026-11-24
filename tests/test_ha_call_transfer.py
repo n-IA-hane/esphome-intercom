@@ -138,11 +138,33 @@ async def test_public_transfer_to_local_application_addresses_pbx_on_real_sip_pe
     from homeassistant.core import Context
     from custom_components.voip_stack.core import sip
     from custom_components.voip_stack.endpoint_session import TerminationIntent
-    from custom_components.voip_stack.roster import RosterEntry
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.voip_stack.store import config_entry
+    from custom_components.voip_stack.config_entry_runtime import async_refresh_directory
+    from custom_components.voip_stack.group_config import normalize_group_data
+    from custom_components.voip_stack.paging_config import normalize_paging_group
 
-    metadata = {"group_type": "ring"} if kind == "ring" else {"virtual_endpoint": kind}
-    row = RosterEntry(identity, name="Local destination", extension=extension, ha_bridge=True, metadata=metadata)
-    lab.runtime.directory.upsert(row)
+    entry = config_entry(lab.hass)
+    queue_manager = None
+    if kind == "paging":
+        data = normalize_paging_group({"name": "Local destination", "extension": extension,
+            "members": ["bedroom0"]}, identity=identity.removeprefix("paging:"))
+        item = ConfigSubentry(subentry_type="paging", title=data["name"],
+            unique_id="paging:" + data["paging_group_id"], data=data)
+    else:
+        data = normalize_group_data({"kind": kind,
+            "name": identity if kind == "ring" else "Local destination",
+            "extension": extension, "members": ["bedroom0"]},
+            identity=identity.removeprefix("queue:") if kind == "queue" else "transfer-ring")
+        item = ConfigSubentry(subentry_type="group", title=data["name"],
+            unique_id="group:" + data["group_id"], data=data)
+    lab.hass.config_entries.async_add_subentry(entry, item)
+    if kind == "queue":
+        from custom_components.voip_stack.call_queues import QueueManager
+        queue_manager = QueueManager(lab.hass, entry)
+        lab.runtime.queues = queue_manager
+    await async_refresh_directory(lab.hass)
+    row = next(row for row in lab.runtime.directory.snapshot() if row.id == identity)
     references = []
     peer = lab.phones[0]
     receive = peer.datagram_received
@@ -169,6 +191,9 @@ async def test_public_transfer_to_local_application_addresses_pbx_on_real_sip_pe
         assert lab.calls.get_session(call_id).live, "Rejected REFER must retain the original conversation"
     finally:
         await lab.calls.request_termination(call_id, TerminationIntent("test_done"))
+        if queue_manager is not None:
+            await queue_manager.close()
+            lab.runtime.queues = None
     assert_call_resources_released(lab)
 
 

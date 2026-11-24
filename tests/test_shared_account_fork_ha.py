@@ -308,6 +308,11 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         resumed = await browser_snapshot(observer)
         assert resumed["connected_at"] == snapshot["connected_at"]
         assert resumed["can_attach_media"] is False
+        # The state update can precede resumed media. Keep both UA recorders
+        # alive until a fresh audio window reaches each side after resume.
+        left, right = relay.left_tx_packets, relay.right_tx_packets
+        await wait_for(lambda: relay.left_tx_packets >= left + 30
+                       and relay.right_tx_packets >= right + 30)
     finally:
         await observer.close()
         await end_call(runtime, caller)
