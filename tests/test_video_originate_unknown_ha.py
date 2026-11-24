@@ -261,13 +261,13 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
         assert (caller.dialog.video_format is not None) is (expected != "audio")
         if expected == "audio":
             assert video is None
-            assert lab.runtime.media.transcoder is None
+            assert not lab.runtime.media.transcoders
         else:
             assert video is not None
             assert video.transcodes_from("left") is (expected == "convert")
             assert video.transcodes_from("right") is False
             if expected == "direct":
-                assert not video.transcoding and lab.runtime.media.transcoder is None
+                assert not video.transcoding and not lab.runtime.media.transcoders
         samples = caller.dialog.send_format.sample_rate * caller.dialog.send_format.frame_ms // 1000
         pcm = struct.pack(f"!{samples}h", *([1200] * samples))
         await lab.hass.loop.sock_sendto(source_audio, rtp.build_packet(rtp.RtpPacket(
@@ -340,7 +340,7 @@ async def test_forwarded_standard_sip_uses_sdp_and_preserves_direct_video(
             await asyncio.wait_for(session.termination_started.wait(), 3)
             await lab.calls.request_termination(call_id, session.termination_intent)
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
-        assert lab.runtime.media.transcoder is None
+        assert not lab.runtime.media.transcoders
     finally:
         await caller.close()
         for session in tuple(lab.calls.sessions.values()):
@@ -574,7 +574,7 @@ async def test_registered_managed_target_negotiates_video_after_audio_only_disco
             assert caller.dialog.local_video_direction == direction
             video = relay.video_relay
             assert video is not None and not video.transcoding
-            assert lab.runtime.media.transcoder is None
+            assert not lab.runtime.media.transcoders
             from io import BytesIO
             from PIL import Image
             encoded = BytesIO()

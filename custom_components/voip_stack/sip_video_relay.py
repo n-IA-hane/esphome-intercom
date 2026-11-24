@@ -22,8 +22,8 @@ from .core.sdp import (
 from .session_cleanup import async_wait_for_cleanup
 from .video_transcoder import (
     FfmpegVideoTranscoder,
-    _claim_transcoder_slot,
-    _release_transcoder_slot,
+    _register_transcoder,
+    _unregister_transcoder,
     video_transcode_supported,
     jpeg_size_transcode_required,
 )
@@ -115,6 +115,7 @@ class _TranscodeGeneration:
     transcoders: dict[str, FfmpegVideoTranscoder]
     transports: dict[tuple[str, bool], asyncio.DatagramTransport]
     sockets: dict[tuple[str, bool], socket.socket | None]
+    _cleanup_task: asyncio.Task[None] | None = field(default=None, repr=False, compare=False)
 
 
 class VideoTranscodeRestoreError(RuntimeError):
@@ -192,7 +193,9 @@ class SipVideoRtpRelay:
         self._transcode = _TranscodeGeneration(set(), {}, {}, {})
         self._transcode_hass: Any | None = None
         self._transcode_call_id = ""
-        self._transcode_slot_claimed = False
+        self._transcode_registered = False
+        self._preparation_tasks: set[asyncio.Task[Any]] = set()
+        self._provisional_transcodes: dict[int, _TranscodeGeneration] = {}
         self._transcode_startup_rtp: dict[str, list[bytes]] = {
             "left": [],
             "right": [],
@@ -279,7 +282,7 @@ class SipVideoRtpRelay:
         generation = self._transcode
         output_keys = {(side, rtcp) for side in generation.directions for rtcp in (False, True)}
         if (not generation.directions <= {"left", "right"}
-                or (generation.directions and not self._transcode_slot_claimed)
+                or (generation.directions and not self._transcode_registered)
                 or set(generation.transcoders) != generation.directions
                 or set(generation.transports) != output_keys or set(generation.sockets) != output_keys
                 or any(not getattr(worker, "ready", True) or getattr(worker, "stopping", False)
@@ -553,8 +556,8 @@ class SipVideoRtpRelay:
         hass = self._transcode_hass
         if hass is None:
             raise RuntimeError("SIP video transcode has no Home Assistant owner")
-        await _claim_transcoder_slot(hass, self)
-        self._transcode_slot_claimed = True
+        await _register_transcoder(hass, self, self.stop)
+        self._transcode_registered = True
         try:
             generation = await self._build_transcode_generation(
                 loop,
@@ -646,8 +649,8 @@ class SipVideoRtpRelay:
                     input_format=source.recv_format,
                     output_format=destination.send_format,
                     output_port=rtp_port,
-                    slot_owner=self,
-                    manage_slot=False,
+                    resource_owner=self,
+                    manage_registration=False,
                 )
             await asyncio.gather(
                 *(item.async_start() for item in generation.transcoders.values())
@@ -723,9 +726,9 @@ class SipVideoRtpRelay:
         generation = self._transcode
         self._transcode = _TranscodeGeneration(set(), {}, {}, {})
         await self._close_transcode_generation(generation)
-        if self._transcode_slot_claimed and self._transcode_hass is not None:
-            await _release_transcoder_slot(self._transcode_hass, self)
-        self._transcode_slot_claimed = False
+        if self._transcode_registered and self._transcode_hass is not None:
+            await _unregister_transcoder(self._transcode_hass, self)
+        self._transcode_registered = False
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
@@ -746,10 +749,18 @@ class SipVideoRtpRelay:
             start_task = self._start_task
             if start_task is not None and not start_task.done():
                 start_task.cancel()
+            preparations = tuple(self._preparation_tasks)
+            for preparation in preparations:
+                preparation.cancel()
         if start_task is not None and start_task is not asyncio.current_task():
             await asyncio.gather(start_task, return_exceptions=True)
+        await asyncio.gather(*preparations, return_exceptions=True)
+        self._preparation_tasks.difference_update(preparations)
         async with self._lifecycle_lock:
             try:
+                for generation in tuple(self._provisional_transcodes.values()):
+                    await self._close_transcode_generation(generation)
+                    self._provisional_transcodes.pop(id(generation), None)
                 await self._stop_transcoding()
             finally:
                 try:
@@ -876,6 +887,40 @@ class SipVideoRtpRelay:
         left: VideoRtpPeer,
         right: VideoRtpPeer,
     ) -> tuple[Callable[[], Awaitable[None]], Callable[[], Awaitable[None]]]:
+        """Join preparation through a child owned by this relay, not its SIP caller."""
+
+        if self._stop_requested:
+            raise RuntimeError("video relay is stopping")
+        task = asyncio.create_task(
+            self._prepare_peer_generation(left=left, right=right),
+            name=f"voip-video-generation-prepare-{self.left_port}-{self.right_port}",
+        )
+        self._preparation_tasks.add(task)
+
+        async def abort() -> None:
+            if not task.done():
+                task.cancel()
+            result = (await asyncio.gather(task, return_exceptions=True))[0]
+            if not isinstance(result, BaseException):
+                _commit, rollback = result
+                await rollback()
+
+        try:
+            return await task
+        except BaseException:
+            await async_wait_for_cleanup(asyncio.create_task(
+                abort(), name="voip-video-generation-abort",
+            ))
+            raise
+        finally:
+            self._preparation_tasks.discard(task)
+
+    async def _prepare_peer_generation(
+        self,
+        *,
+        left: VideoRtpPeer,
+        right: VideoRtpPeer,
+    ) -> tuple[Callable[[], Awaitable[None]], Callable[[], Awaitable[None]]]:
         """Prepare one complete peer and transcoder generation atomically."""
 
         if not self.started:
@@ -970,7 +1015,7 @@ class SipVideoRtpRelay:
         if new_directions and self._transcode_hass is None:
             raise RuntimeError("video relay transcoding is not configured")
         loop = asyncio.get_running_loop()
-        claimed_slot = bool(new_directions and not self._transcode_slot_claimed)
+        new_owner_registration = bool(new_directions and not self._transcode_registered)
         generation = _TranscodeGeneration(set(), {}, {}, {})
 
         def current():
@@ -1009,17 +1054,18 @@ class SipVideoRtpRelay:
         async def recover():
             try:
                 await self._close_transcode_generation(generation)
+                self._provisional_transcodes.pop(id(generation), None)
                 await restore_replaced()
             finally:
                 clear_stages()
-                if claimed_slot:
-                    await _release_transcoder_slot(self._transcode_hass, self)
-                    self._transcode_slot_claimed = False
+                if new_owner_registration:
+                    await _unregister_transcoder(self._transcode_hass, self)
+                    self._transcode_registered = False
 
         try:
-            if claimed_slot:
-                await _claim_transcoder_slot(self._transcode_hass, self)
-                self._transcode_slot_claimed = True
+            if new_owner_registration:
+                await _register_transcoder(self._transcode_hass, self, self.stop)
+                self._transcode_registered = True
             if not current():
                 raise RuntimeError("video relay owner changed before converter preparation")
             # A changed codec cannot share a worker with the old contract.
@@ -1032,6 +1078,7 @@ class SipVideoRtpRelay:
             if new_directions:
                 generation = await self._build_transcode_generation(loop, left, right,
                     suffix="-reoffer", directions=new_directions)
+                self._provisional_transcodes[id(generation)] = generation
             if not current():
                 raise RuntimeError("video relay owner changed during generation preparation")
         except BaseException:
@@ -1045,7 +1092,12 @@ class SipVideoRtpRelay:
             if settled:
                 return
             settled = True
-            await async_wait_for_cleanup(asyncio.create_task(recover(), name="voip-video-generation-rollback"))
+            task = asyncio.create_task(recover(), name="voip-video-generation-rollback")
+            self._preparation_tasks.add(task)
+            try:
+                await async_wait_for_cleanup(task)
+            finally:
+                self._preparation_tasks.discard(task)
 
         async def settle_commit() -> None:
             if not current():
@@ -1058,6 +1110,7 @@ class SipVideoRtpRelay:
                     candidate.rtcp_source_port = None
             retired = self._take_transcode_resources(old, removed)
             self._adopt_transcode_resources(old, generation)
+            self._provisional_transcodes.pop(id(generation), None)
             old.directions = directions
             self.left = left
             self.right = right
@@ -1081,9 +1134,9 @@ class SipVideoRtpRelay:
                     continue
                 for data, addr in staged_peer.packets:
                     self.handle_rtp(staged_side, data, addr)
-            if not directions and self._transcode_slot_claimed:
-                await _release_transcoder_slot(self._transcode_hass, self)
-                self._transcode_slot_claimed = False
+            if not directions and self._transcode_registered:
+                await _unregister_transcoder(self._transcode_hass, self)
+                self._transcode_registered = False
 
         async def commit() -> None:
             nonlocal settled
@@ -1093,12 +1146,28 @@ class SipVideoRtpRelay:
                 await rollback()
                 raise RuntimeError("video relay peer changed before generation commit")
             settled = True
-            await async_wait_for_cleanup(asyncio.create_task(settle_commit(), name="voip-video-generation-commit"))
+            task = asyncio.create_task(settle_commit(), name="voip-video-generation-commit")
+            self._preparation_tasks.add(task)
+            try:
+                await async_wait_for_cleanup(task)
+            finally:
+                self._preparation_tasks.discard(task)
 
         return commit, rollback
 
     @staticmethod
     async def _close_transcode_generation(
+        generation: _TranscodeGeneration,
+    ) -> None:
+        if generation._cleanup_task is None:
+            generation._cleanup_task = asyncio.create_task(
+                SipVideoRtpRelay._dispose_transcode_generation(generation),
+                name="voip-video-generation-close",
+            )
+        await async_wait_for_cleanup(generation._cleanup_task)
+
+    @staticmethod
+    async def _dispose_transcode_generation(
         generation: _TranscodeGeneration,
     ) -> None:
         await asyncio.gather(

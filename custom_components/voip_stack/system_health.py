@@ -66,7 +66,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
             for channel in ("audio", "video")
         ) if media is not None else 0,
         "media_workers": (
-            len(media.debug_capture_tasks) + int(media.transcoder is not None)
+            len(media.debug_capture_tasks) + len(media.transcoders)
             if media is not None
             else 0
         ),

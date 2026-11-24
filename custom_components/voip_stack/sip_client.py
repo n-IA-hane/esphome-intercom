@@ -1107,31 +1107,58 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             )
         unchanged = self._same_dialog_media(current, updated)
         commit = rollback = on_committed = None
+        advertised_endpoints = dict(self.media_endpoints)
+        incompatible_update = False
+
+        async def discard_prepared():
+            nonlocal rollback
+            undo, rollback = rollback, None
+            try:
+                if undo is not None:
+                    await async_wait_for_cleanup(asyncio.create_task(undo(), name="voip-delayed-media-rollback"))
+            finally:
+                if self.dialog is current:
+                    await self._terminate_confirmed_dialog()
         if self.on_media_update is not None:
             try:
                 prepared_update = await self.on_media_update(current, updated, "INVITE")
                 if isinstance(prepared_update, PreparedDialogMediaUpdate):
                     commit, rollback = prepared_update.commit, prepared_update.rollback
                     on_committed = prepared_update.on_committed
+                    proposed_port = prepared_update.answer_video_rtp_port
+                    incompatible_update = proposed_port is not None and int(proposed_port) != updated.local_video_rtp_port
+                    if prepared_update.answer_media_endpoints is not None:
+                        active = {"audio", "audio_rtcp"}
+                        if updated.video_format is not None and updated.local_video_rtp_port:
+                            active.update(("video", "video_rtcp"))
+                        incompatible_update |= any(
+                            prepared_update.answer_media_endpoints.get(kind) != advertised_endpoints.get(kind)
+                            for kind in active)
                 else:
                     commit = prepared_update
             except asyncio.CancelledError:
+                await discard_prepared()
                 raise
             except Exception:
+                await discard_prepared()
                 _LOGGER.exception(
                     "SIP delayed offer preparation failed call_id=%s",
                     self.dialog_ids.call_id,
                 )
-                await self._terminate_confirmed_dialog()
                 return "media_update_failed"
-        if commit is None and not unchanged:
-            await self._terminate_confirmed_dialog()
+        if incompatible_update or (commit is None and not unchanged):
+            await discard_prepared()
             return "media_incompatible"
-        if not await apply_remote_offer_media(commit, rollback):
+        applied = False
+        try:
+            applied = await apply_remote_offer_media(commit, rollback)
+        finally:
+            if not applied and self.dialog is current:
+                await self._terminate_confirmed_dialog()
+        if not applied:
             _LOGGER.error(
                 "SIP delayed offer commit failed call_id=%s", self.dialog_ids.call_id
             )
-            await self._terminate_confirmed_dialog()
             return "media_update_failed"
         requested_timer = sip.negotiate_uas_session_timer(delayed.request)
         updated.session_timer.configure(
@@ -1319,12 +1346,14 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         *,
         local_offer_sdp: str = "",
         current: SipDialog | None = None,
+        advertise_media: bool = True,
     ) -> tuple[SipDialog, str] | None:
         """Build the media replacement for a remote offer or delayed answer."""
 
         current = current or self.dialog
         if current is None:
             return None
+        local_video_port = current.local_video_rtp_port if local_offer_sdp else self.local_video_rtp_port
         try:
             selected = (
                 sdp.negotiate_answer_directional(
@@ -1385,7 +1414,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                         allow_passthrough_fallback=self.allow_video_transcoding,
                     )
                 )
-                if accepted_video and self.local_video_rtp_port
+                if accepted_video and local_video_port
                 else None
             )
             if local_offer_sdp and video_directional is not None:
@@ -1449,15 +1478,16 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 dtmf=dtmf_formats[0] if dtmf_formats else None,
                 audio_rtcp=False,
                 remote_sdp=request.body,
-                video_port=(self.local_video_rtp_port if video is not None else 0),
+                video_port=(local_video_port if video is not None else 0),
                 video_format=video_answer,
                 video_direction=local_video_direction,
             )
             session_id = int(current.local_sdp_session_id or self._sdp_session_id)
             session_version = int(current.local_sdp_session_version)
-            answer = self._advertise_media(answer)
+            if advertise_media:
+                answer = self._advertise_media(answer)
             answer = sdp.rewrite_sdp_origin(answer, session_id, session_version)
-            if not local_offer_sdp and sdp.sdp_description_changed(
+            if advertise_media and not local_offer_sdp and sdp.sdp_description_changed(
                 current.local_sdp_body, answer
             ):
                 session_version += 1
@@ -1497,7 +1527,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 video_format=video,
                 local_video_format=local_video,
                 imageattr_fallback_needed=imageattr_fallback,
-                local_video_rtp_port=(self.local_video_rtp_port if video is not None else 0),
+                local_video_rtp_port=(local_video_port if video is not None else 0),
                 local_video_direction=local_video_direction,
                 local_sdp_session_id=session_id,
                 local_sdp_session_version=session_version,
@@ -1722,6 +1752,13 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         commit: DialogMediaCommit | None = None
         rollback: DialogMediaCommit | None = None
         on_committed = None
+        prepared_endpoints = None
+
+        async def discard_prepared():
+            nonlocal rollback
+            undo, rollback = rollback, None
+            if undo is not None:
+                await async_wait_for_cleanup(asyncio.create_task(undo(), name="voip-remote-media-rollback"))
         if not request.body:
             if method == "UPDATE":
                 status = 200
@@ -1750,7 +1787,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             status = 415
             reason = "Unsupported Media Type"
         else:
-            prepared = self._answer_remote_offer(request)
+            prepared = self._answer_remote_offer(request, advertise_media=False)
             if prepared is None or self.dialog is None:
                 status = 488
                 reason = "Not Acceptable Here"
@@ -1773,6 +1810,8 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                             commit = prepared_update.commit
                             rollback = prepared_update.rollback
                             on_committed = prepared_update.on_committed
+                            prepared_endpoints = (dict(prepared_update.answer_media_endpoints)
+                                if prepared_update.answer_media_endpoints is not None else None)
                             answer_video_format = (
                                 prepared_update.answer_video_format
                             )
@@ -1810,12 +1849,6 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                         audio_direction=updated.local_audio_direction,
                                         video_direction=updated.local_video_direction,
                                     )
-                                    answer = self._advertise_media(answer)
-                                    answer = sdp.rewrite_sdp_origin(
-                                        answer,
-                                        updated.local_sdp_session_id,
-                                        updated.local_sdp_session_version,
-                                    )
                                     updated = replace(
                                         updated,
                                         video_format=video_pair.send,
@@ -1842,16 +1875,11 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                     audio_direction=updated.local_audio_direction,
                                     video_direction=updated.local_video_direction,
                                 )
-                                answer = self._advertise_media(answer)
-                                answer = sdp.rewrite_sdp_origin(
-                                    answer,
-                                    updated.local_sdp_session_id,
-                                    updated.local_sdp_session_version,
-                                )
                                 updated = replace(updated, local_sdp_body=answer)
                         else:
                             commit = prepared_update
                     except asyncio.CancelledError:
+                        await discard_prepared()
                         raise
                     except Exception:
                         _LOGGER.exception(
@@ -1868,20 +1896,39 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                         else:
                             status = 200
                             reason = "OK"
-                            body = answer.encode("utf-8")
                 elif unchanged:
                     status = 200
                     reason = "OK"
-                    body = answer.encode("utf-8")
                 else:
                     status = 488
                     reason = "Not Acceptable Here"
 
+        if 200 <= status < 300 and updated is not None:
+            try:
+                answer = self._advertise_media(answer, prepared_endpoints)
+                session_id = int(expected_dialog.local_sdp_session_id or self._sdp_session_id)
+                session_version = int(expected_dialog.local_sdp_session_version)
+                answer = sdp.rewrite_sdp_origin(answer, session_id, session_version)
+                if sdp.sdp_description_changed(expected_dialog.local_sdp_body, answer):
+                    session_version += 1
+                    answer = sdp.rewrite_sdp_origin(answer, session_id, session_version)
+                body = answer.encode("utf-8")
+                updated = replace(updated, local_sdp_body=answer,
+                    local_sdp_session_id=session_id, local_sdp_session_version=session_version)
+            except asyncio.CancelledError:
+                await discard_prepared()
+                raise
+            except Exception:
+                _LOGGER.exception("SIP remote media answer serialization failed call_id=%s method=%s",
+                    self.dialog_ids.call_id, method)
+                status, reason = 500, "Server Internal Error"
+
         if self.dialog is not expected_dialog:
-            if rollback is not None:
-                await rollback()
+            await discard_prepared()
             self._send_response_to_request(request, host, port, 481, "Call/Transaction Does Not Exist")
             return "remote_hangup" if self.dialog is None else None
+        if not 200 <= status < 300:
+            await discard_prepared()
         if status == 415:
             extra_headers = (("Accept", "application/sdp"),)
         elif status == 488 and self.on_media_update is None:
@@ -1891,19 +1938,22 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             ),)
         else:
             extra_headers = ()
-        sent = self._send_response_to_request(
-            request,
-            host,
-            port,
-            status,
-            reason,
-            extra_headers=extra_headers,
-            body=body if 200 <= status < 300 else b"",
-        )
+        try:
+            sent = self._send_response_to_request(
+                request,
+                host,
+                port,
+                status,
+                reason,
+                extra_headers=extra_headers,
+                body=body if 200 <= status < 300 else b"",
+            )
+        except BaseException:
+            await discard_prepared()
+            raise
         if not sent:
             self._uas_delayed_offer = None
-            if rollback is not None:
-                await rollback()
+            await discard_prepared()
             return "transport_unreachable"
         if self._uas_delayed_offer is not None and self.dialog is not None:
             self.dialog.local_sdp_session_version = (
@@ -1942,6 +1992,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 return "media_update_failed"
             if self._uas_invite_ack_timeout.is_set() or self.dialog is None:
                 return "ack_timeout"
+            if prepared_endpoints is not None:
+                self.media_endpoints = dict(prepared_endpoints)
+                updated._local_media_endpoints = dict(self.media_endpoints)
             self.dialog = updated
             notify_media_commit(on_committed, updated)
         elif (

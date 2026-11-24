@@ -52,7 +52,7 @@ def test_direction_update_keeps_unchanged_worker_and_never_duplicates_a_directio
         right = VideoRtpPeer("127.0.0.1", 42000, 42001, RtpVideoFormat(payload_type=26, encoding="JPEG"))
         relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
         relay.configure_transcoding(types.SimpleNamespace(data={}), "direction-owner")
-        relay.started, relay._transcode_slot_claimed = True, True
+        relay.started, relay._transcode_registered = True, True
         relay._maintain_nat = mock.Mock()
         alive = {side: set() for side in ("left", "right")}
         peak = {side: 0 for side in alive}
@@ -80,8 +80,8 @@ def test_direction_update_keeps_unchanged_worker_and_never_duplicates_a_directio
         original_right = relay._transcode.transcoders["right"]
         held_right = replace(right, video_format=replace(right.video_format, direction="recvonly"))
         with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
-             mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
-             mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
+             mock.patch.object(sip_video_relay, "_register_transcoder", new=mock.AsyncMock()), \
+             mock.patch.object(sip_video_relay, "_unregister_transcoder", new=mock.AsyncMock()):
             try:
                 relay.stage_peer_reconfiguration("right", held_right)
                 commit, rollback = await relay.async_prepare_peer_generation(left=left, right=held_right)
@@ -975,7 +975,7 @@ def test_direction_addition_fences_owner_and_joins_new_worker_cleanup(failure):
             RtpVideoFormat(payload_type=26, encoding="JPEG"))
         relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
         relay.configure_transcoding(types.SimpleNamespace(data={}), "direction-fence")
-        relay.started, relay._transcode_slot_claimed = True, True
+        relay.started, relay._transcode_registered = True, True
         relay._maintain_nat = mock.Mock()
         alive = {side: set() for side in ("left", "right")}
         entered, release = asyncio.Event(), asyncio.Event()
@@ -1009,7 +1009,7 @@ def test_direction_addition_fences_owner_and_joins_new_worker_cleanup(failure):
 
         active_left = replace(left, video_format=replace(left.video_format, direction="sendrecv"))
         with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
-             mock.patch.object(sip_video_relay, "_release_transcoder_slot", side_effect=no_slot):
+             mock.patch.object(sip_video_relay, "_unregister_transcoder", side_effect=no_slot):
             try:
                 relay.stage_peer_reconfiguration("left", active_left)
                 relay.stage_peer_reconfiguration("right", right)
@@ -1052,7 +1052,7 @@ def test_changed_video_contract_stops_old_before_start_and_restores_exclusively(
         right.local_video_format = right.video_format
         relay = SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
         relay.configure_transcoding(types.SimpleNamespace(data={}), "exclusive-codec-owner")
-        relay.started, relay._transcode_slot_claimed = True, True
+        relay.started, relay._transcode_registered = True, True
         relay._maintain_nat = mock.Mock()
         alive = {side: set() for side in ("left", "right")}
         peak = {side: 0 for side in alive}
@@ -1095,8 +1095,8 @@ def test_changed_video_contract_stops_old_before_start_and_restores_exclusively(
         if outcome == "unsupported":
             changed = replace(right, video_format=replace(right.video_format, encoding="H265"))
         with mock.patch.object(relay, "_build_transcode_generation", side_effect=build), \
-             mock.patch.object(sip_video_relay, "_claim_transcoder_slot", new=mock.AsyncMock()), \
-             mock.patch.object(sip_video_relay, "_release_transcoder_slot", new=mock.AsyncMock()):
+             mock.patch.object(sip_video_relay, "_register_transcoder", new=mock.AsyncMock()), \
+             mock.patch.object(sip_video_relay, "_unregister_transcoder", new=mock.AsyncMock()):
             try:
                 relay.stage_peer_reconfiguration("right", changed)
                 if outcome == "unsupported":
@@ -1148,3 +1148,103 @@ def test_changed_video_contract_stops_old_before_start_and_restores_exclusively(
                 await relay.stop()
         assert all(not workers for workers in alive.values())
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["preparing", "ready", "cancel"])
+async def test_owner_joins_provisional_generation(phase):
+    from custom_components.voip_stack import video_transcoder
+    from custom_components.voip_stack.runtime_data import BrowserMediaRuntime
+
+    runtime = types.SimpleNamespace(media=BrowserMediaRuntime())
+    hass = types.SimpleNamespace()
+    left = sip_video_relay.VideoRtpPeer("127.0.0.1", 41000, 41001,
+        RtpVideoFormat(payload_type=104, encoding="VP8"))
+    right = sip_video_relay.VideoRtpPeer("127.0.0.1", 42000, 42001,
+        RtpVideoFormat(payload_type=104, encoding="VP8"))
+    changed = sip_video_relay.VideoRtpPeer("127.0.0.1", 42000, 42001,
+        RtpVideoFormat(payload_type=26, encoding="JPEG"))
+    released = []
+    relay = sip_video_relay.SipVideoRtpRelay(left=left, right=right,
+        left_port=43000, right_port=43002)
+    relay.configure_transcoding(hass, "owned-preparation")
+    relay.started = True
+    relay._on_release = released.append
+    relay._maintain_nat = mock.Mock()
+    entered, build_release = asyncio.Event(), asyncio.Event()
+    close_entered, close_release = asyncio.Event(), asyncio.Event()
+    alive, workers = set(), []
+
+    class Worker:
+        ready = True
+        def __init__(self):
+            self.close_calls = 0
+            alive.add(self)
+            workers.append(self)
+        async def async_close(self):
+            self.close_calls += 1
+            close_entered.set()
+            if phase == "cancel":
+                await close_release.wait()
+            alive.discard(self)
+
+    async def build(_loop, _left, _right, *, directions, **_kwargs):
+        generation = sip_video_relay._TranscodeGeneration(set(directions),
+            {side: Worker() for side in directions}, {}, {})
+        entered.set()
+        try:
+            if phase != "ready":
+                await build_release.wait()
+            return generation
+        except BaseException:
+            # The real builder owns partial resources until it returns them.
+            await relay._close_transcode_generation(generation)
+            raise
+
+    preparation = stopping = None
+    rollback = None
+    with mock.patch.object(video_transcoder, "require_runtime_data", return_value=runtime), \
+         mock.patch.object(relay, "_build_transcode_generation", side_effect=build):
+        try:
+            relay.stage_peer_reconfiguration("left", left)
+            relay.stage_peer_reconfiguration("right", changed)
+            preparation = asyncio.create_task(relay.async_prepare_peer_generation(left=left, right=changed))
+            await asyncio.wait_for(entered.wait(), 1)
+            assert len(alive) == 2 and len(runtime.media.transcoders) == 1
+            if phase == "ready":
+                _commit, rollback = await preparation
+            if phase == "cancel":
+                preparation.cancel()
+                await asyncio.wait_for(close_entered.wait(), 1)
+            runtime.media.shutdown.set()
+            stopping = asyncio.create_task(video_transcoder.async_close_transcoders(hass))
+            if phase == "cancel":
+                for _ in range(12):
+                    await asyncio.sleep(0)
+                assert not stopping.done() and runtime.media.transcoders
+                preparation.cancel()
+                stopping.cancel()
+                await asyncio.sleep(0)
+                assert alive
+                close_release.set()
+                build_release.set()
+                results = await asyncio.gather(preparation, stopping, return_exceptions=True)
+                assert all(isinstance(result, asyncio.CancelledError) for result in results)
+            else:
+                await asyncio.wait_for(stopping, 1)
+            assert not alive and not runtime.media.transcoders
+            assert all(task.done() for task in getattr(relay, "_preparation_tasks", ()))
+            if rollback is not None:
+                await rollback()
+            assert all(worker.close_calls == 1 for worker in workers)
+            assert released == [(43000, 43002)]
+        finally:
+            build_release.set()
+            close_release.set()
+            if preparation is not None:
+                result = (await asyncio.gather(preparation, return_exceptions=True))[0]
+                if isinstance(result, tuple):
+                    await result[1]()
+            if stopping is not None:
+                await asyncio.gather(stopping, return_exceptions=True)
+            await relay.stop()
+    assert not alive

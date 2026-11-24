@@ -88,9 +88,7 @@ def runtime_resource_snapshot(
             if call_artifacts is not None
             else 0,
             "runtime_tasks": _active_task_count(runtime_tasks),
-            "video_transcoders": int(
-                browser_media is not None and browser_media.transcoder is not None
-            ),
+            "video_transcoders": len(browser_media.transcoders) if browser_media is not None else 0,
         }
     )
     call_scoped_keys = (

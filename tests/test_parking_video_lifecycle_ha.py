@@ -109,7 +109,7 @@ async def test_irrecoverable_video_restore_terminates_original_not_only_temporar
     state = av_transaction_owner
     video = state.video
     video.configure_transcoding(SimpleNamespace(data={}), "actual-owner")
-    video.started, video._transcode_slot_claimed = True, True
+    video.started, video._transcode_registered = True, True
     video._maintain_nat = Mock()
     alive = set()
     class Worker:
@@ -127,8 +127,8 @@ async def test_irrecoverable_video_restore_terminates_original_not_only_temporar
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", source_update)
     monkeypatch.setattr(local_media_bridge, "adopt_relay_for_application", Mock(side_effect=RuntimeError("adoption failed")))
     monkeypatch.setattr(video, "_build_transcode_generation", AsyncMock(side_effect=RuntimeError("encoder restart failed")))
-    monkeypatch.setattr(vr, "_claim_transcoder_slot", AsyncMock())
-    monkeypatch.setattr(vr, "_release_transcoder_slot", AsyncMock())
+    monkeypatch.setattr(vr, "_register_transcoder", AsyncMock())
+    monkeypatch.setattr(vr, "_unregister_transcoder", AsyncMock())
     requested = Mock(wraps=state.owner.request_termination)
     monkeypatch.setattr(state.owner, "request_termination", requested)
     with pytest.raises(ParkingError, match="could not be restored"):
@@ -173,7 +173,7 @@ async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_
     right = vr.VideoRtpPeer("127.0.0.1", 42000, 42001, sdp.RtpVideoFormat(payload_type=26, encoding="JPEG"))
     video = vr.SipVideoRtpRelay(left=left, right=right, left_port=43000, right_port=43002)
     video.configure_transcoding(SimpleNamespace(data={}), "cancel-hold")
-    video.started, video._transcode_slot_claimed = True, True
+    video.started, video._transcode_registered = True, True
     video._maintain_nat = Mock()
     entered, release = asyncio.Event(), asyncio.Event()
     alive, peak, offers = set(), {"left": 0, "right": 0}, []
@@ -214,8 +214,8 @@ async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_
     monkeypatch.setattr(bridge_media_updates, "call_registry", lambda _: registry)
     monkeypatch.setattr(bridge_media_updates, "prepare_source_video_update", source_update)
     monkeypatch.setattr(video, "_build_transcode_generation", build)
-    monkeypatch.setattr(vr, "_claim_transcoder_slot", AsyncMock())
-    monkeypatch.setattr(vr, "_release_transcoder_slot", AsyncMock())
+    monkeypatch.setattr(vr, "_register_transcoder", AsyncMock())
+    monkeypatch.setattr(vr, "_unregister_transcoder", AsyncMock())
     try:
         update = await parking.prepare_retained_video_handoff(object(), session, video,
             parking._video_peer_direction(left, "inactive"), parking._video_peer_direction(right, "inactive"))
@@ -230,7 +230,7 @@ async def test_cancelled_video_hold_finishes_settlement_and_compensates_sip_and_
         assert video.left.video_format.direction == video.right.video_format.direction == "sendrecv"
         assert set(video._transcode.transcoders) == {"left", "right"}
         assert {worker.side for worker in alive} == {"left", "right"}
-        assert video._transcode_slot_claimed and not video._staged_peers
+        assert video._transcode_registered and not video._staged_peers
         assert offers == ["inactive", "sendrecv"] and peak == {"left": 1, "right": 1}
     finally:
         release.set()

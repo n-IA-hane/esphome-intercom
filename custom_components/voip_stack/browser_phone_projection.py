@@ -379,8 +379,8 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     registry = call_registry(hass)
     media_debug = dict(store.get("media_debug") or {}) if debug_mode else {}
     if debug_mode:
-        active_transcoder = (
-            entry_runtime.media.transcoder if entry_runtime is not None else None
+        active_transcoders = (
+            entry_runtime.media.transcoders.values() if entry_runtime is not None else ()
         )
         media_debug.update(
             {
@@ -398,10 +398,12 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
                     if entry_runtime is not None
                     else ()
                 ),
-                "video_transcoder_call_id": str(
-                    getattr(active_transcoder, "call_id", "") or ""
-                    if registry.resolve_session_id(str(getattr(active_transcoder, "call_id", "") or "")) in visible_call_ids else ""
-                ),
+                "video_transcoder_call_ids": sorted({
+                    identity for active_transcoder, _close in active_transcoders
+                    if (identity := str(getattr(active_transcoder, "call_id", "")
+                                       or getattr(active_transcoder, "_transcode_call_id", "")))
+                    and registry.resolve_session_id(identity) in visible_call_ids
+                }),
             }
         )
     session = registry.sessions.get(registry.resolve_session_id(str(call_id or "")))

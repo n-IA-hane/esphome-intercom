@@ -8,7 +8,9 @@ when a browser JPEG must be normalized to RFC 2435's fixed Huffman tables.
 from __future__ import annotations
 
 import asyncio
+from builtins import ExceptionGroup
 from collections import deque
+from collections.abc import Awaitable, Callable
 import contextlib
 import errno
 from dataclasses import dataclass, field
@@ -55,37 +57,29 @@ class VideoTranscoderError(RuntimeError):
     """The optional video transcoder could not be started or used."""
 
 
-async def _claim_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
-    """Bound every FFmpeg video bridge to one integration-owned process slot."""
-
+async def _register_transcoder(hass: HomeAssistant, owner: object, close: Callable[[], Awaitable[None]]) -> None:
+    """Track each existing converter owner independently until its cleanup ends."""
     media = require_runtime_data(hass).media
-    while True:
-        async with media.transcoder_lock:
-            active = media.transcoder
-            if active is None or active is owner:
-                media.transcoder = owner
-                media.transcoder_released.clear()
-                return
-            if not bool(getattr(active, "stopping", False)):
-                raise VideoTranscoderError("another SIP video transcode is active")
-            media.transcoder_released.clear()
-        try:
-            await asyncio.wait_for(
-                media.transcoder_released.wait(),
-                timeout=_PROCESS_STOP_TIMEOUT + 0.5,
-            )
-        except TimeoutError as err:
-            raise VideoTranscoderError(
-                "previous SIP video transcode did not release its slot"
-            ) from err
+    if media.shutdown.is_set():
+        raise VideoTranscoderError("VoIP Stack media is shutting down")
+    media.transcoders[id(owner)] = (owner, close)
 
 
-async def _release_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
+async def _unregister_transcoder(hass: HomeAssistant, owner: object) -> None:
     media = require_runtime_data(hass).media
-    async with media.transcoder_lock:
-        if media.transcoder is owner:
-            media.transcoder = None
-            media.transcoder_released.set()
+    current = media.transcoders.get(id(owner))
+    if current is not None and current[0] is owner:
+        del media.transcoders[id(owner)]
+
+
+async def async_close_transcoders(hass: HomeAssistant) -> None:
+    """Join every remaining converter through its existing lifecycle owner."""
+    media = require_runtime_data(hass).media
+    pending = tuple(media.transcoders.values())
+    results = await asyncio.gather(*(close() for _owner, close in pending), return_exceptions=True)
+    failures = [result for result in results if isinstance(result, Exception)]
+    if failures:
+        raise ExceptionGroup("Video converter cleanup failed", failures)
 
 
 async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
@@ -523,8 +517,8 @@ class FfmpegVideoTranscoder:
     input_format: RtpVideoFormat
     output_port: int
     output_format: RtpVideoFormat = _DEFAULT_TRANSCODE_OUTPUT
-    slot_owner: object | None = None
-    manage_slot: bool = True
+    resource_owner: object | None = None
+    manage_registration: bool = True
     input_port: int = 0
     process: asyncio.subprocess.Process | None = None
     _send_socket: socket.socket | None = None
@@ -551,7 +545,7 @@ class FfmpegVideoTranscoder:
 
     @property
     def stopping(self) -> bool:
-        """Return whether another call may wait for this slot's cleanup."""
+        """Return whether this converter's cleanup has been requested."""
 
         return self._close_requested or self._released
 
@@ -576,9 +570,9 @@ class FfmpegVideoTranscoder:
                     self._start_task = None
 
     async def _async_start_impl(self) -> None:
-        owner = self.slot_owner or self
-        if self.manage_slot:
-            await _claim_transcoder_slot(self.hass, owner)
+        owner = self.resource_owner or self
+        if self.manage_registration:
+            await _register_transcoder(self.hass, owner, self.async_close)
         process: asyncio.subprocess.Process | None = None
         send_socket: socket.socket | None = None
         stderr_task: asyncio.Task[None] | None = None
@@ -664,13 +658,13 @@ class FfmpegVideoTranscoder:
             )
         except BaseException:
             # Cancellation is a normal unload path and must release the
-            # process/pipe as well as the singleton transcode slot.
+            # process/pipe as well as this converter registration.
             cleanup = asyncio.create_task(
                 self._dispose_resources(
                     process=process,
                     send_socket=send_socket,
                     stderr_task=stderr_task,
-                    release_slot=self.manage_slot,
+                    unregister_owner=self.manage_registration,
                 ),
                 name=f"voip-video-transcoder-start-cleanup-{self.call_id}",
             )
@@ -734,7 +728,7 @@ class FfmpegVideoTranscoder:
             process=process,
             send_socket=send_socket,
             stderr_task=stderr_task,
-            release_slot=self.manage_slot,
+            unregister_owner=self.manage_registration,
         )
         _LOGGER.info("Stopped optional SIP video transcode call_id=%s", self.call_id)
 
@@ -744,9 +738,9 @@ class FfmpegVideoTranscoder:
         process: asyncio.subprocess.Process | None,
         send_socket: socket.socket | None,
         stderr_task: asyncio.Task[None] | None,
-        release_slot: bool,
+        unregister_owner: bool,
     ) -> None:
-        """Dispose detached FFmpeg resources and release singleton ownership."""
+        """Join detached FFmpeg resources and retire this converter owner."""
 
         try:
             if send_socket is not None:
@@ -756,10 +750,10 @@ class FfmpegVideoTranscoder:
             if stderr_task is not None:
                 stderr_task.cancel()
                 await asyncio.gather(stderr_task, return_exceptions=True)
-            # Never strand the single bounded transcode slot because FFmpeg
+            # Never strand this converter registration because FFmpeg
             # exited between the returncode check and process cleanup.
-            if release_slot:
-                await _release_transcoder_slot(self.hass, self.slot_owner or self)
+            if unregister_owner:
+                await _unregister_transcoder(self.hass, self.resource_owner or self)
             self._released = True
 
 
@@ -790,7 +784,7 @@ class FfmpegJpegNormalizer:
                 return
             if self._close_requested or self._released:
                 raise VideoTranscoderError("JPEG normalizer has already been closed")
-            await _claim_transcoder_slot(self.hass, self)
+            await _register_transcoder(self.hass, self, self.async_close)
             process: asyncio.subprocess.Process | None = None
             stderr_task: asyncio.Task[None] | None = None
             try:
@@ -857,7 +851,7 @@ class FfmpegJpegNormalizer:
                 await self._dispose(
                     process=process,
                     stderr_task=stderr_task,
-                    release_slot=True,
+                    unregister_owner=True,
                 )
                 raise
 
@@ -969,7 +963,7 @@ class FfmpegJpegNormalizer:
                     self._dispose(
                         process=process,
                         stderr_task=stderr_task,
-                        release_slot=True,
+                        unregister_owner=True,
                     ),
                     name=f"voip-jpeg-normalizer-close-{self.call_id}",
                 )
@@ -981,7 +975,7 @@ class FfmpegJpegNormalizer:
         *,
         process: asyncio.subprocess.Process | None,
         stderr_task: asyncio.Task[None] | None,
-        release_slot: bool,
+        unregister_owner: bool,
     ) -> None:
         try:
             await _stop_process(process)
@@ -989,7 +983,7 @@ class FfmpegJpegNormalizer:
             if stderr_task is not None:
                 stderr_task.cancel()
                 await asyncio.gather(stderr_task, return_exceptions=True)
-            if release_slot:
-                await _release_transcoder_slot(self.hass, self)
+            if unregister_owner:
+                await _unregister_transcoder(self.hass, self)
             self._released = True
         _LOGGER.info("Stopped SIP browser JPEG normalizer call_id=%s", self.call_id)

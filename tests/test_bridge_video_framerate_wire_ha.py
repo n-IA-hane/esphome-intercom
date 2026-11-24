@@ -164,7 +164,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
             assert lab.calls.resource_for(call_id, "relay") is audio_relay
             assert (caller.dialog.send_format, caller.dialog.recv_format) == original_audio
         else:
-            assert not relay.transcoding and lab.runtime.media.transcoder is None
+            assert not relay.transcoding and not lab.runtime.media.transcoders
             input_socket = caller_video if source_calls else remote_video
             output_socket = remote_video if source_calls else caller_video
             relay_port = relay.left_port if source_calls else relay.right_port
@@ -195,7 +195,7 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
         if barrier is not None:
             await barrier
         assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used")
-        assert lab.runtime.media.transcoder is None
+        assert not lab.runtime.media.transcoders
     finally:
         if sender is not None:
             sender.cancel()

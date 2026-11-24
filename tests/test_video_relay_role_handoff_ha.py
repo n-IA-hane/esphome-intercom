@@ -47,11 +47,11 @@ def test_active_video_role_handoff_preserves_worker_and_routes_both_directions()
                              for control in (False, True)}
     generation.sockets = dict.fromkeys(generation.transports)
     relay._transcoded_ssrc = {"left": 1234}
-    relay._transcode_slot_claimed = relay.started = True
+    relay._transcode_registered = relay.started = True
     relay.left_rx_packets, relay.right_rx_packets = 10, 20
     relay.reverse_held_sides()
     assert relay._transcode is generation and generation.transcoders == {"right": worker}
-    assert generation.directions == {"right"} and relay._transcode_slot_claimed
+    assert generation.directions == {"right"} and relay._transcode_registered
     assert relay.left is right and relay.right is left
     assert relay.left_rx_packets == 20 and relay.right_rx_packets == 10
     assert generation.transports[("right", False)].get_protocol().source_side == "right"

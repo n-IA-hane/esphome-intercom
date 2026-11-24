@@ -197,12 +197,14 @@ def bridge_media_updates(monkeypatch):
             answer_video_format=None,
             answer_video_rtp_port=None,
             on_committed=None,
+            answer_media_endpoints=None,
         ) -> None:
             self.commit = commit
             self.on_committed = on_committed
             self.rollback = rollback
             self.answer_video_format = answer_video_format
             self.answer_video_rtp_port = answer_video_rtp_port
+            self.answer_media_endpoints = answer_media_endpoints
 
     dependencies = {
         "call_projection": {
@@ -495,9 +497,14 @@ def test_cross_codec_video_direction_change_uses_owned_transcoders(
     assert relay.video_relay.right is new_video
 
 
+@pytest.mark.parametrize("nat,outcome", [(False, "commit"), (True, "commit"),
+    (False, "rollback"), (True, "rollback"), (False, "restore_failure"), (True, "restore_failure"),
+    (True, "discovery_failure"), (True, "cancel")])
 def test_destination_reinvite_can_add_video_to_audio_only_bridge(
     bridge_media_updates,
     monkeypatch,
+    nat,
+    outcome,
 ) -> None:
     registry = _Registry()
     source_video = SimpleNamespace(
@@ -563,9 +570,29 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
     client = SimpleNamespace(
         dialog=SimpleNamespace(video_format=None),
         dialog_ids=SimpleNamespace(call_id="dest-add-video"),
+        media_endpoints={}, discover_media_sockets=None,
         on_media_update=None,
         on_connected_identity=None,
     )
+    discovered = {}
+    if nat:
+        client.media_endpoints = {"audio": object(), "video": SimpleNamespace(local_port=staged.right_port)}
+        sockets = {"video": SimpleNamespace(getsockname=lambda: ("127.0.0.1", staged.right_port)),
+                   "video_rtcp": SimpleNamespace(getsockname=lambda: ("127.0.0.1", staged.right_port + 1))}
+        def pending(side):
+            assert side == "right" and not staged.started
+            return sockets
+        staged.pending_media_sockets = pending
+        async def discover(actual):
+            assert actual is sockets and not staged.started
+            if outcome == "discovery_failure":
+                raise OSError("injected STUN failure")
+            if outcome == "cancel":
+                raise asyncio.CancelledError
+            discovered.update({kind: SimpleNamespace(local_port=sock.getsockname()[1], host="198.51.100.23", port=55001 + index * 17)
+                               for index, (kind, sock) in enumerate(actual.items())})
+            return discovered
+        client.discover_media_sockets = discover
     updated_video = SimpleNamespace(direction="sendrecv", passthrough=True)
     updated = SimpleNamespace(
         audio_peer=object(),
@@ -595,13 +622,17 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
         source_video_receive_format=original_source_receive,
     )
 
-    prepared = asyncio.run(
-        client.on_media_update(
-            client.dialog,
-            updated,
-            "INVITE",
-        )
-    )
+    if outcome == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(client.on_media_update(client.dialog, updated, "INVITE"))
+        assert staged.stopped and not staged.started and relay.video_relay is None
+        assert endpoint.prepared.restored and not endpoint.prepared.committed
+        return
+    prepared = asyncio.run(client.on_media_update(client.dialog, updated, "INVITE"))
+    if outcome == "discovery_failure":
+        assert prepared is None and staged.stopped and not staged.started
+        assert relay.video_relay is None and endpoint.prepared.restored
+        return
 
     assert prepared is not None
     assert endpoint.prepared.committed is True
@@ -610,6 +641,23 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
     assert staged.started is True
     assert relay.video_relay is None
     assert prepared.answer_video_rtp_port == staged.right_port
+    if nat:
+        assert prepared.answer_media_endpoints == {**client.media_endpoints, **discovered}
+        assert prepared.answer_media_endpoints["video"].port == 55001
+    else:
+        assert prepared.answer_media_endpoints is None
+    if outcome != "commit":
+        if outcome == "restore_failure":
+            async def failed_restore(**_kwargs):
+                return False
+            endpoint.prepared.restore = failed_restore
+            with pytest.raises(RuntimeError, match="compensate unsent media answer"):
+                asyncio.run(prepared.rollback())
+        else:
+            asyncio.run(prepared.rollback())
+            assert endpoint.prepared.restored
+        assert staged.stopped and relay.video_relay is None
+        return
     asyncio.run(prepared.commit())
     assert relay.video_relay is staged
     assert staged.stopped is False

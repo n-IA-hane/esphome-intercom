@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -38,9 +39,7 @@ class BrowserMediaRuntime:
     )
     identity_locks: dict[str, Any] = field(default_factory=dict)
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
-    transcoder: Any | None = None
-    transcoder_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    transcoder_released: asyncio.Event = field(default_factory=asyncio.Event)
+    transcoders: dict[int, tuple[Any, Callable[[], Awaitable[None]]]] = field(default_factory=dict)
     debug_capture_tasks: set[asyncio.Future[Any]] = field(default_factory=set)
     debug_capture_dropped_writes: int = 0
 

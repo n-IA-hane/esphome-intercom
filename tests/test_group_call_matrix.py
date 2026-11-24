@@ -304,9 +304,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         hass.runtime.media.owners["video"] = {
             "video-call": object(), "foreign-video-call": object(),
         }
-        hass.runtime.media.transcoder = types.SimpleNamespace(
-            call_id="transcoded-call"
-        )
+        hass.runtime.media.transcoders = {1: (types.SimpleNamespace(call_id="transcoded-call"), None)}
 
         normal = websocket_api._ha_softphone_state(hass, "default")
         self.assertFalse(normal["debug_mode"])
@@ -319,17 +317,17 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertEqual(debug["media_debug"]["audio_ws_owner_call_ids"], ["audio-call"])
         self.assertEqual(debug["media_debug"]["video_ws_owner_call_ids"], ["video-call"])
         self.assertEqual(
-            debug["media_debug"]["video_transcoder_call_id"],
-            "transcoded-call",
+            debug["media_debug"]["video_transcoder_call_ids"],
+            ["transcoded-call"],
         )
         self.assertEqual(debug["media_debug"]["call_registry"]["call_ids"], sorted(own_calls))
         self.assertEqual(
             set(debug["media_debug"]["call_registry"]["endpoint_claims"]), set(own_calls),
         )
-        hass.runtime.media.transcoder = types.SimpleNamespace(call_id="foreign-transcoded-call")
+        hass.runtime.media.transcoders = {1: (types.SimpleNamespace(call_id="foreign-transcoded-call"), None)}
         with patch.object(browser_phone_projection, "current_debug_mode", return_value=True):
             foreign_transcoder = websocket_api._ha_softphone_state(hass, "default")
-        self.assertEqual(foreign_transcoder["media_debug"]["video_transcoder_call_id"], "")
+        self.assertEqual(foreign_transcoder["media_debug"]["video_transcoder_call_ids"], [])
         self.assertEqual(foreign_transcoder["media_debug"]["audio_ws_owner_call_ids"], ["audio-call"])
         self.assertEqual(foreign_transcoder["media_debug"]["video_ws_owner_call_ids"], ["video-call"])
 

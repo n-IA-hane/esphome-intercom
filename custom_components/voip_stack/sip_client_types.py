@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
+from collections.abc import Mapping
+from .core.media_address import MediaEndpoint
 from .core.media.payload_map import PayloadConflict, PayloadMap, RtpMapping
 from .core import sdp, sip, sip_transfer
 from .core.sip_dialog import DialogSignalingState
@@ -177,6 +179,7 @@ class PreparedDialogMediaUpdate:
     answer_video_format: sdp.RtpVideoFormat | None = None
     answer_video_rtp_port: int | None = None
     on_committed: Callable[[SipDialog], None] | None = None
+    answer_media_endpoints: Mapping[str, MediaEndpoint] | None = None
 
 
 DialogMediaUpdateHandler = Callable[

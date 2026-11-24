@@ -174,6 +174,10 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
             async_revoke_media_owners(owners, owner_lock, timeout=5.0)
         )
     pending_owner_sets = await asyncio.gather(*owner_shutdowns)
+    if media is not None:
+        from .video_transcoder import async_close_transcoders
+
+        await async_close_transcoders(hass)
     pending_owner_ids = set().union(*pending_owner_sets)
     if pending_owner_ids:
         _LOGGER.warning(

@@ -452,6 +452,7 @@ class BridgeMediaUpdateBinder:
             rollback_video_generation = None
             source_reinvite = None
             answer_video_format = None
+            answer_media_endpoints = None
             source_video_formats = ()
             if updated_video is not None:
                 if source_client is None and sip_endpoint_manager(self.hass) is None:
@@ -512,20 +513,37 @@ class BridgeMediaUpdateBinder:
                         )
                         if configured is None:
                             raise RuntimeError("incompatible video addition")
+                        if client.media_endpoints:
+                            if client.discover_media_sockets is None:
+                                raise ValueError("New video socket has no media discovery owner")
+                            pending = video_relay.pending_media_sockets("right")
+                            async with asyncio.timeout(3):
+                                discovered = await client.discover_media_sockets(pending)
+                            if (discovered.keys() != pending.keys() or any(
+                                discovered[kind].local_port != sock.getsockname()[1]
+                                for kind, sock in pending.items())):
+                                raise ValueError("Video discovery did not bind the prepared sockets")
+                            answer_media_endpoints = {**client.media_endpoints, **discovered}
                         await video_relay.start()
-                    except (OSError, RuntimeError, TypeError, ValueError) as err:
-                        if source_reinvite is not None:
-                            await source_reinvite.restore(
-                                local_video_rtp_port=0,
-                                video_formats=source_video_formats,
-                            )
-                        if staged_video_relay is not None:
-                            await staged_video_relay.stop()
-                        else:
-                            for sock in sockets:
-                                sock.close()
-                            if reservation is not None:
-                                reservation.release()
+                    except (OSError, RuntimeError, TypeError, ValueError, asyncio.CancelledError) as err:
+                        async def discard_addition():
+                            try:
+                                if source_reinvite is not None:
+                                    await source_reinvite.restore(
+                                        local_video_rtp_port=0,
+                                        video_formats=source_video_formats,
+                                    )
+                            finally:
+                                if staged_video_relay is not None:
+                                    await staged_video_relay.stop()
+                                else:
+                                    for sock in sockets:
+                                        sock.close()
+                                    if reservation is not None:
+                                        reservation.release()
+                        await async_wait_for_cleanup(asyncio.create_task(discard_addition(), name="voip-video-addition-rollback"))
+                        if isinstance(err, asyncio.CancelledError):
+                            raise
                         _LOGGER.warning(
                             "SIP bridge could not stage destination video addition "
                             "source_call_id=%s dest_call_id=%s: %s",
@@ -798,19 +816,21 @@ class BridgeMediaUpdateBinder:
                     )
 
             async def rollback() -> None:
-                if rollback_video_generation is not None:
-                    await rollback_video_generation()
-                if source_reinvite is not None and not await source_reinvite.restore(
-                    local_video_rtp_port=(
-                        0 if adding_video else int(video_relay.left_port)
-                    ),
-                    video_formats=source_video_formats,
-                ):
-                    raise RuntimeError(
-                        "SIP bridge could not compensate unsent media answer"
-                    )
-                if adding_video and staged_video_relay is not None:
-                    await staged_video_relay.stop()
+                try:
+                    if rollback_video_generation is not None:
+                        await rollback_video_generation()
+                    if source_reinvite is not None and not await source_reinvite.restore(
+                        local_video_rtp_port=(
+                            0 if adding_video else int(video_relay.left_port)
+                        ),
+                        video_formats=source_video_formats,
+                    ):
+                        raise RuntimeError(
+                            "SIP bridge could not compensate unsent media answer"
+                        )
+                finally:
+                    if adding_video and staged_video_relay is not None:
+                        await staged_video_relay.stop()
 
             def published(actual):
                 if (registry.is_generation_current(source_call_id, call_generation)
@@ -831,6 +851,7 @@ class BridgeMediaUpdateBinder:
                     int(video_relay.right_port) if updated_video is not None else 0
                 ),
                 on_committed=published,
+                answer_media_endpoints=answer_media_endpoints,
             )
 
         client.on_media_update = prepare

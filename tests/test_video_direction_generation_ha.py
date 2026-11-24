@@ -109,6 +109,6 @@ async def test_direction_change_retains_real_decoder_pid_fd_and_rtp(lab, outcome
         await relay.stop()
         assert all(worker.process is None for worker in workers)
         assert not relay._transports and not relay._transcode.transcoders
-        assert lab.runtime.media.transcoder is None
+        assert not lab.runtime.media.transcoders
         for sock in peers:
             sock.close()
