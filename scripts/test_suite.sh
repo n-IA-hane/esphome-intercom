@@ -212,6 +212,7 @@ ha_tests=(
   tests/test_popup_frontend_ha.py
   tests/test_camera_preference_directory_ha.py
   tests/test_esphome_state_discovery_ha.py
+  tests/test_esphome_account_state_authority_ha.py
   tests/test_local_browser_pickup_video_ha.py
   tests/test_esp_screenshot_homeassistant.py
   tests/test_ldap_directory_ha.py

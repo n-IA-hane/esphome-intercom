@@ -13,6 +13,7 @@ from .endpoint_lifecycle import create_runtime_task
 from .fsm import CallState, sip_public_state
 from .outbound_lifecycle import HA_SOFTPHONE_ACTIVE_STATES
 from .peer_snapshot import device_entity_state
+from .phone_endpoint import EndpointKind
 from .runtime_data import runtime_data
 from .call_events import fire_call_event as _fire_call_event
 from .esphome_phone_inventory import _get_voip_devices
@@ -88,6 +89,11 @@ async def async_emit_state_event(
         endpoint = guarded_endpoint or endpoint_registry.by_device_id(
             device.get("device_id")
         )
+        if endpoint is not None and endpoint.kind is EndpointKind.SIP_ACCOUNT:
+            # This hardware may be using another SIP line while a different
+            # client rings this account. Its native entity remains telemetry;
+            # only SIP dialogs own the account's claims and PBX call events.
+            return
         canonical_state = (
             CallState.RINGING.value
             if raw_state == "incoming"

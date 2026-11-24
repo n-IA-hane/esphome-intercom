@@ -308,7 +308,7 @@ async def test_upgrade_records_cannot_authenticate_until_native_account_migratio
     assert lab.registrar.registered_contacts("Reception")
 
 
-async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_offer(managed, socket_enabled):
+async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_offer(managed, socket_enabled, unused_udp_port_factory):
     import asyncio
     import socket
     from urllib.parse import quote
@@ -325,7 +325,10 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
 
     lab = managed
     phone, _previous = await registered_account(lab)
-    uri = "sip:127.0.0.1:5060"
+    sip_port = unused_udp_port_factory()
+    lab.runtime.transport_config["sip_port"] = sip_port
+    lab.registrar.local_sip_port = sip_port
+    uri = f"sip:127.0.0.1:{sip_port}"
     user = quote(phone.username, safe="-._~")
     auth = build_digest_authorization(challenge_header=lab.registrar._challenge()[1],
         username=phone.username, password=phone.password, method="REGISTER", uri=uri)
@@ -335,7 +338,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
         ("Call-ID", "contact-profile"), ("CSeq", "1 REGISTER"),
         ("Contact", f"<sip:{user}@127.0.0.2:41000>"), ("Expires", "120"),
         ("User-Agent", "Dahua UAC/V4.511.0.0"), ("Authorization", auth)]))
-    manager = SipEndpointManager(host="127.0.0.1", port=5060, local_ip="127.0.0.1",
+    manager = SipEndpointManager(host="127.0.0.1", port=sip_port, local_ip="127.0.0.1",
         local_rtp_port=40000, supported_formats=list(HA_SIP_PCM_FORMATS), on_invite=None,
         on_register=lab.registrar.handle_register, udp_enabled=True, tcp_enabled=False)
     lab.runtime.sip.adopt_component("udp_listener", manager, closer=manager.stop)
@@ -353,7 +356,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
                             ("CSeq", f"{cseq} REGISTER")])
             if authorization:
                 headers.append(("Authorization", authorization))
-            await loop.sock_sendto(wire, sip.build_request("REGISTER", uri, headers), ("127.0.0.1", 5060))
+            await loop.sock_sendto(wire, sip.build_request("REGISTER", uri, headers), ("127.0.0.1", sip_port))
             raw, _address = await asyncio.wait_for(loop.sock_recvfrom(wire, 65535), 2)
             return sip.parse_message(raw)
         challenge = await send_register(1)
@@ -367,7 +370,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
     rows = compose_directory_entries(lab.hass, peers, lab.registrar.registered_roster_entries())
     entry = next(row for row in rows if row.id == phone.username)
     dialer = EndpointDialer(hass=lab.hass, local_ip="127.0.0.1", config=lab.runtime.transport_config,
-        route_resolver=EndpointRouteResolver(lab.hass, "127.0.0.1", 5060),
+        route_resolver=EndpointRouteResolver(lab.hass, "127.0.0.1", sip_port),
         sip_uri_transport=uri_transport, enable_reused_tcp_connection=enable_reused_signaling_flow)
     _uri, peer, selected = dialer.sip_uri_for_member(phone.username, peers, rows)
     assert peer is not None and selected is entry
