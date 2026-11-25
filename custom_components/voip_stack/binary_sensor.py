@@ -13,11 +13,10 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .endpoint_device import (
-    async_link_endpoint_entity,
-    endpoint_device_info,
     endpoint_public_attributes,
     enum_value,
 )
+from .phone_entity import PhoneEndpointEntity
 from .endpoint_entity_manager import (
     EndpointEntityManager,
     register_endpoint_entity_manager,
@@ -103,7 +102,7 @@ class TrunkReadyBinarySensor(BinarySensorEntity):
             self.async_write_ha_state()
 
 
-class PhoneEndpointConnectivityBinarySensor(BinarySensorEntity):
+class PhoneEndpointConnectivityBinarySensor(PhoneEndpointEntity, BinarySensorEntity):
     """Whether the endpoint currently has a usable contact/card connection."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
@@ -113,29 +112,9 @@ class PhoneEndpointConnectivityBinarySensor(BinarySensorEntity):
     _attr_translation_key = "phone_endpoint_connectivity"
 
     def __init__(self, hass, endpoint, registry) -> None:
-        self.endpoint = endpoint
-        self.registry = registry
-        self._attr_unique_id = f"phone_endpoint_{endpoint.endpoint_id}_connectivity"
-        self._attr_device_info = endpoint_device_info(endpoint)
+        super().__init__(endpoint, registry, key="connectivity")
         self._attr_is_on = self._connected(endpoint)
         self._attr_extra_state_attributes = endpoint_public_attributes(endpoint)
-
-    @callback
-    def async_entity_id_changed(self, old_entity_id: str) -> None:
-        """Keep phone lookup and permissions attached to the renamed entity."""
-        super().async_entity_id_changed(old_entity_id)
-        async_link_endpoint_entity(
-            self.registry, self.endpoint.endpoint_id, self.entity_id, old_entity_id
-        )
-        self._linked_entity_id = self.entity_id
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        async_link_endpoint_entity(
-            self.registry, self.endpoint.endpoint_id, self.entity_id,
-            getattr(self, "_linked_entity_id", None),
-        )
-        self._linked_entity_id = self.entity_id
 
     @staticmethod
     def _connected(endpoint) -> bool:
@@ -143,7 +122,7 @@ class PhoneEndpointConnectivityBinarySensor(BinarySensorEntity):
 
     @callback
     def apply_endpoint(self, endpoint) -> None:
-        self.endpoint = endpoint
+        super().apply_endpoint(endpoint)
         self._attr_is_on = self._connected(endpoint)
         self._attr_extra_state_attributes = endpoint_public_attributes(endpoint)
         if self.hass is not None:
