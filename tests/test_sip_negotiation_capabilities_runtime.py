@@ -11,7 +11,7 @@ from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.media.codecs import CODECS
 from custom_components.voip_stack.core.audio_capabilities import (
     HA_AUDIO_CAPABILITIES,
-    local_rtp_audio_formats,
+    local_rtp_audio_candidates,
 )
 from custom_components.voip_stack.core.audio_format import (
     AudioFormat,
@@ -226,7 +226,7 @@ def _declared_wire_shapes():
                 )
     shapes = {
         (fmt.encoding, fmt.sample_rate, fmt.channels)
-        for fmt in local_rtp_audio_formats(preferred)
+        for fmt in local_rtp_audio_candidates(preferred)
         if not CODECS[fmt.encoding].auxiliary
     }
     return tuple(sorted(shapes))
@@ -427,7 +427,7 @@ def test_pcm_packet_budget_can_choose_below_an_advisory_minimum(
 def test_offer_maxptime_is_safe_for_every_receivable_mapping():
     preferred = [AudioFormat(8000, frame_ms=32)]
     hint = sdp.RtpPcmFormat(111, "L16", 192000, 2, 10)
-    receive = local_rtp_audio_formats(preferred, hints=(hint,), receive=True)
+    receive = local_rtp_audio_candidates(preferred, hints=(hint,), receive=True)
     assert any((fmt.sample_rate, fmt.channels) == (192000, 2) for fmt in receive)
     offer = sdp.build_offer_directional(
         "192.0.2.1",

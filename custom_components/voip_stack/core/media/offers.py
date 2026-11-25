@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from ..audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_formats
+from ..audio_capabilities import HA_AUDIO_CAPABILITIES, local_rtp_audio_candidates
 from ..audio_format import PcmFormat
 from ..codec_capabilities import codec_available
 from ..codec_policy import DEFAULT_AUDIO_CODECS
@@ -63,7 +63,7 @@ def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy,
                 if choice is not None:
                     fmt = replace(fmt, frame_ms=choice.packet_ms)
             hints.append(fmt)
-        values = list(local_rtp_audio_formats(list(formats), hints=hints, receive=receive))
+        values = list(local_rtp_audio_candidates(list(formats), hints=hints, receive=receive))
         if not common:
             values = [fmt for fmt in values if fmt.encoding in {"L16", "L24"}]
         if capabilities is None:

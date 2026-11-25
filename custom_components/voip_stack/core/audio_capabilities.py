@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 
 from .audio_format import AudioFormat, PcmFormat, UDP_SAFE_PAYLOAD_BYTES
 from .codec_capabilities import codec_available
-from .media.codecs import CODECS, OCTETS_PER_SAMPLE, PREFERRED_PAYLOADS
+from .media.codecs import CODECS, OCTETS_PER_SAMPLE
+from .media.packet_time import payload_octets
 
 if TYPE_CHECKING:
     from .sdp import RtpPcmFormat
@@ -27,17 +28,6 @@ def _whole(value: float) -> bool:
         and value >= 1
         and math.isclose(value, round(value), abs_tol=1e-8)
     )
-
-
-def _wire_bytes(fmt: RtpPcmFormat) -> int:
-    samples = fmt.sample_rate * fmt.frame_ms / 1000
-    width = OCTETS_PER_SAMPLE.get(
-        fmt.encoding
-    )
-    spec = CODECS.get(fmt.encoding)
-    if spec is not None and spec.frame_duration_ms and spec.max_frame_octets:
-        return math.ceil(fmt.frame_ms / spec.frame_duration_ms) * spec.max_frame_octets * fmt.channels
-    return math.ceil(samples * fmt.channels * width) if width is not None else 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +96,8 @@ class AudioCapabilities:
             budget = (
                 self.receive_payload_bytes if receive else self.transmit_payload_bytes
             )
-            return _wire_bytes(fmt) <= budget
+            size = payload_octets(spec, fmt.sample_rate, fmt.channels, fmt.frame_ms)
+            return size is not None and size <= budget
         except (ValueError, TypeError, OverflowError):
             return False
 
@@ -210,10 +201,14 @@ class AudioCapabilities:
 HA_AUDIO_CAPABILITIES = AudioCapabilities()
 
 
-def local_rtp_audio_formats(
+def local_rtp_audio_candidates(
     preferred: list[AudioFormat], *, hints=(), receive: bool = False
 ) -> tuple[RtpPcmFormat, ...]:
-    """Build local offers from real capabilities, using hints only for ranking."""
+    """List feasible candidates, using hints only for ranking.
+
+    Payload numbers here are placeholders. The complete offer's PayloadMap
+    assigns them after all audio, event and historical mappings are known.
+    """
     from .sdp import RtpPcmFormat
 
     candidates = []
@@ -252,31 +247,15 @@ def local_rtp_audio_formats(
                                 spec.frame_duration_ms or pcm.frame_ms))
     output = []
     seen = set()
-    static = {
-        **PREFERRED_PAYLOADS,
-    }
-    used = set(static.values())
-    mappings = {}
-    next_pt = 96
     for fmt in candidates:
         key = (fmt.encoding, fmt.sample_rate, fmt.channels, fmt.frame_ms)
         if key in seen or not HA_AUDIO_CAPABILITIES.supports_rtp(fmt, receive=receive):
             continue
         seen.add(key)
-        shape = key[:3]
-        payload = static.get(shape, mappings.get(shape))
-        if payload is None:
-            while next_pt in used:
-                next_pt += 1
-            if next_pt > 127:
-                break
-            payload = next_pt
-            mappings[shape] = payload
-            used.add(payload)
         output.append(
             replace(
                 fmt,
-                payload_type=payload,
+                payload_type=96,
                 max_frame_ms=HA_AUDIO_CAPABILITIES.max_receive_packet_ms(fmt)
                 if receive
                 else fmt.max_frame_ms,
