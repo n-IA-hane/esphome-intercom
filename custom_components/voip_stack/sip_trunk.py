@@ -672,7 +672,11 @@ class SipTrunkClient:
 
         # Silence from the registrar fails this REGISTER, not the UDP socket.
         # Its existing dialog leases still need BYE and target refresh traffic.
-        if not self._outbound_dialogs:
+        endpoint = self.inbound_endpoint
+        inbound_dialogs = endpoint is not None and (
+            endpoint.pending_invites or endpoint.active_dialogs
+        )
+        if not self._outbound_dialogs and not inbound_dialogs:
             self._close_udp_transport()
         while not self.responses.empty():
             with contextlib.suppress(asyncio.QueueEmpty):

@@ -213,3 +213,108 @@ async def test_lost_dialog_refresh_still_terminates(status):
     async def send(_method, **_kwargs):
         return sip.parse_message(sip.build_response(status, "Failure", [])) if status else None
     assert await sip_transaction.SessionTimerDriver(state, send, "uac", lambda: 1000).advance() == "session_timer_failed"
+
+
+@pytest.mark.parametrize("response", [503, None])
+@pytest.mark.parametrize("established", [False, True])
+async def test_register_failure_preserves_incoming_trunk_dialog_socket(response, established):
+    """Inbound INVITE uses the registration flow's real endpoint/send override."""
+    from types import SimpleNamespace
+
+    loop = asyncio.get_running_loop()
+    phase = "initial"
+    received = asyncio.Queue()
+    registrar_address = None
+
+    class Registrar(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, raw, address):
+            nonlocal registrar_address
+            message = sip.parse_message(raw)
+            if message.method != "REGISTER":
+                received.put_nowait(message)
+                return
+            registrar_address = address
+            if phase == "refresh" and response is None:
+                return
+            status = response if phase == "refresh" else 200
+            headers = [(name, message.header(name)) for name in ("Via", "From", "To", "Call-ID", "CSeq")]
+            headers.append(("Expires", message.header("Expires") or "300"))
+            self.transport.sendto(sip.build_response(status, "Witness", headers), address)
+
+    transport, peer = await loop.create_datagram_endpoint(Registrar, local_addr=("127.0.0.1", 0))
+    peer_port = transport.get_extra_info("sockname")[1]
+    client = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+        enabled=True, transport="udp", server="127.0.0.1", port=peer_port,
+        domain="test", username="line", auth_username="", password="", expires=300),
+        local_ip="127.0.0.1", local_sip_port=5060)
+    offer = ("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+        "m=audio 40000 RTP/AVP 96\r\na=rtpmap:96 L16/16000\r\na=ptime:20\r\na=sendrecv\r\n")
+
+    async def on_invite(invite):
+        from custom_components.voip_stack.core.sdp import build_answer_directional
+
+        answer = build_answer_directional("127.0.0.1", "127.0.0.1", 42000,
+            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats,
+            send_formats=invite.send_formats, remote_sdp=invite.remote_sdp,
+            dtmf_direction=invite.dtmf_direction)
+        return sip_listener.SipInviteResult(200 if established else 180, "Witness",
+            answer_sdp=answer if established else "", defer_final=not established)
+
+    client.attach_endpoint_manager(SimpleNamespace(local_ip="127.0.0.1", port=5060, local_rtp_port=42000,
+        supported_formats=[audio_format.AudioFormat(16000, frame_ms=20)], supported_send_formats=None,
+        supported_recv_formats=None, on_invite=on_invite, on_terminated=None))
+    call_id = "incoming-owned-flow"
+    uri = "sip:line@127.0.0.1"
+    headers = [("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_port};branch=z9hG4bK-inbound;rport"),
+        ("From", f"<sip:outside@127.0.0.1:{peer_port}>;tag=caller"), ("To", f"<{uri}>"),
+        ("Contact", f"<sip:outside@127.0.0.1:{peer_port}>"), ("Call-ID", call_id),
+        ("CSeq", "1 INVITE"), ("Content-Type", "application/sdp")]
+
+    async def reply_for(cseq, status):
+        async with asyncio.timeout(1):
+            while True:
+                message = await received.get()
+                if message.header("CSeq") == cseq and message.status_code == status:
+                    return message
+
+    old = None
+    try:
+        await client.start()
+        assert await client.wait_for_registration(timeout=1)
+        assert registrar_address is not None
+        transport.sendto(sip.build_request("INVITE", uri, headers, offer.encode()), registrar_address)
+        progress = await reply_for("1 INVITE", 200 if established else 180)
+        dialog_headers = [(name, progress.header(name)) for name in ("From", "To", "Call-ID")]
+        if established:
+            transport.sendto(sip.build_request("ACK", uri,
+                [("Via", f"SIP/2.0/UDP 127.0.0.1:{peer_port};branch=z9hG4bK-ack"), *dialog_headers,
+                 ("CSeq", "1 ACK")]), registrar_address)
+            assert call_id in client.inbound_endpoint.active_dialogs
+        else:
+            assert call_id in client.inbound_endpoint.pending_invites
+        assert not client._outbound_dialogs
+        old = client.transport
+        phase = "refresh"
+        assert await client.register(timeout=.03) == ("timeout" if response is None else "sip_503")
+        assert client.transport is old and not old.is_closing()
+        method = "BYE" if established else "CANCEL"
+        sequence = "2 BYE" if established else "1 CANCEL"
+        via = headers[0][1] if not established else f"SIP/2.0/UDP 127.0.0.1:{peer_port};branch=z9hG4bK-bye"
+        transport.sendto(sip.build_request(method, uri, [("Via", via), *dialog_headers,
+            ("CSeq", sequence)]), registrar_address)
+        await reply_for(sequence, 200)
+        if not established:
+            await reply_for("1 INVITE", 487)
+        assert call_id not in client.inbound_endpoint.active_dialogs
+        assert call_id not in client.inbound_endpoint.pending_invites
+        phase = "recovered"
+        assert await client.register(timeout=1) == "registered"
+        assert client.transport is old
+    finally:
+        phase = "cleanup"
+        await client.stop()
+        transport.close()
+    assert old is not None and old.is_closing()
