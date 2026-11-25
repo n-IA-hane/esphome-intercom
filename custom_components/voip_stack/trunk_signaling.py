@@ -26,7 +26,9 @@ def reuse_registered_trunk_flow(
         client.discover_media_sockets = lambda sockets: discover_pending_media(
             sockets, getattr(trunk, "media_stun_urls", None)
         )
-        client.local_contact_uri = getattr(trunk, "public_gruu", "") if getattr(trunk, "registered", False) else ""
+        public_gruu = getattr(trunk, "public_gruu", "") if getattr(trunk, "registered", False) else ""
+        if public_gruu:
+            client.local_contact_uri = public_gruu
     open_dialog = getattr(trunk, "open_outbound_dialog", None)
     if not callable(open_dialog):
         return False

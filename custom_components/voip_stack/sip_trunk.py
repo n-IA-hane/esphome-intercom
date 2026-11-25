@@ -668,9 +668,12 @@ class SipTrunkClient:
             transport.close()
 
     def _reset_udp_transport_after_timeout(self) -> None:
-        """Retire one failed UDP flow before the refresh owner retries."""
+        """Retire an unowned registration flow, never a live dialog's socket."""
 
-        self._close_udp_transport()
+        # Silence from the registrar fails this REGISTER, not the UDP socket.
+        # Its existing dialog leases still need BYE and target refresh traffic.
+        if not self._outbound_dialogs:
+            self._close_udp_transport()
         while not self.responses.empty():
             with contextlib.suppress(asyncio.QueueEmpty):
                 self.responses.get_nowait()

@@ -96,6 +96,22 @@ class SessionTimerDriver:
                 # Reaching it wakes the same owner, which then ends the call.
                 self.state.refresh_at = expiration
                 return "waiting"
+            if result == "rejected" and expiration and self.now() < expiration:
+                # RFC 4028: a non-terminal rejection does not revoke the
+                # established lease. Retry a temporary server failure once;
+                # another rejection waits for the original expiry, not a loop.
+                retry_at = expiration
+                if response.status_code in {500, 503} and not self.state.transient_retry_used:
+                    self.state.transient_retry_used = True
+                    value = response.header("Retry-After")
+                    try:
+                        delay = int(value.split(";", 1)[0].split(" ", 1)[0]) if value else 5
+                        if delay >= 0:
+                            retry_at = min(expiration, self.now() + max(1, delay))
+                    except ValueError:
+                        pass  # A malformed hint cannot move the live deadline.
+                self.state.refresh_at = retry_at
+                return "waiting"
             return "refreshed" if result == "refreshed" else "session_timer_failed"
         return "session_timer_failed"
 

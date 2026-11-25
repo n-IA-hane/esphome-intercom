@@ -351,9 +351,8 @@ class EndpointDialer:
                     self.config.get(CONF_VIDEO_TRANSCODING, False)
                 ),
             )
-            if not policy.use_trunk_flow:
-                from .sip_runtime import configure_local_contact
-                configure_local_contact(self.hass, client)
+            from .sip_runtime import configure_local_contact
+            configure_local_contact(self.hass, client)
             if policy.use_trunk_flow:
                 from .trunk_media import borrow_pending_media
                 borrow_pending_media(client, ports, video_relay)

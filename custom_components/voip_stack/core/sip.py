@@ -278,6 +278,7 @@ class SipSessionTimer:
     deadline: float = 0.0
     refresh_at: float = 0.0
     refresh_method: str = ""
+    transient_retry_used: bool = False
 
     def configure(
         self,
@@ -286,6 +287,7 @@ class SipSessionTimer:
         local_role: str,
         now: float = 0.0,
     ) -> None:
+        self.transient_retry_used = False
         if timer is None:
             self.interval = 0
             self.local_refresher = False
@@ -328,7 +330,7 @@ def apply_session_refresh_response(
         state.interval = max(state.interval, minimum)
         return "retry"
     if not 200 <= int(response.status_code or 0) < 300:
-        return "failed"
+        return "failed" if response.status_code in {408, 481} else "rejected"
     value = response.header("Session-Expires")
     if not value:
         state.configure(None, local_role=local_role)
@@ -1112,10 +1114,13 @@ def build_uas_response(
             ("Record-Route", value)
             for value in request.header_values("Record-Route")
         )
-    if 200 <= int(status_code) < 300 and request.method in {"INVITE", "UPDATE", "SUBSCRIBE", "NOTIFY"}:
+    establishes_dialog = request.method == "INVITE" and 101 <= int(status_code) < 300
+    successful_target_refresh = (200 <= int(status_code) < 300
+                                 and request.method in {"UPDATE", "SUBSCRIBE", "NOTIFY"})
+    if establishes_dialog or successful_target_refresh:
         if contact_uri:
             headers.append(("Contact", f"<{contact_uri}>"))
-        if request.method in {"INVITE", "UPDATE"}:
+        if 200 <= int(status_code) < 300 and request.method in {"INVITE", "UPDATE"}:
             headers.extend(session_timer_response_headers(request))
     if request.method == "INVITE" and 101 <= int(status_code) < 300:
         headers.append(("Supported", _contact_supported_options(contact_uri)))

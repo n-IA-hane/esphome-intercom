@@ -330,14 +330,15 @@ async def route_sip_bridge(
         generic_video_relay=bool(video_bridge_ports),
         allow_video_transcoding=video_transcoding_enabled,
     )
+    from ..sip_runtime import configure_local_contact
+    configure_local_contact(hass, client)
     if bridge_to_trunk:
         from ..trunk_media import borrow_pending_media
         borrow_pending_media(client, bridge_ports, video_relay)
         selected_trunk_id = getattr(decision, "trunk_id", "")
         reuse_registered_trunk_flow(sip_trunk(hass, selected_trunk_id) if selected_trunk_id else sip_trunk(hass), client)
     else:
-        from ..sip_runtime import configure_local_contact, select_registered_outbound_flow
-        configure_local_contact(hass, client)
+        from ..sip_runtime import select_registered_outbound_flow
         runtime.enable_reused_sip_tcp_connection(
             hass,
             client,

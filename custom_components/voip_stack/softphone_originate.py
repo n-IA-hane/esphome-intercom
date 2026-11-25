@@ -748,14 +748,15 @@ async def _async_prepare_browser_sip_call(
 
     from .browser_dialog_updates import attach_browser_dialog_updates
     attach_browser_dialog_updates(hass, client, endpoint_id, source_device_id)
+    from .sip_runtime import configure_local_contact
+    configure_local_contact(hass, client)
     if use_trunk and trunk is not None:
         from .trunk_signaling import reuse_registered_trunk_flow
 
         if reuse_registered_trunk_flow(trunk, client):
             _LOGGER.info("SIP trunk registered UDP flow reused for outbound call")
     else:
-        from .sip_runtime import configure_local_contact, select_registered_outbound_flow
-        configure_local_contact(hass, client)
+        from .sip_runtime import select_registered_outbound_flow
         _enable_reused_sip_tcp_connection(
             hass,
             client,
