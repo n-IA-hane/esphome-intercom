@@ -18,6 +18,7 @@ from .core.media.capability import PeerEvidence
 from .core import sdp
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
+from .peer_media_profile import legacy_pcm_compatibility, resolve_peer_media_profile
 from .roster import RosterEntry, find_entry, normalize_roster_key
 from .router import RouteAction, RouteDecision, RouteReason, resolve_ha_router
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, runtime_data
@@ -46,7 +47,7 @@ class SipAudioCapabilityProfile:
             recv_formats=tuple(dict.fromkeys(fmt.audio_format for fmt in plan.receive_formats)),
             send_rtp_formats=plan.send_formats, recv_rtp_formats=plan.receive_formats,
             evidence=evidence, codec_policy=codec_policy,
-            include_dahua_pcm=plan.include_dahua_pcm, match_received_codec=plan.match_received_codec)
+            include_dahua_pcm=("PCM", 16000, 1) in plan.compatibility.optional_mappings, match_received_codec=plan.match_received_codec)
 
 
 def _binding_audio_evidence(entry):
@@ -59,9 +60,12 @@ def _binding_audio_evidence(entry):
 def sip_target_rtp_audio_profile(entry, *, codec_policy=None, peer_user_agent=None, trunk=False):
     """Get one engine plan from backend capabilities and Contact-scoped SDP facts."""
     evidence = _binding_audio_evidence(entry)
+    profile = resolve_peer_media_profile(dict(getattr(entry, "metadata", None) or {}),
+        user_agent_override=peer_user_agent)
     plan = negotiator.sip_offer_plan(evidence, codec_policy=codec_policy,
-        peer_metadata=dict(getattr(entry, "metadata", None) or {}),
-        peer_user_agent=peer_user_agent, trunk=trunk)
+        compatibility=profile.audio_compatibility,
+        symmetric_preferences=trunk or profile.is_dahua or profile.include_dahua_pcm,
+        match_received_codec=profile.match_received_codec)
     return SipAudioCapabilityProfile.from_plan(plan, evidence=evidence, codec_policy=codec_policy)
 
 
@@ -71,7 +75,7 @@ def bridge_audio_profile(invite, profile):
         send_rtp_formats=profile.send_rtp_formats,
         receive_rtp_formats=profile.recv_rtp_formats,
         evidence=profile.evidence, codec_policy=profile.codec_policy,
-        common=False, dahua=profile.include_dahua_pcm,
+        common=False, compatibility=legacy_pcm_compatibility(profile.include_dahua_pcm),
         match_received_codec=profile.match_received_codec)
     return SipAudioCapabilityProfile.from_plan(plan,
         evidence=profile.evidence, codec_policy=profile.codec_policy)

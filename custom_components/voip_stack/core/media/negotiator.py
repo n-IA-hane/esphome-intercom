@@ -18,7 +18,7 @@ from ..sdp_audio_facts import offered_pcm_formats, offered_dtmf_formats
 from ..codec_policy import DEFAULT_AUDIO_CODECS
 from ..audio_format import PcmFormat
 from . import leg
-from .capability import PeerEvidence, resolve_peer_media_profile
+from .capability import PeerEvidence, MediaCompatibility
 from .payload_map import PayloadMap, PayloadConflict, TELEPHONE_EVENT
 from .codecs import CODECS, DEFAULT_OPUS_RECEIVE_FMTP
 
@@ -75,7 +75,7 @@ def answer_audio_projection(audio, *, direction, remote_sdp=None):
     return tuple(selected), packet_ms, maximum
 
 
-def validate_answer_contract(audio, answer_sdp, *, events=None, dahua=False, remote_sdp=None):
+def validate_answer_contract(audio, answer_sdp, *, events=None, compatibility=MediaCompatibility(), remote_sdp=None):
     """Validate serialization of an already chosen answer without selecting again."""
     section = parse_sdp(answer_sdp)
     remote_direction = parse_sdp(remote_sdp)['direction'] if remote_sdp else 'sendrecv'
@@ -86,7 +86,7 @@ def validate_answer_contract(audio, answer_sdp, *, events=None, dahua=False, rem
         expected = tuple(dict.fromkeys((*expected, *(audio.send_formats or (audio.send,)))))
     def key(fmt):
         return fmt.payload_type, fmt.encoding, fmt.sample_rate, fmt.channels
-    actual = offered_pcm_formats(answer_sdp, allow_dahua_pcm=dahua, include_auxiliary=True)
+    actual = offered_pcm_formats(answer_sdp, optional_mappings=compatibility.optional_mappings, include_auxiliary=True)
     projected, packet_ms, maximum = answer_audio_projection(audio,
         direction=section['direction'], remote_sdp=remote_sdp)
     if {key(fmt) for fmt in projected} != {key(fmt) for fmt in expected}:
@@ -112,7 +112,8 @@ def validate_answer_contract(audio, answer_sdp, *, events=None, dahua=False, rem
         raise SdpError("answer changed the chosen receiver envelope")
 
 
-def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabilities=None) -> leg.LegPolicy:
+def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabilities=None,
+                   compatibility=MediaCompatibility()) -> leg.LegPolicy:
     """Convert explicit preferences and capabilities into the leg engine's input."""
     send = tuple(send_formats)
     receive = tuple(receive_formats)
@@ -129,28 +130,28 @@ def policy_for_leg(send_formats, receive_formats, *, codec_policy=None, capabili
         codec_policy_explicit=bool(getattr(codec_policy, "audio_configured", enabled is not None)),
         send_capabilities=send if capabilities is None else None,
         receive_capabilities=receive if capabilities is None else None,
-        capabilities=capabilities,
+        capabilities=capabilities, compatibility=compatibility,
     )
 
 
 def answer_offer(remote_sdp, send_formats, receive_formats, *, codec_policy=None,
-                 capabilities=None, dahua=False, established: LegContract | None = None,
+                 capabilities=None, compatibility=MediaCompatibility(), established: LegContract | None = None,
                  receive_capabilities=None, previous_payloads=None):
     """Choose one local answer from actual local capabilities and a remote offer."""
-    policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities)
+    policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities, compatibility=compatibility)
     if receive_capabilities is not None:
         policy = replace(policy, receive_capabilities=tuple(receive_capabilities))
-    return _remember_payloads(leg.answer_offer(remote_sdp, policy, dahua=dahua, established=established), previous_payloads)
+    return _remember_payloads(leg.answer_offer(remote_sdp, policy, established=established), previous_payloads)
 
 
 def apply_answer(local_offer_sdp, remote_sdp, send_formats, receive_formats, *,
-                 codec_policy=None, capabilities=None, dahua=False, format_direction=None,
+                 codec_policy=None, capabilities=None, compatibility=MediaCompatibility(), format_direction=None,
                  established: LegContract | None = None, previous_payloads=None):
     """Apply an answer to its exact offer, or to supplied capabilities for compatibility."""
     send_formats, receive_formats = tuple(send_formats), tuple(receive_formats)
     return _remember_payloads(leg.apply_answer(local_offer_sdp, remote_sdp,
-        policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities),
-        dahua=dahua, format_direction=format_direction,
+        policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities, compatibility=compatibility),
+        format_direction=format_direction,
         send_preferred=send_formats, receive_preferred=receive_formats, established=established), previous_payloads)
 
 
@@ -188,28 +189,26 @@ def renegotiate(remote_sdp, previous: LegContract, send_formats, receive_formats
 
 
 def create_offer(send_formats, receive_formats, evidence: PeerEvidence | None = None, *, codec_policy=None,
-                 capabilities=None, previous: PayloadMap | None = None, **options) -> OfferPlan:
+                 capabilities=None, previous: PayloadMap | None = None,
+                 compatibility=MediaCompatibility(), **options) -> OfferPlan:
     """Plan a complete offer, or reduce it from complete binding evidence."""
-    policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities)
+    policy = policy_for_leg(send_formats, receive_formats, codec_policy=codec_policy, capabilities=capabilities, compatibility=compatibility)
     from .offers import create_complete_offer
     return create_complete_offer(policy, send_formats, receive_formats, capabilities=capabilities,
                                  previous=previous, codec_policy=codec_policy, evidence=evidence, **options)
 
 
-def sip_offer_plan(evidence=None, *, codec_policy=None, peer_metadata=None,
-                   peer_user_agent=None, trunk=False):
-    """Own route and documented peer preferences over the same backend capabilities."""
+def sip_offer_plan(evidence=None, *, codec_policy=None, compatibility=MediaCompatibility(),
+                   symmetric_preferences=False, match_received_codec=False):
+    """Plan a SIP offer from normalized preferences over the backend capabilities."""
     from ..audio_capabilities import HA_AUDIO_CAPABILITIES
     from ..audio_format import HA_SIP_PCM_TX_FORMATS, HA_SIP_PCM_RX_FORMATS, HA_TRUNK_AUDIO_FORMATS
 
-    profile = resolve_peer_media_profile(peer_metadata, user_agent_override=peer_user_agent)
-    compatibility_preferences = trunk or profile.is_dahua or profile.include_dahua_pcm
-    send = HA_TRUNK_AUDIO_FORMATS if compatibility_preferences else HA_SIP_PCM_TX_FORMATS
-    receive = HA_TRUNK_AUDIO_FORMATS if compatibility_preferences else HA_SIP_PCM_RX_FORMATS
+    send = HA_TRUNK_AUDIO_FORMATS if symmetric_preferences else HA_SIP_PCM_TX_FORMATS
+    receive = HA_TRUNK_AUDIO_FORMATS if symmetric_preferences else HA_SIP_PCM_RX_FORMATS
     plan = create_offer(send, receive, evidence, codec_policy=codec_policy,
-        capabilities=HA_AUDIO_CAPABILITIES, common=True, dahua=profile.include_dahua_pcm)
-    return replace(plan, include_dahua_pcm=profile.include_dahua_pcm,
-                   match_received_codec=profile.match_received_codec)
+        capabilities=HA_AUDIO_CAPABILITIES, common=True, compatibility=compatibility)
+    return replace(plan, match_received_codec=match_received_codec)
 
 
 def browser_media_contract():

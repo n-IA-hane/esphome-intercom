@@ -119,6 +119,7 @@ def offered_pcm_formats(
     sdp: str | bytes,
     *,
     allow_dahua_pcm: bool = False,
+    optional_mappings=(),
     capabilities: bool = False,
     include_auxiliary: bool = False,
 ) -> list[RtpPcmFormat]:
@@ -129,15 +130,14 @@ def offered_pcm_formats(
         if spec is None:
             continue
         encoding, rate, channels = spec
-        if encoding == "PCM":
-            if (
-                not allow_dahua_pcm
-                or pt < 96
-                or rate != 16000
-                or channels != 1
-            ):
-                continue
-        elif encoding not in CODECS or (CODECS[encoding].auxiliary and not include_auxiliary):
+        codec = CODECS.get(encoding)
+        if codec is None or (codec.auxiliary and not include_auxiliary):
+            continue
+        # The legacy flag is retained only at this public parsing boundary.
+        admitted = optional_mappings or ((("PCM", 16000, 1),) if allow_dahua_pcm else ())
+        if codec.requires_opt_in and (spec not in admitted or pt < 96):
+            continue
+        if codec.wire_geometries and (rate, channels) not in codec.wire_geometries:
             continue
         out.append(
             RtpPcmFormat(
@@ -145,7 +145,7 @@ def offered_pcm_formats(
                 encoding,
                 rate,
                 channels,
-                20 if encoding == "PCM" and not parsed["ptime"] else parsed["ptime"],
+                codec.assumed_packet_ms if codec.requires_opt_in and not parsed["ptime"] else parsed["ptime"],
                 parsed["minptime"],
                 parsed["maxptime"],
                 str(parsed["fmtp"].get(pt) or ""),

@@ -7,9 +7,7 @@ were declared for and are never combined across rates or codecs. It carries no p
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from collections.abc import Mapping
-from typing import Any
-from ..codec_capabilities import supports_dahua_pcm
+from enum import StrEnum
 from math import isfinite
 
 from .packet_time import PacketTimes
@@ -98,34 +96,22 @@ def constrain_formats(formats, declaration):
         and times.contains(fmt.frame_ms))
 
 
+class AnswerOrder(StrEnum):
+    """Precedence for the first outbound mapping of a bidirectional answer."""
+
+    LOCAL = "local"
+    PEER = "peer"
+    PEER_IF_UNCONFIGURED = "peer_if_unconfigured"
+
+
 @dataclass(frozen=True, slots=True)
-class PeerMediaProfile:
-    is_dahua: bool
-    include_dahua_pcm: bool
-    explicit_dahua: bool
-    match_received_codec: bool = False
+class MediaCompatibility:
+    """Normalized interoperation inputs; the engine never identifies a device.
 
-
-def resolve_peer_media_profile(
-    metadata: Mapping[str, Any] | None,
-    user_agent_override: str | None = None,
-) -> PeerMediaProfile:
-    """Keep PCM opt-in independent of the Dahua video compatibility profile.
-
-    Registered contact metadata historically stores a detected profile for the
-    primary binding. A chosen binding's actual User-Agent takes precedence over
-    that derived value. Static contacts can explicitly select their profile.
+    Optional mappings still require a supported codec and feasible geometry.
+    Payload preferences cannot replace a live or retired dialog mapping.
     """
-    metadata = metadata or {}
-    user_agent = str(
-        metadata.get("user_agent") or ""
-        if user_agent_override is None else user_agent_override
-    ).strip()
-    detected = supports_dahua_pcm(user_agent)
-    configured = str(metadata.get("sip_profile") or "auto").strip().casefold() == "dahua"
-    explicit = configured and not metadata.get("registered", False)
-    legacy = configured and user_agent_override is None and not user_agent
-    is_dahua = explicit or detected or legacy
-    choice = str(metadata.get("dahua_audio") or "auto").strip().casefold()
-    include_pcm = choice in {"pcm", "symmetric"} or (choice == "auto" and detected)
-    return PeerMediaProfile(is_dahua, include_pcm, explicit, is_dahua and choice == "symmetric")
+
+    optional_mappings: tuple[RtpMapping, ...] = ()
+    payload_preferences: tuple[tuple[RtpMapping, int], ...] = ()
+    answer_order: AnswerOrder = AnswerOrder.LOCAL

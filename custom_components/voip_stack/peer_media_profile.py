@@ -1,5 +1,53 @@
-"""Public contact-policy values supplied by the existing media engine."""
+"""Translate contact-specific compatibility into neutral media policy."""
 
-from .core.media.capability import PeerMediaProfile, resolve_peer_media_profile
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
 
-__all__ = ["PeerMediaProfile", "resolve_peer_media_profile"]
+from .core.codec_capabilities import supports_dahua_pcm
+from .core.media.capability import AnswerOrder, MediaCompatibility
+
+
+def legacy_pcm_compatibility(enabled: bool) -> MediaCompatibility:
+    """Preserve the existing opt-in PCM/16000 little-endian wire contract."""
+    return (MediaCompatibility(
+        optional_mappings=(("PCM", 16000, 1),),
+        payload_preferences=((("PCM", 16000, 1), 97),),
+        answer_order=AnswerOrder.PEER_IF_UNCONFIGURED,
+    ) if enabled else MediaCompatibility())
+
+
+@dataclass(frozen=True, slots=True)
+class PeerMediaProfile:
+    is_dahua: bool
+    include_dahua_pcm: bool
+    explicit_dahua: bool
+    match_received_codec: bool = False
+
+    @property
+    def audio_compatibility(self) -> MediaCompatibility:
+        return legacy_pcm_compatibility(self.include_dahua_pcm)
+
+
+def resolve_peer_media_profile(
+    metadata: Mapping[str, Any] | None,
+    user_agent_override: str | None = None,
+) -> PeerMediaProfile:
+    """Keep PCM opt-in independent of the Dahua video compatibility profile.
+
+    A selected Contact's actual User-Agent outranks a previously detected
+    registration profile. Static contacts can explicitly select their profile.
+    """
+    metadata = metadata or {}
+    user_agent = str(
+        metadata.get("user_agent") or ""
+        if user_agent_override is None else user_agent_override
+    ).strip()
+    detected = supports_dahua_pcm(user_agent)
+    configured = str(metadata.get("sip_profile") or "auto").strip().casefold() == "dahua"
+    explicit = configured and not metadata.get("registered", False)
+    legacy = configured and user_agent_override is None and not user_agent
+    is_dahua = explicit or detected or legacy
+    choice = str(metadata.get("dahua_audio") or "auto").strip().casefold()
+    include_pcm = choice in {"pcm", "symmetric"} or (choice == "auto" and detected)
+    return PeerMediaProfile(is_dahua, include_pcm, explicit, is_dahua and choice == "symmetric")

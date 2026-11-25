@@ -57,6 +57,9 @@ class CodecSpec:
     pyav_encoder: str | None = None
     bit_rate: int = 0
     frame_octets_by_tag: tuple[int, ...] = ()
+    # Nonstandard wire encodings require an explicitly admitted mapping.
+    requires_opt_in: bool = False
+    wire_geometries: tuple[tuple[int, int], ...] = ()
 
     @property
     def bits_per_sample(self) -> int | None:
@@ -74,10 +77,9 @@ CODECS: dict[str, CodecSpec] = {
                   assumed_packet_ms=20, pyav_decoder="g722", pyav_encoder="g722", bit_rate=64000),
         CodecSpec("L16", 2, static_mappings=((10, 44100, 2), (11, 44100, 1))),
         CodecSpec("L24", 3, decodes_to_24_bit=True),
-        # Dahua door stations label signed 16 bit little endian samples as
-        # PCM/16000. It is gated by a profile during negotiation; on the wire
-        # it has the same two octet sample envelope as L16.
-        CodecSpec("PCM", 2),
+        # Optional signed 16 bit little-endian samples on the RTP wire.
+        CodecSpec("PCM", 2, assumed_packet_ms=20, requires_opt_in=True,
+                  wire_geometries=((16000, 1),)),
         # Always opus/48000/2 on the wire (RFC 7587 7); decoded here to mono.
         CodecSpec("OPUS", None, conventional_payload=98, conventional_clock_rate=48000,
                   conventional_channels=2, decoded_rate=48000, decoded_channels=1,

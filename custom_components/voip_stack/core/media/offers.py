@@ -45,7 +45,7 @@ def expand_configured_linear_formats(values, formats, codec_policy, *, receive,
     return values
 
 
-def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy,
+def _catalog(formats, explicit, *, receive, common, capabilities, policy,
              codec_policy=None, declared=()):
     if explicit is not None:
         values = list(explicit)
@@ -68,8 +68,17 @@ def _catalog(formats, explicit, *, receive, common, dahua, capabilities, policy,
             values = [fmt for fmt in values if fmt.encoding in {"L16", "L24"}]
         if capabilities is None:
             values = [fmt for fmt in values if fmt.audio_format in formats]
-        if dahua and any(pcm.sample_rate == 16000 and pcm.channels == 1 and pcm.pcm_format is PcmFormat.S16LE for pcm in formats):
-            values.insert(0, RtpPcmFormat(97, "PCM", 16000, 1, 20))
+        extra = []
+        for mapping in policy.compatibility.optional_mappings:
+            spec = CODECS.get(mapping[0])
+            if spec is None or not spec.requires_opt_in:
+                continue
+            candidate = RtpPcmFormat(96, *mapping, spec.assumed_packet_ms or policy.default_packet_ms)
+            geometry = candidate.audio_format
+            if any((pcm.sample_rate, pcm.channels, pcm.pcm_format) ==
+                   (geometry.sample_rate, geometry.channels, geometry.pcm_format) for pcm in formats):
+                extra.append(candidate)
+        values[:0] = extra
         if capabilities is not None:
             # Presets rank PCM geometry; an explicit standard PCM codec can
             # use the dynamic HA converter at another supported sample width.
@@ -122,7 +131,7 @@ def _declared_catalog(values, declaration, *, explicit, capabilities, receive):
 
 def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_formats=None,
                           recv_rtp_formats=None, audio_rtp_formats=None, common=False,
-                          dahua=False, direction="sendrecv",
+                          direction="sendrecv",
                           capabilities=None, previous=None, codec_policy=None, evidence=None):
     """Plan one full or explicitly constrained offer; never guess missing codecs."""
     # A sendrecv m-line advertises formats usable in either direction. Local
@@ -134,10 +143,10 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     known_receive = evidence is not None and (evidence.complete or evidence.receive_geometry_complete)
     peer_sends = evidence.sends if known_send else ()
     peer_receives = evidence.receives if known_receive else ()
-    sends = (_catalog(send_formats, send_rtp_formats, receive=False, common=common, dahua=dahua,
+    sends = (_catalog(send_formats, send_rtp_formats, receive=False, common=common,
                       capabilities=capabilities, policy=policy, codec_policy=codec_policy,
                       declared=peer_receives) if direction != "recvonly" else [])
-    receives = (_catalog(receive_formats, recv_rtp_formats, receive=True, common=common, dahua=dahua,
+    receives = (_catalog(receive_formats, recv_rtp_formats, receive=True, common=common,
                          capabilities=capabilities, policy=policy, codec_policy=codec_policy,
                          declared=peer_sends) if direction != "sendonly" else [])
     explicit = send_rtp_formats is not None or recv_rtp_formats is not None
@@ -148,9 +157,9 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
         # add new alternatives only; they do not widen an existing entry's role.
         # A vendor PCM permission alone never expands a complete RTP catalog.
         known = {_key(fmt) for fmt in (*sends, *receives)}
-        extra_send = (_catalog(send_formats, None, receive=False, common=common, dahua=dahua,
+        extra_send = (_catalog(send_formats, None, receive=False, common=common,
                               capabilities=capabilities, policy=policy) if direction != "recvonly" else [])
-        extra_receive = (_catalog(receive_formats, None, receive=True, common=common, dahua=dahua,
+        extra_receive = (_catalog(receive_formats, None, receive=True, common=common,
                                  capabilities=capabilities, policy=policy) if direction != "sendonly" else [])
         extra_keys = ({_key(fmt) for fmt in extra_send} & {_key(fmt) for fmt in extra_receive}
                       if direction not in {"sendonly", "recvonly"} else
@@ -255,12 +264,10 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
     for fmt in explicit_rows:
         if _key(fmt) in ordered:
             preferences.setdefault(_key(fmt), fmt.payload_type)
-    # Existing Dahua firmware sends its private PCM codec on 97. Keep the
-    # target's conventional offer seed without displacing explicit mappings;
-    # PayloadMap still gives every live or retired dialog meaning precedence.
-    dahua_pcm = ("PCM", 16000, 1)
-    if dahua and dahua_pcm in ordered and 97 not in preferences.values():
-        preferences.setdefault(dahua_pcm, 97)
+    # Explicit rows and dialog history outrank compatibility preferences.
+    for mapping, number in policy.compatibility.payload_preferences:
+        if mapping in ordered and number not in preferences.values():
+            preferences.setdefault(mapping, number)
     numbered = PayloadMap.for_offer([*ordered, *auxiliary, *((TELEPHONE_EVENT, clock, 1) for clock in events)],
                                     previous=previous, preferences=preferences)
     numbers = {mapping: number for number, mapping in numbered.receive.items()}
@@ -274,4 +281,4 @@ def create_complete_offer(policy, send_formats, receive_formats, *, send_rtp_for
         (f"S1 offered {len(primary)} enabled primary mappings", f"R1 ask {packet_ms or 'unspecified'} ms"),
         formats=(*primary, *aux_formats), send_formats=mapped_sends, receive_formats=mapped_receives,
         events=tuple(RtpDtmfFormat(numbers[(TELEPHONE_EVENT, clock, 1)], clock) for clock in events),
-        maximum_ms=maximum, include_dahua_pcm=dahua)
+        maximum_ms=maximum, compatibility=policy.compatibility)

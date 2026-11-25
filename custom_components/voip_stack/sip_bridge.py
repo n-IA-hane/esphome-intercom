@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .peer_media_profile import legacy_pcm_compatibility
+
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 import logging
@@ -32,7 +34,7 @@ def bridge_source_audio(invite: SipInvite, destination: SipDialog) -> SipInvite:
         frozen=invite.initial_response_sent, codec_policy=invite.codec_policy,
         send_capabilities=invite.local_send_capabilities,
         receive_capabilities=invite.local_recv_capabilities,
-        capabilities=invite.local_audio_capabilities, dahua=invite.peer_profile == "dahua")
+        capabilities=invite.local_audio_capabilities, compatibility=legacy_pcm_compatibility(invite.peer_profile == "dahua"))
     if (plan.caller.send == invite.send_format and plan.caller.recv == invite.recv_format
             and plan.caller.recv_formats == invite.recv_formats and plan.caller.send_formats == invite.send_formats):
         return invite

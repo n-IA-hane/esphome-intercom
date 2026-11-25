@@ -1,6 +1,9 @@
 """The existing Dahua offer seed cannot override explicit or historical RTP meaning."""
 
+from dataclasses import replace
+
 import pytest
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from custom_components.voip_stack.core.audio_format import HA_TRUNK_AUDIO_FORMATS
@@ -15,8 +18,9 @@ L16 = ("L16", 16000, 1)
 
 
 def offer(**options):
-    return create_complete_offer(TRUNK_POLICY, HA_TRUNK_AUDIO_FORMATS, HA_TRUNK_AUDIO_FORMATS,
-        common=True, dahua=True, capabilities=HA_AUDIO_CAPABILITIES, **options)
+    return create_complete_offer(replace(TRUNK_POLICY, compatibility=legacy_pcm_compatibility(True)),
+        HA_TRUNK_AUDIO_FORMATS, HA_TRUNK_AUDIO_FORMATS,
+        common=True, capabilities=HA_AUDIO_CAPABILITIES, **options)
 
 
 def test_default_dahua_pcm_preserves_the_original_issue_115_and_161_wire_number():

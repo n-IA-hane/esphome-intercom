@@ -6,7 +6,7 @@ from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.local_softphone_bridge import LocalSoftphoneBridge
 from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
 from custom_components.voip_stack.core import sdp
-from custom_components.voip_stack.core.media.capability import resolve_peer_media_profile
+from custom_components.voip_stack.peer_media_profile import resolve_peer_media_profile
 
 pytestmark = pytest.mark.ha
 

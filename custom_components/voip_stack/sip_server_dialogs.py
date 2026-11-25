@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .peer_media_profile import legacy_pcm_compatibility
+
 import asyncio
 import errno
 from dataclasses import replace
@@ -974,7 +976,7 @@ class SipServerDialogs:
                 validate_answer_contract(sdp.RtpPcmDirection(updated_invite.send_format,
                     updated_invite.recv_format, updated_invite.recv_formats, updated_invite.send_formats),
                     answer_sdp, events=updated_invite.dtmf_direction,
-                    dahua=updated_invite.peer_profile == "dahua", remote_sdp=request.body)
+                    compatibility=legacy_pcm_compatibility(updated_invite.peer_profile == "dahua"), remote_sdp=request.body)
             except (ValueError, sdp.SdpError):
                 status, reason = 488, "Not Acceptable Here"
         next_sdp_version = int(dialog.local_sdp_session_version)

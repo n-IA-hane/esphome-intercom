@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 
+from ..peer_media_profile import legacy_pcm_compatibility
 from .audio_format import AudioFormat
 from .media.codecs import DEFAULT_OPUS_RECEIVE_FMTP
 from .imageattr import serialize_imageattr
@@ -137,7 +138,7 @@ def build_offer_directional(
         plan = negotiator.create_offer(send_formats, recv_formats, codec_policy=codec_policy,
             capabilities=local_capabilities, audio_rtp_formats=audio_rtp_formats,
             send_rtp_formats=send_rtp_formats, recv_rtp_formats=recv_rtp_formats,
-            common=include_common_codecs, dahua=include_dahua_pcm,
+            common=include_common_codecs, compatibility=legacy_pcm_compatibility(include_dahua_pcm),
             direction=audio_direction, previous=previous_payloads)
     except ValueError as error:
         raise SdpError(str(error)) from error

@@ -10,6 +10,7 @@ from dataclasses import replace
 import json
 
 import pytest
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 from custom_components.voip_stack.core import sdp
 from custom_components.voip_stack.core.audio_capabilities import HA_AUDIO_CAPABILITIES
@@ -30,10 +31,10 @@ def contract(step):
     send, receive = POLICIES[step.policy]
     dahua = step.profile == "dahua_pcm"
     return (negotiator.answer_offer(step.sdp, send, receive,
-                capabilities=HA_AUDIO_CAPABILITIES, dahua=dahua)
+                capabilities=HA_AUDIO_CAPABILITIES, compatibility=legacy_pcm_compatibility(dahua))
             if step.op == "answer_offer" else
             negotiator.apply_answer(step.local_offer, step.sdp, send, receive,
-                capabilities=HA_AUDIO_CAPABILITIES, dahua=dahua))
+                capabilities=HA_AUDIO_CAPABILITIES, compatibility=legacy_pcm_compatibility(dahua)))
 
 
 def negotiate(step) -> dict:

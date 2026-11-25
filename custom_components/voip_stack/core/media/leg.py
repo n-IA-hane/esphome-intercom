@@ -18,6 +18,7 @@ from ..sdp_parser import parse_sdp
 from ..sdp_types import RtpDtmfDirection, RtpDtmfFormat, RtpPcmFormat
 from .codecs import DEFAULT_OPUS_RECEIVE_FMTP
 from .codecs import CODECS
+from .capability import AnswerOrder, MediaCompatibility
 from .packet_time import PacketTimes, ReceiverBounds, choose_transmit_packet_ms
 from .payload_map import TELEPHONE_EVENT, RtpMapping, PayloadMap
 
@@ -45,6 +46,7 @@ class LegPolicy:
     receive_capabilities: tuple[AudioFormat, ...] | None = None
     capabilities: AudioCapabilities | None = HA_AUDIO_CAPABILITIES
     codec_policy_explicit: bool = False
+    compatibility: MediaCompatibility = MediaCompatibility()
 
 
 PHONE_POLICY = LegPolicy(
@@ -82,7 +84,7 @@ def _geometry(fmt: RtpPcmFormat) -> Geometry:
     return (spec.decoded_rate or fmt.sample_rate, spec.decoded_channels or fmt.channels)
 
 
-def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool, send=True, receive=True) -> bool:
+def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, send=True, receive=True) -> bool:
     """Require enabled policy, a working adapter and a supported wire mapping."""
     name = fmt.encoding
     if name not in CODECS or (policy.encodings is not None and name not in policy.encodings):
@@ -105,8 +107,11 @@ def _usable(fmt: RtpPcmFormat, policy: LegPolicy, *, dahua: bool, send=True, rec
         return (fmt.sample_rate, fmt.channels) == (8000, 1)
     if name in {"PCMA", "PCMU"}:
         return fmt.sample_rate == 8000
-    if name == "PCM":
-        return dahua and (fmt.sample_rate, fmt.channels) == (16000, 1)
+    spec = CODECS[name]
+    if spec.requires_opt_in and (name, fmt.sample_rate, fmt.channels) not in policy.compatibility.optional_mappings:
+        return False
+    if spec.wire_geometries:
+        return (fmt.sample_rate, fmt.channels) in spec.wire_geometries
     if CODECS[name].pyav_decoder:
         spec = CODECS[name]
         return (fmt.sample_rate, fmt.channels) == (
@@ -252,7 +257,7 @@ def receive_auxiliary_formats(remote_sdp, primary: RtpPcmFormat, policy: LegPoli
 
 
 def answer_offer(
-    remote_sdp, policy: LegPolicy, *, dahua: bool = False, established: LegContract | None = None,
+    remote_sdp, policy: LegPolicy, *, established: LegContract | None = None,
 ) -> LegContract | Refusal:
     """Answer a remote audio offer.
 
@@ -267,8 +272,8 @@ def answer_offer(
     needs_receive = remote_direction != "recvonly"
     # RFC 3264 permits either endpoint to send any accepted mapping. A private
     # per-payload direction must not narrow the standard capability contract.
-    offered = [fmt for fmt in offered_pcm_formats(remote_sdp, allow_dahua_pcm=dahua)
-               if _usable(fmt, policy, dahua=dahua, send=needs_send, receive=needs_receive)]
+    offered = [fmt for fmt in offered_pcm_formats(remote_sdp, optional_mappings=policy.compatibility.optional_mappings)
+               if _usable(fmt, policy, send=needs_send, receive=needs_receive)]
     if not offered:
         return Refusal("no offered codec is enabled and available", tuple(trace))
     peer_receives = peer_sends = offered
@@ -367,7 +372,7 @@ def _preferred_receiver(fmt: RtpPcmFormat, policy: LegPolicy, preferred):
     return len(preferred), None
 
 
-def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool = False,
+def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *,
                  format_direction: str | None = None, send_preferred=(), receive_preferred=(),
                  established: LegContract | None = None) -> LegContract | Refusal:
     """Apply an answer to its offer, or to local capabilities when no offer was supplied.
@@ -376,7 +381,7 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     It cannot establish an offered payload history or an advertised receiver that is absent.
     """
     trace: list[str] = []
-    offered = (offered_pcm_formats(local_offer_sdp, allow_dahua_pcm=dahua)
+    offered = (offered_pcm_formats(local_offer_sdp, optional_mappings=policy.compatibility.optional_mappings)
                if local_offer_sdp is not None else None)
     local = {_mapping(fmt): fmt for fmt in offered} if offered is not None else None
     local_send = local_receive = {_mapping(fmt): fmt for fmt in offered or ()}
@@ -388,8 +393,8 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
         own_mappings = local_send if sending else local_receive
         return local is None or _mapping(fmt) in own_mappings
 
-    answered = [fmt for fmt in offered_pcm_formats(answer_sdp, allow_dahua_pcm=dahua)
-                if (local is None or _mapping(fmt) in local) and _usable(fmt, policy, dahua=dahua,
+    answered = [fmt for fmt in offered_pcm_formats(answer_sdp, optional_mappings=policy.compatibility.optional_mappings)
+                if (local is None or _mapping(fmt) in local) and _usable(fmt, policy,
                     send=needs_send and permits(fmt, sending=True),
                     receive=needs_receive and permits(fmt, sending=False))]
     if not answered:
@@ -409,11 +414,12 @@ def apply_answer(local_offer_sdp, answer_sdp, policy: LegPolicy, *, dahua: bool 
     if local is None and not needs_send:
         send_candidates = sorted(answered, key=lambda fmt: (
             _preferred_receiver(fmt, policy, receive_preferred)[0], answered.index(fmt)))
-    elif (directional and dahua and established is None
-          and not policy.codec_policy_explicit and not policy.codec_order):
-        # The Dahua PCM option adds receive compatibility. It must not replace
-        # the answerer's preferred initial transmit codec with a local PCM rank.
+    elif (directional and established is None
+          and (policy.compatibility.answer_order is AnswerOrder.PEER
+               or (policy.compatibility.answer_order is AnswerOrder.PEER_IF_UNCONFIGURED
+                   and not policy.codec_policy_explicit and not policy.codec_order))):
         send_candidates = peer_receives
+        trace.append("P1 prefer the peer's first feasible answered mapping")
     elif directional:
         send_candidates = sorted(peer_receives, key=lambda fmt: (
             established is not None and _mapping(fmt) != _mapping(established.send),
@@ -517,7 +523,7 @@ class OfferPlan:
     receive_formats: tuple[RtpPcmFormat, ...] = ()
     events: tuple[RtpDtmfFormat, ...] = ()
     maximum_ms: float = 0
-    include_dahua_pcm: bool = False
+    compatibility: MediaCompatibility = MediaCompatibility()
     match_received_codec: bool = False
 
     @property

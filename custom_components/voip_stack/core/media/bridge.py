@@ -10,7 +10,7 @@ from ..codec_policy import CodecPolicy
 from ..sdp_types import RtpPcmDirection, RtpPcmFormat
 from . import leg, negotiator
 from .codecs import CODECS
-from .capability import PeerEvidence
+from .capability import PeerEvidence, MediaCompatibility
 
 
 class AudioOperation(StrEnum):
@@ -110,12 +110,12 @@ def plan_browser_audio(send, receive) -> BrowserAudioPlan:
 
 def plan_bridge_offer(send_formats, receive_formats, source, *, send_rtp_formats=None,
                       receive_rtp_formats=None, evidence: PeerEvidence | None = None,
-                      codec_policy=None, common=True, dahua=False, match_received_codec=False):
+                      codec_policy=None, common=True, compatibility=MediaCompatibility(), match_received_codec=False):
     """Rank a relay opportunity inside one destination's real capability plan."""
     plan = negotiator.create_offer(send_formats, receive_formats, evidence,
         codec_policy=codec_policy, capabilities=HA_AUDIO_CAPABILITIES,
         send_rtp_formats=send_rtp_formats, recv_rtp_formats=receive_rtp_formats,
-        common=common, dahua=dahua)
+        common=common, compatibility=compatibility)
     plan = replace(plan, match_received_codec=match_received_codec)
     if not plan.send_formats or (codec_policy is not None and codec_policy.audio_ordered):
         return plan
@@ -166,7 +166,7 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
                       frozen: bool = False, codec_policy: CodecPolicy = CodecPolicy(),
                       send_capabilities: tuple[AudioFormat, ...] = (),
                       receive_capabilities: tuple[AudioFormat, ...] = (),
-                      capabilities: AudioCapabilities | None = None, dahua: bool = False) -> BridgeAudioPlan:
+                      capabilities: AudioCapabilities | None = None, compatibility=MediaCompatibility()) -> BridgeAudioPlan:
     """B2/B3: refine a free caller with the existing leg negotiator, or retain it.
 
     ``frozen`` means its description was actually transmitted. A queued offer
@@ -196,14 +196,14 @@ def plan_caller_audio(remote_sdp: bytes, caller: RtpPcmDirection, callee: RtpPcm
     policy = negotiator.policy_for_leg(list(dict.fromkeys(send_formats)),
         list(dict.fromkeys(recv_formats)), codec_policy=codec_policy,
         capabilities=(capabilities if capabilities is not None else
-                      None if send_capabilities else HA_AUDIO_CAPABILITIES))
+                      None if send_capabilities else HA_AUDIO_CAPABILITIES), compatibility=compatibility)
     if send_capabilities:
         # B2 searches only configured TX alternatives; admission stays dynamic.
         policy = replace(policy, send_capabilities=tuple(send_formats))
     if capabilities is None and receive_capabilities:
         policy = replace(policy, receive_capabilities=tuple(receive_capabilities))
     document = sdp.SdpDocument.parse(remote_sdp)
-    selected = negotiator.as_direction(leg.answer_offer(document, policy, dahua=dahua), document)
+    selected = negotiator.as_direction(leg.answer_offer(document, policy), document)
     if selected is None:
         trace.append("B2 no feasible alternative inside the caller's offer and policy")
         return result(caller)

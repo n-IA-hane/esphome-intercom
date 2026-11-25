@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ..peer_media_profile import legacy_pcm_compatibility
 from .audio_format import AudioFormat
 from .sdp_audio_facts import (
     audio_format_to_rtp as audio_format_to_rtp,
@@ -86,7 +87,7 @@ def negotiate_directional(
                 if established is not None else None)
     contract = negotiator.answer_offer(remote_sdp, local_send_preferred, local_recv_preferred,
         capabilities=local_capabilities, codec_policy=codec_policy,
-        dahua=allow_dahua_pcm, established=previous, receive_capabilities=local_recv_capabilities,
+        compatibility=legacy_pcm_compatibility(allow_dahua_pcm), established=previous, receive_capabilities=local_recv_capabilities,
         previous_payloads=previous_payloads)
     return negotiator.as_direction(contract, remote_sdp)
 
@@ -119,7 +120,7 @@ def negotiate_answer_directional(
             inactive_default=local_offer_direction)
     contract = negotiator.apply_answer(local_offer_sdp, remote_sdp,
         local_send_preferred, local_recv_preferred, capabilities=local_capabilities,
-        codec_policy=codec_policy, dahua=allow_dahua_pcm, format_direction=format_direction,
+        codec_policy=codec_policy, compatibility=legacy_pcm_compatibility(allow_dahua_pcm), format_direction=format_direction,
         established=negotiator.LegContract(established.send, established.recv, None,
             receive_accept=established.recv_formats, send_accept=established.send_formats)
             if established is not None else None, previous_payloads=previous_payloads)
