@@ -255,11 +255,18 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(decoder.audio_format.frame_ms, 20)
 
     def test_g722_relay_advances_rtp_clock_by_160_not_pcm_samples(self) -> None:
+        encoders = []
+
         class PassthroughCodec:
             has_pending_pcm = False
 
             def __init__(self, fmt, **_kwargs) -> None:
                 self.fmt = fmt
+                self.close_calls = 0
+                encoders.append(self)
+
+            def close(self) -> None:
+                self.close_calls += 1
 
             def follow_received(self, _received):
                 return False
@@ -273,9 +280,13 @@ class SipProfileTest(unittest.TestCase):
         class Transport:
             def __init__(self) -> None:
                 self.sent: list[bytes] = []
+                self.closed = False
 
             def sendto(self, packet: bytes, _addr) -> None:
                 self.sent.append(packet)
+
+            def close(self) -> None:
+                self.closed = True
 
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
         l16 = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
@@ -321,6 +332,10 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(len(transport.sent), 1)
         self.assertEqual(rtp.parse_packet(transport.sent[0]).timestamp, 1000)
         self.assertEqual(relay.right.timestamp, 1160)
+        self.assertEqual([encoder.close_calls for encoder in encoders], [0, 0])
+        asyncio.run(relay.stop())
+        self.assertEqual([encoder.close_calls for encoder in encoders], [1, 1])
+        self.assertTrue(transport.closed)
 
     def test_trunk_opus_answer_negotiates_48k_stereo_20ms(self) -> None:
         answer = (

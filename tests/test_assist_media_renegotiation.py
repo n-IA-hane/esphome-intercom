@@ -212,6 +212,12 @@ def _load_module(registry, answer_calls: list[dict], *, generic=False):
     identity = _load_intercom_module("core.sip_dialog").PreparedDialogIdentity
     _module("core.sip_dialog", PreparedDialogIdentity=identity)
     _module("sip_listener", SipInvite=WIRE.SipInvite, SipInviteResult=WIRE.SipInviteResult)
+    # Keep cleanup behavior real without importing a second RTP stack beneath
+    # this deliberately partial package's fake core.sdp module.
+    _module(
+        "sip_rtp_bridge",
+        discard_peer_reconfiguration=_load_intercom_module("sip_rtp_bridge").discard_peer_reconfiguration,
+    )
     _module("sip_video_relay")
     _module("call_events", fire_call_event=lambda *_args, **_kwargs: None)
     _module("browser_phone_data", _ha_softphone_store=lambda *_args, **_kwargs: {})
@@ -268,11 +274,11 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
     assert isinstance(result, WIRE.SipInviteResult)
     assert isinstance(result.media_contract, WIRE.SipInvite)
     assert "m=video 0" in result.answer_sdp
+    assert "telephone-event/" not in result.answer_sdp
     assert answer_calls == [
         {
             "recv_formats": (),
             "send_formats": (),
-            "dtmf": None,
             "dtmf_direction": None,
             "remote_sdp": invite.remote_sdp,
             "audio_direction": "sendrecv",

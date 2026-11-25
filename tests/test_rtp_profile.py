@@ -180,9 +180,8 @@ class RtpProfileTest(unittest.TestCase):
             rtp_format=pcm,
             send_rtp_format=pcm,
         )
-        with (
-            mock.patch.object(sip_rtp_bridge, "RtpPayloadEncoder", return_value=object()),
-        ):
+        encoders = [mock.Mock(spec=sip_rtp_bridge.RtpPayloadEncoder) for _ in range(2)]
+        with mock.patch.object(sip_rtp_bridge, "RtpPayloadEncoder", side_effect=encoders):
             relay = sip_rtp_bridge.SipRtpRelay(
                 left=left,
                 right=right,
@@ -197,11 +196,17 @@ class RtpProfileTest(unittest.TestCase):
                 "right_to_left: L16/16000/1/20 -> OPUS/48000/2/20",
             ],
         )
+        for encoder in encoders:
+            encoder.close.assert_not_called()
+        asyncio.run(relay.stop())
+        for encoder in encoders:
+            encoder.close.assert_called_once_with()
 
         compatible = sip_rtp_bridge.SipRtpRelay(
             left=left, right=left, left_port=42004, right_port=42006, debug=True
         )
         self.assertNotIn("audio_transcoding", compatible.snapshot())
+        asyncio.run(compatible.stop())
 
     def test_compatible_opus_relay_preserves_payload_and_rewrites_header(self) -> None:
         class FakeTransport:
