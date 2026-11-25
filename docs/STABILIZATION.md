@@ -31,9 +31,11 @@ Qualification tooling pins its official source revision,
 `requirements-firmware-test.txt`. Use a profile's existing YAML in Device
 Builder. The shared packages select the additional components it needs.
 
-Micro Wake Word, Voice Assistant and the two playback providers are based on
-ESPHome development revision `373224c141dceadbb67ace263040cbfc802c5968`.
-Their source revisions, local fixes and removal conditions are recorded in
+HTTP and Micro Wake Word now come directly from immutable official ESPHome
+commits containing merged PR22787 and PR22781, respectively. Their local
+runtime copies are removed. Voice Assistant and `speaker_source` retain their
+bounded adaptations on `373224c141dceadbb67ace263040cbfc802c5968`.
+Source revisions, remaining deltas and removal conditions are recorded in
 [`esphome/upstream_sources.json`](../esphome/upstream_sources.json).
 
 `qualification/sources.json` is the common component catalog. The candidate lock
@@ -80,8 +82,10 @@ quality or H.264 readiness.
 
 | Work | Completion condition |
 | --- | --- |
-| MWW and VA | Current official base, focused lifecycle regressions, residual fixes proposed upstream |
-| Playback providers | Reentrant completion and terminal errors preserved on the same official base |
+| MWW | Official merge `26c2b61c405ad004e08c6472de08ed264e97ea3e`; eleven model-lifecycle cases and fixed historical negative control |
+| VA | Local idle/reentrant-ordering delta remains until PR22782 or equivalent is qualified |
+| HTTP | Official merge `ce3f2f4c2cb98bed6e23176832afdce40be6661b`; completed-worker and reentrant completion contracts |
+| Speaker player | Local terminal-error and replacement behavior remains pending equivalent official support |
 | GMF | Official manager selected, ESP-SR unchanged, creation/reconfiguration/teardown qualified |
 | S3/P4 rendering | Protocol-neutral frame input; VoIP adapters owned by VoIP; no parallel renderer |
 | P4 display | Declared minimal upstream-aligned MIPI owner supplies serialized transforms/readback; complete the scoped physical regressions |
@@ -92,16 +96,19 @@ quality or H.264 readiness.
 
 Temporary providers must name their official base, essential differences,
 upstream proposal and removal condition in `esphome/upstream_sources.json`.
-The model-reload correction is now proposed in
-[ESPHome PR22781](https://github.com/esphome/esphome/pull/22781), and the
-noncontinuous idle correction in
+The model-reload correction was merged in
+[ESPHome PR22781](https://github.com/esphome/esphome/pull/22781) on 24 November
+2026 UTC. Packages select its exact official merge until the minimum supported
+released builder contains the fix. No local MWW provider remains. The
+noncontinuous idle correction remains proposed in
 [ESPHome PR22782](https://github.com/esphome/esphome/pull/22782).
 Remove the provider and external selection together after qualification of an
 official revision containing every remaining correction. A published proposal
 is not equivalent to its inclusion in a stable release.
 
-The HTTP completion correction is proposed in
-[PR22787](https://github.com/esphome/esphome/pull/22787). The broader player
+The HTTP completion correction was merged on 20 November 2026 UTC in
+[PR22787](https://github.com/esphome/esphome/pull/22787). Its official merge
+replaces the byte-identical local HTTP runtime. The broader player
 terminal-error and replacement policy is a
 [follow-up contribution to PR22118](https://github.com/esphome/esphome/pull/22118#issuecomment-6914576261),
 not a duplicate PR or an accepted extension of that narrower startup fix.
@@ -110,6 +117,28 @@ The H.264 dependency remains an explicit candidate fork on official base
 proposed in [Espressif PR28](https://github.com/espressif/esp-h264-component/pull/28).
 Default-SDK P4 boot and duplex wire media are qualified;
 the optional vendor Unity case is not presented as hardware-executed.
+
+### Remaining exceptions and their removal gates
+
+| Source | Status on 25 November 2026 | Removal gate |
+| --- | --- | --- |
+| `audio_http` | Official immutable component pin; no local runtime delta | Minimum supported released builder contains the merged fix and completion/restart tests pass |
+| `micro_wake_word` | Official immutable component pin; no local runtime delta | Minimum supported released builder contains the merged fix and reload/reset contracts pass |
+| `voice_assistant` | Local two-site lifecycle patch; PR22782 open | Noncontinuous IDLE and callback restart ordering match, with Speaker/MediaPlayer completion covered |
+| `speaker_source` | Local terminal-error and replacement handling; contribution to open PR22118 | Current/pending ERROR cleanup, replacement ownership and repeat policy all match; startup-only PR behavior is insufficient |
+| `mipi_dsi` | Local display-owner capability; PR22789 open | Official owned transform, serialized UI/video writes and composed readback, plus physical P4 qualification |
+| Espressif H.264 | Pinned fork with DB-buffer placement option; PR28 open | Official equivalent preserves internal DMA budget and passes codec/SDK/hardware qualification |
+| P4 SDK backports | Verified build-local official PPA/SDMMC patches | The recommended SDK includes the fixes and passes rotated display/camera workloads |
+| GMF AFE | Official immutable dependency, no local vendor delta | Dependency upgrade is a separate DSP qualification, not a fork-removal task |
+
+Test snapshots of official providers and authentic wake-word model assets live
+under `tests/fixtures`, with hashes checked before use. They do not participate
+in production component selection and require no network or manually prepared
+source tree. Positive MWW tests execute the actual streaming-model owner with
+a substituted inference backend; they establish fresh-input and lifetime
+contracts, not acoustic recognition accuracy. The old official revision is a
+fixed negative control, so updating the installed builder cannot make a correct
+upstream provider fail merely because it no longer reproduces the old bug.
 
 ## P4 source and measurement checkpoint
 

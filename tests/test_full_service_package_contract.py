@@ -53,7 +53,8 @@ def test_full_gain_controls_and_provider_selection(tmp_path, profile, mic_defaul
         assert source['gain_factor'] == 1
     providers = [component for entry in current['external_components'] for component in entry['components']]
     assert providers.count('micro_wake_word') == 1
-    for component in ('voice_assistant', 'audio_http', 'speaker_source'):
+    assert providers.count('audio_http') == 1
+    for component in ('voice_assistant', 'speaker_source'):
         assert providers.count(component) == int(legacy)
     physical = next(item for item in current['speaker'] if item.get('platform') == 'esp_audio_stack')
     assert 'audio_stack_speaker_idle_powerdown' in str(physical['amplifier_settle_time'])

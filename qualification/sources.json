@@ -44,6 +44,16 @@
       "repository": "home-assistant/core",
       "revision": "fddf359f543346a9b7cc0068e8e4dc19944dea13"
     },
-    "home_assistant_minimum": "2026.11.1"
+    "home_assistant_minimum": "2026.11.1",
+    "esphome_audio_http": {
+      "repository": "esphome/esphome",
+      "revision": "ce3f2f4c2cb98bed6e23176832afdce40be6661b",
+      "path": "esphome/components/audio_http"
+    },
+    "esphome_micro_wake_word": {
+      "repository": "esphome/esphome",
+      "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+      "path": "esphome/components/micro_wake_word"
+    }
   }
 }

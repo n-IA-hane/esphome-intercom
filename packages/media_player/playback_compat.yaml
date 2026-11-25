@@ -1,13 +1,16 @@
-# Keep the HTTP source and speaker player independently selectable.
+# The HTTP lifecycle fix is merged upstream; only the player remains local.
 esphome:
   min_version: 2026.11.0
 defaults:
-  esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "audio_http", "speaker_source"]) }
-  _legacy_playback_components: ${ (["audio_http"] if "audio_http" in esphome_legacy_audio_providers else []) + (["speaker_source"] if "speaker_source" in esphome_legacy_audio_providers else []) }
+  esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "speaker_source"]) }
+  esphome_audio_http_components_source: ${ esphome_audio_http_components_source | default("github://esphome/esphome@ce3f2f4c2cb98bed6e23176832afdce40be6661b") }
+  _official_audio_http_provider:
+    source: ${esphome_audio_http_components_source}
+    components: [audio_http]
+  _legacy_playback_components: ${ ["speaker_source"] if "speaker_source" in esphome_legacy_audio_providers else [] }
   _legacy_playback_provider:
     source: ${ext_components_source}
     components: ${_legacy_playback_components}
-# Remove audio_http after stable ESPHome 2026.12 joins finished workers before
-# IDLE callbacks. Remove speaker_source once it retires source errors while
-# preserving replacement playback and queued media. Check each provider separately.
-external_components: ${ [_legacy_playback_provider] if _legacy_playback_components else [] }
+# Remove the official HTTP pin after the minimum supported builder includes
+# PR22787. The local speaker_source has a separate terminal-error/removal gate.
+external_components: ${ [_official_audio_http_provider] + ([_legacy_playback_provider] if _legacy_playback_components else []) }

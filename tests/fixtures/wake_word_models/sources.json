@@ -1,0 +1,22 @@
+{
+  "https://github.com/esphome/micro-wake-word-models/raw/main/models/v2/alexa.json": {
+    "file": "alexa/alexa.json.b64",
+    "sha256": "1d999798b35b1fe2606465b75ab840be51c1811d2909d5e620cefb6e96f8abd0",
+    "origin": "https://raw.githubusercontent.com/esphome/micro-wake-word-models/40ff33f57f8fc6ad71a75ef085abbf742495b225/models/v2/alexa.json"
+  },
+  "https://github.com/esphome/micro-wake-word-models/raw/main/models/v2/alexa.tflite": {
+    "file": "alexa/alexa.tflite.b64",
+    "sha256": "9011a8155b04de858c48038529235cbc0e42e9fca05a55bf588cb80a653a723b",
+    "origin": "https://raw.githubusercontent.com/esphome/micro-wake-word-models/40ff33f57f8fc6ad71a75ef085abbf742495b225/models/v2/alexa.tflite"
+  },
+  "https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.json": {
+    "file": "stop/stop.json.b64",
+    "sha256": "bd13aeb1b83852649dc4fb6135cb160ff68716d14612b06f6a405342c57447aa",
+    "origin": "https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.json"
+  },
+  "https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.tflite": {
+    "file": "stop/stop.tflite.b64",
+    "sha256": "b5a18c4ad681a89950dfade31011e1631bdcb333e93c84519a1a63ff4f071146",
+    "origin": "https://github.com/OHF-Voice/micro-wake-word/releases/download/stop/stop.tflite"
+  }
+}

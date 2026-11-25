@@ -8,6 +8,25 @@ import pytest
 
 
 @pytest.fixture(scope="session", autouse=True)
+def offline_schema_model_sources():
+    # New upstream providers revalidate model URLs even with seeded caches.
+    # A subprocess-only HTTP boundary supplies our authentic pinned assets.
+    root = Path(__file__).resolve().parent / "fixtures"
+    previous = {key: os.environ.get(key) for key in ("PYTHONPATH", "VOIP_SCHEMA_MODEL_FIXTURES")}
+    os.environ["VOIP_SCHEMA_MODEL_FIXTURES"] = str(root / "wake_word_models")
+    os.environ["PYTHONPATH"] = str(root / "offline_schema") + (
+        os.pathsep + previous["PYTHONPATH"] if previous["PYTHONPATH"] else "")
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@pytest.fixture(scope="session", autouse=True)
 def runtime_native_core_headers(request, tmp_path_factory):
     # HA-only lanes do not need ESPHome or this compiler adapter.
     consumers = {"test_primary_voice_controls_runtime.py", "test_lvgl_settings_composition.py"}

@@ -1,11 +1,12 @@
 # Official MWW trigger; user automations coexist through normal package merging.
-# Remove this external micro_wake_word when the stable ESPHome 2026.12 provider
-# resets the stride and pending probability after reloading a streaming model.
+# PR22781 is merged. Use its immutable official source until the minimum
+# supported builder contains the fix; no local MWW runtime provider remains.
 external_components:
-- source: ${ext_components_source}
+- source: ${esphome_mww_components_source}
   components: [micro_wake_word]
 
 defaults:
+  esphome_mww_components_source: ${ esphome_mww_components_source | default("github://esphome/esphome@26c2b61c405ad004e08c6472de08ed264e97ea3e") }
   _ordinary_wake_word:
     runtime_controller:
       observe:

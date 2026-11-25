@@ -3,13 +3,13 @@
 from pathlib import Path
 import subprocess
 
+from scripts.official_component_fixtures import verified_component_directory
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPONENT = ROOT / "esphome/components/micro_wake_word"
 
 
 def test_native_capture_callback_preserves_borrowing_and_consumer_reset_owner(tmp_path):
-    source = (COMPONENT / "micro_wake_word.cpp").read_text()
+    source = (verified_component_directory("micro_wake_word") / "micro_wake_word.cpp").read_text()
     start = source.index("this->microphone_source_->add_data_callback(")
     end = source.index("\n  });", start) + len("\n  });")
     callback_registration = source[start:end]

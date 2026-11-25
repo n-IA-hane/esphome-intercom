@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from functools import lru_cache
 import hashlib
 from pathlib import Path
@@ -9,16 +10,16 @@ import re
 import shutil
 import subprocess
 import sys
-from urllib.request import urlopen
 
 from esphome import yaml_util
 import pytest
 
+from scripts.official_component_fixtures import verified_component_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 FULL = ['voice', 'wake_word', 'voip', 'music', 'sendspin', 'timers', 'status_led', 'diagnostics']
 
-# Verify real schema dependencies once per process, including models fetched from release assets.
+# Authentic schema dependencies are stored as offline, hash-verified fixtures.
 _MODEL_SOURCES = {
     "alexa": (
         "https://github.com/esphome/micro-wake-word-models/raw/main/models/v2/alexa.json",
@@ -43,14 +44,15 @@ def _verify_model_bytes(data: bytes, expected_sha256: str) -> bytes:
 
 @lru_cache(maxsize=None)
 def _ui_model_files(model: str) -> tuple[tuple[str, bytes], ...]:
-    _, base, manifest_hash, data_hash = _MODEL_SOURCES[model]
+    _, _, manifest_hash, data_hash = _MODEL_SOURCES[model]
     files = []
     for cache_name, filename, digest in (
         ("manifest.json", model + ".json", manifest_hash),
         (model + ".tflite", model + ".tflite", data_hash),
     ):
-        with urlopen(base + filename, timeout=30) as response:
-            files.append((cache_name, _verify_model_bytes(response.read(128 * 1024), digest)))
+        encoded = (ROOT / "tests/fixtures/wake_word_models" / model / (filename + ".b64")).read_bytes()
+        data = base64.b64decode(b"".join(encoded.split()), validate=True)
+        files.append((cache_name, _verify_model_bytes(data, digest)))
     return tuple(files)
 
 
@@ -154,6 +156,11 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
     substitutions['intercom_idf_root'] = str(ROOT / 'idf_components')
     # Use the public GMF dependency rather than a workstation-only checkout.
     substitutions['gmf_ai_audio_source'] = ''
+    # Identical official pinned bytes, checked before use. Unit/schema runs do
+    # not fetch external Git providers or need a manually prepared checkout.
+    for key, component in (("esphome_audio_http_components_source", "audio_http"),
+                           ("esphome_mww_components_source", "micro_wake_word")):
+        substitutions[key] = str(verified_component_directory(component).parent)
     for key, repository in (
         ('ext_components_source', ROOT),
         ('audio_stack_components_source', Path(os.environ.get('AUDIO_STACK_REPO', ROOT.parent / 'esphome-audio-stack'))),

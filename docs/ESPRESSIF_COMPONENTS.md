@@ -20,9 +20,11 @@ Spotpear enables `psram_dma: true` on its display, rather than changing SPI
 behavior for every device.
 
 Audio, mixer, resampler, microphone, speaker and OTA use the native ESPHome
-providers. HTTP, `speaker_source`, Voice Assistant and Micro Wake Word retain
-only the explicit residual corrections recorded in `esphome/upstream_sources.json`
-until qualified upstream replacements are available. They do not rewrite the
+providers. HTTP and Micro Wake Word use immutable official component pins
+containing their merged lifecycle fixes; their former local runtime providers
+are removed. Only `speaker_source` and Voice Assistant retain the explicit
+residual corrections recorded in `esphome/upstream_sources.json` until qualified
+upstream replacements are available. These selections do not rewrite the
 HTTP/Sendspin dependency sources. The recorded development baseline resolves
 esp-audio-libs 4.0.1, micro-decoder 0.4.0 and sendspin-cpp 0.9.3.
 

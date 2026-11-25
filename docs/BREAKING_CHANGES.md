@@ -39,6 +39,17 @@ See [incoming SIP access](SIP_TRUNK.md#who-can-call-home-assistant).
 The older firmware migration sections below describe earlier transitions.
 For the current preview's component choices, use the maintained board recipe.
 
+The current packages select HTTP and Micro Wake Word directly from the official
+ESPHome commits containing their merged lifecycle fixes. Their local runtime
+copies have been removed. A custom YAML still sourcing `audio_http` or
+`micro_wake_word` from this repository must use the selections in
+`packages/media_player/playback_compat.yaml` and
+`packages/runtime/wake_word_events.yaml`, respectively. Existing component IDs,
+model settings and automations stay unchanged. `esphome_legacy_audio_providers`
+now controls only the remaining local Voice Assistant and speaker-player
+adaptations; an old `audio_http` entry no longer selects a local copy. The
+official pins remain until the minimum supported builder includes their fixes.
+
 The preview uses one media negotiation engine. Remove the retired
 `VOIP_STACK_MEDIA_ENGINE` override from service environments. Ordinary outgoing
 offers include all enabled codecs supported by the installed backend; narrowing

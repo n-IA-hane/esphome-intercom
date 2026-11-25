@@ -13,20 +13,27 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 
 | Local path | Upstream | Notes |
 |---|---|---|
-| `esphome/components/voice_assistant/` | ESPHome 2026.10.0, `704551a6` | Noncontinuous idle completion and callback ordering. |
-| `esphome/components/speaker_source/` | ESPHome 2026.10.0, `704551a6` | Terminal source error cleanup through the existing player owner. |
-| `esphome/components/audio_http/` | ESPHome 2026.10.0, `704551a6` | Release completed HTTP workers before publishing idle. |
+| `esphome/components/voice_assistant/` | ESPHome `373224c141dceadbb67ace263040cbfc802c5968` | Noncontinuous idle completion and callback ordering. |
+| `esphome/components/speaker_source/` | ESPHome `373224c141dceadbb67ace263040cbfc802c5968` | Terminal source error cleanup through the existing player owner. |
+| `esphome/components/mipi_dsi/` | ESPHome `c6f330458a2da2f64788487486bd6d0f8749fafd` | Display-owned transforms, serialized UI/video writes and composed readback. |
+| `tests/fixtures/official_esphome/` | Exact official revisions and file hashes in its `sources.json` | Unmodified HTTP/MWW source snapshots for offline host/schema tests, plus a fixed historical negative control. |
 
-The three lifecycle adaptations above are loaded through the maintained
+The local lifecycle/display adaptations above are loaded through the maintained
 `ext_components_source` includes. Their `UPSTREAM.md` files describe the bounded
-deltas. Other audio, MWW, mixer, resampler, speaker and OTA providers come from
-the installed official ESPHome distribution. Their upstream licenses apply to
+deltas. HTTP and MWW are selected directly from official pinned ESPHome commits;
+the local production copies are retired. Other audio, mixer, resampler, speaker
+and OTA providers come from the installed official distribution. Their licenses apply to
 generated firmware. The existing ESPHome split license applies to all copied
 runtime and Python files.
 
 The host test entrypoint `tests/fixtures/assist_media/main.cpp` is derived from
 the same ESPHome revision and retains GPLv3 terms. Host-only micro-decoder and
 micro-flac sources are fetched as pinned CI dependencies and are not vendored.
+
+`tests/fixtures/wake_word_models/` contains byte-preserving base64 copies of the
+official Alexa and Stop model assets by Kevin Ahrendt for offline schema tests.
+The fixture `sources.json` records source URLs and decoded SHA256 identities.
+These assets retain Apache License 2.0; see `licenses/APACHE-2.0.txt`.
 
 ## Contributed camera component
 

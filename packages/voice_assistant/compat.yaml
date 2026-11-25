@@ -2,7 +2,7 @@
 esphome:
   min_version: 2026.11.0
 defaults:
-  esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "audio_http", "speaker_source"]) }
+  esphome_legacy_audio_providers: ${ esphome_legacy_audio_providers | default(["voice_assistant", "speaker_source"]) }
   _legacy_voice_provider:
     source: ${ext_components_source}
     components: [voice_assistant]

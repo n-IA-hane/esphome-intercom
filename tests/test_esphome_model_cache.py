@@ -1,6 +1,7 @@
 """UI/schema fixtures reuse authentic, hash-verified wake-word models."""
 
 import json
+import urllib.request
 
 import pytest
 
@@ -21,13 +22,13 @@ def test_ui_model_fixture_contains_real_model_and_rejects_corruption(word, size)
             composition._verify_model_bytes(corrupted, digest)
 
 
-def test_ui_model_fixture_reuses_verified_bytes_without_another_download(tmp_path, monkeypatch):
-    verified = {word: dict(composition._ui_model_files(word)) for word in ("alexa", "stop")}
-
+def test_ui_model_fixture_runs_offline_without_a_prepared_cache(tmp_path, monkeypatch):
     def unexpected_download(*_args, **_kwargs):
         raise AssertionError("Verified model bytes must be reused")
 
-    monkeypatch.setattr(composition, "urlopen", unexpected_download)
+    monkeypatch.setattr(urllib.request, "urlopen", unexpected_download)
+    composition._ui_model_files.cache_clear()
+    verified = {word: dict(composition._ui_model_files(word)) for word in ("alexa", "stop")}
     for directory in (tmp_path / "one/.esphome", tmp_path / "two/data"):
         composition.seed_ui_schema_model_cache(directory, with_timer_stop=True)
         for word, key in (("alexa", "a5f625a9"), ("stop", "23a3a6c4")):

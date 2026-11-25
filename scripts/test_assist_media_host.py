@@ -12,6 +12,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
+from official_component_fixtures import verified_component_directory
 ROOT = Path(__file__).resolve().parents[1]
 ESPHOME_REVISION = "1feda1bcaa861a5f2e933f2c65d599e44f4b132b"
 DECODER_SOURCES = (
@@ -58,10 +59,13 @@ def main() -> int:
     import cpp_unit_test
     from esphome import loader
 
-    loader.install_meta_finder(ROOT / "esphome/components", ["speaker_source", "audio_http"])
+    official_http = verified_component_directory("audio_http")
+    loader.install_meta_finder(ROOT / "esphome/components", ["speaker_source"])
+    loader.install_meta_finder(official_http.parent, ["audio_http"])
     for name in ("speaker_source", "audio_http"):
         module = importlib.import_module(f"esphome.components.{name}")
-        if Path(module.__file__).resolve().parent != ROOT / "esphome/components" / name:
+        expected = official_http if name == "audio_http" else ROOT / "esphome/components" / name
+        if Path(module.__file__).resolve().parent != expected:
             raise RuntimeError(f"The host build selected the wrong provider for {name}")
 
     original_config = build_helpers.create_host_config

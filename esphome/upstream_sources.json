@@ -28,7 +28,9 @@
       "proposal_head": "0772fe5368500b8144422f42bb68cbf449756f7e",
       "upstream_pr_url": "https://github.com/esphome/esphome/pull/22118",
       "upstream_pr_head": "b28b4d025a7d75ca15ec16c3003e1638efec59f7",
-      "proposal_scope": "Follow-up contribution for current-source terminal ERROR and replacement ownership; repeat-skip is proposed policy, not accepted upstream behaviour"
+      "proposal_scope": "Follow-up contribution for current-source terminal ERROR and replacement ownership; repeat-skip is proposed policy, not accepted upstream behaviour",
+      "upstream_pr_status": "open",
+      "upstream_status_checked_at": "2026-11-25"
     },
     "voice_assistant": {
       "local_repository": "esphome-intercom",
@@ -51,65 +53,10 @@
       "removal_condition": "An official ESPHome revision includes PR22782 or equivalent noncontinuous IDLE notification and reentrant desired-state ordering; qualify Speaker/MediaPlayer completion, restart callbacks and existing disconnect policy, then remove this provider and its external selection together.",
       "proposal_status": "open",
       "proposal_url": "https://github.com/esphome/esphome/pull/22782",
-      "proposal_head": "a0df8ac2286173112b66bb85826db6a834f3ad42"
-    },
-    "audio_http": {
-      "local_repository": "esphome-intercom",
-      "upstream_revision": "373224c141dceadbb67ace263040cbfc802c5968",
-      "adaptations": [
-        "Join completed decoder and reader workers before publishing natural IDLE",
-        "Disable the old loop before callbacks may start another playback"
-      ],
-      "public_proposal": true,
-      "source_sha256": {
-        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
-        "audio_http_media_source.cpp": "2296b3c243502d2af6b6ed8ea211f9bd98e44c96a6add60149389fba09b512ba",
-        "media_source.py": "8c86bb052fdf32e3c22624e04f67f952d79a74a33b7f81a70ef1d905c8d42da0",
-        "__init__.py": "66786bb283a337f9166f5e11366369683663d8a2e1a6912ae2f21f75dc82833c"
-      },
-      "upstream_source_sha256": {
-        "media_source.py": "8c86bb052fdf32e3c22624e04f67f952d79a74a33b7f81a70ef1d905c8d42da0",
-        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
-        "audio_http_media_source.cpp": "0f65a8c5b8bb20c1190840b43e20e96763689fbce3d4b64000b814e08d23503c",
-        "__init__.py": "66786bb283a337f9166f5e11366369683663d8a2e1a6912ae2f21f75dc82833c"
-      },
-      "removal_condition": "An official ESPHome revision includes PR22787 or equivalent retirement of completed HTTP workers before natural IDLE and callback-safe loop ordering; qualify EOF and immediate listener restart, then remove the provider and its external selection together.",
-      "proposal_status": "open",
-      "proposal_url": "https://github.com/esphome/esphome/pull/22787",
-      "proposal_head": "227ea5fd8f2e46482889200118ade90cdcee8fe0"
-    },
-    "micro_wake_word": {
-      "local_repository": "esphome-intercom",
-      "upstream_revision": "373224c141dceadbb67ace263040cbfc802c5968",
-      "esphome_baseline": "2026.12.0.dev0",
-      "adaptations": [
-        "Reset the input stride phase and pending probability after successful creation of a new interpreter"
-      ],
-      "public_proposal": true,
-      "source_sha256": {
-        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
-        "streaming_model.h": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83",
-        "preprocessor_settings.h": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6",
-        "micro_wake_word.h": "cd05b3a902e6dac6b8ecbf577b2c91dd08d8fa1e3a413b71da75527818afff27",
-        "streaming_model.cpp": "62b11c99f864f0df6e21f4b6ab94de67402c0e6fa5c3976693a21b171fc87cb7",
-        "model_data.cpp": "4a82c423d4041903f634a85494c1f59e09fa9a1f1a7f01c2b2beab0d9264fa59",
-        "micro_wake_word.cpp": "c8d8252f2eee7ab310d097563bb1880373ab4ae93d21948218e72a78dd03f28f",
-        "__init__.py": "4070f1014a4ffb5a4561efe1cfa61a651f02e8892faac9a905bf95092593e811"
-      },
-      "upstream_source_sha256": {
-        "streaming_model.h": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83",
-        "streaming_model.cpp": "5cfae0c48b83a893fa1d4b07dee2ee4aebea4731e432cf7563a5fb2990ee875d",
-        "preprocessor_settings.h": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6",
-        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
-        "model_data.cpp": "4a82c423d4041903f634a85494c1f59e09fa9a1f1a7f01c2b2beab0d9264fa59",
-        "micro_wake_word.h": "cd05b3a902e6dac6b8ecbf577b2c91dd08d8fa1e3a413b71da75527818afff27",
-        "micro_wake_word.cpp": "c8d8252f2eee7ab310d097563bb1880373ab4ae93d21948218e72a78dd03f28f",
-        "__init__.py": "4070f1014a4ffb5a4561efe1cfa61a651f02e8892faac9a905bf95092593e811"
-      },
-      "removal_condition": "An official ESPHome revision includes PR22781 or equivalent input-stride and pending-score resets after successful interpreter creation; qualify model reload and ordinary probability resets, then remove this provider and its external selection together.",
-      "proposal_status": "open",
-      "proposal_url": "https://github.com/esphome/esphome/pull/22781",
-      "proposal_head": "eb96825b450e1fc30ae2feaacf195ceeffef6ea3"
+      "proposal_head": "a0df8ac2286173112b66bb85826db6a834f3ad42",
+      "upstream_pr_head": "984d0234156bdcacbb660e5a453e1cd7fd03acbe",
+      "upstream_pr_status": "open",
+      "upstream_status_checked_at": "2026-11-25"
     },
     "mipi_dsi": {
       "local_repository": "esphome-intercom",
@@ -146,7 +93,10 @@
       "proposal_status": "open",
       "proposal_url": "https://github.com/esphome/esphome/pull/22789",
       "proposal_head": "5f5a5bf2489fe937c64e7f08be09f4b3b8569a2b",
-      "documentation_proposal_url": "https://github.com/esphome/developers.esphome.io/pull/348"
+      "documentation_proposal_url": "https://github.com/esphome/developers.esphome.io/pull/348",
+      "upstream_pr_head": "3252ead60343539914998687190053f8b3df575c",
+      "upstream_pr_status": "open",
+      "upstream_status_checked_at": "2026-11-25"
     }
   },
   "dependencies": {
@@ -196,7 +146,9 @@
     "audio",
     "mixer",
     "ota",
-    "resampler"
+    "resampler",
+    "audio_http",
+    "micro_wake_word"
   ],
   "retired_adapters": [
     "audio_dsp_iram",
@@ -229,7 +181,8 @@
       "option_default": false,
       "allocation_scope": "Hardware encoder deblocking buffer preference only; reference and db_tmp remain INTERNAL|DMA",
       "proposal_url": "https://github.com/espressif/esp-h264-component/pull/28",
-      "proposal_head": "5ceb19dfebb72c0a94193052716e35db1698c9d9"
+      "proposal_head": "5ceb19dfebb72c0a94193052716e35db1698c9d9",
+      "upstream_status_checked_at": "2026-11-25"
     }
   },
   "build_backports": {
@@ -306,6 +259,50 @@
         "5.5.6": "e106b16b9adf5af60785a3ee8032cf6e877edfe4",
         "6.0.3": "8e4e73b0ddd98f2423490c45423d54fe2370d576"
       }
+    }
+  },
+  "official_component_pins": {
+    "audio_http": {
+      "repository": "esphome/esphome",
+      "revision": "ce3f2f4c2cb98bed6e23176832afdce40be6661b",
+      "path": "esphome/components/audio_http",
+      "source_kind": "official_pinned_component",
+      "adaptations": [],
+      "source_substitution": "esphome_audio_http_components_source",
+      "source_sha256": {
+        "audio_http_media_source.h": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392",
+        "audio_http_media_source.cpp": "2296b3c243502d2af6b6ed8ea211f9bd98e44c96a6add60149389fba09b512ba",
+        "media_source.py": "8c86bb052fdf32e3c22624e04f67f952d79a74a33b7f81a70ef1d905c8d42da0",
+        "__init__.py": "66786bb283a337f9166f5e11366369683663d8a2e1a6912ae2f21f75dc82833c"
+      },
+      "proposal_status": "merged",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22787",
+      "merged_at": "2026-11-20T20:24:22Z",
+      "removal_condition": "Remove this official external pin after the minimum supported released ESPHome builder contains the correction and the same lifecycle contracts pass. The former local runtime copy is already retired.",
+      "qualification": "Offline hash-verified provider fixtures and generated-source identity; hardware acoustic qualification remains separate."
+    },
+    "micro_wake_word": {
+      "repository": "esphome/esphome",
+      "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+      "path": "esphome/components/micro_wake_word",
+      "source_kind": "official_pinned_component",
+      "adaptations": [],
+      "source_substitution": "esphome_mww_components_source",
+      "source_sha256": {
+        "model_data.h": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65",
+        "streaming_model.h": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83",
+        "preprocessor_settings.h": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6",
+        "micro_wake_word.h": "cd05b3a902e6dac6b8ecbf577b2c91dd08d8fa1e3a413b71da75527818afff27",
+        "streaming_model.cpp": "aa86a726ec8c42c9f0febfcaf9b47dc5080822595331e89c18b0961f27437097",
+        "model_data.cpp": "4a82c423d4041903f634a85494c1f59e09fa9a1f1a7f01c2b2beab0d9264fa59",
+        "micro_wake_word.cpp": "c8d8252f2eee7ab310d097563bb1880373ab4ae93d21948218e72a78dd03f28f",
+        "__init__.py": "4070f1014a4ffb5a4561efe1cfa61a651f02e8892faac9a905bf95092593e811"
+      },
+      "proposal_status": "merged",
+      "proposal_url": "https://github.com/esphome/esphome/pull/22781",
+      "merged_at": "2026-11-24T23:40:56Z",
+      "removal_condition": "Remove this official external pin after the minimum supported released ESPHome builder contains the correction and the same lifecycle contracts pass. The former local runtime copy is already retired.",
+      "qualification": "Offline hash-verified provider fixtures and generated-source identity; hardware acoustic qualification remains separate."
     }
   }
 }

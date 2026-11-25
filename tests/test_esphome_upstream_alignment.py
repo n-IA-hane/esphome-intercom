@@ -14,6 +14,7 @@ import pytest
 
 from tests.esphome_native import NATIVE_COMPONENTS
 from tests.test_package_composition import FULL, device_config
+from scripts.official_component_fixtures import verified_component_directory
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,9 +27,11 @@ OFFICIAL = (
 RETIRED = (
     "audio", "mixer",
     "ota", "audio_http_compat", "sendspin_compat", "audio_dsp_iram", "speaker",
+    "audio_http", "micro_wake_word",
 )
-# HTTP retirement, player lifecycle, Assist idle and MWW model reload.
-LIFECYCLE = ("audio_http", "speaker_source", "voice_assistant", "micro_wake_word")
+# Only the player lifecycle and Assist idle still require a local runtime delta.
+LIFECYCLE = ("speaker_source", "voice_assistant")
+PINNED_OFFICIAL = ("audio_http", "micro_wake_word")
 pytestmark = [pytest.mark.architecture, pytest.mark.timeout(240)]
 
 
@@ -72,6 +75,7 @@ def test_real_parser_selects_only_recorded_lifecycle_overrides(native_full_build
     }
     assert set(OFFICIAL).isdisjoint(providers)
     assert set(LIFECYCLE) <= providers
+    assert set(PINNED_OFFICIAL) <= providers
     assert {"esp_audio_stack", "esp_afe", "voip_stack", "runtime_controller"} <= providers
     assert not any(name in document for name in ("audio_http_compat", "sendspin_compat", "audio_dsp_iram"))
     generated = (source / "main.cpp").read_text()
@@ -183,6 +187,42 @@ def test_recorded_lifecycle_provider_reaches_generated_cpp(native_full_build, co
         assert digest == record.hash.value, f"Installed provider was edited: {installed}"
 
 
+@pytest.mark.parametrize("component", PINNED_OFFICIAL)
+def test_official_pinned_provider_reaches_generated_cpp(native_full_build, component):
+    document, source = native_full_build
+    official = verified_component_directory(component)
+    selected = [entry for entry in document["external_components"] if component in entry["components"]]
+    assert len(selected) == 1
+    assert Path(selected[0]["source"]["path"]).resolve() == official.parent
+    generated = source / "esphome/components" / component
+    files = [path for path in generated.rglob("*") if path.suffix in (".cpp", ".h")]
+    assert files
+    for path in files:
+        assert path.read_bytes() == (official / path.relative_to(generated)).read_bytes()
+
+
+def test_production_official_pins_match_catalog_and_fixture_provenance():
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    catalog = json.loads((ROOT / "qualification/sources.json").read_text())
+    packages = {
+        "audio_http": "packages/media_player/playback_compat.yaml",
+        "micro_wake_word": "packages/runtime/wake_word_events.yaml",
+    }
+    for component, package in packages.items():
+        entry = manifest["official_component_pins"][component]
+        assert entry["repository"] == "esphome/esphome"
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["revision"])
+        assert entry["source_kind"] == "official_pinned_component" and not entry["adaptations"]
+        assert entry["proposal_status"] == "merged" and entry["removal_condition"]
+        document = yaml_util.load_yaml(ROOT / package)
+        assert f'"github://esphome/esphome@{entry["revision"]}"' in (
+            document["defaults"][entry["source_substitution"]])
+        assert catalog["official_sources"]["esphome_" + component]["revision"] == entry["revision"]
+        assert component in manifest["retired_local_providers"]
+        assert not (COMPONENTS / component).exists()
+        assert verified_component_directory(component).is_dir()
+
+
 def test_all_local_upstream_providers_are_documented():
     assert not (COMPONENTS / "spi").exists()
     manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
@@ -221,10 +261,10 @@ def test_official_build_backports_are_separate_from_runtime_provider_overrides()
         assert entry["removal_condition"]
         for filename, digest in entry["source_sha256"].items():
             assert hashlib.sha256((COMPONENTS / name / filename).read_bytes()).hexdigest() == digest
-    for component, number in (("micro_wake_word", 22781), ("voice_assistant", 22782)):
-        entry = manifest["components"][component]
-        assert entry["public_proposal"] is True
-        assert entry["proposal_url"] == f"https://github.com/esphome/esphome/pull/{number}"
+    entry = manifest["components"]["voice_assistant"]
+    assert entry["public_proposal"] is True
+    assert entry["proposal_url"] == "https://github.com/esphome/esphome/pull/22782"
+    assert manifest["official_component_pins"]["micro_wake_word"]["proposal_url"] == "https://github.com/esphome/esphome/pull/22781"
 
 
 @pytest.fixture(scope="module")
@@ -273,9 +313,9 @@ def test_loaded_upstream_exceptions_have_an_explicit_exit(native_full_build):
     providers = {name for item in document.get("external_components", [])
                  for name in item.get("components", [])}
     shadowed = {name for name in providers if (NATIVE_COMPONENTS / name).is_dir()}
-    assert shadowed <= set(manifest["components"])
+    assert shadowed <= set(manifest["components"]) | set(manifest["official_component_pins"])
     for name in shadowed:
-        entry = manifest["components"][name]
-        assert re.fullmatch(r"[0-9a-f]{40}", entry["upstream_revision"])
+        entry = manifest["components"].get(name, manifest["official_component_pins"].get(name))
+        assert re.fullmatch(r"[0-9a-f]{40}", entry.get("upstream_revision", entry.get("revision")))
         assert entry["removal_condition"]
         assert entry.get("proposal_status") or entry.get("upstream_pr")

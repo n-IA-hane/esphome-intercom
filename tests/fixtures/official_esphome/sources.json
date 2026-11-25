@@ -1,0 +1,98 @@
+{
+  "components/audio_http/audio_http_media_source.h": {
+    "repository": "esphome/esphome",
+    "revision": "ce3f2f4c2cb98bed6e23176832afdce40be6661b",
+    "path": "esphome/components/audio_http/audio_http_media_source.h",
+    "sha256": "bce48610f54cabfe55a381e9756a34f4acbff6660446e51e7582c2d8acfff392"
+  },
+  "components/audio_http/audio_http_media_source.cpp": {
+    "repository": "esphome/esphome",
+    "revision": "ce3f2f4c2cb98bed6e23176832afdce40be6661b",
+    "path": "esphome/components/audio_http/audio_http_media_source.cpp",
+    "sha256": "2296b3c243502d2af6b6ed8ea211f9bd98e44c96a6add60149389fba09b512ba"
+  },
+  "components/audio_http/media_source.py": {
+    "repository": "esphome/esphome",
+    "revision": "ce3f2f4c2cb98bed6e23176832afdce40be6661b",
+    "path": "esphome/components/audio_http/media_source.py",
+    "sha256": "8c86bb052fdf32e3c22624e04f67f952d79a74a33b7f81a70ef1d905c8d42da0"
+  },
+  "components/audio_http/__init__.py": {
+    "repository": "esphome/esphome",
+    "revision": "ce3f2f4c2cb98bed6e23176832afdce40be6661b",
+    "path": "esphome/components/audio_http/__init__.py",
+    "sha256": "66786bb283a337f9166f5e11366369683663d8a2e1a6912ae2f21f75dc82833c"
+  },
+  "components/micro_wake_word/model_data.h": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/model_data.h",
+    "sha256": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65"
+  },
+  "components/micro_wake_word/streaming_model.h": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/streaming_model.h",
+    "sha256": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83"
+  },
+  "components/micro_wake_word/preprocessor_settings.h": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/preprocessor_settings.h",
+    "sha256": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6"
+  },
+  "components/micro_wake_word/micro_wake_word.h": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/micro_wake_word.h",
+    "sha256": "cd05b3a902e6dac6b8ecbf577b2c91dd08d8fa1e3a413b71da75527818afff27"
+  },
+  "components/micro_wake_word/streaming_model.cpp": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/streaming_model.cpp",
+    "sha256": "aa86a726ec8c42c9f0febfcaf9b47dc5080822595331e89c18b0961f27437097"
+  },
+  "components/micro_wake_word/model_data.cpp": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/model_data.cpp",
+    "sha256": "4a82c423d4041903f634a85494c1f59e09fa9a1f1a7f01c2b2beab0d9264fa59"
+  },
+  "components/micro_wake_word/micro_wake_word.cpp": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/micro_wake_word.cpp",
+    "sha256": "c8d8252f2eee7ab310d097563bb1880373ab4ae93d21948218e72a78dd03f28f"
+  },
+  "components/micro_wake_word/__init__.py": {
+    "repository": "esphome/esphome",
+    "revision": "26c2b61c405ad004e08c6472de08ed264e97ea3e",
+    "path": "esphome/components/micro_wake_word/__init__.py",
+    "sha256": "4070f1014a4ffb5a4561efe1cfa61a651f02e8892faac9a905bf95092593e811"
+  },
+  "mww_before_reload_fix/streaming_model.cpp": {
+    "repository": "esphome/esphome",
+    "revision": "373224c141dceadbb67ace263040cbfc802c5968",
+    "path": "esphome/components/micro_wake_word/streaming_model.cpp",
+    "sha256": "5cfae0c48b83a893fa1d4b07dee2ee4aebea4731e432cf7563a5fb2990ee875d"
+  },
+  "mww_before_reload_fix/streaming_model.h": {
+    "repository": "esphome/esphome",
+    "revision": "373224c141dceadbb67ace263040cbfc802c5968",
+    "path": "esphome/components/micro_wake_word/streaming_model.h",
+    "sha256": "09f578bd5ac62f97d3c29194775e6354b9cf8d5de3287e1223648e3904006e83"
+  },
+  "mww_before_reload_fix/model_data.h": {
+    "repository": "esphome/esphome",
+    "revision": "373224c141dceadbb67ace263040cbfc802c5968",
+    "path": "esphome/components/micro_wake_word/model_data.h",
+    "sha256": "6dfb8da8fc6928c02d3c93d7fd8e15c1af38da2facc6597b45917585ecfe4d65"
+  },
+  "mww_before_reload_fix/preprocessor_settings.h": {
+    "repository": "esphome/esphome",
+    "revision": "373224c141dceadbb67ace263040cbfc802c5968",
+    "path": "esphome/components/micro_wake_word/preprocessor_settings.h",
+    "sha256": "72db0f83ba2d644503f3b91a76502845aa34668edbbb20997ab0cfa95f4d9ef6"
+  }
+}

@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from tests.esphome_native import NATIVE_COMPONENTS
+from scripts.official_component_fixtures import verified_component_directory, verified_fixture_directory
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,14 +12,14 @@ FIXTURE = ROOT / "tests/fixtures/mww_reload_contract"
 pytestmark = pytest.mark.timeout(60)
 
 
-@pytest.mark.parametrize("provider,expected_failures", [("upstream", 8), ("local", 0)])
+@pytest.mark.parametrize("provider,expected_failures", [("before_fix", 8), ("official_pinned", 0)])
 def test_new_interpreter_waits_for_three_new_features(
     tmp_path: Path, provider: str, expected_failures: int
 ) -> None:
     component = (
-        NATIVE_COMPONENTS / "micro_wake_word"
-        if provider == "upstream"
-        else ROOT / "esphome/components/micro_wake_word"
+        verified_fixture_directory("mww_before_reload_fix", revision="373224c141dceadbb67ace263040cbfc802c5968")
+        if provider == "before_fix"
+        else verified_component_directory("micro_wake_word")
     )
     for name in (
         "esphome/core/helpers.h",
@@ -47,7 +47,7 @@ def test_new_interpreter_waits_for_three_new_features(
     assert result.returncode == int(expected_failures != 0), result.stdout + result.stderr
     assert f"SUMMARY passed={11 - expected_failures} failed={expected_failures}" in result.stdout
     assert "AddressSanitizer" not in result.stderr and "runtime error:" not in result.stderr
-    if provider == "local":
+    if provider == "official_pinned":
         assert "new-slice Invoke counts 0,0,1; first input row heads 17,34,51" in result.stdout
     else:
         assert "first input row heads 85,17,34" in result.stdout
