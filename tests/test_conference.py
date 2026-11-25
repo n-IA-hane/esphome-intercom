@@ -29,6 +29,12 @@ class _FakeUnauthorized(Exception):
         self.details = kwargs
 
 
+class _FakeServiceValidationError(ValueError):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args)
+        self.details = kwargs
+
+
 class _FakeContext:
     def __init__(self, id=None, user_id=None, parent_id=None):
         self.id = id or uuid4().hex
@@ -67,6 +73,9 @@ def _install_ha_fakes() -> None:
         exceptions, "Unauthorized", _FakeUnauthorized
     )
     exceptions.UnknownUser = getattr(exceptions, "UnknownUser", _FakeUnauthorized)
+    exceptions.ServiceValidationError = getattr(
+        exceptions, "ServiceValidationError", _FakeServiceValidationError
+    )
     exceptions.ConfigEntryError = getattr(exceptions, "ConfigEntryError", type("ConfigEntryError", (Exception,), {}))
     config_entries.ConfigEntry = getattr(config_entries, "ConfigEntry", type("ConfigEntry", (), {}))
     config_entries.ConfigSubentry = getattr(
