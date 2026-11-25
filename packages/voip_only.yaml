@@ -27,4 +27,4 @@ packages:
 # voip_stack reserves socket headroom in validation; no lwIP override here.
 
 voip_stack:
-  use_ha_as_first_contact: true
+  initial_contact: ${ voip_initial_contact | default('') }

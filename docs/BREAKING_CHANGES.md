@@ -1077,3 +1077,13 @@ that wants this information can import the standard Home Assistant sensor and
 choose its own presentation; see [Account media processing](MEDIA_PROCESSING.md).
 This change does not require a new account or entity migration for existing
 call-state, connectivity or control entities.
+
+
+## Initial phone contact
+
+Replace `use_ha_as_first_contact` with `initial_contact` in custom `voip_stack`
+configuration. Shipped packages expose the optional substitution
+`voip_initial_contact`; leave it empty for alphabetical selection. Use a public
+SIP username, extension/number or URI, not an HA device ID or a display label.
+The setting selects a target and does not originate a call. Explicit SIP dialing
+does not depend on LDAP completing first.

@@ -177,7 +177,7 @@ voip_stack:
   transport: udp
   sip_port: 5060
   rtp_port: 40000
-  use_ha_as_first_contact: false
+  initial_contact: ""
   audio:
     tx:
       sample_rate: 16000
@@ -231,8 +231,12 @@ These are **ESPHome actions**, not HA service YAML. Merge them into an existing
 
 ### Choose who supplies the phonebook
 
-`use_ha_as_first_contact: false` only changes the initial contact selection; it
-does not disable the HA-managed phonebook.
+`initial_contact` selects a SIP username, extension/number or URI through the
+normal SIP line. It works without a display and before LDAP is available. An
+empty value leaves the deterministic alphabetical first contact as the default;
+it does not disable the HA-managed phonebook. A manual selection or an active
+call is not reset by a directory refresh. The old `use_ha_as_first_contact`
+option has been retired; it was already inert after the LDAP migration.
 
 For an ESP whose telephone contacts are configured entirely in firmware,
 remove the managed `directory` feature from the current profile's feature list.

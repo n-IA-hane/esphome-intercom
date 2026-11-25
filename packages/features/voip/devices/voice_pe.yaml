@@ -19,7 +19,7 @@ speaker:
   bits_per_sample: 16
   num_channels: 1
 voip_stack:
-  use_ha_as_first_contact: true
+  initial_contact: ${ voip_initial_contact | default('') }
   id: phone
   audio:
     codecs:

@@ -93,7 +93,7 @@ substitutions:
       - model: alexa
   firmware_voip_binding:
     voip_stack:
-      use_ha_as_first_contact: true
+      initial_contact: ${ voip_initial_contact | default('') }
       task_stacks_in_psram: true
       audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}
       tx_task_stack_size: ${voip_tx_task_stack_size}

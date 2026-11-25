@@ -1,6 +1,6 @@
 # Complete telephone binding and local controls, without a voice/media coordinator.
 voip_stack:
-  use_ha_as_first_contact: true
+  initial_contact: ${ voip_initial_contact | default('') }
   task_stacks_in_psram: true
   buffers_in_psram: true
   audio:
