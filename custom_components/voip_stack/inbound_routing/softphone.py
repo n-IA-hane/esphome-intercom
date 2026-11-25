@@ -6,7 +6,7 @@ from ..core.media.bridge import plan_browser_audio
 
 from dataclasses import dataclass
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 from homeassistant.core import HomeAssistant
 
@@ -142,7 +142,6 @@ def answer_inbound_ha_softphone(
     resolved_callee: str,
     source_endpoint: PhoneEndpoint | None,
     target_endpoint: PhoneEndpoint | None,
-    dtmf_format: Any,
 ) -> SipInviteResult:
     """Accept an inbound SIP call into the selected browser softphone."""
 
@@ -271,7 +270,6 @@ def answer_inbound_ha_softphone(
         invite.send_format,
         invite.recv_format,
         recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-        dtmf=dtmf_format,
         remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
         video_port=local_video_rtp_port,
         video_format=(

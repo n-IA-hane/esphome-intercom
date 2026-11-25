@@ -385,6 +385,8 @@ ha_tests=(
   tests/test_dialog_subscription_lease_ha.py
   tests/test_directory_consumers_ha.py
   tests/test_dtmf_media_commit_ha.py
+  tests/test_release_trunk_contact_ha.py
+  tests/test_media_generic_compatibility_ha.py
   tests/test_large_outbound_invite_ha.py
   tests/test_media_bridge_plan_ha.py
   tests/test_notify_tcp_recovery_ha.py

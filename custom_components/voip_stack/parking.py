@@ -503,7 +503,7 @@ async def route_parking_call(runtime, invite, decision, registry, source_endpoin
 
 
 async def prepare_parking_pickup(hass, invite, slot, local_ip):
-    from .core.sdp import build_answer_directional, first_offered_dtmf_format, local_direction_for_remote
+    from .core.sdp import build_answer_directional, local_direction_for_remote
     from .dtmf_events import attach_dtmf_event_bridge
     from .endpoint_registry import EndpointBusyError
     from .runtime_data import sip_endpoint_manager
@@ -556,7 +556,7 @@ async def prepare_parking_pickup(hass, invite, slot, local_ip):
         if not claim.current:
             raise ParkingError("The parked call ended")
         answer = build_answer_directional(local_ip, local_ip, prepared.relay.right_port,
-            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, dtmf=first_offered_dtmf_format(invite.remote_sdp), remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+            invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             **({"video_port": prepared.video_update.answer_video_rtp_port,
                 "video_format": prepared.video_update.answer_video_format,
                 "video_direction": local_direction_for_remote(prepared.video_update.answer_video_format.direction)}

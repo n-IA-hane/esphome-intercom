@@ -14,7 +14,7 @@ from .call_projection import publish_bridge_projection
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, EndpointCallSession, TerminationIntent
 from .inbound_answer import async_commit_runtime_answer
-from .local_call_media import ApplicationCallSource, LocalCallMedia, source_dtmf_formats
+from .local_call_media import ApplicationCallSource, LocalCallMedia
 from .media_ports import RtpPortReservation, take_delayed_offer_ports
 from .core.sdp import build_answer_directional
 from .sip_runtime import send_final_response
@@ -168,10 +168,6 @@ class LocalCallApplication:
             self.media = media
             if self.source_client is not None:
                 bind_application_source_dialog(self)
-            formats = source_dtmf_formats(self.invite)
-            dtmf = formats[0] if formats else None
-            if dtmf is not None:
-                dtmf = replace(dtmf, events=dtmf.events & frozenset(range(16)))
             answer = "" if self.source_client is not None else build_answer_directional(
                 self.local_ip,
                 self.local_ip,
@@ -179,7 +175,6 @@ class LocalCallApplication:
                 self.invite.send_format,
                 self.invite.recv_format,
                 recv_formats=self.invite.recv_formats, send_formats=self.invite.send_formats,
-                dtmf=dtmf,
                 remote_sdp=self.invite.remote_sdp, dtmf_direction=getattr(self.invite, "dtmf_direction", None),
             )
             result = await async_commit_runtime_answer(

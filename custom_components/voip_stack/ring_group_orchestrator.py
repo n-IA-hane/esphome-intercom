@@ -70,7 +70,7 @@ from .route_abort import (
     RouteAbortIntent,
     async_abort_route,
 )
-from .core.sdp import build_answer_directional, first_offered_dtmf_format
+from .core.sdp import build_answer_directional
 from .sip_runtime import send_final_response as _sip_send_final_response
 
 if TYPE_CHECKING:
@@ -543,7 +543,6 @@ async def run_ring_group_call(
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             )
             media = {

@@ -458,15 +458,13 @@ def build_answer_directional(
     audio_direction: str | None = None,
     video_direction: str | None = None,
 ) -> str:
-    from .media.negotiator import negotiate_dtmf, answer_audio_projection
+    from .media.negotiator import answer_audio_projection
 
+    # Legacy callers may supply one already chosen mapping. Current owners
+    # supply the complete direction; serialization never negotiates it again.
     event_formats = (dtmf,) if dtmf is not None and dtmf.events else ()
     if dtmf_direction is not None:
         event_formats = dtmf_direction.recv_formats or ((dtmf_direction.recv,) if dtmf_direction.recv is not None else ())
-    elif event_formats and remote_sdp:
-        events = negotiate_dtmf(remote_sdp, send_clock_rate=send.sample_rate,
-                                receive_clock_rate=recv.sample_rate)
-        event_formats = events.recv_formats if events is not None else ()
     remote_audio = parse_sdp(remote_sdp) if remote_sdp else None
     if audio_direction is None:
         audio_direction = (

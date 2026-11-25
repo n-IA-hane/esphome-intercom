@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
-from ..core.sdp import build_answer_directional, first_offered_dtmf_format
+from ..core.sdp import build_answer_directional
 from ..config import trunk_identity_uri as _trunk_identity_uri
 from ..const import (
     CONF_SIP_VIDEO,
@@ -460,8 +460,7 @@ async def route_sip_bridge(
                     require_current()
                     update()
             answer = build_answer_directional(local_ip, local_ip, source_relay_port,
-                invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
-                dtmf=first_offered_dtmf_format(invite.remote_sdp))
+                invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None))
             if not runtime.send_final_response(hass, invite.call_id, 183, "Session Progress", answer_sdp=answer):
                 raise RuntimeError("source no longer accepts provisional media")
             early_answer_sdp = answer

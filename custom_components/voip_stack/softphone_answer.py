@@ -280,9 +280,6 @@ async def async_answer_browser_call(
         )
 
     answer_sdp = ""
-    from .local_call_media import source_dtmf_formats
-    dtmf_formats = source_dtmf_formats(invite)
-    dtmf_format = dtmf_formats[0] if dtmf_formats else None
     response_already_sent = bool(
         preanswered is not None and preanswered.get("final_response_sent", True)
     )
@@ -316,7 +313,6 @@ async def async_answer_browser_call(
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                dtmf=dtmf_format,
                 remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                 video_port=local_video_rtp_port,
                 video_format=(
@@ -360,7 +356,6 @@ async def async_answer_browser_call(
             invite.send_format,
             invite.recv_format,
             recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-            dtmf=dtmf_format,
             remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             video_port=local_video_rtp_port,
             video_format=(

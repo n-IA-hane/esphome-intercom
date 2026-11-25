@@ -10,7 +10,9 @@ from custom_components.voip_stack.sip_runtime import configure_local_contact
 from custom_components.voip_stack.sip_tcp_io import read_sip_stream_message
 from custom_components.voip_stack.sip_trunk import SipTrunkClient, SipTrunkConfig
 from custom_components.voip_stack.trunk_signaling import reuse_registered_trunk_flow
-from .test_trunk_calls_ha import trunks, lab  # noqa: F401
+from . import test_trunk_calls_ha as trunk_fixtures
+
+trunks, lab = trunk_fixtures.trunks, trunk_fixtures.lab
 
 pytestmark = [pytest.mark.ha, pytest.mark.integration]
 

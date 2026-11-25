@@ -47,6 +47,18 @@ def test_directional_audio_selects_and_advertises_each_event_clock():
     assert source_dtmf_formats(invite)[0] == invite.recv_dtmf_format
     assert {fmt.sample_rate for fmt in source_dtmf_formats(invite)} == {8000, 16000, 48000}
     answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 4000,
-        invite.send_format, invite.recv_format, dtmf=invite.send_dtmf_format, remote_sdp=body)
+        invite.send_format, invite.recv_format, dtmf_direction=invite.dtmf_direction, remote_sdp=body)
     assert {item.sample_rate for item in sdp.offered_dtmf_formats(answer)} == {8000, 16000, 48000}
     assert (invite.send_format.frame_ms, invite.recv_format.frame_ms) == (10, 20)
+
+
+def test_answer_serializer_preserves_exact_chosen_event_without_selecting_again():
+    remote = ("v=0\r\no=peer 1 1 IN IP4 192.0.2.2\r\ns=call\r\nc=IN IP4 192.0.2.2\r\nt=0 0\r\n"
+        "m=audio 40000 RTP/AVP 8 101 102\r\na=rtpmap:8 PCMA/8000\r\n"
+        "a=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\n"
+        "a=rtpmap:102 telephone-event/16000\r\na=fmtp:102 0-15\r\n")
+    audio = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+    chosen = sdp.RtpDtmfFormat(101, 8000, frozenset({1, 2, 3}))
+    answer = sdp.build_answer_directional("192.0.2.1", "192.0.2.1", 40002,
+        audio, audio, remote_sdp=remote, dtmf=chosen)
+    assert sdp.offered_dtmf_formats(answer) == [chosen]

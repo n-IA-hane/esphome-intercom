@@ -67,7 +67,7 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
                           video_direction=video_direction)
         answer = build_answer_directional(local_ip, local_ip, local_port, invite.send_format,
             invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
-            dtmf=invite.recv_dtmf_format, video_port=video_port,
+            video_port=video_port,
             video_format=invite.answer_video_format if video_port else None,
             video_direction=video_direction)
         policies = tuple(sorted(set((*old.endpoint_claims, *grant.original.endpoint_claims,

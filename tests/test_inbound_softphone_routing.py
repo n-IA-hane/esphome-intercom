@@ -314,7 +314,6 @@ def test_immediate_answer_rejects_unavailable_browser() -> None:
         resolved_callee="HA",
         source_endpoint=None,
         target_endpoint=browser,
-        dtmf_format=None,
     )
 
     assert result.status == 480
@@ -341,7 +340,6 @@ def test_immediate_audio_answer_owns_media_and_publishes_state() -> None:
         resolved_callee="HA",
         source_endpoint=None,
         target_endpoint=browser,
-        dtmf_format=None,
     )
 
     assert result.status == 200

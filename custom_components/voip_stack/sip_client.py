@@ -1455,7 +1455,6 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 if video is not None
                 else "inactive"
             )
-            dtmf_formats = sdp.offered_dtmf_formats(request.body)
             dtmf_direction = (
                 sdp.negotiate_dtmf_answer_directional(
                     request.body, local_offer_sdp, audio=selected
@@ -1475,7 +1474,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 selected.send,
                 selected.recv,
                 recv_formats=receive_formats, send_formats=send_formats,
-                dtmf=dtmf_formats[0] if dtmf_formats else None,
+                dtmf_direction=dtmf_direction,
                 audio_rtcp=False,
                 remote_sdp=request.body,
                 video_port=(local_video_port if video is not None else 0),
@@ -1838,11 +1837,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                         updated.recv_format,
                                         recv_formats=updated.recv_formats, send_formats=updated.send_formats,
                                         audio_rtcp=False,
-                                        dtmf=(
-                                            sdp.offered_dtmf_formats(request.body)[0]
-                                            if sdp.offered_dtmf_formats(request.body)
-                                            else None
-                                        ),
+                                        dtmf_direction=updated.dtmf_direction,
                                         remote_sdp=request.body,
                                         video_port=updated.local_video_rtp_port,
                                         video_format=answer_video_format,
@@ -1864,11 +1859,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                     updated.recv_format,
                                     recv_formats=updated.recv_formats, send_formats=updated.send_formats,
                                     audio_rtcp=False,
-                                    dtmf=(
-                                        sdp.offered_dtmf_formats(request.body)[0]
-                                        if sdp.offered_dtmf_formats(request.body)
-                                        else None
-                                    ),
+                                    dtmf_direction=updated.dtmf_direction,
                                     remote_sdp=request.body,
                                     video_port=updated.local_video_rtp_port,
                                     video_format=updated.video_format,

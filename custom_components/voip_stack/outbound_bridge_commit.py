@@ -21,7 +21,7 @@ from .media_ports import RtpPortReservation, release_video_media_reservation
 from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
 from .runtime_data import sip_endpoint_manager
 from .session_cleanup import async_wait_for_cleanup
-from .core.sdp import build_answer_directional, first_offered_dtmf_format
+from .core.sdp import build_answer_directional
 from .core.rtp import AudioRtpSenderState
 from .sip_bridge import (
     async_request_sip_bridge_keyframe,
@@ -400,7 +400,6 @@ async def async_commit_outbound_bridge(
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                 video_port=(
                     relay.video_relay.left_port

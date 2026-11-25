@@ -126,7 +126,7 @@ async def pickup_browser(call, endpoint, target):
 
 
 async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", generation=None, leg_id=""):
-    from .core.sdp import build_answer_directional, first_offered_dtmf_format
+    from .core.sdp import build_answer_directional
     from .session_cleanup import async_wait_for_cleanup
     from .core.rtp import AudioRtpSenderState
     from .call_projection import publish_bridge_projection, publish_media_route
@@ -369,7 +369,6 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             incoming.send_format,
             incoming.recv_format,
             recv_formats=incoming.recv_formats, send_formats=incoming.send_formats,
-            dtmf=first_offered_dtmf_format(incoming.remote_sdp),
             remote_sdp=incoming.remote_sdp, dtmf_direction=getattr(incoming, "dtmf_direction", None),
             video_port=relay.video_relay.right_port if picker_video_answer is not None else 0,
             video_format=picker_video_answer.video_format if picker_video_answer is not None else None,
@@ -504,7 +503,6 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 source.send_format,
                 source.recv_format,
                 recv_formats=source.recv_formats, send_formats=source.send_formats,
-                dtmf=first_offered_dtmf_format(source.remote_sdp),
                 remote_sdp=source.remote_sdp, dtmf_direction=getattr(source, "dtmf_direction", None),
                 video_port=relay.video_relay.left_port if source_video_answer is not None else 0,
                 video_format=source_video_answer.video_format if source_video_answer is not None else None,
