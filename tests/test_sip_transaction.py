@@ -53,12 +53,22 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
     async def test_invite_provisional_stops_retransmission_while_waiting_for_final(self):
         responses = asyncio.Queue()
         sends = 0
+        sends_at_provisional = None
+        provisional_received = asyncio.Event()
         sip = sip_transaction.sip
         final_task = None
 
         async def final_response():
+            await provisional_received.wait()
             await asyncio.sleep(0.03)
             responses.put_nowait((sip.parse_message(sip.build_response(200, "OK", [])), None))
+
+        async def on_provisional(_message, _context):
+            nonlocal sends_at_provisional
+            # T1 may expire before this host consumes the queued 180. Only
+            # retransmissions after processing the provisional violate this contract.
+            sends_at_provisional = sends
+            provisional_received.set()
 
         def send():
             nonlocal sends, final_task
@@ -89,11 +99,15 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
                 response = await sip_transaction.async_run_dialog_request_transaction(
                     send=send, read=read, matches=lambda message: True, active=lambda: True,
                     transport="UDP", timeout=0.2, method="INVITE",
+                    on_provisional=on_provisional,
                 )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(sends, 1)
+            self.assertIsNotNone(sends_at_provisional)
+            self.assertEqual(sends, sends_at_provisional)
         finally:
             if final_task is not None:
+                if not final_task.done():
+                    final_task.cancel()
                 await asyncio.gather(final_task, return_exceptions=True)
 
     async def test_non_invite_keeps_retrying_after_a_provisional_response(self):
