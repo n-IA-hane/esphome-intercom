@@ -122,6 +122,10 @@ async def test_native_sensor_tracks_both_directions_packets_and_cleanup(hass, ph
     source, target = fmt(16000, ms=10), fmt(48000, ms=10, pt=110)
     media = relay(left=peer(source, "192.0.2.1", 40000), right=peer(target, "192.0.2.2", 41000))
     media.left_transport, media.right_transport = Mock(), Mock()
+    from custom_components.voip_stack.phone_state import PHONE_STATE_CHANGED
+
+    events = []
+    unsubscribe = hass.bus.async_listen(PHONE_STATE_CHANGED, lambda event: events.append(event))
     first, platform = await add_sensor(hass, phones, "office")
     second, other_platform = await add_sensor(hass, phones, "kitchen")
     try:
@@ -130,6 +134,7 @@ async def test_native_sensor_tracks_both_directions_packets_and_cleanup(hass, ph
         call_projection.publish_media_route(hass, session.call_id, media.media_route)
         await hass.async_block_till_done()
         assert hass.states.get(first.entity_id).state == "unknown"
+        events.clear()
         media.handle_packet("left", rtp.build_packet(rtp.RtpPacket(source.payload_type,
                             1, 0, 123, b"\0" * 320)), ("192.0.2.1", 40000))
         await hass.async_block_till_done()
@@ -138,6 +143,7 @@ async def test_native_sensor_tracks_both_directions_packets_and_cleanup(hass, ph
         assert (left["audio_tx"], left["audio_rx"]) == ("resampled", "unknown")
         assert (right["audio_tx"], right["audio_rx"]) == ("unknown", "resampled")
         assert left["leg_id"] == "one-source" and left["generation"] == session.generation
+        assert not events, "A media-only update must not emit call-state/BLF activity"
         media.handle_packet("right", rtp.build_packet(rtp.RtpPacket(target.payload_type,
                             1, 0, 456, b"\0" * 960)), ("192.0.2.2", 41000))
         await hass.async_block_till_done()
@@ -166,6 +172,7 @@ async def test_native_sensor_tracks_both_directions_packets_and_cleanup(hass, ph
     finally:
         await platform.async_reset()
         await other_platform.async_reset()
+        unsubscribe()
 
 
 async def test_multiple_calls_stay_distinct_and_unsupported_adapters_stay_unknown(hass, phones):
@@ -179,14 +186,14 @@ async def test_multiple_calls_stay_distinct_and_unsupported_adapters_stay_unknow
     second.left_to_right_clock.observe_format(second.left.inbound_rtp_format)
     second.right_to_left_clock.observe_format(second.right.inbound_rtp_format)
     two = attach(phones, second, "two")
-    state, attributes = diagnostics.account_media_processing(phone_states(hass)["office"]["calls"])
+    state, attributes = diagnostics.account_media_processing(phones.runtime, "office", phone_states(hass)["office"]["calls"])
     assert state == "mixed"
     assert {item["call_id"] for item in attributes["calls"]} == {one.call_id, two.call_id}
     assert attributes["call_count"] == 2
     await phones.calls.request_termination(one.call_id, TerminationIntent("done"))
     await phones.calls.request_termination(two.call_id, TerminationIntent("done"))
     browser = attach(phones, relay(), "browser", source_role="ha_softphone")
-    state, attributes = diagnostics.account_media_processing(phone_states(hass)["office"]["calls"])
+    state, attributes = diagnostics.account_media_processing(phones.runtime, "office", phone_states(hass)["office"]["calls"])
     assert state == "unknown"
     call = phone_states(hass)["office"]["calls"][0]
     assert set(diagnostics.call_media_processing(phones.runtime, "office", {**call, "generation": browser.generation + 1}).values()) == {"unknown"}

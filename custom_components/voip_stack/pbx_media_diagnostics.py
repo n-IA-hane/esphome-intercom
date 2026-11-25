@@ -60,10 +60,10 @@ def call_media_processing(runtime, endpoint_id, call):
     return dict(zip(_MEDIA_FIELDS, (audio[side], audio[reverse], video[side], video[reverse]), strict=True))
 
 
-def account_media_processing(calls):
+def account_media_processing(runtime, endpoint_id, calls):
     """Aggregate a detached call projection while preserving every occurrence."""
     details = [{**{key: call[key] for key in ("call_id", "generation", "leg_id", "sip_call_id")},
-                **call["media_processing"]} for call in calls]
+                **call_media_processing(runtime, endpoint_id, call)} for call in calls]
     operations = {item[field] for item in details for field in _MEDIA_FIELDS}
     active = operations - {"inactive"}
     state = (
@@ -77,8 +77,8 @@ def account_media_processing(calls):
     return state, {"call_count": len(details), "calls": details}
 
 
-def publish_media_processing(_hass, data, _session):
+def publish_media_processing(_hass, data, session):
     """Refresh the shared projection; unchanged values produce no HA update."""
     observer = data.sip.component("phone_state")
     if observer is not None:
-        observer.refresh()
+        observer.media_changed(session.token)

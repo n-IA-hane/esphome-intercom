@@ -148,20 +148,23 @@ class PhoneEndpointMediaProcessingSensor(PhoneEndpointEntity, SensorEntity):
 
     def __init__(self, hass, endpoint, registry):
         super().__init__(endpoint, registry, key="media_processing")
+        self._runtime = require_runtime_data(hass)
+        self._observer = None
         self._apply_phone({"calls": []})
 
     async def async_added_to_hass(self):
         from .phone_state import phone_state_observer
 
         await super().async_added_to_hass()
-        observer = phone_state_observer(self.hass)
+        observer = self._observer = phone_state_observer(self.hass)
         self.async_on_remove(observer.subscribe(self._phone_changed))
+        self.async_on_remove(observer.subscribe(self._media_changed, kind="media"))
         self._apply_phone(observer.previous.get(self.endpoint.endpoint_id, {"calls": []}))
 
     def _apply_phone(self, phone):
         from .pbx_media_diagnostics import account_media_processing
 
-        value, attributes = account_media_processing(phone["calls"])
+        value, attributes = account_media_processing(self._runtime, self.endpoint.endpoint_id, phone["calls"])
         changed = (value != getattr(self, "_attr_native_value", None)
                    or attributes != getattr(self, "_attr_extra_state_attributes", None))
         self._attr_native_value, self._attr_extra_state_attributes = value, attributes
@@ -175,6 +178,14 @@ class PhoneEndpointMediaProcessingSensor(PhoneEndpointEntity, SensorEntity):
             if context is not None:
                 self.async_set_context(context)
             self.async_write_ha_state()
+
+    @callback
+    def _media_changed(self, token):
+        phone = self._observer.previous.get(self.endpoint.endpoint_id)
+        if phone is not None and any(call["call_id"] == token.call_id and call["generation"] == token.generation
+                                     for call in phone["calls"]):
+            if self._apply_phone(phone):
+                self.async_write_ha_state()
 
 
 class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):

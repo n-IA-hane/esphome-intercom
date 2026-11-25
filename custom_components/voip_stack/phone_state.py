@@ -98,8 +98,6 @@ def phone_states(hass, *, dialogs=None):
     entry = config_entry(hass)
     paging = paging_group_memberships(entry) if entry is not None else None
     dialogs = snapshot_all(runtime) if dialogs is None else dialogs
-    from .pbx_media_diagnostics import call_media_processing
-
     result = {}
     for endpoint in runtime.endpoints.endpoints:
         states = tuple(
@@ -132,7 +130,6 @@ def phone_states(hass, *, dialogs=None):
             value["pickup_available"] = (
                 item.state == "early" and item.direction == "recipient"
             )
-            value["media_processing"] = call_media_processing(runtime, endpoint.endpoint_id, value)
             calls.append(value)
         from .sip_account_identity import ha_phone_device_fields
         result[endpoint.endpoint_id] = {
@@ -173,6 +170,7 @@ class PhoneStateObserver:
         self.listeners = set()
         self.activity_listeners = set()
         self.dialog_listeners = set()
+        self.media_listeners = set()
         self.projection_listeners = set()
         self.access_unsubscribers = []
         self.unsubscribers = []
@@ -255,6 +253,7 @@ class PhoneStateObserver:
             "state": self.listeners,
             "activity": self.activity_listeners,
             "dialog": self.dialog_listeners,
+            "media": self.media_listeners,
             "projection": self.projection_listeners,
         }[kind]
         listeners.add(listener)
@@ -271,10 +270,15 @@ class PhoneStateObserver:
             listeners.discard(listener)
             if not self.projection_listeners:
                 self._stop_access_observation()
-            if not (self.listeners or self.activity_listeners or self.dialog_listeners or self.projection_listeners):
+            if not (self.listeners or self.activity_listeners or self.dialog_listeners or self.media_listeners or self.projection_listeners):
                 self._stop()
 
         return unsubscribe
+
+    @callback
+    def media_changed(self, token):
+        """Notify native diagnostics without generating call-state or BLF events."""
+        self._deliver(self.media_listeners, token)
 
     def _stop(self):
         self._stop_access_observation()
@@ -378,6 +382,7 @@ class PhoneStateObserver:
         self.listeners.clear()
         self.activity_listeners.clear()
         self.dialog_listeners.clear()
+        self.media_listeners.clear()
         self.projection_listeners.clear()
 
 
