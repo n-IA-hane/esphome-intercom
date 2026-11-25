@@ -175,19 +175,29 @@ class PhonebookCoordinator:
 
     @callback
     def _report_name_conflicts(self, entries) -> None:
-        """Report ambiguous phonebook names once, until the conflict changes."""
-        from .roster import normalize_roster_key
+        """Explain ambiguous dial aliases without forbidding shared labels."""
+        from .phone_directory import PhoneDirectory
+        from .roster import RosterError, normalize_roster_key
 
+        entries = tuple(entry for entry in entries if entry.enabled)
         names = {}
         for entry in entries:
-            if not entry.enabled:
-                continue
             key = normalize_roster_key(entry.display_name)
             if key:
                 names.setdefault(key, []).append(entry)
         conflicts = []
         for matches in names.values():
             if len(matches) < 2:
+                continue
+            ambiguous = []
+            for label in sorted({entry.display_name for entry in matches}):
+                try:
+                    PhoneDirectory.resolve_entries(entries, label)
+                except RosterError:
+                    ambiguous.append(label)
+            # A public group/service name or account login can take precedence
+            # over a presentation alias. Use the real resolver's decision.
+            if not ambiguous:
                 continue
             destinations = []
             for entry in matches:
@@ -198,9 +208,11 @@ class PhonebookCoordinator:
                     else "group" if metadata.get("group_type")
                     else "phone/contact"
                 )
+                username = (f", username {entry.id}" if metadata.get("endpoint_kind") in
+                            {"sip_account", "esphome", "browser", "ha_softphone"} else "")
                 extension = f", extension {entry.extension}" if entry.extension else ""
-                destinations.append(f"{entry.display_name} ({kind}{extension})")
-            conflicts.append("; ".join(sorted(destinations)))
+                destinations.append(f"{entry.display_name} ({kind}{username}{extension})")
+            conflicts.append(f"{', '.join(ambiguous)}: " + "; ".join(sorted(destinations)))
         current = tuple(sorted(conflicts))
         if current == self._name_conflicts:
             return
@@ -210,16 +222,15 @@ class PhonebookCoordinator:
             persistent_notification.async_dismiss(self.hass, notification_id)
             return
         message = (
-            "Phonebook names must be unique, including browser phones and Assist pipelines. "
-            "Rename one destination in each conflicting pair:\n\n"
+            "Phones may share a display name. The following names are ambiguous "
+            "when dialed without a username or extension:\n\n"
             + "\n".join(f"- {conflict}" for conflict in current)
-            + "\n\nUse the VoIP Stack phone settings, the contact editor, or the Assist "
-            "pipeline settings to change the corresponding name. Different extension "
-            "numbers do not make duplicate names valid."
+            + "\n\nUse the configured username or extension to select the intended "
+            "destination. Renaming its display label is optional."
         )
-        _LOGGER.error("Duplicate VoIP phonebook names: %s. Rename the conflicting destinations.",
+        _LOGGER.warning("Ambiguous VoIP dial names: %s. Use a username or extension.",
                       " | ".join(current))
         persistent_notification.async_create(
-            self.hass, message, title="VoIP Stack: duplicate phonebook names",
+            self.hass, message, title="VoIP Stack: ambiguous dial names",
             notification_id=notification_id,
         )

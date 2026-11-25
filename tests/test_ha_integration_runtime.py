@@ -66,31 +66,50 @@ async def test_phonebook_duplicate_name_notification(hass, caplog):
     unsubscribe = notifications.async_register_callback(hass, updated)
     phone = RosterEntry("browser-a", "Casa", extension="100",
                         metadata={"endpoint_kind": "browser"})
-    assist = RosterEntry("assist-a", "CASA", extension="777",
-                         metadata={"virtual_endpoint": "assist_pipeline"})
+    assist = RosterEntry("desk-b", "CASA", extension="777",
+                         metadata={"endpoint_kind": "sip_account"})
     owner = PhonebookCoordinator(hass, None)
     try:
         owner._report_name_conflicts([phone, assist])
         await hass.async_block_till_done()
         assert len(updates) == 1
         notification = updates[0][1]["voip_stack_duplicate_phonebook_names"]
-        assert "browser phone, extension 100" in notification["message"]
-        assert "Assist pipeline, extension 777" in notification["message"]
-        assert "must be unique" in notification["message"]
-        assert "Duplicate VoIP phonebook names" in caplog.text
+        assert "browser phone, username browser-a, extension 100" in notification["message"]
+        assert "phone/contact, username desk-b, extension 777" in notification["message"]
+        assert "may share a display name" in notification["message"]
+        assert "must be unique" not in notification["message"]
+        assert "Ambiguous VoIP dial names" in caplog.text
+        assert all(record.levelname != "ERROR" for record in caplog.records)
 
         owner._report_name_conflicts([assist, phone])
         await hass.async_block_till_done()
         assert len(updates) == 1
-        assert caplog.text.count("Duplicate VoIP phonebook names") == 1
+        assert caplog.text.count("Ambiguous VoIP dial names") == 1
 
         # Reloading after a rename must also clear the previous notification.
-        renamed = RosterEntry("assist-a", "Assistant", extension="777")
+        renamed = RosterEntry("desk-b", "Assistant", extension="777")
         PhonebookCoordinator(hass, None)._report_name_conflicts([phone, renamed])
         await hass.async_block_till_done()
         assert updates[-1][0] is notifications.UpdateType.REMOVED
     finally:
         unsubscribe()
+
+
+async def test_shared_label_does_not_warn_when_public_group_name_resolves(hass):
+    from unittest.mock import patch
+    from custom_components.voip_stack.phone_directory import PhoneDirectory
+    from custom_components.voip_stack.phonebook_coordinator import PhonebookCoordinator
+    from custom_components.voip_stack.roster import RosterEntry
+
+    phone = RosterEntry("desk_1", "Studio", extension="101",
+                        metadata={"endpoint_kind": "sip_account"})
+    group = RosterEntry("ring:studio", "Studio", extension="600",
+                        metadata={"group_type": "ring"})
+    assert PhoneDirectory.resolve_entries([phone, group], "Studio") == group
+    assert PhoneDirectory.resolve_entries([phone, group], "desk_1") == phone
+    with patch("custom_components.voip_stack.phonebook_coordinator.persistent_notification.async_create") as notify:
+        PhonebookCoordinator(hass, None)._report_name_conflicts([phone, group])
+    notify.assert_not_called()
 
 
 async def test_phonebook_unique_names_do_not_notify(hass):

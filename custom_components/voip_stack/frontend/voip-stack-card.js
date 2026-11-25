@@ -3472,7 +3472,7 @@ class VoipStackCard extends HTMLElement {
   async _submitTransfer() {
     const draft = this._transferDraft;
     if (!draft || this._transferBusy || draft.callId !== this._sessionCallId() || this._getEspState() !== "in_call") return;
-    const destination = draft.keypad ? draft.manual.trim() : this._getSoftphoneTargetDevice()?.name;
+    const destination = draft.keypad ? draft.manual.trim() : publicDialTarget(this._getSoftphoneTargetDevice());
     if (!destination) { this._showError("No destination entered"); return; }
     this._transferBusy = true;
     this._errorMsg = "";

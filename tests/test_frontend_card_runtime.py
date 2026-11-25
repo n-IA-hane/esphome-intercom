@@ -1394,7 +1394,7 @@ assert.deepEqual(acknowledged._softphoneSnapshot.capabilities,["audio","video"])
 const transfer = makeCard();
 transfer.config.device_id = "phone-device";
 transfer._softphoneSnapshot = {{...base, state:"in_call",call_id:"transfer-original"}};
-transfer._softphoneTargets=()=>[{{device_id:"desk",name:"Reception"}}];
+transfer._softphoneTargets=()=>[{{id:"desk_1",username:"desk_1",endpoint_kind:"sip_account",device_id:"desk",name:"Studio"}}];
 transfer._els.transferBtn=new FakeElement();
 transfer._els.transferHangupBtn=new FakeElement();
 transfer._toggleTransfer();
@@ -1417,7 +1417,7 @@ assert.equal(transfer._softphoneSnapshot.state,"in_call");
 transfer._toggleKeypad();
 transfer._hass.callWS=async request=>{{transferRequests.push(request);return {{response:{{success:true}}}}}};
 await transfer._submitTransfer();
-assert.equal(transferRequests[1].service_data.destination,"Reception");
+assert.equal(transferRequests[1].service_data.destination,"desk_1");
 assert.equal(transfer._transferDraft,null);
 transfer._toggleTransfer();
 transfer._toggleTransfer();
@@ -2059,6 +2059,11 @@ assert.deepEqual(model.formatListFromMetadata(null), []);
 assert.equal(model.publicDialTarget({{device_id:"opaque-device",endpoint_id:"esphome:opaque"}}),"");
 assert.equal(model.publicDialTarget({{id:"queue:opaque",metadata:{{virtual_endpoint:"queue"}}}}),"");
 assert.equal(model.publicDisplayName({{name:"Kitchen",extension:"201"}}),"Kitchen");
+for (const username of ["Sala riunioni", "réception", "接待", "desk+night"]) {{
+  const row = {{id: username, name: "Studio", metadata: {{endpoint_kind: "sip_account", username}}}};
+  assert.equal(model.publicDialTarget(row), username);
+  assert.equal(model.publicDialTarget(model.targetFromRosterEntry(row)), username);
+}}
 
 const esp = model.targetFromRosterEntry({{
   id: "ws3",

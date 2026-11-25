@@ -17,6 +17,21 @@ from .test_managed_phones_ha import (
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("username", ["Sala riunioni", "réception", "接待", "desk+night"])
+async def test_public_account_directory_preserves_literal_dial_identity(phone_lab, username):
+    from custom_components.voip_stack.directory_runtime import async_refresh_directory
+    from custom_components.voip_stack.roster import dump_roster_json
+
+    add_phone(phone_lab, username=username, name="Studio")
+    await async_refresh_directory(phone_lab.hass, peers=[], registered=[])
+    row = phone_lab.runtime.directory.get(username)
+    assert row is not None
+    exported = json.loads(dump_roster_json([row]))["contacts"][0]
+    assert exported["metadata"]["username"] == username
+    assert exported["name"] == "Studio"
+    assert phone_lab.runtime.directory.resolve(username).id == username
+
+
 @pytest.mark.parametrize("sensor_present", [False, True])
 async def test_phonebook_export_uses_backend_directory_without_reading_sensor(managed, sensor_present):
     from homeassistant.core import ServiceCall

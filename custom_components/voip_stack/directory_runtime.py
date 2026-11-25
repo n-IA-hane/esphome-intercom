@@ -56,6 +56,7 @@ def _endpoint_entry(endpoint):
         extension=endpoint.extension, ha_bridge=True,
         enabled=endpoint.availability is not EndpointAvailability.UNAVAILABLE,
         metadata={"endpoint_id": endpoint.endpoint_id, "endpoint_kind": endpoint.kind.value,
+                  "username": endpoint.username, "sip_uri_user": endpoint.sip_uri_user,
                   "device_id": endpoint.device_id, "account_id": "ha", "local_ha": browser,
                   "capabilities": sorted(endpoint.capabilities), "registered": False,
                   "availability": endpoint.availability.value,
@@ -121,7 +122,10 @@ def compose_directory_entries(hass, peers, registered):
             from .phone_config import phone_subentry_by_endpoint_id
 
             kind, identity = endpoint.kind.value, endpoint.endpoint_id
-            metadata.update(account_id="ha", availability=endpoint.availability.value)
+            # Publish the literal configured address. Consumers must not infer
+            # a SIP login from a display label or an ASCII-only identifier.
+            metadata.update(account_id="ha", availability=endpoint.availability.value,
+                            username=endpoint.username, sip_uri_user=endpoint.sip_uri_user)
             account = phone_subentry_by_endpoint_id(entry, identity) if entry is not None else None
             if account is not None and account.data.get('video_enabled') is False:
                 metadata.update(configured_video_enabled=False, sip_video_codec='')
