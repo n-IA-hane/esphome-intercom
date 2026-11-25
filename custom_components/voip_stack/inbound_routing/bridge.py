@@ -41,6 +41,7 @@ from ..fsm import (
     TerminalReason,
     sip_failure_response,
 )
+from ..inbound_identity import inbound_from_uri
 from ..media_ports import (
     RtpPortReservation,
     release_sip_rtp_port_pair,
@@ -285,7 +286,7 @@ async def route_sip_bridge(
         ),
         local_identity_uri=(
             _trunk_identity_uri(trunk_config) if bridge_to_trunk else ""
-        ),
+        ) or inbound_from_uri(invite),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,

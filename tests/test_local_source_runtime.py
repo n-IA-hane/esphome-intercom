@@ -27,7 +27,10 @@ def test_pending_browser_source_preserves_pcm_rate_and_video_intent(monkeypatch,
     }
     media = {"local_bridge": True}
     registry = SimpleNamespace(
-        get_session=lambda _id: SimpleNamespace(token=object(), call_id="local-call"),
+        get_session=lambda _id: SimpleNamespace(
+            token=object(), call_id="local-call",
+            metadata={"inbound_from_uri": "sip:previous-party@remote-pbx.example"},
+        ),
         resource_for=lambda *_args: media,
     )
     monkeypatch.setattr(local, "call_registry", lambda _hass: registry)
@@ -43,6 +46,9 @@ def test_pending_browser_source_preserves_pcm_rate_and_video_intent(monkeypatch,
         "127.0.0.1", 15060, video_peer_format=sdp.RtpVideoFormat(payload_type=103, encoding="VP8"),
     )
     assert source.invite.call_id == "local-call"
+    # This adapter retains the actual browser, not a previous trunk participant.
+    assert str(source.invite.caller_uri) == "sip:caller@127.0.0.1:15060"
+    assert not source.invite.received_via_trunk
     for format in (source.invite.send_format, source.invite.recv_format):
         assert format.audio_format.sample_rate == 48000
         assert format.audio_format.channels == 1

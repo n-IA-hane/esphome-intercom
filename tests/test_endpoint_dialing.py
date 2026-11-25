@@ -253,6 +253,37 @@ def test_audio_only_trunk_does_not_reserve_video_for_incoming_video(monkeypatch)
     assert created["video_formats"] == ()
 
 
+@pytest.mark.parametrize("trusted,explicit,expected", [
+    (True, "", "sips:source@pbx-a.example:5061;transport=tls"),
+    (True, "sip:account@provider.example", "sip:account@provider.example"),
+    (False, "", ""),
+    (False, "sip:account@provider.example", "sip:account@provider.example"),
+])
+def test_forwarded_trunk_preserves_caller_domain_with_explicit_identity_precedence(
+    monkeypatch, trusted, explicit, expected,
+):
+    from custom_components.voip_stack.core import sip
+
+    dialer, created, _reused = _dialer(monkeypatch)
+    leg = dialer.prepare_outbound_leg(
+        member="100", peers=[], roster_entries=[], local_name="Remote caller",
+        local_rtp_port_index=1, uri_override="sip:100@pbx-b.example",
+        invite=SimpleNamespace(
+            routing_caller="source", video_format=None, max_forwards=None,
+            received_via_trunk=trusted,
+            caller_uri=sip.parse_sip_uri("sips:source@pbx-a.example:5061;transport=tls"),
+            send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
+            recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
+        ),
+        port_reservation=SimpleNamespace(
+            ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock(),
+        ),
+        policy=endpoint_dialing.OutboundLegPolicy(local_identity_uri=explicit),
+    )
+    assert leg is not None
+    assert created["local_identity_uri"] == expected
+
+
 @pytest.mark.parametrize("endpoint_kind", ["esphome", "sip_account"])
 def test_endpoint_kind_uses_the_same_engine_media_plan(monkeypatch, endpoint_kind):
     from custom_components.voip_stack.core import sdp

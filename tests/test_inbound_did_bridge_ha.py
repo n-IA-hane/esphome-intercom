@@ -127,7 +127,9 @@ async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex
                 phone.bye.clear()
             before = [len(phone.invites) for phone in lab.phones]
             branch = f"z9hG4bK-did-bridge-{index}"
-            from_header = f'"Independent source" <sip:{caller}@provider.example>;tag=source-{index}'
+            caller_uri = (f"sips:{caller}@provider.example:5061;transport=tls"
+                          if index % 2 else f"sip:{caller}@provider.example")
+            from_header = f'"Independent source" <{caller_uri}>;tag=source-{index}'
             headers = [("Via", f"SIP/2.0/UDP 127.0.0.2:{signal_port};branch={branch};rport"),
                 ("From", from_header), ("To", f"<sip:{did}@provider.example>"),
                 ("Call-ID", call_id), ("CSeq", "1 INVITE"), ("Contact", f"<{source_uri}>"),
@@ -140,6 +142,12 @@ async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex
             target_invite = lab.phones[target_index].invites[-1]
             assert sip.parse_sip_uri(target_invite.uri).user == expected
             assert sip.parse_sip_uri(target_invite.header("To")).user == expected
+            # The destination changes at this PBX; the remote caller's SIP
+            # domain must not become the local Contact address.
+            assert str(sip.parse_sip_uri(target_invite.header("From"))) == caller_uri
+            contact = sip.parse_sip_uri(target_invite.header("Contact"))
+            assert (contact.host, contact.port) == listener
+            assert sip.extract_tag(target_invite.header("From")) != f"source-{index}"
             assert snapshots[-1]["called_number"] == snapshots[-1]["called_number_raw"] == did
             assert snapshots[-1]["caller_number"] == caller
             assert snapshots[-1]["inbound_trunk_id"] == "did-provider"

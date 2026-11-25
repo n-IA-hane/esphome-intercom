@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from .codec_settings import effective_codec_policy
 from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
+from .inbound_identity import inbound_from_uri
 from .endpoint_routing import (
     EndpointRouteResolver,
     bridge_audio_profile,
@@ -299,7 +300,7 @@ class EndpointDialer:
                         else local_name
                     )
                 ),
-                local_identity_uri=policy.local_identity_uri,
+                local_identity_uri=policy.local_identity_uri or inbound_from_uri(invite),
                 local_sip_port=int(self.config["sip_port"]),
                 local_rtp_port=local_audio_port,
                 supported_send_formats=sip_send_formats,

@@ -35,6 +35,16 @@ A directory contact remains a destination you can dial. Its address or
 display name does not authorize incoming calls. Existing configured trunks
 continue to use their own source and routing settings.
 
+### Calls between PBXs
+
+When HA sends an identified incoming trunk caller to a local SIP destination,
+the new leg preserves the caller's complete `From` URI, including its domain.
+The new leg still owns its own dialog tag and reachable HA `Contact`. An
+explicit identity configured for an outgoing trunk takes precedence when the
+call is sent through that trunk. Retaining a local browser in a transfer keeps
+that browser's identity; it does not reuse a previous participant's identity
+from the call history.
+
 ## Which phones may use the trunk?
 
 Every phone is allowed by default. Use **VoIP Stack: Set external call access**

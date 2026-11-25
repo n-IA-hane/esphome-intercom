@@ -125,3 +125,15 @@ def apply_inbound_identity(invite, config: Mapping, request: sip.SipMessage):
 def identity_fields(invite) -> dict[str, str]:
     """Copy the small immutable ingress snapshot, never request headers."""
     return {key: str(getattr(invite, key, "") or "") for key in INBOUND_IDENTITY_KEYS}
+
+
+def inbound_from_uri(invite) -> str:
+    """Keep an identified trunk caller's URI when building its destination leg.
+
+    From is the remote party's identity, while Contact remains our reachable
+    dialog address. A locally originated source keeps the normal local identity;
+    an explicit outbound trunk identity takes precedence at the call site.
+    """
+    if not getattr(invite, "received_via_trunk", False):
+        return ""
+    return str(getattr(invite, "caller_uri", None) or "")
