@@ -1672,11 +1672,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1738,11 +1738,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1804,11 +1804,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1870,11 +1870,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1944,11 +1944,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2018,11 +2018,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2088,11 +2088,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2169,11 +2169,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Compara o número de telefone chamado após a reescrita do tronco de entrada, quando configurada."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Compara o ramal de destino configurado ou o endereço originalmente chamado preservado pelo tronco de entrada."
         },
         "caller_match": {
           "name": "Caller value matching",

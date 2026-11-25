@@ -1672,11 +1672,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1738,11 +1738,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1804,11 +1804,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1870,11 +1870,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1944,11 +1944,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2018,11 +2018,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2088,11 +2088,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2169,11 +2169,11 @@
         },
         "destination_number": {
           "name": "Called telephone number",
-          "description": "Match the called number received at ingress."
+          "description": "Porovná volané telefonní číslo po přepsání příchozím trunkem, pokud je přepis nakonfigurován."
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Match the configured destination extension."
+          "description": "Porovná nakonfigurovanou cílovou pobočku nebo původní volanou adresu zachovanou příchozím trunkem."
         },
         "caller_match": {
           "name": "Caller value matching",
