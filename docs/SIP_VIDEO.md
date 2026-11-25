@@ -275,6 +275,12 @@ attaches after DTMF collection can therefore wait until the remote sender's
 next natural keyframe. VoIP Stack deliberately does not send unnegotiated PLI,
 FIR or proprietary SIP picture-update messages.
 
+For a converted stream, negotiated PLI/FIR requests recovery from the remote
+source. The running FFmpeg output encoder currently uses periodic keyframes;
+VoIP Stack has no dynamic command that forces that encoder to emit a keyframe
+immediately. An accepted recovery request therefore does not guarantee an
+immediate new output keyframe.
+
 End-to-end success still depends on every provider or PBX in the route keeping
 the `m=video` section and forwarding the negotiated RTP/RTCP ports. A normal
 PSTN leg or an audio-only ITSP may remove video while leaving audio usable.

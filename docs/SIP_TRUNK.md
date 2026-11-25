@@ -322,6 +322,15 @@ Choose one routing mode in that named trunk's configuration:
   negotiated telephone-event or SIP INFO digits, and resolves explicit digits
   as phonebook extensions.
 
+Routing events distinguish the original called address from the number used
+for DID routing. `called_extension`, `target_route` and `dialed_target` preserve
+the original address on an incoming trunk. `called_number` contains the called
+telephone number after the trunk's configured rewriting. In native automation
+filters, **Called telephone number** matches `called_number`; **Destination
+extension** also accepts the preserved original called address, in addition to
+the configured destination extension. Use the number filter when matching a
+rewritten DID.
+
 DTMF digits resolve against the central phonebook `extension` field:
 
 For example, assign extension `100` to the Kitchen phone in its configuration.
