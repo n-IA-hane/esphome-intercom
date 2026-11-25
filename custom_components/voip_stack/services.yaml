@@ -1570,11 +1570,11 @@ wait_unanswered:
               mode: box
 send_dtmf:
   name: Send keypad input
-  description: Send digits from a phone's established call through its active browser or PBX relay. The negotiated RTP event or SIP INFO sender is reused. Calls without a supported active media owner return an error.
+  description: Send digits on the current Automation call, or from a selected phone's established call, using its existing negotiated RTP or SIP INFO sender. Automation calls use the same call context as Text to Speech and Wait for keypad input, without a phone selector.
   fields:
     device_id:
       name: Phone
-      description: Phone sending the digits to the other party. Defaults to the preferred HA phone.
+      description: Select a phone for a normal phone call or manual execution. Omit for a native VoIP trigger or after Call with an Automation contact in the same execution.
       selector:
         device:
           filter:
@@ -1593,12 +1593,12 @@ send_dtmf:
       fields:
         call_id:
           name: Call ID
-          description: Required when the selected phone has multiple active calls.
+          description: Select one call when an execution or phone has multiple calls. For an Automation call, also supply its call generation. Native triggers and a single outgoing Automation call select both automatically.
           selector:
             text: {}
         expected_generation:
           name: Call generation
-          description: Reject the action if this call generation has changed.
+          description: Reject the action if this call generation has changed. Required together with an explicit Automation call ID.
           selector:
             number:
               min: 0

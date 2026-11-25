@@ -263,11 +263,42 @@ not make a call audio-only when the peer is sending video.
 
 ![DTMF keypad open during a call](images/phone-cards/softphone-dtmf.png)
 
-Automations can use `voip_stack.send_dtmf` to send keypad input from a phone's
-established call. Select its SIP account device. When that phone has more than
-one live call, supply `call_id`; `expected_generation` can guard a stored call
-reference. The action uses the active browser or PBX relay's negotiated RTP
-event sender, falling back to the existing SIP INFO dialog when available.
+Automations can use `voip_stack.send_dtmf` on an Automation contact's call or
+on a phone's established call. The action uses the call's existing negotiated
+RTP event sender, falling back to its actual SIP INFO dialog when needed.
+It shares the same media transport and cleanup owner as speech and playback.
+
+Inside a native VoIP call trigger, send the digits without selecting a phone.
+As with `tts_say`, the Automation contact answers its incoming call if needed.
+An ordinary HA automation can also originate from an Automation contact and
+then send digits to the destination:
+
+```yaml
+- action: voip_stack.call
+  data:
+    source_automation: Door controller
+    destination: Front door
+    answer_timeout: 30
+  response_variable: door_call
+- action: voip_stack.send_dtmf
+  data:
+    digits: "1234#"
+    duration_ms: 160
+    gap_ms: 100
+- action: voip_stack.hangup
+```
+
+The same execution binds the returned call and generation automatically.
+When it owns multiple outgoing calls, pass `call_id: "{{ door_call.call_id }}"`
+and `expected_generation: "{{ door_call.generation }}"` to select one.
+The action does not transfer control to another automation execution. Digits,
+TTS, media playback and waits share the application's operation lock, so wait
+for one action to finish before starting the next. `wait_for_dtmf` receives
+the remote peer's reply on both incoming and outgoing Automation calls.
+
+For a normal phone call, select its SIP account device. When that phone has
+more than one live call, supply `call_id`; `expected_generation` can guard a
+stored call reference. This path reuses its active browser or PBX relay:
 
 ```yaml
 action: voip_stack.send_dtmf
@@ -286,9 +317,13 @@ and the number `sent`. Success means the negotiated sender completed, not
 that the remote IVR accepted a command. An unauthorized phone,
 ambiguous call, changed generation, inactive sender or failed SIP INFO produces
 an action error. Ending the call cancels the sequence before another digit.
-Calls handled only by an application media source, including some local IVR or
-announcement paths, currently have no account-owned outgoing keypad sender
-and are unsupported by this action. This does not change their DTMF reception.
+Application control follows the authorization of the other Automation actions:
+internal HA automations and authenticated administrators are allowed, and
+the existing controller and generation must still own the call. Phone actions
+retain their native phone control permission. Other local applications, such
+as an Assist or mailbox session not owned by an Automation contact, are not
+implicitly taken over by this action. The action does not synthesize in-band
+tones when neither negotiated RTP events nor SIP INFO are available.
 
 For parking and retrieval, follow the [parking walkthrough](CALL_PARKING.md).
 For forwarding, ringing timeouts, mailbox setup and line selection, see

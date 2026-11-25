@@ -3550,11 +3550,11 @@
     },
     "send_dtmf": {
       "name": "Enviar tons DTMF",
-      "description": "Envia dígitos pelo canal de mídia ativo da chamada estabelecida, usando eventos RTP negociados ou SIP INFO. Canais de mídia não suportados retornam um erro.",
+      "description": "Envia dígitos na chamada Automation atual ou na chamada ativa do telefone selecionado, usando o remetente RTP negociado ou SIP INFO existente. Chamadas Automation usam o mesmo contexto da síntese de voz, sem selecionar um telefone.",
       "fields": {
         "device_id": {
           "name": "Telefone",
-          "description": "Telefone que envia os dígitos à outra parte. Por padrão, usa o telefone HA preferido."
+          "description": "Selecione um telefone para uma chamada normal ou execução manual. Omita em um gatilho VoIP nativo ou após Chamar com um contato Automation na mesma execução."
         },
         "digits": {
           "name": "Dígitos",
@@ -3562,11 +3562,11 @@
         },
         "call_id": {
           "name": "ID da chamada",
-          "description": "Obrigatório quando o telefone tem várias chamadas ativas."
+          "description": "Selecione uma entre várias chamadas. Para um ID de chamada Automation explícito, informe também sua geração. Gatilhos nativos e uma única chamada Automation de saída selecionam ambos automaticamente."
         },
         "expected_generation": {
           "name": "Geração da chamada",
-          "description": "Rejeita a ação se a geração da chamada mudou."
+          "description": "Rejeita uma geração alterada. Obrigatório com um ID de chamada Automation explícito."
         },
         "duration_ms": {
           "name": "Duração da tecla",

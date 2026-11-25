@@ -3550,11 +3550,11 @@
     },
     "send_dtmf": {
       "name": "Odeslat tóny DTMF",
-      "description": "Odešle číslice přes aktivní mediální kanál probíhajícího hovoru pomocí dohodnutých událostí RTP nebo SIP INFO. Nepodporovaný mediální kanál vrátí chybu.",
+      "description": "Odešle číslice v aktuálním hovoru Automation nebo v probíhajícím hovoru vybraného telefonu přes jeho stávající RTP nebo SIP INFO. Hovory Automation používají stejný kontext hovoru jako převod textu na řeč bez výběru telefonu.",
       "fields": {
         "device_id": {
           "name": "Telefon",
-          "description": "Telefon odesílající číslice druhé straně. Výchozí je preferovaný telefon HA."
+          "description": "Vyberte telefon pro běžný hovor nebo ruční spuštění. Vynechte při nativním spouštěči VoIP nebo po volání kontaktem Automation ve stejném běhu."
         },
         "digits": {
           "name": "Číslice",
@@ -3562,11 +3562,11 @@
         },
         "call_id": {
           "name": "ID hovoru",
-          "description": "Povinné, pokud má telefon více aktivních hovorů."
+          "description": "Vyberte jeden z více hovorů. Pro explicitní ID hovoru Automation zadejte také generaci. Nativní spouštěče a jediný odchozí hovor Automation vybírají obě hodnoty automaticky."
         },
         "expected_generation": {
           "name": "Generace hovoru",
-          "description": "Odmítne akci, pokud se generace hovoru změnila."
+          "description": "Odmítne změněnou generaci. Povinné s explicitním ID hovoru Automation."
         },
         "duration_ms": {
           "name": "Délka stisku",

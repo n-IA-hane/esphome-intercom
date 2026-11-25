@@ -3550,11 +3550,11 @@
     },
     "send_dtmf": {
       "name": "DTMF-Töne senden",
-      "description": "Sendet Ziffern über den aktiven Medienkanal des bestehenden Anrufs mit ausgehandelten RTP-Ereignissen oder SIP INFO. Nicht unterstützte Medienkanäle melden einen Fehler.",
+      "description": "Sendet Ziffern im aktuellen Automation-Anruf oder im bestehenden Anruf des ausgewählten Telefons über den vorhandenen RTP- oder SIP-INFO-Sender. Automation-Anrufe verwenden denselben Anrufkontext wie Text-to-Speech ohne Telefonauswahl.",
       "fields": {
         "device_id": {
           "name": "Telefon",
-          "description": "Telefon, das die Ziffern an die Gegenstelle sendet. Standard ist das bevorzugte HA-Telefon."
+          "description": "Für einen normalen Anruf oder eine manuelle Ausführung ein Telefon wählen. Bei einem nativen VoIP-Auslöser oder nach einem Anruf mit Automation-Kontakt in derselben Ausführung weglassen."
         },
         "digits": {
           "name": "Ziffern",
@@ -3562,11 +3562,11 @@
         },
         "call_id": {
           "name": "Anruf-ID",
-          "description": "Erforderlich, wenn das Telefon mehrere aktive Anrufe hat."
+          "description": "Einen von mehreren Anrufen auswählen. Bei einer expliziten Automation-Anruf-ID auch die Generation angeben. Native Auslöser und ein einzelner ausgehender Automation-Anruf wählen beides automatisch."
         },
         "expected_generation": {
           "name": "Anrufgeneration",
-          "description": "Aktion ablehnen, wenn sich die Anrufgeneration geändert hat."
+          "description": "Eine geänderte Generation ablehnen. Bei einer expliziten Automation-Anruf-ID erforderlich."
         },
         "duration_ms": {
           "name": "Tastendauer",

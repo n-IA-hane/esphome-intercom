@@ -190,7 +190,7 @@ class AutomationCall(LocalCallApplication):
                 if (
                     data.get("call_id") != self.session.call_id
                     or data.get("generation") != self.session.generation
-                    or data.get("source_leg") != "caller"
+                    or data.get("source_leg") != ("callee" if self.outgoing else "caller")
                     or completed.done()
                 ):
                     return
@@ -215,6 +215,33 @@ class AutomationCall(LocalCallApplication):
         if execution is not None:
             execution.dtmf_result = result
         return result
+
+    async def send_dtmf(self, call: ServiceCall) -> dict:
+        """Serialize keypad input with speech, waits and call cleanup."""
+        from .dtmf import send_dtmf_sequence
+
+        async def send():
+            await self.answer()
+            self.require_current()
+            media = self.media
+            assert media is not None
+            digits = str(call.data["digits"]).upper()
+            duration_ms = int(call.data.get("duration_ms", 160))
+            gap_ms = int(call.data.get("gap_ms", 100))
+
+            def require_media():
+                self.require_current()
+                if (self.media is not media or self.session.state != CallState.IN_CALL.value
+                        or call_registry(self.hass).resource_for(self.session.call_id, "relay") is not media):
+                    raise ServiceValidationError("The call's application media owner changed")
+
+            if not await send_dtmf_sequence(digits, duration_ms=duration_ms, gap_ms=gap_ms,
+                    schedule=media.schedule_dtmf, require_current=require_media):
+                raise ServiceValidationError("The negotiated media owner could not send keypad input")
+            return {"call_id": self.session.call_id, "generation": self.session.generation,
+                    "digits": digits, "sent": len(digits)}
+
+        return await self.run_operation(call, send, timeout=None)
 
     async def forward(self, destination: str, *, on_failure: str = "resume", trunk_id: str = "") -> None:
         self.require_current()

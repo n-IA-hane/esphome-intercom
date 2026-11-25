@@ -89,7 +89,23 @@ class LocalCallApplication:
 
         publish_dtmf_event(self.hass, call_id=self.session.call_id, dest_call_id="",
                            caller=self.session.caller, callee=self.session.callee,
-                           side=side, digit=digit, transport=transport)
+                           side="right" if self.outgoing else side, digit=digit, transport=transport)
+
+    async def send_dtmf_info(self, digit: str, *, duration_ms: int) -> bool:
+        """Use the actual peer dialog, including a retargeted outgoing leg."""
+        self.require_current()
+        registry = call_registry(self.hass)
+        media = self.media
+        if media is None or registry.resource_for(self.session.call_id, "relay") is not media:
+            return False
+        client = (registry.sip_client_for(media.invite.call_id) if self.outgoing else self.source_client)
+        if client is not None:
+            return bool(await client.send_dtmf_info(digit, duration_ms=duration_ms))
+        from .runtime_data import sip_endpoint_manager
+
+        manager = sip_endpoint_manager(self.hass)
+        return bool(manager is not None and await manager.async_send_dtmf_info(
+            media.invite.call_id, digit, duration_ms=duration_ms))
 
     async def release_media_for_forward(self) -> None:
         """Release the local receiver before the next media owner binds it."""
@@ -159,6 +175,7 @@ class LocalCallApplication:
                 rtp_source=(preanswered or {}).get("audio_rtp_source"),
             )
         media.on_dtmf = self.handle_dtmf
+        media.on_dtmf_fallback = self.send_dtmf_info
         media.private_dtmf = getattr(self, "private_dtmf", False)
         try:
             await media.start()
@@ -259,6 +276,7 @@ def attach_local_application(application_type, hass, session, invite, contact, l
                           stage=application.cleanup_stage, generation=session.generation)
     if application.media is not None:
         application.media.on_dtmf = application.handle_dtmf
+        application.media.on_dtmf_fallback = application.send_dtmf_info
         application.media.private_dtmf = getattr(application, "private_dtmf", False)
     if application.source_client is not None:
         bind_application_source_dialog(application)

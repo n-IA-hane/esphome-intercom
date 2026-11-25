@@ -3550,11 +3550,11 @@
     },
     "send_dtmf": {
       "name": "Invia toni DTMF",
-      "description": "Invia cifre sulla chiamata in corso attraverso il proprietario audio attivo, usando eventi RTP negoziati o SIP INFO. Un proprietario audio non supportato restituisce un errore.",
+      "description": "Invia cifre sulla chiamata Automation corrente o sulla chiamata attiva del telefono selezionato, usando il mittente RTP negoziato o SIP INFO esistente. Le chiamate Automation usano lo stesso contesto del testo vocale senza selezionare un telefono.",
       "fields": {
         "device_id": {
           "name": "Telefono",
-          "description": "Telefono che invia le cifre alla controparte. Se omesso, usa il telefono HA preferito."
+          "description": "Seleziona un telefono per una chiamata normale o un'esecuzione manuale. Omettilo con un trigger VoIP nativo o dopo Chiamata con un contatto Automation nella stessa esecuzione."
         },
         "digits": {
           "name": "Cifre",
@@ -3562,11 +3562,11 @@
         },
         "call_id": {
           "name": "ID chiamata",
-          "description": "Obbligatorio se il telefono ha più chiamate attive."
+          "description": "Seleziona una chiamata tra più chiamate. Con un ID Automation esplicito indica anche la generazione. I trigger nativi e una sola chiamata Automation uscente selezionano entrambi automaticamente."
         },
         "expected_generation": {
           "name": "Generazione chiamata",
-          "description": "Rifiuta l’azione se la generazione della chiamata è cambiata."
+          "description": "Rifiuta una generazione cambiata. Obbligatorio con un ID di chiamata Automation esplicito."
         },
         "duration_ms": {
           "name": "Durata pressione",

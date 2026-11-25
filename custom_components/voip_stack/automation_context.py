@@ -76,6 +76,7 @@ CALL_ACTIONS = frozenset(
         "set_deadline",
         "cancel_deadline",
         "wait_for_dtmf",
+        "send_dtmf",
         "wait_unanswered",
         "send_to_voicemail",
     }
@@ -84,7 +85,7 @@ CALL_ACTIONS = frozenset(
 
 def _bind_outgoing_action(call: ServiceCall) -> ServiceCall:
     """Resolve from existing session owners, never a global preferred phone."""
-    if call.service not in {"tts_say", "play_media", "hangup", "forward", "wait_for_dtmf", "send_to_voicemail"}:
+    if call.service not in {"tts_say", "play_media", "hangup", "forward", "wait_for_dtmf", "send_dtmf", "send_to_voicemail"}:
         return call
     if call.data.get("call_id") or call.data.get("device_id"):
         return call
@@ -96,6 +97,10 @@ def _bind_outgoing_action(call: ServiceCall) -> ServiceCall:
         and application.session.live
     ]
     if not matches:
+        if call.service == "send_dtmf":
+            # Retain the existing preferred-phone action outside an outgoing
+            # application execution; never choose another automation's call.
+            return call
         raise ServiceValidationError(
             "This execution has no outgoing Automation call. Call first, or select a phone or call explicitly"
         )
@@ -130,6 +135,7 @@ def bind_call_action(call: ServiceCall) -> ServiceCall:
         "tts_say",
         "play_media",
         "wait_for_dtmf",
+        "send_dtmf",
         "wait_unanswered",
         "send_to_voicemail",
         "route",
@@ -186,7 +192,7 @@ def bind_call_action(call: ServiceCall) -> ServiceCall:
         device_id = execution.snapshot.get("device_id")
         if device_id:
             data["device_id"] = device_id
-    if call.service in {"tts_say", "play_media", "forward", "hangup", "wait_for_dtmf", "wait_unanswered", "send_to_voicemail", "park", "pickup", "start_recording", "stop_recording"}:
+    if call.service in {"tts_say", "play_media", "forward", "hangup", "wait_for_dtmf", "send_dtmf", "wait_unanswered", "send_to_voicemail", "park", "pickup", "start_recording", "stop_recording"}:
         expected = data.get("expected_generation")
         if expected is not None and expected != execution.token.generation:
             raise ServiceValidationError(

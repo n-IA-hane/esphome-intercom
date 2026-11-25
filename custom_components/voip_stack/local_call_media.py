@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from .core import rtp
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
+from .dtmf import build_telephone_event_payload, send_rtp_dtmf_event, telephone_event_code
 from .queue_utils import put_drop_oldest
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadEncoder, SipDialog
@@ -55,6 +56,7 @@ class LocalAudioContract:
     dtmf_events: frozenset[int] = frozenset()
     recv_dtmf_formats: tuple = ()
     send_dtmf_formats: tuple = ()
+    dtmf_direction: Any = None
     source_host: str = ""
 
     @classmethod
@@ -178,6 +180,10 @@ class LocalCallMedia:
         self.release_reservation_on_stop = True
         self.on_complete = on_complete
         self.on_dtmf = None
+        self.on_dtmf_fallback = None
+        self._dtmf_tasks: set[asyncio.Task] = set()
+        self._dtmf_lock = asyncio.Lock()
+        self._dtmf_source: rtp.AudioRtpSenderState | None = None
         self._handoff_input: list[bytes] | None = None
         self._dtmf_sdp = None
         self._dtmf_decoder = None
@@ -302,6 +308,10 @@ class LocalCallMedia:
                 raise RuntimeError("Local call media session ended before media commit")
             if self.invite is not previous:
                 raise RuntimeError("Assist media contract changed before commit")
+            # A press belongs to the contract captured when it was queued.
+            # Never finish an old payload mapping on a newly accepted offer.
+            for task in tuple(self._dtmf_tasks):
+                task.cancel()
             self.decoder.close()
             self.encoder.close()
             self.decoder = decoder
@@ -431,7 +441,7 @@ class LocalCallMedia:
             self.decoder.close()
             self.encoder.close()
             current = asyncio.current_task()
-            tasks = [self._consumer_task, self._tts_task, self._tx_task]
+            tasks = [self._consumer_task, self._tts_task, self._tx_task, *self._dtmf_tasks]
             for task in tasks:
                 if task is not None and task is not current and not task.done():
                     task.cancel()
@@ -524,6 +534,72 @@ class LocalCallMedia:
             _LOGGER.debug(
                 "Local call RTP RX drop call_id=%s: %s", self.invite.call_id, err
             )
+
+    def schedule_dtmf(self, digit: str, *, duration_ms: int = 160):
+        """Send from this application on its existing negotiated RTP transport."""
+        if (self.closed.is_set() or not self.can_send or self.transport is None
+                or self.transport.is_closing() or telephone_event_code(digit) is None):
+            return None
+        contract = self.invite
+        transport = self.transport
+
+        async def send() -> bool:
+            async with self._dtmf_lock:
+                if (self.closed.is_set() or self.invite is not contract or not self.can_send
+                        or self.transport is not transport or transport.is_closing()):
+                    return False
+                direction = getattr(contract, "dtmf_direction", None)
+                selected = direction.send if direction is not None else None
+                if selected is None or telephone_event_code(digit) not in selected.events:
+                    callback = self.on_dtmf_fallback
+                    return bool(callback is not None and await callback(digit, duration_ms=duration_ms))
+
+                # An event with the audio clock shares sequence/SSRC with that
+                # sender. A different clock needs its own RTP source state,
+                # still owned and transmitted by this same socket/transport.
+                audio_rate = self.encoder.fmt.rtp_clock_rate
+                self.rtp_source.use_clock_rate(audio_rate)
+                shared = selected.sample_rate == audio_rate
+                if not shared and self._dtmf_source is None:
+                    self._dtmf_source = rtp.AudioRtpSenderState.create()
+                    if self._dtmf_source.ssrc == self.rtp_source.ssrc:
+                        self._dtmf_source.ssrc = (self.rtp_source.ssrc ^ 0x80000000) or 1
+                source = self.rtp_source if shared else self._dtmf_source
+                assert source is not None
+                source.use_clock_rate(selected.sample_rate)
+                timestamp, ssrc = source.timestamp, source.ssrc
+
+                async def emit(duration, marker, end, offset):
+                    if (self.closed.is_set() or self.invite is not contract or not self.can_send
+                            or self.transport is not transport or transport.is_closing()
+                            or source.ssrc != ssrc
+                            or (shared and self.encoder.fmt.rtp_clock_rate != audio_rate)):
+                        return False
+                    packet = rtp.build_packet(rtp.RtpPacket(
+                        payload_type=selected.payload_type, sequence=source.sequence,
+                        timestamp=rtp.next_timestamp(timestamp, offset), ssrc=ssrc,
+                        payload=build_telephone_event_payload(digit, duration=duration, end=end),
+                        marker=marker))
+                    transport.sendto(packet, (self.remote_rtp_host, self.remote_rtp_port))
+                    source.sequence = rtp.next_sequence(source.sequence)
+                    self.counters["rtp_tx"] += 1
+                    return True
+
+                try:
+                    return await send_rtp_dtmf_event(digit, clock_rate=selected.sample_rate,
+                        duration_ms=duration_ms, emit=emit)
+                finally:
+                    if not shared:
+                        # Also retire the timestamp of an interrupted press so
+                        # a later identical digit cannot be mistaken for it.
+                        source.timestamp = rtp.next_timestamp(timestamp,
+                            round(max(40, min(5000, duration_ms)) * selected.sample_rate / 1000)
+                            + selected.sample_rate // 20)
+
+        task = asyncio.create_task(send(), name=f"voip-local-dtmf-{contract.call_id}-{digit}")
+        self._dtmf_tasks.add(task)
+        task.add_done_callback(self._dtmf_tasks.discard)
+        return task
 
     async def _send_loop(self) -> None:
         """Maintain the RTP clock and stream TTS frames as soon as they arrive."""

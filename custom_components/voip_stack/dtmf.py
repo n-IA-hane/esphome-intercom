@@ -60,6 +60,19 @@ def telephone_event_code(digit: str) -> int | None:
     return _DIGIT_EVENT_CODES.get(str(digit or "").strip().upper())
 
 
+async def send_dtmf_sequence(digits, *, duration_ms, gap_ms, schedule, require_current) -> bool:
+    """Sequence commands without owning another task, transport or call identity."""
+    for index, digit in enumerate(digits):
+        require_current()
+        task = schedule(digit, duration_ms=duration_ms)
+        if task is None or not await task:
+            return False
+        require_current()
+        if index + 1 < len(digits):
+            await asyncio.sleep(gap_ms / 1000)
+    return True
+
+
 def parse_sip_info_duration(body: bytes) -> int:
     """Preserve the stated press duration, using the legacy default if absent."""
     match = re.search(r"^Duration\s*=\s*(\d+)\s*$", body.decode("ascii", errors="ignore"), re.I | re.M)

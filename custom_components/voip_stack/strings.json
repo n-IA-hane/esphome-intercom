@@ -3550,11 +3550,11 @@
     },
     "send_dtmf": {
       "name": "Send keypad input",
-      "description": "Send digits through the established call's active media owner, using negotiated RTP events or SIP INFO. Unsupported media owners return an error.",
+      "description": "Send digits on the current Automation call or a selected phone's established call, using its existing negotiated RTP or SIP INFO sender. Automation calls reuse the Text to Speech call context without a phone selector.",
       "fields": {
         "device_id": {
           "name": "Phone",
-          "description": "Phone sending the digits to the other party. Defaults to the preferred HA phone."
+          "description": "Select a phone for a normal call or manual execution. Omit for a native VoIP trigger or after Call with an Automation contact in the same execution."
         },
         "digits": {
           "name": "Digits",
@@ -3562,11 +3562,11 @@
         },
         "call_id": {
           "name": "Call ID",
-          "description": "Required when the phone has multiple active calls."
+          "description": "Select one of multiple calls. For an explicit Automation call ID, also supply its generation. Native triggers and a single outgoing Automation call select both automatically."
         },
         "expected_generation": {
           "name": "Call generation",
-          "description": "Reject the action if the call generation has changed."
+          "description": "Reject a changed generation. Required with an explicit Automation call ID."
         },
         "duration_ms": {
           "name": "Press duration",

@@ -382,6 +382,9 @@ async def _async_originate_application_call(
             registry.attach_relay(call_id, media)
             client.audio_rtp_socket = None
             application.media = media
+            media.on_dtmf = application.handle_dtmf
+            media.on_dtmf_fallback = application.send_dtmf_info
+            client.on_info_dtmf = lambda digit, _duration: application.handle_dtmf("right", digit, "sip_info")
             async def update_media(_current, updated, _method):
                 commit = media.prepare_media_update(LocalAudioContract.from_dialog(updated))
                 async def apply():
