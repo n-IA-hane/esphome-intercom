@@ -161,6 +161,9 @@ class _SourceEndpoint:
 
 @pytest.fixture
 def bridge_media_updates(monkeypatch):
+    from .voip_phase1_support import _load_intercom_module
+
+    discard_audio = _load_intercom_module("sip_rtp_bridge").discard_peer_reconfiguration
     package_name = "voip_stack_bridge_media_updates_test"
     package = ModuleType(package_name)
     package.__path__ = [str(MODULE.parent)]
@@ -228,6 +231,9 @@ def bridge_media_updates(monkeypatch):
         },
         "sip_video_relay": {
             "VideoTranscodeRestoreError": type("VideoTranscodeRestoreError", (RuntimeError,), {}),
+        },
+        "sip_rtp_bridge": {
+            "discard_peer_reconfiguration": discard_audio,
         },
         "core.sdp": {
             "video_answer_contract": lambda offered, answered: answered,

@@ -49,6 +49,35 @@ _DTMF_REPORT_IDLE_SECONDS = 0.25
 
 
 @dataclass(slots=True)
+class PreparedRtpPeerUpdate:
+    """Own a candidate's codecs until one commit or explicit discard."""
+
+    apply: Callable[[], None]
+    release: Callable[[], None]
+    settled: bool = False
+
+    def __call__(self) -> None:
+        if self.settled:
+            raise RuntimeError("RTP relay preparation has already settled")
+        try:
+            self.apply()
+        finally:
+            self.discard()
+
+    def discard(self) -> None:
+        if not self.settled:
+            self.settled = True
+            self.release()
+
+
+def discard_peer_reconfiguration(update) -> None:
+    """Retire owned candidates while accepting legacy callable adapters."""
+    discard = getattr(update, "discard", None)
+    if discard is not None:
+        discard()
+
+
+@dataclass(slots=True)
 class _DtmfFallbackPress:
     report: RtpDtmfReport
     source: RtpPeer
@@ -557,60 +586,67 @@ class SipRtpRelay:
                 previous=previous, receive_state=self._receive_states[side],
                 output_pcm=target.outbound_rtp_format.audio_format)
 
-        left_receiver = receiver("left", left, right)
-        right_receiver = receiver("right", right, left)
-        left_to_right_passthrough = bool(
-            not self.debug_capture
-            and not right.match_received_codec
-            and len(left_receiver.accepted_formats) == 1
-            and plan_audio_flow(
-                left.inbound_rtp_format,
-                right.outbound_rtp_format,
-            ).payload_relay
-        )
-        right_to_left_passthrough = bool(
-            not self.debug_capture
-            and not left.match_received_codec
-            and len(right_receiver.accepted_formats) == 1
-            and plan_audio_flow(
-                right.inbound_rtp_format,
-                left.outbound_rtp_format,
-            ).payload_relay
-        )
-        return {
-            "left_to_right_passthrough": left_to_right_passthrough,
-            "right_to_left_passthrough": right_to_left_passthrough,
-            "left_to_right_clock": _PayloadRelayClock(),
-            "right_to_left_clock": _PayloadRelayClock(),
-            "left_to_right": None
-            if left_to_right_passthrough
-            else PcmFrameConverter(left_receiver.output_pcm, right.outbound_rtp_format.audio_format),
-            "right_to_left": None
-            if right_to_left_passthrough
-            else PcmFrameConverter(right_receiver.output_pcm, left.outbound_rtp_format.audio_format),
-            "left_decoder": None
-            if left_to_right_passthrough and not left_receiver.has_pcm_observers
-            else left_receiver,
-            "right_decoder": None
-            if right_to_left_passthrough and not right_receiver.has_pcm_observers
-            else right_receiver,
-            "left_encoder": None
-            if right_to_left_passthrough
-            else RtpPayloadEncoder(left.outbound_rtp_format, send_formats=left.outbound_rtp_formats, match_received_codec=left.match_received_codec),
-            "right_encoder": None
-            if left_to_right_passthrough
-            else RtpPayloadEncoder(right.outbound_rtp_format, send_formats=right.outbound_rtp_formats, match_received_codec=right.match_received_codec),
-            "dtmf_decoders": {
-                "left": RtpDtmfDecoder(left.inbound_dtmf_formats or
-                    (RtpDtmfFormat(left.dtmf_payload_type, left.dtmf_clock_rate, left.dtmf_events),),
-                    audio_receiver=left_receiver)
-                    if left.inbound_dtmf_formats or left.dtmf_payload_type is not None else None,
-                "right": RtpDtmfDecoder(right.inbound_dtmf_formats or
-                    (RtpDtmfFormat(right.dtmf_payload_type, right.dtmf_clock_rate, right.dtmf_events),),
-                    audio_receiver=right_receiver)
-                    if right.inbound_dtmf_formats or right.dtmf_payload_type is not None else None,
-            },
-        }
+        with contextlib.ExitStack() as cleanup:
+            def owned(resource):
+                cleanup.callback(resource.close)
+                return resource
+
+            left_receiver = owned(receiver("left", left, right))
+            right_receiver = owned(receiver("right", right, left))
+            left_to_right_passthrough = bool(
+                not self.debug_capture
+                and not right.match_received_codec
+                and len(left_receiver.accepted_formats) == 1
+                and plan_audio_flow(
+                    left.inbound_rtp_format,
+                    right.outbound_rtp_format,
+                ).payload_relay
+            )
+            right_to_left_passthrough = bool(
+                not self.debug_capture
+                and not left.match_received_codec
+                and len(right_receiver.accepted_formats) == 1
+                and plan_audio_flow(
+                    right.inbound_rtp_format,
+                    left.outbound_rtp_format,
+                ).payload_relay
+            )
+            state = {
+                "left_to_right_passthrough": left_to_right_passthrough,
+                "right_to_left_passthrough": right_to_left_passthrough,
+                "left_to_right_clock": _PayloadRelayClock(),
+                "right_to_left_clock": _PayloadRelayClock(),
+                "left_to_right": None
+                if left_to_right_passthrough
+                else PcmFrameConverter(left_receiver.output_pcm, right.outbound_rtp_format.audio_format),
+                "right_to_left": None
+                if right_to_left_passthrough
+                else PcmFrameConverter(right_receiver.output_pcm, left.outbound_rtp_format.audio_format),
+                "left_decoder": None
+                if left_to_right_passthrough and not left_receiver.has_pcm_observers
+                else left_receiver,
+                "right_decoder": None
+                if right_to_left_passthrough and not right_receiver.has_pcm_observers
+                else right_receiver,
+                "left_encoder": None
+                if right_to_left_passthrough
+                else owned(RtpPayloadEncoder(left.outbound_rtp_format, send_formats=left.outbound_rtp_formats, match_received_codec=left.match_received_codec)),
+                "right_encoder": None
+                if left_to_right_passthrough
+                else owned(RtpPayloadEncoder(right.outbound_rtp_format, send_formats=right.outbound_rtp_formats, match_received_codec=right.match_received_codec)),
+                "dtmf_decoders": {
+                    "left": RtpDtmfDecoder(left.inbound_dtmf_formats or
+                        (RtpDtmfFormat(left.dtmf_payload_type, left.dtmf_clock_rate, left.dtmf_events),),
+                        audio_receiver=left_receiver)
+                        if left.inbound_dtmf_formats or left.dtmf_payload_type is not None else None,
+                    "right": RtpDtmfDecoder(right.inbound_dtmf_formats or
+                        (RtpDtmfFormat(right.dtmf_payload_type, right.dtmf_clock_rate, right.dtmf_events),),
+                        audio_receiver=right_receiver)
+                        if right.inbound_dtmf_formats or right.dtmf_payload_type is not None else None,
+                },
+            }
+            state["cleanup"] = cleanup.pop_all()
+            return state
 
     @staticmethod
     def _media_codec_contract(left: RtpPeer, right: RtpPeer) -> tuple[Any, ...]:
@@ -660,6 +696,9 @@ class SipRtpRelay:
         self.right_encoder = state["right_encoder"]
         self._dtmf_decoders = state["dtmf_decoders"]
         self._bind_receive_callbacks()
+        # Ownership moved to the live relay attributes and their usual stop
+        # path. A retained preparation must no longer own their close hooks.
+        state["cleanup"].pop_all()
 
     def _bind_receive_callbacks(self):
         for side in ("left", "right"):
@@ -772,7 +811,7 @@ class SipRtpRelay:
         self,
         side: str,
         peer: RtpPeer,
-    ) -> Callable[[], None]:
+    ) -> PreparedRtpPeerUpdate:
         """Prepare a negotiated peer update whose commit checks the current owner."""
 
         if side not in {"left", "right"}:
@@ -788,8 +827,9 @@ class SipRtpRelay:
         )
 
         def _commit() -> None:
+            nonlocal state
             current = self.left if side == "left" else self.right
-            if current is not previous:
+            if self._stop_requested or current is not previous:
                 raise RuntimeError("stale RTP relay reconfiguration")
             commit_left = peer if side == "left" else self.left
             commit_right = peer if side == "right" else self.right
@@ -818,12 +858,22 @@ class SipRtpRelay:
                     else self._build_media_state(commit_left, commit_right)
                 )
                 self._apply_media_state(commit_left, commit_right, commit_state)
+                if commit_state is state:
+                    # The live relay now owns these codecs. Discard may only
+                    # release the unused alternative, never this adopted one.
+                    state = None
             if side in self._capture_buffers and peer.audio_format != previous.audio_format:
                 self._capture_buffers[side].clear()
                 self._capture_frames[side] = 0
                 self._capture_formats[side] = peer.audio_format
 
-        return _commit
+        def _discard() -> None:
+            nonlocal state
+            if state is not None:
+                state["cleanup"].close()
+                state = None
+
+        return PreparedRtpPeerUpdate(_commit, _discard)
 
     def media_reconfiguration_guard(self, *, deadline: float | None = None):
         """Serialize a negotiated commit with this owner's active digits."""

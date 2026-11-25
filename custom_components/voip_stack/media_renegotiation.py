@@ -49,6 +49,7 @@ from .sip_bridge import (
     invite_video_rtp_peer,
 )
 from .sip_listener import SipInvite, SipInviteResult
+from .sip_rtp_bridge import discard_peer_reconfiguration
 from .session_cleanup import async_wait_for_cleanup
 from .call_events import fire_call_event as _fire_call_event
 from .browser_phone_data import _ha_softphone_store
@@ -210,6 +211,7 @@ async def _prepare_bridge_video_contract_change(
 
     candidate = None
     result_transferred = False
+    commit_left = commit_right = None
     try:
         candidate = await client.async_prepare_video_reinvite(
             local_video_rtp_port=destination_video_port,
@@ -380,6 +382,8 @@ async def _prepare_bridge_video_contract_change(
 
         async def rollback() -> None:
             nonlocal rolled_back
+            discard_peer_reconfiguration(commit_left)
+            discard_peer_reconfiguration(commit_right)
             if rolled_back or finalized:
                 return
             rolled_back = True
@@ -422,6 +426,8 @@ async def _prepare_bridge_video_contract_change(
         return SipInviteResult(488, "Not Acceptable Here")
     finally:
         if not result_transferred:
+            discard_peer_reconfiguration(commit_left)
+            discard_peer_reconfiguration(commit_right)
             try:
                 if candidate is not None:
                     if registry.is_generation_current(updated.call_id, call_generation):
@@ -1008,6 +1014,7 @@ async def async_prepare_media_update(
         video_direction=video_direction,
     )
     commit_video_generation = rollback_video_generation = None
+    commit_audio = None
     try:
         commit_audio = relay.prepare_peer_reconfiguration(side, next_audio_peer)
         next_video_peer = invite_video_rtp_peer(updated) if video_relay is not None and updated.video_format is not None else None
@@ -1029,8 +1036,11 @@ async def async_prepare_media_update(
             except BaseException:
                 undo_stage()
                 raise
-    except (TypeError, ValueError, RuntimeError):
-        return SipInviteResult(488, "Not Acceptable Here")
+    except BaseException as error:
+        discard_peer_reconfiguration(commit_audio)
+        if isinstance(error, (TypeError, ValueError, RuntimeError)):
+            return SipInviteResult(488, "Not Acceptable Here")
+        raise
 
     audio_committed = video_committed = False
 
@@ -1063,6 +1073,7 @@ async def async_prepare_media_update(
 
     async def _rollback_relay_update() -> None:
         nonlocal audio_committed, video_committed
+        discard_peer_reconfiguration(commit_audio)
         if rollback_video_generation is not None:
             await rollback_video_generation()
         if not audio_committed and not video_committed:

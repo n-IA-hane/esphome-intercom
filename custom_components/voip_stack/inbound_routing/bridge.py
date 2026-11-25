@@ -66,7 +66,7 @@ from ..sip_bridge import (
     dialog_rtp_peer,
 )
 from ..sip_client import SIP_TIMER_B, SipCallClient, PreparedDialogMediaUpdate
-from ..sip_rtp_bridge import SipRtpRelay
+from ..sip_rtp_bridge import SipRtpRelay, discard_peer_reconfiguration
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -468,6 +468,7 @@ async def route_sip_bridge(
 
         async def rollback():
             nonlocal early_relay
+            discard_peer_reconfiguration(update)
             if previous is None:
                 if (registry.resource_for(invite.call_id, "relay") is relay
                         and not owns_provisional_media(registry.get_session(invite.call_id, generation=call_generation))):

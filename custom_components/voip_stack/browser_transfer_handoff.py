@@ -10,7 +10,7 @@ from .core.sip_transfer import SipTransferResult
 from .endpoint_session import CleanupStage, SessionHandoff, TerminationIntent
 from .dtmf_events import attach_dtmf_event_bridge
 from .sip_bridge import local_rtp_peer
-from .sip_rtp_bridge import SipRtpRelay
+from .sip_rtp_bridge import SipRtpRelay, discard_peer_reconfiguration
 from .softphone_termination import async_terminate_sip_bridge_session
 from .session_cleanup import async_wait_for_cleanup
 
@@ -142,6 +142,7 @@ async def adopt_consultation(hass, runtime, source, grant):
             await async_watch_sip_bridge_destination(hass, client=client, source_call_id=original.call_id,
                 terminate_sip_bridge=async_terminate_sip_bridge_session)
         watcher = asyncio.create_task(watch(), name=f"voip-bridge-destination-{destination_id}")
+        reconfigure = None
         try:
             async with relay.media_reconfiguration_guard():
                 source.validate()
@@ -199,6 +200,8 @@ async def adopt_consultation(hass, runtime, source, grant):
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
             raise
+        finally:
+            discard_peer_reconfiguration(reconfigure)
         calls.cancel_task(consultation.call_id, f"client_watcher:{destination_id}")
         ready.set()
         source.connected(consultation.callee, consultation.route_kind)
