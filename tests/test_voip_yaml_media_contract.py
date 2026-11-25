@@ -110,8 +110,10 @@ def test_retired_directory_and_media_route_packages_are_removed() -> None:
 
 
 def test_physical_phone_presets_use_native_ha_surface() -> None:
-    assert "ha_phone: !include" not in (ROOT / "packages/voip_only.yaml").read_text()
-    assert "use_ha_as_first_contact: true" in (ROOT / "packages/voip_only.yaml").read_text()
+    text = VOIP_ONLY_PACKAGE.read_text()
+    assert "ha_phone: !include" not in text
+    assert "use_ha_as_first_contact" not in text
+    assert "initial_contact: ${ voip_initial_contact | default('') }" in text
 
 
 def test_flac_ringtone_stop_preserves_pipeline_ownership() -> None:
