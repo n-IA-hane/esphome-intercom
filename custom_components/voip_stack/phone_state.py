@@ -98,6 +98,8 @@ def phone_states(hass, *, dialogs=None):
     entry = config_entry(hass)
     paging = paging_group_memberships(entry) if entry is not None else None
     dialogs = snapshot_all(runtime) if dialogs is None else dialogs
+    from .pbx_media_diagnostics import call_media_processing
+
     result = {}
     for endpoint in runtime.endpoints.endpoints:
         states = tuple(
@@ -130,6 +132,7 @@ def phone_states(hass, *, dialogs=None):
             value["pickup_available"] = (
                 item.state == "early" and item.direction == "recipient"
             )
+            value["media_processing"] = call_media_processing(runtime, endpoint.endpoint_id, value)
             calls.append(value)
         from .sip_account_identity import ha_phone_device_fields
         result[endpoint.endpoint_id] = {

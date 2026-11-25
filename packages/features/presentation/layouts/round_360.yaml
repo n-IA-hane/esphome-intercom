@@ -865,16 +865,6 @@ defaults:
         text_font: font_state
         text_align: CENTER
     - label:
-        id: call_media_diagnostics_label
-        align: TOP_MID
-        y: 31%
-        width: 85%
-        text: ''
-        text_color: 16777215
-        text_font: phone_media_diagnostics_font
-        text_align: CENTER
-        long_mode: SCROLL
-    - label:
         id: call_in_call_peer_label
         align: CENTER
         text: ''
@@ -1185,7 +1175,6 @@ defaults:
       id(call_ringing_out_status_label), id(call_in_call_status_label), id(call_ended_status_label)
     };
     for (auto *obj : statuses) label_at(obj, 10);
-    label_at(id(call_media_diagnostics_label), 15);
     lv_obj_t *peers[] = {
       id(call_ringing_in_peer_label), id(call_ringing_out_peer_label),
       id(call_in_call_peer_label), id(call_ended_peer_label)

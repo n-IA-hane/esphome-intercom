@@ -417,10 +417,11 @@ async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(ma
         service = account_service_device(lab)
         phone = phone_record(lab)
         entities = er.async_get(lab.hass)
-        account_entities = {e.domain: e for e in er.async_entries_for_device(entities, service.id)}
+        account_rows = list(er.async_entries_for_device(entities, service.id))
+        account_entities = {e.domain: e for e in account_rows}
         assert set(account_entities) == {"sensor", "binary_sensor", "event", "switch"}
         assert all(e.platform == "voip_stack" and e.config_subentry_id == service.config_subentry_id
-                   for e in account_entities.values())
+                   for e in account_rows)
         assert all(e.platform == "esphome" for e in er.async_entries_for_device(entities, lab.device.id))
         assert [row['endpoint_id'] for row in _ha_softphone_devices(lab.hass)] == [phone.endpoint_id]
         assert lab.hass.states.get(account_entities["binary_sensor"].entity_id).state == "off"
@@ -431,7 +432,9 @@ async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(ma
         for selected in (service.id, lab.device.id):
             source = await async_resolve_source_device(lab.hass, SimpleNamespace(data={"device_id": selected}))
             assert source["device_id"] == lab.device.id and source["endpoint_id"] == phone.endpoint_id
-        state_id = account_entities["sensor"].entity_id
+        state_id = next(e.entity_id for e in account_rows if e.unique_id.endswith("_call_state"))
+        assert any(e.unique_id.endswith("_media_processing") for e in account_rows)
+        assert any(e.unique_id.endswith("_external_call_access") for e in account_rows)
         assert lab.hass.states.get(state_id).state == "idle"
         calls = lab.runtime.sip
         calls._bind_endpoint_registry(lab.runtime.endpoints)
@@ -447,7 +450,7 @@ async def test_managed_line_entities_follow_the_pbx_and_keep_native_selectors(ma
         assert not calls.sessions and not lab.runtime.endpoints.endpoints
         assert dr.async_get(lab.hass).async_get(service.id) is None
         assert all(entities.async_get(e.entity_id) is None and lab.hass.states.get(e.entity_id) is None
-                   for e in account_entities.values())
+                   for e in account_rows)
     finally:
         await lab.hass.config_entries.async_unload_platforms(lab.entry, platforms)
 

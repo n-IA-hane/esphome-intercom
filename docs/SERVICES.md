@@ -925,3 +925,17 @@ registrations. It does not reload the PBX or interrupt calls. Storage dashboard
 edits already trigger reconciliation through HA events; this action provides an
 explicit reload after changing a YAML file. See
 [accounts and clients](ACCOUNTS_AND_CLIENTS.md).
+
+
+### Native external-call access switch
+
+Each account also exposes an **External calls** configuration switch. It calls
+the same administrative policy owner as `voip_stack.set_external_call_access`;
+changing either surface updates the other. The stored restriction follows the
+account identity across entity renames and applies to new outgoing trunk legs.
+Existing calls keep their transports. Administrators and internal automations
+can change this setting; ordinary control of another phone switch does not
+confer permission to grant trunk access.
+
+See [Account media processing](MEDIA_PROCESSING.md) for the native diagnostic
+sensor and optional ESPHome presentation.

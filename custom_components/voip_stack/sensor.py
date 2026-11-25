@@ -5,6 +5,7 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .endpoint_device import (
@@ -18,6 +19,7 @@ from .endpoint_entity_manager import (
     register_endpoint_entity_manager,
 )
 from .phonebook_coordinator import PHONEBOOK_UPDATED, PhonebookCoordinator
+from .pbx_media_diagnostics import PROCESSING_STATES
 from .phone_entity import PhoneEndpointEntity
 from .runtime_data import require_runtime_data, runtime_data
 from .service_entity import NativeServiceEntity, async_setup_native_service_entities
@@ -73,6 +75,9 @@ async def async_setup_entry(
         include=lambda row: row.subentry_type == "group" and row.data.get("kind") == "queue")
     from .call_queues import EVENT_QUEUE_CHANGED
     entry.async_on_unload(hass.bus.async_listen(EVENT_QUEUE_CHANGED, reconcile_queues))
+    media_manager = EndpointEntityManager(hass, entry, async_add_entities, PhoneEndpointMediaProcessingSensor)
+    media_manager.async_setup()
+    register_endpoint_entity_manager(entry, "endpoint_media_processing_entity_manager", media_manager)
     endpoint_manager = EndpointEntityManager(
         hass,
         entry,
@@ -129,6 +134,47 @@ class QueueCountSensor(NativeServiceEntity, SensorEntity):
         except ValueError:
             return None
         return state["waiting"] if self.key == "waiting" else sum(member["available"] for member in state["members"])
+
+
+class PhoneEndpointMediaProcessingSensor(PhoneEndpointEntity, SensorEntity):
+    """Describe current account media through the existing phone-state owner."""
+
+    _attr_options = PROCESSING_STATES
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "phone_endpoint_media_processing"
+    _attr_icon = "mdi:transit-connection-variant"
+
+    def __init__(self, hass, endpoint, registry):
+        super().__init__(endpoint, registry, key="media_processing")
+        self._apply_phone({"calls": []})
+
+    async def async_added_to_hass(self):
+        from .phone_state import phone_state_observer
+
+        await super().async_added_to_hass()
+        observer = phone_state_observer(self.hass)
+        self.async_on_remove(observer.subscribe(self._phone_changed))
+        self._apply_phone(observer.previous.get(self.endpoint.endpoint_id, {"calls": []}))
+
+    def _apply_phone(self, phone):
+        from .pbx_media_diagnostics import account_media_processing
+
+        value, attributes = account_media_processing(phone["calls"])
+        changed = (value != getattr(self, "_attr_native_value", None)
+                   or attributes != getattr(self, "_attr_extra_state_attributes", None))
+        self._attr_native_value, self._attr_extra_state_attributes = value, attributes
+        return changed
+
+    @callback
+    def _phone_changed(self, update, context):
+        if update["endpoint_id"] != self.endpoint.endpoint_id:
+            return
+        if self._apply_phone(update["phone"] or {"calls": []}):
+            if context is not None:
+                self.async_set_context(context)
+            self.async_write_ha_state()
 
 
 class PhoneEndpointCallStateSensor(PhoneEndpointEntity, SensorEntity):

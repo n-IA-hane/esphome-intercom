@@ -1555,6 +1555,17 @@
       },
       "queue_available_agents": {
         "name": "Available agents"
+      },
+      "phone_endpoint_media_processing": {
+        "name": "Zpracování médií",
+        "state": {
+          "idle": "Žádný hovor",
+          "unknown": "Neurčeno",
+          "inactive": "Neaktivní",
+          "forwarded": "Předáváno",
+          "processed": "Zpracováváno",
+          "mixed": "Smíšené"
+        }
       }
     },
     "switch": {
@@ -1572,6 +1583,9 @@
       },
       "service_enabled": {
         "name": "Enabled"
+      },
+      "phone_endpoint_external_call_access": {
+        "name": "Externí hovory"
       }
     },
     "text": {

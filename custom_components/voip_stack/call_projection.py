@@ -195,11 +195,11 @@ def _bind_media_route_diagnostics(hass, registry, session) -> None:
         def processing_changed():
             if relay.on_media_processing_changed is not processing_changed or not current():
                 return
-            from .pbx_media_diagnostics import publish_pbx_media_diagnostics
+            from .pbx_media_diagnostics import publish_media_processing
 
             data = runtime_data(hass)
             if data is not None:
-                publish_pbx_media_diagnostics(hass, data, session)
+                publish_media_processing(hass, data, session)
 
         def close(_reason):
             if relay.on_media_route_changed is changed:
@@ -235,9 +235,9 @@ def publish_media_route(hass: HomeAssistant, call_id: str, route: str) -> None:
     ):
         route = "ha_transcoding"
     session.update_metadata(committed_media_route=route)
-    from .pbx_media_diagnostics import publish_pbx_media_diagnostics
+    from .pbx_media_diagnostics import publish_media_processing
 
-    publish_pbx_media_diagnostics(hass, data, session)
+    publish_media_processing(hass, data, session)
 
 
 def stage_phone_termination_projection(
@@ -370,9 +370,9 @@ def publish_bridge_projection(
     )
     if published and session.live and session.state == "in_call":
         _bind_media_route_diagnostics(hass, require_runtime_data(hass).sip, session)
-        from .pbx_media_diagnostics import publish_pbx_media_diagnostics
+        from .pbx_media_diagnostics import publish_media_processing
 
-        publish_pbx_media_diagnostics(hass, require_runtime_data(hass), session)
+        publish_media_processing(hass, require_runtime_data(hass), session)
     return published
 
 

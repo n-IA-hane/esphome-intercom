@@ -150,3 +150,5 @@ For an offline or browsable copy, [build the documentation site](DOCUMENTATION_S
 
 The active upstream migration and December Core checkpoint are tracked in
 [Stabilization](STABILIZATION.md).
+
+- [Account media processing](MEDIA_PROCESSING.md), native per-account TX/RX diagnostics and optional ESP presentation.

@@ -221,3 +221,52 @@ async def test_service_requires_one_explicit_phone_and_boolean(hass, phones, dat
     with pytest.raises(vol.Invalid):
         await hass.services.async_call(DOMAIN, SERVICE, data, blocking=True)
     assert dict(entry.data) == before
+
+
+async def test_native_switch_and_service_share_policy_and_authorization(
+    hass, phones, hass_admin_user, hass_read_only_user,
+):
+    import logging
+    from datetime import timedelta
+    from homeassistant.helpers.entity_platform import EntityPlatform
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack.switch import PhoneEndpointExternalCallAccessSwitch
+
+    from homeassistant.auth.const import GROUP_ID_USER
+    from pytest_homeassistant.common import MockUser
+
+    member = MockUser(groups=[await hass.auth.async_get_group(GROUP_ID_USER)]).add_to_hass(hass)
+    entry, registry = phones
+    assert await async_setup_component(hass, "switch", {})
+    entity = PhoneEndpointExternalCallAccessSwitch(hass, registry.require("phone-sip_account"), registry)
+    platform = EntityPlatform(hass=hass, logger=logging.getLogger(__name__), domain="switch",
+                              platform_name=DOMAIN, platform=None, scan_interval=timedelta(seconds=30),
+                              entity_namespace=None)
+    platform.config_entry = entry
+    await platform.async_add_entities([entity])
+    try:
+        assert hass.states.get(entity.entity_id).state == "on"
+        # The existing service updates the same native switch after entry commit.
+        await _set(hass, "sip_account", False)
+        await hass.async_block_till_done()
+        assert hass.states.get(entity.entity_id).state == "off"
+        for user in (hass_read_only_user, member):
+            with pytest.raises(Unauthorized):
+                await hass.services.async_call("switch", "turn_on", {"entity_id": entity.entity_id},
+                    blocking=True, context=Context(user_id=user.id))
+        assert entry.data[BLOCKED] == ["phone-sip_account"]
+        await hass.services.async_call("switch", "turn_on", {"entity_id": entity.entity_id},
+            blocking=True, context=Context(user_id=hass_admin_user.id))
+        await hass.async_block_till_done()
+        assert not entry.data.get(BLOCKED)
+        stable = entity.unique_id
+        er.async_get(hass).async_update_entity(entity.entity_id, new_entity_id="switch.renamed_trunk_access")
+        await hass.async_block_till_done()
+        assert entity.unique_id == stable
+        assert registry.by_entity_id(entity.entity_id).endpoint_id == "phone-sip_account"
+        await hass.services.async_call("switch", "turn_off", {"entity_id": entity.entity_id}, blocking=True)
+        await hass.async_block_till_done()
+        assert hass.states.get(entity.entity_id).state == "off"
+        assert entry.runtime_data.transport_config[BLOCKED] == ("phone-sip_account",)
+    finally:
+        await platform.async_reset()

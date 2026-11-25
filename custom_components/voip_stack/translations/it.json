@@ -1555,6 +1555,17 @@
       },
       "queue_available_agents": {
         "name": "Available agents"
+      },
+      "phone_endpoint_media_processing": {
+        "name": "Elaborazione media",
+        "state": {
+          "idle": "Nessuna chiamata",
+          "unknown": "Non determinato",
+          "inactive": "Non attivo",
+          "forwarded": "Inoltrato",
+          "processed": "Elaborato",
+          "mixed": "Misto"
+        }
       }
     },
     "switch": {
@@ -1572,6 +1583,9 @@
       },
       "service_enabled": {
         "name": "Enabled"
+      },
+      "phone_endpoint_external_call_access": {
+        "name": "Chiamate esterne"
       }
     },
     "text": {

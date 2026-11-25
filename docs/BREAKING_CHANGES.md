@@ -1066,3 +1066,14 @@ serving files outside the packaged release flow.
 
 Older upgrade notes are kept in their original GitHub release pages. The
 sections above track the supported upgrade contracts through `2026.8.0`.
+
+
+## Account media diagnostics
+
+The native account **Media processing** sensor replaces the private ESP API
+`set_pbx_media_diagnostics` and `voip_stack` text sensor type `media_diagnostics`.
+The firmware's default diagnostic labels and font are removed. Custom firmware
+that wants this information can import the standard Home Assistant sensor and
+choose its own presentation; see [Account media processing](MEDIA_PROCESSING.md).
+This change does not require a new account or entity migration for existing
+call-state, connectivity or control entities.

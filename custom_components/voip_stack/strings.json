@@ -1555,6 +1555,17 @@
       },
       "queue_available_agents": {
         "name": "Available agents"
+      },
+      "phone_endpoint_media_processing": {
+        "name": "Media processing",
+        "state": {
+          "idle": "Idle",
+          "unknown": "Undetermined",
+          "inactive": "Inactive",
+          "forwarded": "Forwarded",
+          "processed": "Processed",
+          "mixed": "Mixed"
+        }
       }
     },
     "switch": {
@@ -1572,6 +1583,9 @@
       },
       "service_enabled": {
         "name": "Enabled"
+      },
+      "phone_endpoint_external_call_access": {
+        "name": "External calls"
       }
     },
     "text": {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -83,6 +83,7 @@ async def async_setup_entry(
     for key, entity_class in (
         ("endpoint_auto_answer_entity_manager", PhoneEndpointAutoAnswerSwitch),
         ("endpoint_send_video_entity_manager", PhoneEndpointSendVideoSwitch),
+        ("endpoint_external_call_access_entity_manager", PhoneEndpointExternalCallAccessSwitch),
     ):
         preference_manager = EndpointEntityManager(
             hass,
@@ -186,3 +187,47 @@ class PhoneEndpointAutoAnswerSwitch(PhoneEndpointSettingSwitch):
 class PhoneEndpointSendVideoSwitch(PhoneEndpointSettingSwitch):
     entity_description = SwitchEntityDescription(key="send_video", translation_key="phone_endpoint_send_video",
                                                  icon="mdi:video-wireless")
+
+
+class PhoneEndpointExternalCallAccessSwitch(PhoneEndpointEntity, SwitchEntity):
+    """Expose the existing administrative trunk policy without another store."""
+
+    _attr_translation_key = "phone_endpoint_external_call_access"
+    _attr_icon = "mdi:phone-outgoing"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass, endpoint, registry):
+        from .store import config_entry
+
+        super().__init__(endpoint, registry, key="external_call_access")
+        self.entry = config_entry(hass)
+
+    @property
+    def is_on(self):
+        from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
+
+        return self.endpoint.endpoint_id not in self.entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(self.entry.add_update_listener(self._config_changed))
+
+    async def _config_changed(self, _hass, _entry):
+        self.async_write_ha_state()
+
+    async def _async_set(self, allowed):
+        from .const import DOMAIN
+        from .external_call_access import async_set_external_call_access
+
+        # Carry the real entity-service context through the existing admin check.
+        # A user allowed to toggle other phone switches cannot grant trunk access.
+        await async_set_external_call_access(ServiceCall(self.hass, DOMAIN, "set_external_call_access",
+            {"device_id": self.endpoint.ha_device_id or self.endpoint.device_id, "allowed": allowed},
+            context=self._context))
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs):
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs):
+        await self._async_set(False)
