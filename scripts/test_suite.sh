@@ -284,6 +284,7 @@ ha_tests=(
   tests/test_account_consolidation_ha.py
   tests/test_account_settings_transactions_ha.py
   tests/test_account_identity_ha.py
+  tests/test_account_migration_diagnostics_ha.py
   tests/test_account_login_migration_ha.py
   tests/test_account_client_snapshot_ha.py
   tests/test_authorization_registry_ha.py
@@ -378,6 +379,7 @@ ha_tests=(
   tests/test_cn_negotiation_edges.py
   tests/test_cn_negotiation_ha.py
   tests/test_codec_policy_forms_ha.py
+  tests/test_codec_bootstrap_ha.py
   tests/test_codec_settings_ha.py
   tests/test_counterpart_display_ha.py
   tests/test_bridge_connected_identity_wire_ha.py
