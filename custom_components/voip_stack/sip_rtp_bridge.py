@@ -1545,6 +1545,14 @@ class SipRtpRelay:
             if not receive_state.admit(packet, clock_rate=received_format.rtp_clock_rate):
                 self.dropped += 1
                 return
+            # RX measures admitted wire audio, including a short packet held
+            # until a resampler or reorder buffer can yield a complete frame.
+            if side == "left":
+                self.left_rx_packets += 1
+                self.left_rx_bytes += len(data)
+            else:
+                self.right_rx_packets += 1
+                self.right_rx_bytes += len(data)
             if receive_state.changed:
                 if decoder is not None:
                     decoder.reset_source()
@@ -1663,12 +1671,8 @@ class SipRtpRelay:
             return_encoder.follow_received(received_format)
         if side == "left":
             self.left_to_right_passthrough = passthrough
-            self.left_rx_packets += 1
-            self.left_rx_bytes += len(data)
         else:
             self.right_to_left_passthrough = passthrough
-            self.right_rx_packets += 1
-            self.right_rx_bytes += len(data)
         destination_side = "right" if side == "left" else "left"
         for out in outgoing:
             self._send_audio_packet(destination_side, out)

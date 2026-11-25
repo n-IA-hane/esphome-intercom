@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 import socket
 import struct
 from unittest.mock import patch
@@ -60,6 +61,32 @@ async def receive_datagram(sock):
             data = await asyncio.get_running_loop().sock_recv(sock, 4096)
             if not is_stun_message(data):
                 return data
+
+
+async def test_rx_counts_each_admitted_packet_while_resampling_accumulates_a_frame():
+    source = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+    destination = sdp.RtpPcmFormat(97, "L16", 16000, 1, 20)
+    payload = struct.pack("!480h", *([1200] * 480))
+    async with audio_path(source) as (relay, left, right, _observed):
+        relay.reconfigure_peer("right", replace(relay.right, payload_type=97,
+            audio_format=destination.audio_format, rtp_format=destination,
+            send_rtp_format=destination, inbound_rtp_formats=(destination,),
+            outbound_rtp_formats=(destination,)))
+        loop = asyncio.get_running_loop()
+        packets = [rtp.build_packet(rtp.RtpPacket(96, number + 1, number * 480,
+            0x1234, payload)) for number in range(2)]
+        await loop.sock_sendto(left, packets[0], ("127.0.0.1", relay.left_port))
+        async with asyncio.timeout(1):
+            while relay._receive_states["left"].highest != 1:
+                await asyncio.sleep(0)
+        assert relay.left_rx_packets == 1
+        assert relay.left_rx_bytes == len(packets[0])
+        assert relay.right_tx_packets == 0
+        forwarded = await exchange(left, packets[1], relay.left_port, right)
+        assert forwarded.payload_type == 97 and len(forwarded.payload) == 640
+        assert relay.left_rx_packets == 2 and relay.right_tx_packets == 1
+        assert relay.left_rx_bytes == sum(map(len, packets))
+        assert relay.dropped == 0
 
 
 @pytest.mark.parametrize("rate", [16000, 48000])
