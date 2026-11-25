@@ -31,7 +31,9 @@ from .debug_capture import (
 )
 from .dtmf import (
     RtpDtmfDecoder,
+    RtpDtmfReport,
     build_telephone_event_payload,
+    send_rtp_dtmf_event,
     telephone_event_code,
     telephone_event_segments,
 )
@@ -43,7 +45,17 @@ from .rtp_audio_receiver import RtpAudioReceiver
 
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 8
-_DTMF_UPDATE_SECONDS = 0.05
+_DTMF_REPORT_IDLE_SECONDS = 0.25
+
+
+@dataclass(slots=True)
+class _DtmfFallbackPress:
+    report: RtpDtmfReport
+    source: RtpPeer
+    destination: RtpPeer
+    updated: asyncio.Event = field(default_factory=asyncio.Event)
+    task: asyncio.Task | None = None
+    completed: bool = False
 
 
 @dataclass(slots=True)
@@ -384,6 +396,7 @@ class SipRtpRelay:
         self._dtmf_locks = {"left": asyncio.Lock(), "right": asyncio.Lock()}
         self._receive_states = {"left": rtp.RtpReceiveState(), "right": rtp.RtpReceiveState()}
         self._dtmf_report_maps = {}
+        self._dtmf_fallback_presses = {}
         self._audio_observer_roles = []
         self.video_relay: Any | None = None
         self.forwarded = 0
@@ -481,6 +494,9 @@ class SipRtpRelay:
         self._dtmf_report_maps = {
             ("right" if key[0] == "left" else "left", *key[1:]): value
             for key, value in self._dtmf_report_maps.items()}
+        self._dtmf_fallback_presses = {
+            ("right" if key[0] == "left" else "left", *key[1:]): value
+            for key, value in self._dtmf_fallback_presses.items()}
         for roles in self._audio_observer_roles:
             roles["left"], roles["right"] = roles["right"], roles["left"]
         self._bind_receive_callbacks()
@@ -1003,6 +1019,7 @@ class SipRtpRelay:
 
     def _request_stop(self) -> None:
         self._stop_requested = True
+        self._dtmf_fallback_presses.clear()
         for side in ("left", "right"):
             receiver = getattr(self, f"{side}_decoder", None)
             if receiver is not None:
@@ -1216,8 +1233,7 @@ class SipRtpRelay:
         mapping = self._dtmf_report_maps.get(key)
         if mapping is None and (destination.outbound_dtmf_payload_type is None
                 or event not in destination.outbound_dtmf_events):
-            if report.first:
-                self._schedule_dtmf_fallback(side, report.digit)
+            self._collect_dtmf_fallback(side, source, destination, report)
             return
         rate = max(1, destination.outbound_dtmf_clock_rate)
         encoder = self.right_encoder if destination_side == "right" else self.left_encoder
@@ -1332,33 +1348,64 @@ class SipRtpRelay:
         task.add_done_callback(self._dtmf_tasks.discard)
         return True
 
-    def _schedule_dtmf_fallback(self, source_side: str, digit: str, *, duration_ms=160) -> None:
-        """Run one dialog-level fallback under the relay lifecycle owner."""
+    def _collect_dtmf_fallback(self, side, source, destination, report) -> None:
+        """Complete one decoded press, including segments and a missing final."""
+        if self.on_dtmf_fallback is None or self._stop_requested:
+            return
+        key = (side, report.ssrc, report.timestamp, report.digit)
+        press = self._dtmf_fallback_presses.get(key)
+        if press is not None:
+            if not press.completed:
+                press.report = report
+                press.updated.set()
+            return
+        press = _DtmfFallbackPress(report, source, destination)
+        self._dtmf_fallback_presses[key] = press
+        while len(self._dtmf_fallback_presses) > 256:
+            retired = self._dtmf_fallback_presses.pop(next(iter(self._dtmf_fallback_presses)))
+            if retired.task is not None and not retired.task.done():
+                retired.task.cancel()
 
+        async def complete():
+            try:
+                while not press.report.end:
+                    press.updated.clear()
+                    try:
+                        async with asyncio.timeout(_DTMF_REPORT_IDLE_SECONDS):
+                            await press.updated.wait()
+                    except TimeoutError:
+                        break
+                if (self._stop_requested or source is not (self.left if side == "left" else self.right)
+                        or destination is not (self.right if side == "left" else self.left)
+                        or not destination.can_receive or destination.connection_held):
+                    return
+                duration_ms = max(1, round(press.report.duration * 1000 / press.report.sample_rate))
+                await self._send_dtmf_fallback(side, press.report.digit, duration_ms)
+            finally:
+                press.completed = True
+
+        press.task = asyncio.create_task(complete(), name=f"voip-dtmf-press-{side}-{report.digit}")
+        self._dtmf_tasks.add(press.task)
+        press.task.add_done_callback(self._dtmf_tasks.discard)
+
+    async def _send_dtmf_fallback(self, source_side, digit, duration_ms) -> None:
         callback = self.on_dtmf_fallback
         if callback is None or self._stop_requested:
             return
+        try:
+            if not await callback(source_side, digit, duration_ms):
+                _LOGGER.info("SIP INFO DTMF fallback not accepted source=%s digit=%s", source_side, digit)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception("SIP INFO DTMF fallback failed source=%s digit=%s", source_side, digit)
 
-        async def _run() -> None:
-            try:
-                result = await callback(source_side, digit, duration_ms)
-                if not result:
-                    _LOGGER.info(
-                        "SIP INFO DTMF fallback not accepted source=%s digit=%s",
-                        source_side,
-                        digit,
-                    )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                _LOGGER.exception(
-                    "SIP INFO DTMF fallback failed source=%s digit=%s",
-                    source_side,
-                    digit,
-                )
-
+    def _schedule_dtmf_fallback(self, source_side: str, digit: str, *, duration_ms=160) -> None:
+        """Run an already complete digit under the relay lifecycle owner."""
+        if self.on_dtmf_fallback is None or self._stop_requested:
+            return
         task = asyncio.create_task(
-            _run(),
+            self._send_dtmf_fallback(source_side, digit, duration_ms),
             name=f"voip-sip-info-dtmf-{source_side}-{digit}",
         )
         self._dtmf_tasks.add(task)
@@ -1399,55 +1446,33 @@ class SipRtpRelay:
             event_ssrc = destination.ssrc if shared_clock else destination.dtmf_ssrc
             audio_timestamp_at_start = destination.timestamp
 
-            previous_segment = 0
-
-            def _send(*, elapsed_ms: int, marker: bool, end: bool) -> bool:
-                nonlocal previous_segment
+            async def emit(duration, marker, end, offset):
                 current = self.right if destination_side == "right" else self.left
                 if (current is not destination or self._stop_requested
                         or not destination.can_receive or destination.connection_held):
                     return False
-                duration = max(1, round(elapsed_ms * event_rate / 1000))
-                for offset, segment_duration, ended in telephone_event_segments(duration,
-                        previous_segment=previous_segment, end=end):
-                    sequence = destination.sequence if shared_clock else destination.dtmf_sequence
-                    packet = rtp.build_packet(rtp.RtpPacket(
-                        payload_type=int(event_payload_type), sequence=sequence,
-                        timestamp=rtp.next_timestamp(event_timestamp, offset),
-                        ssrc=event_ssrc,
-                        payload=build_telephone_event_payload(digit,
-                            duration=segment_duration, end=ended), marker=marker and offset == 0))
-                    if not self._send_audio_packet(destination_side, packet):
-                        return False
-                    if shared_clock:
-                        destination.sequence = rtp.next_sequence(sequence)
-                        source_side = "left" if destination_side == "right" else "right"
-                        highest = self._receive_states[source_side].highest
-                        if highest is not None:
-                            clock = self.left_to_right_clock if source_side == "left" else self.right_to_left_clock
-                            clock.inserted_after(highest)
-                    else:
-                        destination.dtmf_sequence = rtp.next_sequence(sequence)
-                previous_segment = (duration - 1) // 65535
+                sequence = destination.sequence if shared_clock else destination.dtmf_sequence
+                packet = rtp.build_packet(rtp.RtpPacket(
+                    payload_type=int(event_payload_type), sequence=sequence,
+                    timestamp=rtp.next_timestamp(event_timestamp, offset), ssrc=event_ssrc,
+                    payload=build_telephone_event_payload(digit, duration=duration, end=end), marker=marker))
+                if not self._send_audio_packet(destination_side, packet):
+                    return False
+                if shared_clock:
+                    destination.sequence = rtp.next_sequence(sequence)
+                    source_side = "left" if destination_side == "right" else "right"
+                    highest = self._receive_states[source_side].highest
+                    if highest is not None:
+                        clock = self.left_to_right_clock if source_side == "left" else self.right_to_left_clock
+                        clock.inserted_after(highest)
+                else:
+                    destination.dtmf_sequence = rtp.next_sequence(sequence)
                 return True
 
-            if not _send(elapsed_ms=1, marker=True, end=False):
+            if not await send_rtp_dtmf_event(digit, clock_rate=event_rate,
+                    duration_ms=duration_ms, emit=emit, maximum_duration_ms=None,
+                    initial_duration_ticks=max(1, round(event_rate / 1000))):
                 return
-            elapsed_ms = 0
-            while elapsed_ms < duration_ms:
-                step_ms = min(round(_DTMF_UPDATE_SECONDS * 1000), duration_ms - elapsed_ms)
-                await asyncio.sleep(step_ms / 1000)
-                elapsed_ms += step_ms
-                if not _send(
-                    elapsed_ms=elapsed_ms,
-                    marker=False,
-                    end=elapsed_ms >= duration_ms,
-                ):
-                    return
-            for _repeat in range(2):
-                await asyncio.sleep(_DTMF_UPDATE_SECONDS)
-                if not _send(elapsed_ms=duration_ms, marker=False, end=True):
-                    return
 
             if shared_clock:
                 expected_audio_delta = round(duration_ms * audio_rate / 1000)

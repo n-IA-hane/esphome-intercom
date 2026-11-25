@@ -105,15 +105,19 @@ async def send_rtp_dtmf_event(
     clock_rate: int,
     duration_ms: int,
     emit: Callable[[int, bool, bool, int], Awaitable[bool]],
+    maximum_duration_ms: int | None = 5000,
+    initial_duration_ticks: int = 1,
 ) -> bool:
     """Pace one RFC 4733 event and repeat its final report three times."""
 
     if telephone_event_code(digit) is None:
         return False
     rate = max(1, int(clock_rate))
-    duration_ms = max(40, min(5000, int(duration_ms)))
+    duration_ms = max(40, int(duration_ms))
+    if maximum_duration_ms is not None:
+        duration_ms = min(maximum_duration_ms, duration_ms)
     elapsed_ms = 0
-    if not await emit(1, True, False, 0):
+    if not await emit(max(1, initial_duration_ticks), True, False, 0):
         return False
     previous_segment = 0
     while elapsed_ms < duration_ms:
