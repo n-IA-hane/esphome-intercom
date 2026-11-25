@@ -603,6 +603,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     account_handlers = build_account_service_handlers(_refresh_directory)
     phonebook_handlers = build_phonebook_service_handlers(_refresh_directory)
     from .automation_call import async_play_media, async_tts_say, async_wait_for_dtmf, async_wait_unanswered
+    from .dtmf_action import async_send_dtmf
     from .external_call_access import async_set_external_call_access
     from .mailbox import async_set_voicemail_settings
     from .voicemail import async_send_to_voicemail
@@ -638,6 +639,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "tts_say": async_tts_say,
             "play_media": async_play_media,
             "wait_for_dtmf": async_wait_for_dtmf,
+            "send_dtmf": async_send_dtmf,
             "wait_unanswered": async_wait_unanswered,
             "transfer": _handle_sip_transfer_service,
             "park": async_park_call,

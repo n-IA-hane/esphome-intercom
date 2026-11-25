@@ -1287,66 +1287,55 @@ class SipRtpRelay:
             else:
                 self.right_dtmf_tx_events += 1
 
-    def relay_dtmf(
-        self,
-        source_side: str,
-        digit: str,
-        *,
-        duration_ms: int = 160,
-    ) -> bool:
-        """Translate one detected digit to the opposite negotiated RTP leg."""
-
-        if source_side not in {"left", "right"} or self._stop_requested:
+    def relay_dtmf(self, source_side: str, digit: str, *, duration_ms: int = 160) -> bool:
+        """Translate an ingress digit, retaining the legacy RTP-accepted result."""
+        if source_side not in {"left", "right"}:
             return False
         destination_side = "right" if source_side == "left" else "left"
-        destination = self.right if destination_side == "right" else self.left
+        destination = getattr(self, destination_side)
+        rtp_event = (destination.outbound_dtmf_payload_type is not None
+                     and telephone_event_code(digit) in destination.outbound_dtmf_events)
+        task = self.schedule_dtmf(destination_side, digit, duration_ms=duration_ms)
+        return task is not None and rtp_event
+
+    def schedule_dtmf(self, destination_side: str, digit: str, *, duration_ms: int = 160):
+        """Queue one command on the existing negotiated media owner.
+
+        The returned task reports actual completion, including SIP INFO failure,
+        and is retired with the relay. Reconfiguration waits for the same task.
+        """
+        if destination_side not in {"left", "right"} or self._stop_requested:
+            return None
+        destination = getattr(self, destination_side)
         event = telephone_event_code(digit)
         if event is None or not destination.can_receive or destination.connection_held:
-            _LOGGER.info(
-                "RTP DTMF not relayed source=%s destination=%s digit=%s negotiated=%s",
-                source_side,
-                destination_side,
-                digit,
-                destination.outbound_dtmf_payload_type is not None,
-            )
-            return False
-        if (
-            destination.outbound_dtmf_payload_type is None
-            or event not in destination.outbound_dtmf_events
-        ):
-            self._schedule_dtmf_fallback(source_side, digit, duration_ms=duration_ms)
-            _LOGGER.info(
-                "RTP DTMF unavailable; signaling fallback requested source=%s destination=%s digit=%s",
-                source_side,
-                destination_side,
-                digit,
-            )
-            return False
+            return None
+        rtp_event = (destination.outbound_dtmf_payload_type is not None
+                     and event in destination.outbound_dtmf_events)
+        if not rtp_event and self.on_dtmf_fallback is None:
+            return None
 
-        async def _run() -> None:
+        async def send() -> bool:
             try:
-                await self._send_dtmf_event(
-                    destination_side,
-                    destination,
-                    str(digit).upper(),
-                    duration_ms=max(40, int(duration_ms)),
-                )
+                if rtp_event:
+                    return await self._send_dtmf_event(destination_side, destination,
+                        str(digit).upper(), duration_ms=max(40, int(duration_ms)))
+                async with self._dtmf_locks[destination_side]:
+                    if (getattr(self, destination_side) is not destination or self._stop_requested
+                            or not destination.can_receive or destination.connection_held):
+                        return False
+                    source_side = "right" if destination_side == "left" else "left"
+                    return await self._send_dtmf_fallback(source_side, digit, duration_ms)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                _LOGGER.exception(
-                    "RTP DTMF relay failed destination=%s digit=%s",
-                    destination_side,
-                    digit,
-                )
+                _LOGGER.exception("DTMF command failed destination=%s digit=%s", destination_side, digit)
+                return False
 
-        task = asyncio.create_task(
-            _run(),
-            name=f"voip-rtp-dtmf-{destination_side}-{digit}",
-        )
+        task = asyncio.create_task(send(), name=f"voip-dtmf-{destination_side}-{digit}")
         self._dtmf_tasks.add(task)
         task.add_done_callback(self._dtmf_tasks.discard)
-        return True
+        return task
 
     def _collect_dtmf_fallback(self, side, source, destination, report) -> None:
         """Complete one decoded press, including segments and a missing final."""
@@ -1388,28 +1377,20 @@ class SipRtpRelay:
         self._dtmf_tasks.add(press.task)
         press.task.add_done_callback(self._dtmf_tasks.discard)
 
-    async def _send_dtmf_fallback(self, source_side, digit, duration_ms) -> None:
+    async def _send_dtmf_fallback(self, source_side, digit, duration_ms) -> bool:
         callback = self.on_dtmf_fallback
         if callback is None or self._stop_requested:
-            return
+            return False
         try:
-            if not await callback(source_side, digit, duration_ms):
+            accepted = bool(await callback(source_side, digit, duration_ms))
+            if not accepted:
                 _LOGGER.info("SIP INFO DTMF fallback not accepted source=%s digit=%s", source_side, digit)
+            return accepted
         except asyncio.CancelledError:
             raise
         except Exception:
             _LOGGER.exception("SIP INFO DTMF fallback failed source=%s digit=%s", source_side, digit)
-
-    def _schedule_dtmf_fallback(self, source_side: str, digit: str, *, duration_ms=160) -> None:
-        """Run an already complete digit under the relay lifecycle owner."""
-        if self.on_dtmf_fallback is None or self._stop_requested:
-            return
-        task = asyncio.create_task(
-            self._send_dtmf_fallback(source_side, digit, duration_ms),
-            name=f"voip-sip-info-dtmf-{source_side}-{digit}",
-        )
-        self._dtmf_tasks.add(task)
-        task.add_done_callback(self._dtmf_tasks.discard)
+            return False
 
     async def _send_dtmf_event(
         self,
@@ -1418,16 +1399,16 @@ class SipRtpRelay:
         digit: str,
         *,
         duration_ms: int,
-    ) -> None:
+    ) -> bool:
         """Originate one RFC 4733 event with three final reports."""
 
         async with self._dtmf_locks[destination_side]:
             if self._stop_requested:
-                return
+                return False
             event_payload_type = destination.outbound_dtmf_payload_type
             event_set = frozenset(destination.outbound_dtmf_events)
             if event_payload_type is None or telephone_event_code(digit) not in event_set:
-                return
+                return False
             event_rate = max(1, destination.outbound_dtmf_clock_rate)
             encoder = self.right_encoder if destination_side == "right" else self.left_encoder
             wire_format = encoder.fmt if encoder is not None else destination.outbound_rtp_format
@@ -1472,7 +1453,7 @@ class SipRtpRelay:
             if not await send_rtp_dtmf_event(digit, clock_rate=event_rate,
                     duration_ms=duration_ms, emit=emit, maximum_duration_ms=None,
                     initial_duration_ticks=max(1, round(event_rate / 1000))):
-                return
+                return False
 
             if shared_clock:
                 expected_audio_delta = round(duration_ms * audio_rate / 1000)
@@ -1500,6 +1481,7 @@ class SipRtpRelay:
                 event_payload_type,
                 event_rate,
             )
+            return True
 
     def handle_packet(self, side: str, data: bytes, addr) -> None:
         if self._stop_requested or is_stun_message(data):

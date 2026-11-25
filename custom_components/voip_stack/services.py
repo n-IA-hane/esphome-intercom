@@ -190,6 +190,14 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Optional("max_digits", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=32)),
         vol.Optional("terminator", default="#"): vol.In(["", "#", "*"]),
     }, extra=vol.PREVENT_EXTRA)
+    dtmf_send_schema = vol.Schema({
+        **phone_selector_fields,
+        vol.Optional("call_id", default=""): SHORT_TEXT,
+        vol.Optional("expected_generation"): SEQUENCE,
+        vol.Required("digits"): vol.All(cv.string, vol.Length(min=1, max=32), vol.Match(r"^[0-9A-Da-d*#]+$")),
+        vol.Optional("duration_ms", default=160): vol.All(vol.Coerce(int), vol.Range(min=40, max=5000)),
+        vol.Optional("gap_ms", default=100): vol.All(vol.Coerce(int), vol.Range(min=50, max=2000)),
+    }, extra=vol.PREVENT_EXTRA)
     sip_forward_schema = vol.Schema(
         {
             **phone_selector_fields,
@@ -524,6 +532,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     hass.services.async_register(DOMAIN, "tts_say", handler_for("tts_say"), schema=tts_say_schema)
     hass.services.async_register(DOMAIN, "wait_unanswered", handler_for("wait_unanswered"), schema=unanswered_wait_schema)
     hass.services.async_register(DOMAIN, "wait_for_dtmf", handler_for("wait_for_dtmf"), schema=dtmf_wait_schema, supports_response=SupportsResponse.OPTIONAL)
+    hass.services.async_register(DOMAIN, "send_dtmf", handler_for("send_dtmf"), schema=dtmf_send_schema, supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "forward", handler_for("forward"), schema=sip_forward_schema)
     hass.services.async_register(
         DOMAIN,

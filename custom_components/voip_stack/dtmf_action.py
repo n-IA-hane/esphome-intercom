@@ -1,0 +1,86 @@
+"""Native HA keypad commands dispatched to the active call's media owner."""
+
+from __future__ import annotations
+
+import asyncio
+
+from homeassistant.core import ServiceCall
+from homeassistant.exceptions import ServiceValidationError
+
+from .runtime_data import require_runtime_data
+
+
+async def async_send_dtmf(call: ServiceCall) -> dict:
+    """Send from one authorized phone without acquiring another RTP source."""
+    runtime = require_runtime_data(call.hass)
+    phone = await runtime.phones.resolve_source(call)
+    registry = runtime.sip
+    if registry is None:
+        raise ServiceValidationError("VoIP Stack is not running")
+    endpoint_id = phone.endpoint_id
+    call_id = str(call.data.get("call_id") or "").strip()
+    if call_id:
+        session = registry.get_session(registry.resolve_session_id(call_id))
+    else:
+        matches = [item for item in registry.sessions.values()
+                   if item.live and endpoint_id in item.endpoint_claims]
+        if len(matches) != 1:
+            raise ServiceValidationError("Select one active call using call_id")
+        session = matches[0]
+    if session is None or not session.live or session.state != "in_call":
+        raise ServiceValidationError("Sending keypad input requires an established call")
+    role = session.endpoint_claims.get(endpoint_id)
+    if role not in {"source", "destination"}:
+        raise ServiceValidationError("The selected call does not belong to this phone")
+    expected = call.data.get("expected_generation")
+    if expected is not None and session.generation != int(expected):
+        raise ServiceValidationError("The selected call has ended or changed generation")
+    token = session.token
+    active_audio = runtime.media.sessions_for("audio")
+    browser_owners = [value for (identity, endpoint), value in active_audio.items()
+                      if endpoint == endpoint_id and registry.resolve_session_id(identity) == session.call_id
+                      and callable(getattr(value, "schedule_dtmf", None))]
+    if len(browser_owners) > 1:
+        raise ServiceValidationError("The selected phone has more than one active media owner")
+    owner = browser_owners[0] if browser_owners else registry.resource_for(session.call_id, "relay")
+    schedule = getattr(owner, "schedule_dtmf", None)
+    if not callable(schedule):
+        raise ServiceValidationError("This call has no active media owner that can send keypad input")
+    destination = "right" if role == "source" else "left"
+
+    def require_current() -> None:
+        current = registry.get_session(session.call_id, generation=token.generation)
+        owned = (any(value is owner for value in active_audio.values()) if browser_owners
+                 else registry.resource_for(session.call_id, "relay") is owner)
+        if (current is not session or not session.live or session.state != "in_call"
+                or session.endpoint_claims.get(endpoint_id) != role or not owned):
+            raise ServiceValidationError("The call or its media owner changed while sending keypad input")
+
+    name = f"send_dtmf:{endpoint_id}"
+    previous = registry.task_for(session.call_id, name)
+    if previous is not None and not previous.done():
+        raise ServiceValidationError("Keypad input is already being sent from this phone")
+    digits = str(call.data["digits"]).upper()
+    duration_ms = int(call.data.get("duration_ms", 160))
+    gap_ms = int(call.data.get("gap_ms", 100))
+
+    async def send_sequence() -> dict:
+        for index, digit in enumerate(digits):
+            require_current()
+            task = (schedule(digit, duration_ms=duration_ms) if browser_owners
+                    else schedule(destination, digit, duration_ms=duration_ms))
+            if task is None or not await task:
+                raise ServiceValidationError("The negotiated media owner could not send keypad input")
+            require_current()
+            if index + 1 < len(digits):
+                await asyncio.sleep(gap_ms / 1000)
+        return {"call_id": session.call_id, "generation": token.generation,
+                "digits": digits, "sent": len(digits)}
+
+    operation = session.create_task(send_sequence(), name=name)
+    try:
+        return await operation
+    except asyncio.CancelledError:
+        if asyncio.current_task().cancelling():
+            raise
+        raise ServiceValidationError("The call ended before keypad input completed") from None

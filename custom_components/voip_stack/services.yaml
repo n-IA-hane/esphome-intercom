@@ -1568,6 +1568,65 @@ wait_unanswered:
               min: 1
               max: 2147483647
               mode: box
+send_dtmf:
+  name: Send keypad input
+  description: Send digits from a phone's established call through its active browser or PBX relay. The negotiated RTP event or SIP INFO sender is reused. Calls without a supported active media owner return an error.
+  fields:
+    device_id:
+      name: Phone
+      description: Phone sending the digits to the other party. Defaults to the preferred HA phone.
+      selector:
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP account
+    digits:
+      name: Digits
+      description: Up to 32 digits from 0-9, A-D, star and hash, sent in order.
+      required: true
+      example: '1234#'
+      selector:
+        text: {}
+    advanced:
+      name: Advanced options
+      collapsed: true
+      fields:
+        call_id:
+          name: Call ID
+          description: Required when the selected phone has multiple active calls.
+          selector:
+            text: {}
+        expected_generation:
+          name: Call generation
+          description: Reject the action if this call generation has changed.
+          selector:
+            number:
+              min: 0
+              max: 2147483647
+              mode: box
+        duration_ms:
+          name: Press duration
+          default: 160
+          selector:
+            number:
+              min: 40
+              max: 5000
+              unit_of_measurement: ms
+              mode: box
+        gap_ms:
+          name: Gap between digits
+          default: 100
+          selector:
+            number:
+              min: 50
+              max: 2000
+              unit_of_measurement: ms
+              mode: box
+        line_id:
+          name: SIP line
+          description: Select a line when addressing a physical phone with multiple SIP accounts.
+          selector:
+            text: {}
 wait_for_dtmf:
   name: Wait for keypad input
   description: Wait for digits from the caller on this automation call. The next condition can check the received

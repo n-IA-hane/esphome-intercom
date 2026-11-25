@@ -263,6 +263,33 @@ not make a call audio-only when the peer is sending video.
 
 ![DTMF keypad open during a call](images/phone-cards/softphone-dtmf.png)
 
+Automations can use `voip_stack.send_dtmf` to send keypad input from a phone's
+established call. Select its SIP account device. When that phone has more than
+one live call, supply `call_id`; `expected_generation` can guard a stored call
+reference. The action uses the active browser or PBX relay's negotiated RTP
+event sender, falling back to the existing SIP INFO dialog when available.
+
+```yaml
+action: voip_stack.send_dtmf
+data:
+  device_id: YOUR_SIP_ACCOUNT_DEVICE_ID
+  call_id: "{{ active_call_id }}"
+  expected_generation: "{{ active_call_generation }}"
+  digits: "1234#"
+  duration_ms: 160
+  gap_ms: 100
+response_variable: keypad_result
+```
+
+The optional response contains `call_id`, `generation`, normalized `digits`
+and the number `sent`. Success means the negotiated sender completed, not
+that the remote IVR accepted a command. An unauthorized phone,
+ambiguous call, changed generation, inactive sender or failed SIP INFO produces
+an action error. Ending the call cancels the sequence before another digit.
+Calls handled only by an application media source, including some local IVR or
+announcement paths, currently have no account-owned outgoing keypad sender
+and are unsupported by this action. This does not change their DTMF reception.
+
 For parking and retrieval, follow the [parking walkthrough](CALL_PARKING.md).
 For forwarding, ringing timeouts, mailbox setup and line selection, see
 [PBX workflows](PBX_WORKFLOWS.md).
