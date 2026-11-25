@@ -1,0 +1,1017 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "VoIP Stack",
+        "description": "Point de terminaison SIP, pont/routeur et registraire local pour les téléphones VoIP ESPHome. HA écoute automatiquement le SIP en UDP et en TCP.",
+        "data": {
+          "sip_port": "Port SIP",
+          "rtp_port": "Port RTP",
+          "advertise_host": "Hôte/IP de HA annoncé",
+          "assist_intents": "Activer les intentions Assist",
+          "assist_endpoint_enabled": "Inclure l'assistant vocal",
+          "debug_mode": "Activer la journalisation de débogage SIP/RTP",
+          "media_capture": "Enregistrer l'audio des appels privés pour le diagnostic",
+          "experimental_sip_video": "Activer la vidéo SIP pour le softphone Home Assistant",
+          "sip_registrar_enabled": "Activer les comptes SIP locaux",
+          "trunk_enabled": "Activer un trunk SIP facultatif"
+        },
+        "data_description": {
+          "sip_port": "Port d'écoute du point de terminaison SIP de HA. HA accepte la signalisation SIP en UDP et en TCP sur ce port.",
+          "rtp_port": "Port UDP RTP de base pour les médias et les relais de HA.",
+          "advertise_host": "Remplacement facultatif publié dans les annuaires des téléphones ESP. À utiliser lorsque HA se trouve derrière un routage, un NAT, un LXC, un VPN ou plusieurs sous-réseaux et que l'adresse annoncée automatiquement n'est pas joignable par les appareils ESP.",
+          "assist_intents": "Enregistre les gestionnaires Assist facultatifs pour appeler, raccrocher, répondre et refuser (« Hey Jarvis, appelle la cuisine »). Les noms de contacts prononcés sont résolus dynamiquement dans l'annuaire VoIP actif.",
+          "assist_endpoint_enabled": "Ajoute une extension SIP adossée directement à un pipeline Assist de Home Assistant. Aucune intégration VoIP ni aucun écouteur SIP distinct n'est nécessaire.",
+          "debug_mode": "Active des diagnostics et journaux SIP/RTP/médias détaillés, sans enregistrer l'audio des appels.",
+          "media_capture": "Enregistre explicitement l'audio privé des appels : jusqu'à 15 secondes par sens pour le softphone HA et 8 secondes par segment de relais, stocké en WAV/JSON dans ~/.cache/voip_stack_debug (mode 0700) et limité à 24 fichiers / 64 MiB. À laisser désactivé sauf pour recueillir une capture de diagnostic.",
+          "experimental_sip_video": "Permet au softphone Home Assistant de négocier de la vidéo SIP avec les téléphones standard, softphones et stations de porte compatibles. H.264, VP8 et JPEG passent par le chemin média du navigateur. Les points de terminaison ESP standard restent audio seul ; les profils ESP32-P4 qualifiés peuvent négocier JPEG ou H.264. Nécessite HTTPS et un navigateur compatible.",
+          "sip_registrar_enabled": "Accepte les REGISTER des points de terminaison SIP locaux (téléphones VoIP, Zoiper, Linphone ou baresip) avec les comptes gérés par les services VoIP Stack.",
+          "trunk_enabled": "Affiche les réglages de trunk fournisseur/PBX. Une fois désactivé, aucune inscription de trunk, route externe ni collecteur DTMF n'est démarré."
+        }
+      },
+      "video": {
+        "title": "Vidéo SIP",
+        "description": "La vidéo est facultative. Le softphone Home Assistant et les points de terminaison SIP standard la prennent en charge, et les profils ESP32-P4 qualifiés peuvent négocier JPEG ou H.264. Les autres points de terminaison ESP restent en audio seul.",
+        "data": {
+          "video_transcoding_enabled": "Activer le transcodage vidéo",
+          "video_camera_send_enabled": "Autoriser l'envoi de la caméra du navigateur"
+        },
+        "data_description": {
+          "video_transcoding_enabled": "Autorise VoIP Stack à utiliser le binaire FFmpeg de Home Assistant lorsque deux segments vidéo négociés n'ont aucun codec en commun. Le direct H.264, VP8 et JPEG reste privilégié. Le repli borné peut convertir l'ancienne vidéo pour le softphone HA et assurer H.264 ou JPEG entre segments SIP gérés par HA. L'envoi JPEG depuis le navigateur peut aussi utiliser un normaliseur RFC 2435 borné. En cas d'échec, l'audio compatible reste actif.",
+          "video_camera_send_enabled": "Expose un choix « Envoyer la caméra » dans la carte. Chaque téléphone logique Home Assistant conserve son choix ; l'autorisation de caméra reste locale à chaque navigateur. Recevoir de la vidéo ne nécessite jamais l'accès à la caméra."
+        }
+      },
+      "assist": {
+        "title": "Extension de l'assistant vocal",
+        "description": "Choisissez l'extension SIP et le pipeline Assist de Home Assistant utilisés pour les appels téléphoniques. VoIP Stack ouvre la conversation avec un message utilisateur du type `Incoming SIP call from \"Daniele\".` Configurez le comportement téléphonique dans le champ Instructions ou prompt de l'agent de conversation sélectionné, sous Paramètres > Appareils et services > l'intégration de l'agent > Configurer. Exemple d'instructions : `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Humeur sympathique : `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Humeur exécrable : `Hi. I don't give a s**t, so please go f**k yourself.`",
+        "data": {
+          "assist_extension": "Extension de l'assistant vocal",
+          "assist_pipeline": "Pipeline de l'assistant vocal",
+          "assist_advanced_call_context": "Fournir les détails avancés de l'appel à l'assistant"
+        },
+        "data_description": {
+          "assist_extension": "Extension numérique de 1 à 255 chiffres, unique parmi les comptes, les contacts et les groupes.",
+          "assist_pipeline": "Pipeline Assist utilisé pour la reconnaissance vocale, la conversation et la synthèse vocale lors des appels téléphoniques.",
+          "assist_advanced_call_context": "Ajoute une fois au message utilisateur initial l'identifiant de l'appelant, la correspondance dans l'annuaire, la source et l'extension appelée. Ces valeurs sont des métadonnées d'appel non fiables et une correspondance dans l'annuaire ne constitue pas une authentification."
+        }
+      },
+      "trunk": {
+        "title": "Trunk SIP facultatif",
+        "description": "Connecte Home Assistant à un fournisseur ou à un PBX. Les appels entrants suivent le routage configuré et les automatisations facultatives.",
+        "data": {
+          "trunk_transport": "Transport SIP du trunk",
+          "trunk_server": "Serveur du trunk",
+          "trunk_port": "Port SIP du trunk",
+          "trunk_domain": "Domaine du trunk",
+          "trunk_username": "Identifiant du trunk",
+          "trunk_auth_username": "Identifiant d'authentification",
+          "trunk_password": "Mot de passe",
+          "trunk_register_expires": "Expiration du REGISTER",
+          "trunk_outbound_proxy": "Proxy sortant",
+          "trunk_inbound_default_target": "Destination de repli",
+          "trunk_inbound_mode": "Traitement des appels entrants",
+          "automation_routing_enabled": "Autoriser les automatisations à choisir la destination entrante",
+          "trunk_dtmf_timeout_ms": "Délai DTMF (secondes)",
+          "trunk_dtmf_terminator": "Chiffre de fin DTMF",
+          "trunk_allowed_ips": "Adresses IP entrantes autorisées",
+          "trunk_audio_codecs": "Codecs audio autorisés",
+          "trunk_video_codecs": "Codecs vidéo autorisés",
+          "trunk_outbound_media_address": "Adresse IPv4 média sortante"
+        },
+        "data_description": {
+          "trunk_transport": "Transport SIP utilisé entre HA et le fournisseur.",
+          "trunk_server": "Hôte du registraire/proxy du fournisseur.",
+          "trunk_port": "Port SIP du fournisseur, généralement 5060.",
+          "trunk_domain": "Domaine/realm SIP facultatif. Vide, la valeur du serveur du trunk est utilisée.",
+          "trunk_username": "Compte SIP et utilisateur par défaut du Request-URI entrant.",
+          "trunk_auth_username": "Identifiant d'authentification Digest s'il diffère de l'identifiant SIP.",
+          "trunk_password": "Mot de passe d'authentification Digest.",
+          "trunk_register_expires": "Durée de validité du REGISTER, en secondes.",
+          "trunk_outbound_proxy": "Hôte de proxy facultatif, ou sip:hôte:port, utilisé comme prochain saut de signalisation.",
+          "trunk_inbound_default_target": "Choisissez le téléphone récepteur par son nom, ou saisissez un groupe, une extension ou un contact Automatisation. Le routage immédiat utilise cette destination lorsque la destination appelée n'est pas dans l'annuaire. La sélection DTMF et les automatisations de routage peuvent choisir une autre destination.",
+          "trunk_inbound_mode": "« Router immédiatement » ignore la saisie de chiffres. « Recueillir l'extension en DTMF » répond d'abord au segment du trunk, puis laisse les chiffres saisis choisir une extension de l'annuaire.",
+          "automation_routing_enabled": "Avant d'utiliser la destination de repli, publie une courte demande de routage à laquelle une automatisation peut répondre. Les chiffres DTMF explicites restent toujours prioritaires.",
+          "trunk_dtmf_timeout_ms": "Délai entre deux chiffres en mode DTMF. Le premier chiffre dispose de 10 secondes. La valeur par défaut est de 3 secondes, le maximum de 10 secondes.",
+          "trunk_dtmf_terminator": "Chiffre de fin facultatif, par exemple #. Vide : c'est le délai ou la correspondance exacte avec une extension de l'annuaire qui décide.",
+          "trunk_allowed_ips": "Saisissez séparément chaque IP source ou réseau CIDR autorisé. Ils peuvent différer du serveur sortant. Obligatoire sans inscription.",
+          "trunk_audio_codecs": "Codecs audio autorisés pour les appels entrants et sortants sur ce trunk. Conservez les valeurs par défaut sauf si votre PBX ou fournisseur impose une liste. Sélectionnez au moins un codec. Un appel nécessite un codec commun ; le DTMF est négocié séparément. Cette liste ne modifie ni les autres trunks ni les téléphones locaux.",
+          "trunk_video_codecs": "Codecs vidéo autorisés sur ce trunk. Videz la liste pour des appels audio seul. Sélectionner un codec n'active ni la vidéo ni le transcodage : le téléphone et le chemin média doivent le prendre en charge. Les profils H.264 sont négociés automatiquement. En cas de doute, conservez les valeurs par défaut.",
+          "trunk_outbound_media_address": "Facultatif. Adresse de Home Assistant joignable par ce PBX pour l'audio et la vidéo des appels sortants. Derrière un NAT, utilisez votre adresse IPv4 publique et gardez les ports RTP/RTCP joignables sans changer leur numéro. N'indiquez pas l'adresse du fournisseur. Vide : l'adresse HA existante est utilisée. Ne modifie ni les appels du réseau local ni l'inscription SIP."
+        }
+      },
+      "trunk_mode": {
+        "title": "Inscription du trunk",
+        "description": "Laissez ceci activé pour un compte fournisseur. Désactivez-le pour un trunk statique qui accepte les appels sans REGISTER. Configurez les IP entrantes autorisées à l'étape suivante.",
+        "data": {
+          "trunk_register": "Enregistrer le trunk"
+        }
+      },
+      "voicemail": {
+        "title": "Voix de la messagerie vocale",
+        "description": "Choisissez l'entité TTS de Home Assistant utilisée par le menu téléphonique partagé.",
+        "data": {
+          "tts_entity_id": "Entité TTS"
+        }
+      },
+      "voicemail_language": {
+        "title": "Langue de la messagerie vocale",
+        "data": {
+          "language": "Langue"
+        }
+      },
+      "voicemail_voice": {
+        "title": "Voix de la messagerie vocale",
+        "description": "Choisissez la voix utilisée pour les messages du menu téléphonique.",
+        "data": {
+          "voice": "Voix"
+        }
+      },
+      "parking": {
+        "title": "Parking d'appels",
+        "data": {
+          "access": "Code d'accès au parking",
+          "slots": "Emplacements de parking, séparés par des virgules",
+          "timeout": "Délai du parking",
+          "return_timeout": "Délai de rappel",
+          "return_destination": "Destination du retour",
+          "hold_media": "Audio d'attente",
+          "clear_hold_media": "Supprimer l'audio d'attente enregistré"
+        }
+      },
+      "reconfigure": {
+        "title": "Réglages VoIP Stack",
+        "description": "Choisissez les réglages à configurer. Toutes les applications PBX sont disponibles ; configurez leurs ressources selon vos besoins.",
+        "menu_options": {
+          "user": "Réglages généraux",
+          "parking": "Parking d'appels",
+          "voicemail": "Voix de la messagerie vocale"
+        }
+      }
+    },
+    "error": {
+      "sip_rtp_port_conflict": "SIP et RTP doivent utiliser des ports différents.",
+      "assist_extension_invalid": "L'extension de l'assistant vocal doit contenir de 1 à 255 chiffres.",
+      "assist_extension_conflict": "L'extension de l'assistant vocal est déjà utilisée par une autre route.",
+      "trunk_server_required": "Le serveur du trunk est obligatoire.",
+      "trunk_username_required": "L'identifiant du trunk est obligatoire.",
+      "trunk_password_required": "Le mot de passe du trunk est obligatoire.",
+      "trunk_allowed_ips_invalid": "Saisissez au moins une IP ou un réseau CIDR valide. Un réseau /0 non restreint n'est pas autorisé.",
+      "voicemail_tts_unavailable": "Sélectionnez une entité TTS disponible.",
+      "voicemail_language_unsupported": "Cette langue n'est prise en charge ni par les messages de la messagerie vocale, ni par le moteur TTS sélectionné.",
+      "voicemail_route_conflict": "Un téléphone, un contact ou un groupe existant utilise une adresse de messagerie vocale (*97, *98, mailbox, mailbox.*, voicemail.* ou *60 suivi d'une extension). Renommez cette route avant d'activer la messagerie vocale.",
+      "voicemail_voice_unavailable": "Sélectionnez une voix prise en charge par le moteur TTS et la langue choisis.",
+      "parking_configuration_invalid": "Choisissez des codes de parking distincts et des délais entre 1 et 3600 secondes.",
+      "parking_route_conflict": "Un code de parking entre en conflit avec un téléphone, un contact, une extension Assist ou un groupe existant.",
+      "trunk_codecs_invalid": "Sélectionnez des codecs pris en charge et conservez au moins un codec audio.",
+      "trunk_target_required": "Choisissez un téléphone récepteur ou saisissez une destination du plan de numérotation.",
+      "trunk_media_address_invalid": "Saisissez une adresse IPv4 unicast joignable, ou laissez vide.",
+      "parking_slots_in_use": "Récupérez ou terminez les appels des emplacements supprimés avant de modifier la liste des emplacements de parking."
+    },
+    "abort": {
+      "reconfigure_successful": "VoIP Stack reconfiguré avec succès.",
+      "already_configured": "VoIP Stack est déjà configuré."
+    }
+  },
+  "config_subentries": {
+    "phone": {
+      "entry_type": "Téléphone",
+      "initiate_flow": {
+        "user": "Ajouter un téléphone"
+      },
+      "title": "Point de terminaison téléphonique",
+      "step": {
+        "user": {
+          "title": "Ajouter un téléphone",
+          "description": "Créez un nouveau softphone navigateur Home Assistant ou un compte SIP standard. Tous les téléphones partagent le même écouteur SIP et le même pool RTP.",
+          "data": {
+            "kind": "Type de téléphone"
+          }
+        },
+        "browser": {
+          "title": "Softphone Home Assistant",
+          "description": "Créez un téléphone logique pour une ou plusieurs cartes Lovelace. Les cartes liées au même téléphone sonnent ensemble ; la première à répondre prend en charge les médias.",
+          "data": {
+            "name": "Nom",
+            "extension": "Extension",
+            "enabled": "Activé",
+            "dnd": "Ne pas déranger",
+            "ring_group": "Groupe de sonnerie",
+            "conference_group": "Groupe de conférence",
+            "conference_ring": "Sonner pour les appels de conférence",
+            "video_enabled": "Autoriser la vidéo",
+            "auto_answer": "Réponse automatique",
+            "send_video": "Envoyer la vidéo",
+            "voicemail_enabled": "Activer la boîte vocale"
+          },
+          "data_description": {
+            "name": "Nom du téléphone, obligatoire, utilisé par la carte, l'annuaire et le routage des appels.",
+            "extension": "Extension composable unique, facultative. Le téléphone logique reste joignable même lorsqu'aucune carte navigateur n'est connectée.",
+            "auto_answer": "Répond automatiquement lorsqu'un navigateur associé dispose de l'autorisation microphone.",
+            "send_video": "Envoie par défaut la caméra du navigateur associé lorsque la vidéo est négociée et que l'autorisation est disponible.",
+            "voicemail_enabled": "Désactiver cette boîte vocale supprime définitivement ses messages, fichiers, code PIN et réglages. La réactiver crée une boîte vocale vide."
+          }
+        },
+        "sip_account": {
+          "title": "Compte SIP standard",
+          "description": "Créez des identifiants pour n'importe quel téléphone ou softphone SIP/RTP standard. Aucun comportement propre à un fabricant n'est utilisé.",
+          "data": {
+            "name": "Nom",
+            "extension": "Extension",
+            "username": "Identifiant SIP",
+            "password": "Mot de passe SIP",
+            "enabled": "Activé",
+            "dnd": "Ne pas déranger",
+            "ring_group": "Groupe de sonnerie",
+            "conference_group": "Groupe de conférence",
+            "conference_ring": "Sonner pour les appels de conférence",
+            "video_enabled": "Autoriser la négociation vidéo",
+            "offline_policy": "Lorsqu'il n'est pas enregistré",
+            "offline_forward_target": "Destination du renvoi",
+            "voicemail_enabled": "Activer la boîte vocale"
+          },
+          "data_description": {
+            "voicemail_enabled": "Désactiver cette boîte vocale supprime définitivement ses messages, fichiers, code PIN et réglages. La réactiver crée une boîte vocale vide."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurer le téléphone"
+        }
+      },
+      "error": {
+        "phone_name_required": "Un nom de téléphone est obligatoire.",
+        "phone_username_invalid": "Utilisez uniquement des lettres, des chiffres, des points, des traits de soulignement ou des traits d'union.",
+        "phone_password_required": "Un mot de passe SIP est obligatoire.",
+        "phone_forward_target_required": "Une destination de renvoi est obligatoire pour la politique « Renvoi ».",
+        "phone_alias_conflict": "Le nom, l'extension ou l'identifiant est déjà utilisé par un autre téléphone.",
+        "mailbox_removal_failed": "La boîte vocale n'a pas pu être supprimée. Rétablissez l'accès au dossier des médias et réessayez."
+      },
+      "abort": {
+        "reconfigure_successful": "Téléphone reconfiguré avec succès.",
+        "already_configured": "Ce téléphone existe déjà."
+      }
+    },
+    "contact": {
+      "entry_type": "Contact",
+      "initiate_flow": {
+        "user": "Ajouter un contact"
+      },
+      "title": "Contact",
+      "step": {
+        "user": {
+          "title": "Ajouter un contact",
+          "description": "Créez une entrée d'annuaire sans créer de téléphone ni d'entités. Un contact Automatisation transmet son appel aux automatisations HA.",
+          "data": {
+            "type": "Type de contact"
+          }
+        },
+        "contact": {
+          "title": "Contact",
+          "description": "Créez une entrée d'annuaire sans créer de téléphone ni d'entités. Un contact Automatisation transmet son appel aux automatisations HA.",
+          "data": {
+            "name": "Nom",
+            "extension": "Extension facultative",
+            "number": "Numéro externe",
+            "sip_uri": "Adresse SIP",
+            "fallback_destination": "Destination si l'appel n'est pas pris en charge",
+            "timeout": "Attendre une automatisation",
+            "sip_profile": "Profil de compatibilité SIP",
+            "dahua_audio": "Compatibilité audio Dahua"
+          },
+          "data_description": {
+            "extension": "Laissez vide pour joindre le contact par son nom dans l'annuaire.",
+            "fallback_destination": "Si aucune automatisation ne traite l'appel, renvoyez-le ici. Laissez vide pour terminer l'appel.",
+            "timeout": "Nombre de secondes avant le repli si aucune automatisation ne prend le contrôle de l'appel. Il ne s'agit pas d'une durée de sonnerie.",
+            "sip_profile": "« Auto » conserve la détection du correspondant. Choisissez Dahua pour une station de porte Dahua statique.",
+            "dahua_audio": "« Auto » suit le véritable User-Agent. « Standard » exclut le PCM Dahua ; « PCM » l'ajoute à l'offre. « Symétrique » adapte aussi l'émission à un codec reçu déjà négocié en réception."
+          }
+        }
+      },
+      "error": {
+        "invalid_contact": "Utilisez un nom et une extension uniques. Un contact ordinaire nécessite un numéro ou une adresse SIP ; un contact Automatisation ne doit contenir ni l'un ni l'autre.",
+        "invalid_sip_profile": "Sélectionnez un profil SIP valide. Les choix audio Dahua explicites exigent le profil Dahua. Les contacts Automatisation ne peuvent pas utiliser de profils d'appareil."
+      }
+    },
+    "trunk": {
+      "entry_type": "Trunk SIP",
+      "initiate_flow": {
+        "user": "Ajouter un trunk SIP"
+      },
+      "title": "Trunk SIP",
+      "step": {
+        "user": {
+          "title": "Trunk SIP",
+          "description": "Donnez un nom à cette ligne et indiquez si le fournisseur exige une inscription.",
+          "data": {
+            "name": "Nom",
+            "trunk_enabled": "Activer ce trunk",
+            "trunk_register": "Enregistrer le trunk",
+            "make_default": "Utiliser comme trunk sortant par défaut"
+          },
+          "data_description": {
+            "make_default": "Utilisé lorsque ni l'action d'appel ni le téléphone appelant ne sélectionne de trunk. Un trunk sélectionné mais indisponible ne bascule jamais automatiquement vers une autre ligne."
+          }
+        },
+        "trunk": {
+          "title": "Trunk SIP facultatif",
+          "description": "Connecte Home Assistant à un fournisseur ou à un PBX. Les appels entrants suivent le routage configuré et les automatisations facultatives.",
+          "data": {
+            "trunk_transport": "Transport SIP du trunk",
+            "trunk_server": "Serveur du trunk",
+            "trunk_port": "Port SIP du trunk",
+            "trunk_domain": "Domaine du trunk",
+            "trunk_username": "Identifiant du trunk",
+            "trunk_auth_username": "Identifiant d'authentification",
+            "trunk_password": "Mot de passe",
+            "trunk_register_expires": "Expiration du REGISTER",
+            "trunk_outbound_proxy": "Proxy sortant",
+            "trunk_inbound_default_target": "Destination de repli",
+            "trunk_inbound_mode": "Traitement des appels entrants",
+            "automation_routing_enabled": "Autoriser les automatisations à choisir la destination entrante",
+            "trunk_dtmf_timeout_ms": "Délai DTMF (secondes)",
+            "trunk_dtmf_terminator": "Chiffre de fin DTMF",
+            "trunk_allowed_ips": "Adresses IP entrantes autorisées",
+            "trunk_audio_codecs": "Codecs audio autorisés",
+            "trunk_video_codecs": "Codecs vidéo autorisés",
+            "trunk_outbound_media_address": "Adresse IPv4 média sortante"
+          },
+          "data_description": {
+            "trunk_transport": "Transport SIP utilisé entre HA et le fournisseur.",
+            "trunk_server": "Hôte du registraire/proxy du fournisseur.",
+            "trunk_port": "Port SIP du fournisseur, généralement 5060.",
+            "trunk_domain": "Domaine/realm SIP facultatif. Vide, la valeur du serveur du trunk est utilisée.",
+            "trunk_username": "Compte SIP et utilisateur par défaut du Request-URI entrant.",
+            "trunk_auth_username": "Identifiant d'authentification Digest s'il diffère de l'identifiant SIP.",
+            "trunk_password": "Mot de passe d'authentification Digest.",
+            "trunk_register_expires": "Durée de validité du REGISTER, en secondes.",
+            "trunk_outbound_proxy": "Hôte de proxy facultatif, ou sip:hôte:port, utilisé comme prochain saut de signalisation.",
+            "trunk_inbound_default_target": "Choisissez le téléphone récepteur par son nom, ou saisissez un groupe, une extension ou un contact Automatisation. Le routage immédiat utilise cette destination lorsque la destination appelée n'est pas dans l'annuaire. La sélection DTMF et les automatisations de routage peuvent choisir une autre destination.",
+            "trunk_inbound_mode": "« Router immédiatement » ignore la saisie de chiffres. « Recueillir l'extension en DTMF » répond d'abord au segment du trunk, puis laisse les chiffres saisis choisir une extension de l'annuaire.",
+            "automation_routing_enabled": "Avant d'utiliser la destination de repli, publie une courte demande de routage à laquelle une automatisation peut répondre. Les chiffres DTMF explicites restent toujours prioritaires.",
+            "trunk_dtmf_timeout_ms": "Délai entre deux chiffres en mode DTMF. Le premier chiffre dispose de 10 secondes. La valeur par défaut est de 3 secondes, le maximum de 10 secondes.",
+            "trunk_dtmf_terminator": "Chiffre de fin facultatif, par exemple #. Vide : c'est le délai ou la correspondance exacte avec une extension de l'annuaire qui décide.",
+            "trunk_allowed_ips": "Saisissez séparément chaque IP source ou réseau CIDR autorisé. Ils peuvent différer du serveur sortant. Obligatoire sans inscription.",
+            "trunk_audio_codecs": "Codecs audio autorisés pour les appels entrants et sortants sur ce trunk. Conservez les valeurs par défaut sauf si votre PBX ou fournisseur impose une liste. Sélectionnez au moins un codec. Un appel nécessite un codec commun ; le DTMF est négocié séparément. Cette liste ne modifie ni les autres trunks ni les téléphones locaux.",
+            "trunk_video_codecs": "Codecs vidéo autorisés sur ce trunk. Videz la liste pour des appels audio seul. Sélectionner un codec n'active ni la vidéo ni le transcodage : le téléphone et le chemin média doivent le prendre en charge. Les profils H.264 sont négociés automatiquement. En cas de doute, conservez les valeurs par défaut.",
+            "trunk_outbound_media_address": "Facultatif. Adresse de Home Assistant joignable par ce PBX pour l'audio et la vidéo des appels sortants. Derrière un NAT, utilisez votre adresse IPv4 publique et gardez les ports RTP/RTCP joignables sans changer leur numéro. N'indiquez pas l'adresse du fournisseur. Vide : l'adresse HA existante est utilisée. Ne modifie ni les appels du réseau local ni l'inscription SIP."
+          }
+        }
+      },
+      "error": {
+        "trunk_server_required": "Le serveur du trunk est obligatoire.",
+        "trunk_username_required": "L'identifiant du trunk est obligatoire.",
+        "trunk_password_required": "Le mot de passe du trunk est obligatoire.",
+        "trunk_allowed_ips_invalid": "Saisissez au moins une IP ou un réseau CIDR valide. Un réseau /0 non restreint n'est pas autorisé.",
+        "invalid_name": "Saisissez un nom de 1 à 128 caractères.",
+        "duplicate_name": "Choisissez un autre nom de trunk.",
+        "advertise_ip_unknown": "Configurez l'adresse SIP annoncée avant d'ajouter ce trunk.",
+        "trunk_in_use": "Terminez les appels utilisant ce trunk avant de modifier ses réglages de connexion.",
+        "trunk_registration_failed": "L'inscription a échoué. Vérifiez le serveur, le transport et les identifiants. La configuration enregistrée n'a pas été modifiée.",
+        "trunk_validation_failed": "Vérifiez les réglages de connexion et les réseaux entrants. Des trunks statiques sur le même transport ne peuvent pas avoir des réseaux sources qui se chevauchent.",
+        "trunk_codecs_invalid": "Sélectionnez des codecs pris en charge et conservez au moins un codec audio.",
+        "trunk_target_required": "Choisissez un téléphone récepteur ou saisissez une destination du plan de numérotation.",
+        "trunk_media_address_invalid": "Saisissez une adresse IPv4 unicast joignable, ou laissez vide."
+      },
+      "abort": {
+        "reconfigure_successful": "Configuration du trunk mise à jour."
+      }
+    }
+  },
+  "selector": {
+    "trunk_inbound_mode": {
+      "options": {
+        "direct": "Router immédiatement",
+        "dtmf": "Recueillir l'extension en DTMF"
+      }
+    },
+    "call_ingress": {
+      "options": {
+        "extension": "Appel local",
+        "trunk": "Appel par trunk"
+      }
+    },
+    "dtmf_source": {
+      "options": {
+        "caller": "Appelant",
+        "callee": "Appelé"
+      }
+    },
+    "contact_type": {
+      "options": {
+        "contact": "Numéro ou adresse SIP",
+        "automation": "Automatisation"
+      }
+    },
+    "dtmf_result": {
+      "options": {
+        "received": "Chiffres reçus",
+        "timeout": "Délai de saisie expiré"
+      }
+    },
+    "call_outcome": {
+      "options": {
+        "ended": "Terminé",
+        "missed": "Manqué",
+        "failed": "Échoué"
+      }
+    },
+    "sip_profile": {
+      "options": {
+        "auto": "Auto",
+        "dahua": "Dahua"
+      }
+    },
+    "dahua_audio": {
+      "options": {
+        "auto": "Auto selon le User-Agent",
+        "standard": "Codecs SIP standard",
+        "pcm": "Standard + PCM Dahua",
+        "symmetric": "PCM Dahua, aligner sur le codec reçu"
+      }
+    },
+    "trunk_audio_codecs": {
+      "options": {
+        "OPUS": "Opus",
+        "G722": "G.722",
+        "PCMA": "G.711 loi A (PCMA)",
+        "PCMU": "G.711 loi µ (PCMU)",
+        "L16": "PCM linéaire 16 bits (L16)",
+        "L24": "PCM linéaire 24 bits (L24)",
+        "PCM": "PCM (Dahua)"
+      }
+    },
+    "trunk_video_codecs": {
+      "options": {
+        "H264": "H.264",
+        "VP8": "VP8",
+        "JPEG": "JPEG",
+        "H263": "H.263",
+        "H263P": "H.263+",
+        "H265": "H.265 / HEVC"
+      }
+    },
+    "phone_state": {
+      "options": {
+        "idle": "Au repos",
+        "unavailable": "Indisponible",
+        "calling": "Appel en cours",
+        "ringing": "Sonnerie",
+        "in_call": "En communication",
+        "held": "En attente"
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "sip_udp_ready": "Écouteur SIP UDP",
+      "sip_tcp_ready": "Écouteur SIP TCP",
+      "advertise_host": "Sélection de l'hôte annoncé",
+      "configured_phones": "Téléphones configurés",
+      "online_esphome_phones": "Téléphones ESPHome en ligne",
+      "registered_sip_accounts": "Comptes SIP enregistrés",
+      "trunk_registered": "Trunk SIP enregistré",
+      "active_calls": "Appels en cours",
+      "reserved_rtp_ports": "Ports RTP réservés",
+      "runtime_tasks": "Tâches d'exécution",
+      "active_media_owners": "Détenteurs de médias navigateur actifs",
+      "media_workers": "Processus média actifs"
+    }
+  },
+  "issues": {
+    "esphome_actions_incomplete": {
+      "title": "Le contrôle du téléphone ESPHome est incomplet",
+      "description": "{phone} n'expose pas les actions de contrôle d'appel ESPHome : {actions}. Mettez à jour son paquet téléphone VoIP et son firmware."
+    },
+    "media_capture_enabled": {
+      "title": "La capture privée des médias est activée",
+      "description": "VoIP Stack enregistre les médias privés des appels à des fins de diagnostic. Désactivez la capture des médias une fois le dépannage terminé."
+    },
+    "default_trunk_missing": {
+      "title": "Choisissez le trunk SIP sortant par défaut",
+      "description": "Aucun trunk existant n'est sélectionné comme trunk par défaut. Ouvrez VoIP Stack, reconfigurez la ligne souhaitée et activez « Utiliser comme trunk sortant par défaut ». Vous pouvez aussi sélectionner une ligne dans les options du téléphone ou dans l'action d'appel. Supprimer une ligne ne sélectionne jamais silencieusement un autre fournisseur."
+    },
+    "duplicate_extensions": {
+      "title": "Extensions de téléphone en double",
+      "description": "Ces destinations utilisent la même extension : {conflicts}. Attribuez une extension différente à chaque téléphone, contact ou point de terminaison Assist. Les appels vers une extension ambiguë sont refusés ; les noms et les adresses SIP explicites restent disponibles. Pour un téléphone ESPHome, modifiez son extension sur l'appareil. Ce problème disparaît lorsque l'annuaire ne comporte plus de conflit."
+    },
+    "parking_configuration": {
+      "title": "La configuration du parking demande votre attention",
+      "description": "Choisissez un numéro d'accès et des numéros d'emplacement de parking valides, sans conflit avec des téléphones, contacts ou groupes existants. Les destinations existantes restent inchangées."
+    },
+    "mailbox_route_conflict": {
+      "title": "Conflit de codes de messagerie vocale",
+      "description": "Un téléphone, un contact ou un groupe utilise une adresse de service de messagerie vocale. Renommez la destination en conflit ; les routes existantes restent inchangées."
+    }
+  },
+  "exceptions": {
+    "destination_required": {
+      "message": "Une destination d'appel est obligatoire."
+    },
+    "advertise_ip_unknown": {
+      "message": "L'adresse IP annoncée de Home Assistant est inconnue."
+    },
+    "call_changed_during_operation": {
+      "message": "L'appel {call_id} a changé pendant l'opération demandée."
+    },
+    "call_forwarding": {
+      "message": "L'appel {call_id} est en cours de renvoi."
+    },
+    "call_id_destination_required": {
+      "message": "Un identifiant d'appel et une destination sont obligatoires."
+    },
+    "call_id_required": {
+      "message": "Un identifiant d'appel est obligatoire."
+    },
+    "call_inactive": {
+      "message": "L'appel {call_id} n'est plus actif."
+    },
+    "call_not_forwardable": {
+      "message": "L'appel {call_id} n'est pas un appel Home Assistant en attente ou en sonnerie pouvant être renvoyé."
+    },
+    "call_not_ringing": {
+      "message": "L'appel {call_id} a déjà été décroché ou ne sonne plus."
+    },
+    "call_phase_mismatch": {
+      "message": "L'appel {call_id} est à l'état {state}, et non dans la phase {phase}."
+    },
+    "call_phone_owner_missing": {
+      "message": "L'appel {call_id} n'a pas de téléphone Home Assistant propriétaire."
+    },
+    "call_sequence_mismatch": {
+      "message": "La séquence de l'appel {call_id} est {actual}, alors que {expected} était attendu."
+    },
+    "call_state_mismatch": {
+      "message": "L'appel {call_id} est {actual}, alors que {expected} était attendu."
+    },
+    "call_unknown_or_ended": {
+      "message": "L'appel {call_id} est inconnu ou terminé."
+    },
+    "conference_full": {
+      "message": "La conférence {conference} est complète."
+    },
+    "conference_phone_mismatch": {
+      "message": "L'appel de conférence {call_id} n'appartient pas au téléphone {phone}."
+    },
+    "destination_not_forwardable": {
+      "message": "La destination {destination} n'est pas une cible de renvoi valide du plan de numérotation SIP."
+    },
+    "destination_not_ha_phone": {
+      "message": "La destination {destination} n'est pas un téléphone Home Assistant configuré."
+    },
+    "destination_not_ready": {
+      "message": "La destination {destination} n'est pas encore disponible."
+    },
+    "forward_failure_policy_invalid": {
+      "message": "La politique d'échec de renvoi doit être « reprendre », « terminer » ou « occupé »."
+    },
+    "forward_ring_group_only": {
+      "message": "Un appel déjà en sonnerie ne peut actuellement être renvoyé que vers un groupe de sonnerie."
+    },
+    "local_phone_operation_failed": {
+      "message": "Le téléphone local n'a pas pu effectuer l'opération d'appel demandée."
+    },
+    "pbx_session_unavailable": {
+      "message": "La session PBX de l'appel {call_id} n'est plus disponible."
+    },
+    "pending_route_missing": {
+      "message": "Il n'y a aucune route SIP en attente pour l'appel {call_id}."
+    },
+    "phone_busy": {
+      "message": "{phone} est occupé."
+    },
+    "phone_disabled": {
+      "message": "{phone} est désactivé."
+    },
+    "phone_self_target": {
+      "message": "Un téléphone Home Assistant ne peut pas s'utiliser lui-même comme destination d'appel."
+    },
+    "ring_group_phone_already_declined": {
+      "message": "Ce téléphone a déjà refusé l'appel du groupe de sonnerie."
+    },
+    "ring_group_phone_required": {
+      "message": "Répondez à l'appel du groupe de sonnerie depuis l'un des téléphones qui sonnent."
+    },
+    "route_destination_required": {
+      "message": "L'action de routage demandée nécessite une destination."
+    },
+    "route_hop_limit_exceeded": {
+      "message": "L'appel {call_id} a dépassé la limite de routage de {limit} sauts."
+    },
+    "route_not_decidable": {
+      "message": "La route SIP de l'appel {call_id} ne peut plus être déterminée."
+    },
+    "sip_answer_failed": {
+      "message": "La transaction de réponse SIP a échoué pour l'appel {call_id}."
+    },
+    "sip_call_start_failed": {
+      "message": "L'appel SIP vers {destination} n'a pas pu être lancé."
+    },
+    "sip_target_unresolved": {
+      "message": "La destination SIP {destination} n'a pas pu être résolue."
+    },
+    "trunk_required": {
+      "message": "La destination {destination} nécessite un trunk SIP enregistré."
+    },
+    "esphome_action_missing": {
+      "message": "{phone} n'expose pas l'action ESPHome requise {action}. Mettez à jour son paquet téléphone VoIP et son firmware."
+    },
+    "esphome_route_missing": {
+      "message": "{phone} n'expose aucune route de contrôle d'appel ESPHome."
+    },
+    "phone_not_browser": {
+      "message": "L'appareil sélectionné n'est pas un téléphone navigateur Home Assistant."
+    },
+    "phone_not_integration_owned": {
+      "message": "L'appareil sélectionné n'est pas un téléphone géré par VoIP Stack."
+    },
+    "phone_operation_not_supported": {
+      "message": "{phone} ne prend pas en charge l'opération {operation}."
+    },
+    "phone_selection_required": {
+      "message": "Sélectionnez le téléphone qui doit effectuer cette action."
+    },
+    "phone_unavailable": {
+      "message": "{phone} est actuellement indisponible."
+    },
+    "purge_devices_disabled": {
+      "message": "Cette action est désactivée car VoIP Stack ne possède pas les appareils ESPHome et ne peut pas les supprimer sans risque."
+    },
+    "transfer_destination_required": {
+      "message": "Une destination de transfert ou un appel de remplacement est obligatoire."
+    },
+    "transfer_target_invalid": {
+      "message": "La cible du transfert est invalide ou ambiguë."
+    },
+    "unknown_phone_device": {
+      "message": "L'appareil téléphonique Home Assistant sélectionné est inconnu."
+    },
+    "external_calls_disabled": {
+      "message": "Les appels externes sont désactivés pour ce téléphone."
+    },
+    "outgoing_trunk_not_selected": {
+      "message": "Aucun trunk SIP sortant sélectionné. Choisissez une ligne dans les options du téléphone ou définissez un trunk par défaut."
+    },
+    "outgoing_trunk_unavailable": {
+      "message": "Le trunk SIP sélectionné est indisponible. Vérifiez son capteur Ready."
+    }
+  },
+  "entity": {
+    "event": {
+      "voip_stack_call_event": {
+        "name": "Appel VoIP Stack"
+      },
+      "phone_endpoint_call": {
+        "name": "Appel"
+      }
+    },
+    "sensor": {
+      "voip_stack_ha_softphone_call_state": {
+        "name": "État d'appel VoIP Stack"
+      },
+      "phone_endpoint_call_state": {
+        "name": "État de l'appel",
+        "state": {
+          "offline": "Hors ligne",
+          "idle": "Au repos",
+          "calling": "Appel en cours",
+          "remote_ringing": "Sonnerie distante",
+          "ringing": "Sonnerie",
+          "connecting": "Connexion",
+          "in_call": "En communication",
+          "held": "En attente",
+          "terminating": "Fin en cours"
+        }
+      }
+    },
+    "switch": {
+      "phone_endpoint_dnd": {
+        "name": "Ne pas déranger"
+      },
+      "phone_endpoint_conference_ring": {
+        "name": "Sonner pour les appels de conférence"
+      },
+      "phone_endpoint_auto_answer": {
+        "name": "Réponse automatique"
+      },
+      "phone_endpoint_send_video": {
+        "name": "Envoyer la vidéo"
+      }
+    },
+    "text": {
+      "phone_endpoint_extension": {
+        "name": "Extension"
+      },
+      "phone_endpoint_ring_group": {
+        "name": "Groupes de sonnerie"
+      },
+      "phone_endpoint_conference_group": {
+        "name": "Groupes de conférence"
+      }
+    },
+    "binary_sensor": {
+      "phone_endpoint_connectivity": {
+        "name": "Connectivité"
+      },
+      "trunk_ready": {
+        "name": "Prêt"
+      }
+    }
+  },
+  "triggers": {
+    "call_started": {
+      "name": "Appel VoIP démarré",
+      "description": "Laissez les filtres vides pour correspondre à tous les appels. Les actions utilisent automatiquement cet appel déclencheur.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        }
+      }
+    },
+    "call_received": {
+      "name": "Appel VoIP reçu",
+      "description": "Laissez les filtres vides pour correspondre à tous les appels. Les actions utilisent automatiquement cet appel déclencheur.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        }
+      }
+    },
+    "route_requested": {
+      "name": "Destination d'appel VoIP demandée",
+      "description": "Laissez les filtres vides pour correspondre à tous les appels. Les actions utilisent automatiquement cet appel déclencheur.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        }
+      }
+    },
+    "call_connected": {
+      "name": "Appel VoIP connecté",
+      "description": "Laissez les filtres vides pour correspondre à tous les appels. Les actions utilisent automatiquement cet appel déclencheur.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        }
+      }
+    },
+    "call_ended": {
+      "name": "Appel VoIP terminé",
+      "description": "Laissez les filtres vides pour correspondre à tous les appels. Les actions utilisent automatiquement cet appel déclencheur.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        },
+        "reason": {
+          "name": "Motif de fin",
+          "description": "Filtre facultatif."
+        },
+        "outcome": {
+          "name": "Résultat de l'appel",
+          "description": "Terminé normalement, manqué ou échoué. Laissez vide pour tous les résultats."
+        }
+      }
+    },
+    "dtmf_received": {
+      "name": "Chiffre du clavier reçu pendant un appel VoIP",
+      "description": "Laissez les filtres vides pour correspondre à tous les appels. Les actions utilisent automatiquement cet appel déclencheur.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        },
+        "digit": {
+          "name": "Chiffre du clavier",
+          "description": "Filtre facultatif."
+        },
+        "source_leg": {
+          "name": "Auteur de la pression",
+          "description": "Filtre facultatif."
+        }
+      }
+    },
+    "call_unanswered": {
+      "name": "Appel VoIP sans réponse",
+      "description": "Le téléphone atteint son délai de sonnerie configuré, ou une durée explicitement choisie. Décrocher, renvoyer ou terminer annule cette attente.",
+      "fields": {
+        "caller": {
+          "name": "Appelant",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Nom ou extension dans l'annuaire. Laissez vide pour tous."
+        },
+        "ingress": {
+          "name": "Origine de l'appel",
+          "description": "Filtre facultatif."
+        },
+        "for": {
+          "name": "Durée sans réponse",
+          "description": "Omettre pour utiliser le délai de sonnerie configuré du téléphone. Indiquer une durée pour une attente propre à l'automatisation."
+        }
+      }
+    },
+    "voicemail_received": {
+      "name": "Message de messagerie vocale reçu",
+      "description": "S'exécute après l'enregistrement du message. Les actions sur les messages sélectionnent automatiquement cet enregistrement.",
+      "fields": {
+        "mailbox": {
+          "name": "Boîte vocale",
+          "description": "Filtre de téléphone facultatif. Laissez vide pour toutes les boîtes vocales."
+        }
+      }
+    },
+    "phone_state_changed": {
+      "name": "État du téléphone modifié",
+      "fields": {
+        "phone": {
+          "name": "Téléphone"
+        },
+        "from": {
+          "name": "De"
+        },
+        "to": {
+          "name": "Vers"
+        }
+      }
+    },
+    "mailbox_changed": {
+      "name": "Boîte vocale du téléphone modifiée",
+      "fields": {
+        "phone": {
+          "name": "Téléphone"
+        }
+      }
+    },
+    "call_picked_up": {
+      "name": "Appel décroché",
+      "fields": {
+        "destination": {
+          "name": "Destination"
+        }
+      }
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "name": "L'appel est dans un état",
+      "description": "Vérifie l'appel déclencheur ou le téléphone sélectionné.",
+      "fields": {
+        "state": {
+          "name": "État"
+        }
+      }
+    },
+    "is_call_origin": {
+      "name": "L'appel provient de",
+      "description": "Vérifie l'appel déclencheur ou le téléphone sélectionné.",
+      "fields": {
+        "ingress": {
+          "name": "Origine"
+        }
+      }
+    },
+    "is_phone_available": {
+      "name": "Le téléphone est disponible",
+      "description": "Vérifie l'appel déclencheur ou le téléphone sélectionné.",
+      "fields": {
+        "phone": {
+          "name": "Nom ou extension dans l'annuaire"
+        }
+      }
+    },
+    "is_dtmf_result": {
+      "name": "La saisie clavier de l'appelant correspond",
+      "description": "Vérifie le résultat de la dernière action « Attendre une saisie clavier » de cette exécution.",
+      "fields": {
+        "status": {
+          "name": "Résultat"
+        },
+        "digits": {
+          "name": "Chiffres attendus",
+          "description": "Laissez vide pour accepter n'importe quels chiffres reçus."
+        }
+      }
+    },
+    "is_phone_state": {
+      "name": "Le téléphone est dans l'état",
+      "fields": {
+        "phone": {
+          "name": "Téléphone"
+        },
+        "state": {
+          "name": "État"
+        }
+      }
+    },
+    "has_ringing_call": {
+      "name": "Le téléphone a un appel en sonnerie",
+      "fields": {
+        "phone": {
+          "name": "Téléphone"
+        }
+      }
+    },
+    "has_voicemail": {
+      "name": "Le téléphone a des messages vocaux",
+      "fields": {
+        "phone": {
+          "name": "Téléphone"
+        },
+        "unread_only": {
+          "name": "Messages non lus uniquement"
+        }
+      }
+    }
+  },
+  "services": {
+    "get_phone_state": {
+      "name": "Obtenir l'état du téléphone",
+      "description": "Lit l'état, les appels et les compteurs de messagerie du téléphone sélectionné.",
+      "fields": {
+        "device_id": {
+          "name": "Téléphone"
+        }
+      }
+    },
+    "pickup": {
+      "name": "Décrocher un appel",
+      "description": "Récupère sur le téléphone sélectionné un appel en sonnerie ou garé.",
+      "fields": {
+        "device_id": {
+          "name": "Téléphone qui récupère"
+        },
+        "target_device_id": {
+          "name": "Téléphone qui sonne"
+        },
+        "slot": {
+          "name": "Emplacement de parking"
+        },
+        "answer_timeout": {
+          "name": "Attente de la réponse"
+        },
+        "call_id": {
+          "name": "Identifiant d'appel"
+        },
+        "expected_generation": {
+          "name": "Génération de l'appel"
+        },
+        "leg_id": {
+          "name": "Segment d'appel"
+        }
+      }
+    }
+  }
+}

@@ -50,6 +50,7 @@ async def prepare(hass, monkeypatch, language, *, legacy=False, silent=False):
     ("en", "call kitchen", "Calling Kitchen phone."),
     ("it", "chiama cucina", "Chiamo Kitchen phone."),
     ("de", "rufe küche an", "Ich rufe Kitchen phone an."),
+    ("fr", "appelle cuisine", "J'appelle Kitchen phone."),
 ])
 async def test_localized_success_uses_resolved_contact(hass, monkeypatch, language, text, expected):
     _resolve, records = await prepare(hass, monkeypatch, language)
@@ -64,6 +65,7 @@ async def test_localized_success_uses_resolved_contact(hass, monkeypatch, langua
     ("en", "call nowhere", "nowhere"),
     ("it", "chiama nessuno", "nessuno"),
     ("de", "rufe niemand an", "niemand"),
+    ("fr", "appelle nulle part", "nulle part"),
 ])
 async def test_localized_error_keeps_target_and_error_type(hass, monkeypatch, language, text, fragment):
     resolve, records = await prepare(hass, monkeypatch, language)
@@ -93,6 +95,7 @@ async def test_explicit_empty_template_is_silent_without_cancelling_action(hass,
     ("en", ("hang up", "answer", "decline"), ("OK.", "Answering.", "Declining.")),
     ("it", ("riaggancia", "rispondi", "rifiuta"), ("Va bene.", "Rispondo.", "Rifiuto la chiamata.")),
     ("de", ("auflegen", "annehmen", "ablehnen"), ("OK.", "Ich nehme den Anruf an.", "Ich lehne den Anruf ab.")),
+    ("fr", ("raccroche", "décroche", "refuse"), ("D'accord.", "Je réponds.", "Je refuse.")),
 ])
 async def test_localized_call_controls(hass, monkeypatch, language, sentences, expected):
     _resolve, records = await prepare(hass, monkeypatch, language)
