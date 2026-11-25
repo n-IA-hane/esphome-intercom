@@ -3547,6 +3547,45 @@
           "name": "ID des Tischtelefons"
         }
       }
+    },
+    "send_dtmf": {
+      "name": "DTMF-Töne senden",
+      "description": "Sendet Ziffern über den aktiven Medienkanal des bestehenden Anrufs mit ausgehandelten RTP-Ereignissen oder SIP INFO. Nicht unterstützte Medienkanäle melden einen Fehler.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Telefon, das die Ziffern an die Gegenstelle sendet. Standard ist das bevorzugte HA-Telefon."
+        },
+        "digits": {
+          "name": "Ziffern",
+          "description": "Bis zu 32 Zeichen: 0-9, A-D, Stern und Raute, nacheinander gesendet."
+        },
+        "call_id": {
+          "name": "Anruf-ID",
+          "description": "Erforderlich, wenn das Telefon mehrere aktive Anrufe hat."
+        },
+        "expected_generation": {
+          "name": "Anrufgeneration",
+          "description": "Aktion ablehnen, wenn sich die Anrufgeneration geändert hat."
+        },
+        "duration_ms": {
+          "name": "Tastendauer",
+          "description": "Dauer jeder Ziffer in Millisekunden."
+        },
+        "gap_ms": {
+          "name": "Pause zwischen Ziffern",
+          "description": "Pause zwischen den Ziffern in Millisekunden."
+        },
+        "line_id": {
+          "name": "SIP-Leitung",
+          "description": "Leitung auswählen, wenn das physische Telefon mehrere SIP-Konten hat."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Erweiterte Optionen"
+        }
+      }
     }
   }
 }

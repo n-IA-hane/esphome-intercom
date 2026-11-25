@@ -3547,6 +3547,45 @@
           "name": "ID do telefone físico"
         }
       }
+    },
+    "send_dtmf": {
+      "name": "Enviar tons DTMF",
+      "description": "Envia dígitos pelo canal de mídia ativo da chamada estabelecida, usando eventos RTP negociados ou SIP INFO. Canais de mídia não suportados retornam um erro.",
+      "fields": {
+        "device_id": {
+          "name": "Telefone",
+          "description": "Telefone que envia os dígitos à outra parte. Por padrão, usa o telefone HA preferido."
+        },
+        "digits": {
+          "name": "Dígitos",
+          "description": "Até 32 caracteres: 0-9, A-D, asterisco e cerquilha, enviados em ordem."
+        },
+        "call_id": {
+          "name": "ID da chamada",
+          "description": "Obrigatório quando o telefone tem várias chamadas ativas."
+        },
+        "expected_generation": {
+          "name": "Geração da chamada",
+          "description": "Rejeita a ação se a geração da chamada mudou."
+        },
+        "duration_ms": {
+          "name": "Duração da tecla",
+          "description": "Duração de cada dígito em milissegundos."
+        },
+        "gap_ms": {
+          "name": "Intervalo entre dígitos",
+          "description": "Pausa entre dígitos em milissegundos."
+        },
+        "line_id": {
+          "name": "Linha SIP",
+          "description": "Selecione uma linha quando o telefone físico tiver várias contas SIP."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opções avançadas"
+        }
+      }
     }
   }
 }

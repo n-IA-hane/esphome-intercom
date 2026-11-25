@@ -3547,6 +3547,45 @@
           "name": "ID fyzického telefonu"
         }
       }
+    },
+    "send_dtmf": {
+      "name": "Odeslat tóny DTMF",
+      "description": "Odešle číslice přes aktivní mediální kanál probíhajícího hovoru pomocí dohodnutých událostí RTP nebo SIP INFO. Nepodporovaný mediální kanál vrátí chybu.",
+      "fields": {
+        "device_id": {
+          "name": "Telefon",
+          "description": "Telefon odesílající číslice druhé straně. Výchozí je preferovaný telefon HA."
+        },
+        "digits": {
+          "name": "Číslice",
+          "description": "Až 32 znaků: 0-9, A-D, hvězdička a mřížka, odeslaných v pořadí."
+        },
+        "call_id": {
+          "name": "ID hovoru",
+          "description": "Povinné, pokud má telefon více aktivních hovorů."
+        },
+        "expected_generation": {
+          "name": "Generace hovoru",
+          "description": "Odmítne akci, pokud se generace hovoru změnila."
+        },
+        "duration_ms": {
+          "name": "Délka stisku",
+          "description": "Délka každé číslice v milisekundách."
+        },
+        "gap_ms": {
+          "name": "Mezera mezi číslicemi",
+          "description": "Pauza mezi číslicemi v milisekundách."
+        },
+        "line_id": {
+          "name": "Linka SIP",
+          "description": "Vyberte linku, pokud má fyzický telefon více účtů SIP."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Pokročilé možnosti"
+        }
+      }
     }
   }
 }

@@ -3547,6 +3547,45 @@
           "name": "Physical phone ID"
         }
       }
+    },
+    "send_dtmf": {
+      "name": "Send keypad input",
+      "description": "Send digits through the established call's active media owner, using negotiated RTP events or SIP INFO. Unsupported media owners return an error.",
+      "fields": {
+        "device_id": {
+          "name": "Phone",
+          "description": "Phone sending the digits to the other party. Defaults to the preferred HA phone."
+        },
+        "digits": {
+          "name": "Digits",
+          "description": "Up to 32 digits: 0-9, A-D, star and hash, sent in order."
+        },
+        "call_id": {
+          "name": "Call ID",
+          "description": "Required when the phone has multiple active calls."
+        },
+        "expected_generation": {
+          "name": "Call generation",
+          "description": "Reject the action if the call generation has changed."
+        },
+        "duration_ms": {
+          "name": "Press duration",
+          "description": "Duration of each digit in milliseconds."
+        },
+        "gap_ms": {
+          "name": "Gap between digits",
+          "description": "Pause between digits in milliseconds."
+        },
+        "line_id": {
+          "name": "SIP line",
+          "description": "Select a line when the physical phone has multiple SIP accounts."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced options"
+        }
+      }
     }
   }
 }

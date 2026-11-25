@@ -3547,6 +3547,45 @@
           "name": "ID telefono fisico"
         }
       }
+    },
+    "send_dtmf": {
+      "name": "Invia toni DTMF",
+      "description": "Invia cifre sulla chiamata in corso attraverso il proprietario audio attivo, usando eventi RTP negoziati o SIP INFO. Un proprietario audio non supportato restituisce un errore.",
+      "fields": {
+        "device_id": {
+          "name": "Telefono",
+          "description": "Telefono che invia le cifre alla controparte. Se omesso, usa il telefono HA preferito."
+        },
+        "digits": {
+          "name": "Cifre",
+          "description": "Fino a 32 cifre: 0-9, A-D, asterisco e cancelletto, inviate in ordine."
+        },
+        "call_id": {
+          "name": "ID chiamata",
+          "description": "Obbligatorio se il telefono ha più chiamate attive."
+        },
+        "expected_generation": {
+          "name": "Generazione chiamata",
+          "description": "Rifiuta l’azione se la generazione della chiamata è cambiata."
+        },
+        "duration_ms": {
+          "name": "Durata pressione",
+          "description": "Durata di ogni cifra in millisecondi."
+        },
+        "gap_ms": {
+          "name": "Pausa tra cifre",
+          "description": "Pausa tra le cifre in millisecondi."
+        },
+        "line_id": {
+          "name": "Linea SIP",
+          "description": "Seleziona una linea se il telefono fisico ha più account SIP."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Opzioni avanzate"
+        }
+      }
     }
   }
 }
