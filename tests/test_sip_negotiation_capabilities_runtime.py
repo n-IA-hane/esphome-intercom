@@ -25,6 +25,7 @@ from custom_components.voip_stack.endpoint_routing import (
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 from custom_components.voip_stack.sip_client import RtpPayloadEncoder
 from custom_components.voip_stack.sip_listener import SipInviteResult, SipUdpEndpoint
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 pytestmark = pytest.mark.ha
@@ -169,7 +170,7 @@ def test_dahua_pcm_stays_profile_gated_little_endian(user_agent, allowed):
     offer = _peer_sdp("PCM", 16000, frame_ms=20)
     selected = _negotiate(
         offer,
-        allow_dahua_pcm=codec_capabilities.supports_dahua_pcm(user_agent),
+        compatibility=legacy_pcm_compatibility(codec_capabilities.supports_dahua_pcm(user_agent)),
     )
     assert (selected is not None) is allowed
     if selected is None:

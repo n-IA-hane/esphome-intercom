@@ -14,6 +14,7 @@ from .voip_phase1_support import (
     _load_audio_ws_runtime_module, _load_intercom_module,
     audio_format, rtp, sdp, sip, sip_client,
 )
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 class _Browser:
@@ -65,7 +66,7 @@ def test_dahua_answer_order_yields_to_explicit_policy_and_established_binding():
 
     def apply(**kwargs):
         return sdp.negotiate_answer_directional(answer, preferred, preferred,
-            local_offer_sdp=offer, allow_dahua_pcm=True, **kwargs)
+            local_offer_sdp=offer, compatibility=legacy_pcm_compatibility(True), **kwargs)
 
     selected = apply()
     assert selected is not None

@@ -118,7 +118,6 @@ def _same_rtp_audio_codec(left: RtpPcmFormat, right: RtpPcmFormat) -> bool:
 def offered_pcm_formats(
     sdp: str | bytes,
     *,
-    allow_dahua_pcm: bool = False,
     optional_mappings=(),
     capabilities: bool = False,
     include_auxiliary: bool = False,
@@ -133,9 +132,7 @@ def offered_pcm_formats(
         codec = CODECS.get(encoding)
         if codec is None or (codec.auxiliary and not include_auxiliary):
             continue
-        # The legacy flag is retained only at this public parsing boundary.
-        admitted = optional_mappings or ((("PCM", 16000, 1),) if allow_dahua_pcm else ())
-        if codec.requires_opt_in and (spec not in admitted or pt < 96):
+        if codec.requires_opt_in and (spec not in optional_mappings or pt < 96):
             continue
         if codec.wire_geometries and (rate, channels) not in codec.wire_geometries:
             continue

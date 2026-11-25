@@ -13,6 +13,7 @@ from .inbound_identity import identity_fields
 import logging
 
 from .sip_server_state import (SipInvite, SipInviteResult, _ActiveDialog, _PendingDelayedOffer)
+from .peer_media_profile import legacy_pcm_compatibility
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class SipServerOffers:
         try:
             current_local_sdp = dialog.local_sdp_body or dialog.answer_sdp
             current_audio_formats = tuple(sdp.offered_pcm_formats(
-                current_local_sdp, allow_dahua_pcm=previous.peer_profile == "dahua",
+                current_local_sdp, optional_mappings=legacy_pcm_compatibility(previous.peer_profile == "dahua").optional_mappings,
             ))
             if not current_audio_formats:
                 return None
@@ -114,7 +115,7 @@ class SipServerOffers:
                 [fmt.audio_format for fmt in current_audio_formats],
                 local_offer_direction=previous.local_audio_direction,
                 local_offer_sdp=offer,
-                allow_dahua_pcm=previous.peer_profile == "dahua",
+                compatibility=legacy_pcm_compatibility(previous.peer_profile == "dahua"),
                 local_capabilities=HA_AUDIO_CAPABILITIES,
                 previous_payloads=dialog.audio_payloads,
                 established=sdp.RtpPcmDirection(previous.send_format, previous.recv_format,

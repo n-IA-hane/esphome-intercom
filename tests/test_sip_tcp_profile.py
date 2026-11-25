@@ -19,6 +19,7 @@ from .voip_phase1_support import (
     types,
     unittest,
 )
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
@@ -421,7 +422,7 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(invite.method, "INVITE")
                 offered = sdp.offered_pcm_formats(
                     invite.body,
-                    allow_dahua_pcm=True,
+                    optional_mappings=legacy_pcm_compatibility(True).optional_mappings,
                 )
                 selected = next(item for item in offered if item.encoding == "PCM")
                 answer = sdp.build_answer_directional(

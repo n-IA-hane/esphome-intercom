@@ -17,6 +17,7 @@ from .voip_phase1_support import (
     sip_listener,
     unittest,
 )
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 class SdpPcmProfileTest(unittest.TestCase):
@@ -151,7 +152,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             offer,
             local,
             local,
-            allow_dahua_pcm=True,
+            compatibility=legacy_pcm_compatibility(True),
         )
 
         self.assertIsNotNone(selected)
@@ -180,7 +181,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             40000,
             local,
             local,
-            include_dahua_pcm=True,
+            compatibility=legacy_pcm_compatibility(True),
         )
 
         self.assertNotIn(" PCM/16000", standard)
@@ -192,7 +193,7 @@ class SdpPcmProfileTest(unittest.TestCase):
                 item.encoding
                 for item in sdp.offered_pcm_formats(
                     dahua,
-                    allow_dahua_pcm=True,
+                    optional_mappings=legacy_pcm_compatibility(True).optional_mappings,
                 )
             ],
             ["PCM", "L16"],
@@ -239,7 +240,7 @@ class SdpPcmProfileTest(unittest.TestCase):
                             rate=rate,
                             channels=channels,
                         ),
-                        allow_dahua_pcm=True,
+                        optional_mappings=legacy_pcm_compatibility(True).optional_mappings,
                     ),
                     [],
                 )

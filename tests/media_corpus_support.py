@@ -14,6 +14,7 @@ from custom_components.voip_stack.core.audio_format import (
     HA_TRUNK_AUDIO_FORMATS,
 )
 from custom_components.voip_stack.sip_listener import SipUdpEndpoint
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 CORPUS = Path(__file__).parent / "media_corpus"
 GOLDEN = CORPUS / "golden" / "legacy.json"
@@ -137,7 +138,7 @@ def production_apply_answer(step: Step) -> dict:
     try:
         selected = sdp.negotiate_answer_directional(
             step.sdp, list(send), list(receive), local_offer_sdp=step.local_offer,
-            allow_dahua_pcm=step.profile == "dahua_pcm", local_capabilities=HA_AUDIO_CAPABILITIES)
+            compatibility=legacy_pcm_compatibility(step.profile == "dahua_pcm"), local_capabilities=HA_AUDIO_CAPABILITIES)
     except Exception as error:  # noqa: BLE001
         return {"outcome": "error", "error": type(error).__name__}
     if selected is None:

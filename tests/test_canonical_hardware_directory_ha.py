@@ -16,6 +16,7 @@ from .test_managed_phones_ha import (
     bind_account,
     phone_record,
 )
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 pytestmark = pytest.mark.ha
 
@@ -386,7 +387,7 @@ async def test_common_endpoint_dialer_keeps_registered_contact_profile_and_real_
             local_name="Caller", local_rtp_port_index=0, port_reservation=reservation)
         assert leg is not None and leg.bridge_to_softphone
         leg.client._prepare_initial_offer(delayed_offer=False, audio_direction="sendrecv")
-        mappings = sdp.offered_pcm_formats(leg.client._local_sdp_body, allow_dahua_pcm=True)
+        mappings = sdp.offered_pcm_formats(leg.client._local_sdp_body, optional_mappings=legacy_pcm_compatibility(True).optional_mappings)
         assert any(fmt.encoding == "PCM" for fmt in mappings)
         assert {fmt.encoding for fmt in mappings} >= {"PCMA", "PCMU"}
     finally:

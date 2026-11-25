@@ -19,6 +19,16 @@ separately, including accepted alternatives. The bridge planner decides whether
 each direction needs payload relay, reframing, PCM conversion or transcoding.
 The media owner executes that plan.
 
+The public SDP wrappers accept the same `MediaCompatibility` value as the
+negotiator. A contact adapter translates its profile before calling
+`build_offer_directional`, `negotiate_directional` or
+`negotiate_answer_directional`; the core never imports that adapter. Parsing
+optional wire mappings uses `offered_pcm_formats(..., optional_mappings=...)`.
+The old internal `allow_dahua_pcm` / `include_dahua_pcm` wrapper arguments are
+replaced by these neutral inputs. Contact settings and the SIP client adapter
+retain their existing configuration behavior. The complete SDP API can be
+imported and exercised with only the core package present.
+
 A codec is usable only when enabled and its actual encoder or decoder is
 available in the required direction. Codec availability is not inferred from a
 library package name alone. Unsupported descriptions receive an explicit refusal.

@@ -9,6 +9,7 @@ from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.media.payload_map import PayloadMap
 from custom_components.voip_stack.endpoint_routing import sip_target_rtp_audio_profile
 from custom_components.voip_stack.sip_client import SipCallClient, SipDialog
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 pytestmark = pytest.mark.ha
 
@@ -29,7 +30,7 @@ def test_documented_dahua_pcm_quirk_keeps_pt97_and_real_receive_capacity():
     assert profile.include_dahua_pcm and not profile.match_received_codec
     client = writer(profile)
     client._prepare_initial_offer(delayed_offer=False, audio_direction="sendrecv")
-    offered = sdp.offered_pcm_formats(client._local_sdp_body, allow_dahua_pcm=True)
+    offered = sdp.offered_pcm_formats(client._local_sdp_body, optional_mappings=legacy_pcm_compatibility(True).optional_mappings)
     assert [(fmt.payload_type, fmt.encoding) for fmt in offered] == [(97, "PCM"), (0, "PCMU")]
     assert sdp.parse_sdp(client._local_sdp_body)["ptime"] == 20
     assert sdp.parse_sdp(client._local_sdp_body)["maxptime"] >= 40

@@ -21,6 +21,7 @@ from .voip_phase1_support import (
     _load_audio_ws_runtime_module, _load_intercom_module,
     audio_format, rtp, sdp, sip, sip_client,
 )
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 async def _factory_arguments(module, local_port):
@@ -211,7 +212,7 @@ def test_local_offer_receive_capacity_and_explicit_limit(encoding, rate, pt, exp
                if explicit_max else {})
     offer = sdp.build_offer_directional(
         "127.0.0.1", "127.0.0.1", 40000, [fmt.audio_format], [fmt.audio_format],
-        include_common_codecs=encoding == "PCMU", include_dahua_pcm=encoding == "PCM",
+        include_common_codecs=encoding == "PCMU", compatibility=legacy_pcm_compatibility(encoding == "PCM"),
         local_capabilities=capabilities, **options,
     )
     answer = (
@@ -222,7 +223,7 @@ def test_local_offer_receive_capacity_and_explicit_limit(encoding, rate, pt, exp
     )
     selected = sdp.negotiate_answer_directional(
         answer, [fmt.audio_format], [fmt.audio_format], local_offer_sdp=offer,
-        allow_dahua_pcm=encoding == "PCM", local_capabilities=capabilities,
+        compatibility=legacy_pcm_compatibility(encoding == "PCM"), local_capabilities=capabilities,
     )
     assert selected is not None
     assert selected.send.frame_ms == 20 and selected.send.max_frame_ms == 20

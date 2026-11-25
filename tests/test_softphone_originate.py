@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -591,11 +592,11 @@ def test_static_dahua_contact_builds_full_offer_for_direct_and_trunk(
         send_rtp_formats=captured["supported_send_rtp_formats"],
         recv_rtp_formats=captured["supported_recv_rtp_formats"],
         include_common_codecs=captured["include_common_codecs"],
-        include_dahua_pcm=captured["include_dahua_pcm"],
+        compatibility=legacy_pcm_compatibility(captured["include_dahua_pcm"]),
         video_port=captured["local_video_rtp_port"], video_formats=captured["video_formats"],
         video_direction=captured["video_direction"],
     )
-    audio = media.offered_pcm_formats(offer, allow_dahua_pcm=True)
+    audio = media.offered_pcm_formats(offer, optional_mappings=legacy_pcm_compatibility(True).optional_mappings)
     assert any(fmt.encoding == "PCMU" for fmt in audio)
     assert any(fmt.encoding == "PCMA" for fmt in audio)
     assert any(fmt.encoding == "L16" and fmt.sample_rate == 16000 for fmt in audio)

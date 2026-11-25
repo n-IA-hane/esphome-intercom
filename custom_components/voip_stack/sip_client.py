@@ -79,6 +79,7 @@ from .core.sip_transaction import (
     matches_response,
     same_request_transaction,
 )
+from .peer_media_profile import legacy_pcm_compatibility
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1362,7 +1363,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                     self.supported_recv_formats,
                     local_offer_sdp=local_offer_sdp,
                     codec_policy=self.codec_policy,
-                    allow_dahua_pcm=self.include_dahua_pcm,
+                    compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
                 if local_offer_sdp
@@ -1370,7 +1371,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                     request.body,
                     self.supported_send_formats,
                     self.supported_recv_formats,
-                    allow_dahua_pcm=self.include_dahua_pcm,
+                    compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                     codec_policy=self.codec_policy,
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                     # A delayed initial offer has only a signaling seed. RTP
@@ -2781,7 +2782,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 local_offer_direction=current.local_audio_direction,
                 local_offer_sdp=offer,
                 codec_policy=self.codec_policy,
-                allow_dahua_pcm=self.include_dahua_pcm,
+                compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                 local_capabilities=HA_AUDIO_CAPABILITIES,
                 established=sdp.RtpPcmDirection(current.send_format, current.recv_format,
                     current.recv_formats, current.send_formats),

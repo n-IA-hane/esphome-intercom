@@ -14,6 +14,7 @@ from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_B, SIP_TIMER_F, SipC
 import logging
 
 from .sip_client_types import (_is_invite_progress_response, _sip_decline_reason)
+from .peer_media_profile import legacy_pcm_compatibility
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -425,7 +426,7 @@ class SipInviteTransactions:
                 self.supported_send_formats,
                 self.supported_recv_formats,
                 include_common_codecs=self.include_common_codecs,
-                include_dahua_pcm=self.include_dahua_pcm,
+                compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                 audio_rtcp=False,
                 send_rtp_formats=self.supported_send_rtp_formats,
                 recv_rtp_formats=self.supported_recv_rtp_formats,

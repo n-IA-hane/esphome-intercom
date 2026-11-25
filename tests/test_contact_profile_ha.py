@@ -8,6 +8,7 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from .support.ha_frontend import prepare_frontend_dependency
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 
 pytestmark = pytest.mark.ha
@@ -212,7 +213,7 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
             try:
                 await attempt.client.invite(target="8001", remote_host="127.0.0.1", remote_sip_port=port, timeout=2)
                 offer = captured[-1]
-                offered = sdp.offered_pcm_formats(offer, allow_dahua_pcm=True)
+                offered = sdp.offered_pcm_formats(offer, optional_mappings=legacy_pcm_compatibility(True).optional_mappings)
                 assert any(item.encoding == "PCM" for item in offered) is pcm
                 assert {"PCMU", "PCMA", "L16"} <= {item.encoding for item in offered}
                 assert b"a=ptime:20\r\n" in offer

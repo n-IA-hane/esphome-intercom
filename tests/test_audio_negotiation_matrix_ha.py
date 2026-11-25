@@ -23,6 +23,7 @@ from custom_components.voip_stack.core.rtp_payload import RtpPayloadEncoder
 from custom_components.voip_stack.rtp_audio_receiver import RtpAudioReceiver
 from custom_components.voip_stack.sip_bridge import bridge_source_audio
 from custom_components.voip_stack.sip_listener import SipUdpEndpoint
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 pytestmark = pytest.mark.ha
 
@@ -250,8 +251,8 @@ def test_every_answer_to_our_offer_is_accepted_within_the_wire_rules(profile, re
         receive = tuple(reversed(receive))
     offer = sdp.build_offer_directional(
         "127.0.0.1", "127.0.0.1", 40000, list(send), list(receive), include_common_codecs=True,
-        include_dahua_pcm=dahua, local_capabilities=HA_AUDIO_CAPABILITIES)
-    offered = sdp.offered_pcm_formats(offer, allow_dahua_pcm=dahua)
+        compatibility=legacy_pcm_compatibility(dahua), local_capabilities=HA_AUDIO_CAPABILITIES)
+    offered = sdp.offered_pcm_formats(offer, optional_mappings=legacy_pcm_compatibility(dahua).optional_mappings)
     assert "x-voip-stack" not in offer
     assert len(offered) >= 5
     violations, accepted = [], 0
@@ -273,7 +274,7 @@ def test_every_answer_to_our_offer_is_accepted_within_the_wire_rules(profile, re
         try:
             selected = sdp.negotiate_answer_directional(
                 answer, list(send), list(receive), local_offer_sdp=offer,
-                allow_dahua_pcm=dahua, local_capabilities=HA_AUDIO_CAPABILITIES)
+                compatibility=legacy_pcm_compatibility(dahua), local_capabilities=HA_AUDIO_CAPABILITIES)
         except Exception as error:  # noqa: BLE001
             violations.append((case, f"answer negotiation raised {error!r}"))
             continue

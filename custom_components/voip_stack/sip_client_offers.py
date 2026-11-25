@@ -11,6 +11,7 @@ from .core.sip_dialog import PreparedDialogIdentity, build_dialog_request
 import logging
 
 from .sip_client_types import (SipDialog, _audio_payload_update, _video_payload_update)
+from .peer_media_profile import legacy_pcm_compatibility
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -609,7 +610,7 @@ class SipLocalOffers:
                 local_offer_direction=local_offer_direction,
                 local_offer_sdp=self._local_sdp_body or None,
                 codec_policy=self.codec_policy,
-                allow_dahua_pcm=self.include_dahua_pcm,
+                compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                 local_capabilities=HA_AUDIO_CAPABILITIES,
             )
             if selected is not None:

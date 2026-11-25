@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from .voip_phase1_support import _load_intercom_module, audio_format, sdp, sip, sip_client
+from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
 
 resolve = _load_intercom_module('peer_media_profile').resolve_peer_media_profile
 
@@ -54,7 +55,7 @@ async def test_client_wire_offer_explicit_pcm_without_forging_identity(user_agen
     try:
         await client.invite(target='door', remote_host='127.0.0.1', remote_sip_port=transport.get_extra_info('sockname')[1], timeout=1)
         assert client.peer_user_agent == user_agent
-        formats = sdp.offered_pcm_formats(offers[0], allow_dahua_pcm=True)
+        formats = sdp.offered_pcm_formats(offers[0], optional_mappings=legacy_pcm_compatibility(True).optional_mappings)
         assert any(f.encoding == 'PCM' for f in formats) == vendor
         assert any(f.encoding == 'PCMU' for f in formats)
         assert all(f.frame_ms == 20 for f in formats)

@@ -981,7 +981,7 @@ class SipIncomingInvites:
                     established=established,
                     previous_payloads=current_dialog.audio_payloads if current_dialog is not None else PayloadMap(),
                     codec_policy=codec_policy,
-                    allow_dahua_pcm=peer_profile == "dahua",
+                    compatibility=legacy_pcm_compatibility(peer_profile == "dahua"),
                     local_capabilities=local_audio_capabilities,
                 )
                 if local_offer_sdp
@@ -989,7 +989,7 @@ class SipIncomingInvites:
                     request.body,
                     self.supported_send_formats,
                     self.supported_recv_formats,
-                    allow_dahua_pcm=peer_profile == "dahua",
+                    compatibility=legacy_pcm_compatibility(peer_profile == "dahua"),
                     codec_policy=codec_policy,
                     local_capabilities=local_audio_capabilities,
                     established=established,
