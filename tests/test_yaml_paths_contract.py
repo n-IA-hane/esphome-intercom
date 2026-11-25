@@ -256,6 +256,45 @@ def test_package_default_round_trip_preserves_expression(tmp_path):
     assert package.read_text() == original
 
 
+@pytest.mark.parametrize('source', [
+    '/workspace/checkouts/esphome/components',
+    '/srv/esphome/components',
+    '/Users/developer/VoIP Stack/esphome/components',
+    '/opt/esphome/components',
+    '/',
+])
+@pytest.mark.parametrize('expression', [False, True])
+def test_remote_sources_reject_absolute_paths_under_any_checkout_root(tmp_path, source, expression):
+    tool = _load_yaml_paths()
+    value = '${ ext_components_source | default("' + source + '") }' if expression else '"' + source + '"'
+    package = tmp_path / 'source.yaml'
+    package.write_text('substitutions:\n  ext_components_source: ' + value + '\n')
+    assert list(tool.source_errors(package, 'dev', True)) == ['absolute local source path in public YAML']
+    assert list(tool.source_errors(package, 'dev', False)) == []
+
+
+@pytest.mark.parametrize('value', [
+    '"https://example.invalid/components"',
+    '"github://n-IA-hane/esphome-intercom@dev"',
+    '"../esphome/components"',
+    '"../../other/components"',
+    '${ ext_components_source | default("github://n-IA-hane/esphome-intercom@dev") }',
+    '${ ext_components_source | default("https://example.invalid/components") }',
+])
+def test_remote_source_guard_preserves_portable_values(tmp_path, value):
+    tool = _load_yaml_paths()
+    package = tmp_path / 'source.yaml'
+    package.write_text('substitutions:\n  ext_components_source: ' + value + '\n')
+    assert list(tool.source_errors(package, 'dev', True)) == []
+
+
+def test_remote_source_guard_keeps_non_source_settings_out_of_scope(tmp_path):
+    tool = _load_yaml_paths()
+    package = tmp_path / 'source.yaml'
+    package.write_text('substitutions:\n  label: "/workspace/example"\n')
+    assert list(tool.source_errors(package, 'dev', True)) == []
+
+
 def test_global_managed_files_exclude_debug_not_ready_and_private(tmp_path):
     tool = _load_yaml_paths()
     tool.ROOT = tmp_path

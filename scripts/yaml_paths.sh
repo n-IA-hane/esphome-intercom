@@ -323,7 +323,10 @@ def source_errors(path, ref, remote):
                 yield f"asset source channel {actual}, expected {backend_ref}"
     if remote:
         for line in lines:
-            if re.match(r"\s*(?:-\s*)?(?:[\w]*source|url|path|intercom_idf_root|assets_base):", line) and re.search(r"(?:['\"( ]|^)/(?:home|var/tmp|tmp|mnt|opt|root)/", line):
+            # Package defaults may contain an absolute path inside default(...).
+            # Match the literal's leading slash, independent of checkout root;
+            # URL scheme separators are preceded by a colon instead.
+            if re.match(r"\s*(?:-\s*)?(?:[\w]*source|url|path|intercom_idf_root|assets_base):", line) and re.search(r"(?:['\"( ]|^)/", line):
                 yield "absolute local source path in public YAML"
 
 
