@@ -26,7 +26,8 @@ are removed. Only `speaker_source` and Voice Assistant retain the explicit
 residual corrections recorded in `esphome/upstream_sources.json` until qualified
 upstream replacements are available. These selections do not rewrite the
 HTTP/Sendspin dependency sources. The recorded development baseline resolves
-esp-audio-libs 4.0.1, micro-decoder 0.4.0 and sendspin-cpp 0.9.3.
+esp-audio-libs 4.1.0, micro-decoder 0.4.0 and sendspin-cpp 0.9.3. These versions
+are checked against the dependencies emitted by the actual ESPHome generator.
 
 The audio path adds the project-owned `esp_audio_stack`, optional `esp_aec` or
 `esp_afe`, `voip_stack` and `runtime_controller`. The schema-only

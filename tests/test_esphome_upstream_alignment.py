@@ -223,6 +223,16 @@ def test_production_official_pins_match_catalog_and_fixture_provenance():
         assert verified_component_directory(component).is_dir()
 
 
+def test_recorded_audio_dependency_versions_match_the_real_generator(native_full_build):
+    _, source = native_full_build
+    manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
+    dependencies = yaml_util.load_yaml(source / "idf_component.yml")["dependencies"]
+    for key, dependency in (("audio_libs", "esphome/esp-audio-libs"),
+                            ("micro_decoder", "esphome/micro-decoder"),
+                            ("sendspin", "sendspin/sendspin-cpp")):
+        assert manifest["build_baseline"][key] == dependencies[dependency]["version"]
+
+
 def test_all_local_upstream_providers_are_documented():
     assert not (COMPONENTS / "spi").exists()
     manifest = json.loads((ROOT / "esphome/upstream_sources.json").read_text())
