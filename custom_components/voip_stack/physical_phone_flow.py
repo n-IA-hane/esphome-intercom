@@ -674,6 +674,9 @@ class PhysicalPhoneSubentryFlowHandler(ConfigSubentryFlow):
     async def async_step_account(self, user_input=None):
         if not provisioning_enabled(self._get_entry()):
             return self.async_abort(reason="phone_provisioning_disabled")
+        from .core.codec_capabilities import preload_codec_capabilities
+
+        await self.hass.async_add_executor_job(preload_codec_capabilities)
         if self._account_flow is None:
             from .config_flow import PhoneSubentryFlowHandler
             self._account_flow = PhoneSubentryFlowHandler()

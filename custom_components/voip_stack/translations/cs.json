@@ -1203,6 +1203,21 @@
         }
       }
     },
+    "account_migration_failed": {
+      "title": "Zkusit migraci účtů SIP znovu",
+      "description": "Migrace nebyla dokončena. Chyba: {error_type}. Zdroj: {source}. Zkontrolujte protokol integrace a před dalším pokusem vyřešte uvedenou příčinu. Tato chyba nepotvrzuje konflikt účtů.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Zkusit migraci účtů znovu",
+            "description": "Po vyřešení uvedené příčiny zopakujte celou migraci."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Migrace je stále zablokována. Zkontrolujte uvedenou chybu a před dalším pokusem vyřešte její příčinu."
+        }
+      }
+    },
     "phone_identity_conflict": {
       "title": "Identitu telefonu je nutné obnovit",
       "description": "The saved references for {phone} require reconciliation (native: {canonical}, previous: {legacy}). Open the repair to correct the account settings and retry migration while preserving its Home Assistant device, entities and bindings.",

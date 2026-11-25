@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from builtins import BaseExceptionGroup
 from inspect import signature
+import logging
 from pathlib import Path
 import voluptuous as vol
 
@@ -18,6 +20,7 @@ from .const import DOMAIN
 from .runtime_data import runtime_data
 
 
+_LOGGER = logging.getLogger(__name__)
 MEDIA_CAPTURE_ISSUE_ID = "media_capture_enabled"
 ESPHOME_ACTION_ISSUE_PREFIX = "esphome_actions_"
 ESPHOME_ENDPOINT_COLLISION_ISSUE_PREFIX = "esphome_endpoint_collision_"
@@ -188,6 +191,7 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
             if entry.state is not ConfigEntryState.MIGRATION_ERROR:
                 async_sync_phone_identity_issue(self.hass, entry)
                 async_sync_account_route_issue(self.hass, entry)
+                async_sync_account_migration_issue(self.hass, entry)
                 if entry.state is ConfigEntryState.LOADED and not retrying_migration:
                     self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 return self.async_create_entry(data={})
@@ -196,8 +200,17 @@ class AccountMigrationRepairFlow(ConfirmRepairFlow):
         return result
 
 
+class AccountMigrationRetryRepairFlow(AccountMigrationRepairFlow):
+    """Retry a failed migration without pretending an account edit will fix it."""
+
+    async def async_step_init(self, user_input=None):
+        return await self.async_step_confirm(user_input)
+
+
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
     """Create the native retry flow only for an account migration conflict."""
+    if issue_id.startswith("account_migration_failed_") and data is not None:
+        return AccountMigrationRetryRepairFlow(str(data["entry_id"]))
     if issue_id.startswith('managed_record_') and data is not None:
         return ManagedRecordRepairFlow(str(data['entry_id']), str(data['hardware']),
                                        membership_reference=data.get('membership_reference'))
@@ -550,6 +563,58 @@ def async_sync_account_route_issue(hass, entry, error=None) -> None:
         translation_key="account_route_conflict",
         translation_placeholders={"phone": error.phone, "route": error.route},
         data={"entry_id": entry.entry_id})
+
+
+def _migration_error_origin(error) -> str:
+    """Name code locations, never exception values which may contain credentials."""
+    pending, origins = [error], []
+    while pending and len(origins) < 4:
+        current = pending.pop(0)
+        if isinstance(current, BaseExceptionGroup):
+            pending[0:0] = current.exceptions[:4]
+            continue
+        trace = current.__traceback__
+        if trace is None:
+            origins.append(type(current).__name__)
+            continue
+        while trace.tb_next is not None:
+            trace = trace.tb_next
+        code = trace.tb_frame.f_code
+        origins.append(f"{type(current).__name__} at {Path(code.co_filename).name}:{trace.tb_lineno} ({code.co_name})")
+    return "; ".join(origins)
+
+
+def async_sync_account_migration_issue(hass, entry, error=None) -> None:
+    """Keep storage/programming failures separate from proven identity conflicts."""
+    issue_id = "account_migration_failed_" + entry.entry_id
+    if error is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id,
+        is_fixable=True, is_persistent=False, severity=ir.IssueSeverity.ERROR,
+        translation_key="account_migration_failed", translation_placeholders={
+            "error_type": type(error).__name__, "source": _migration_error_origin(error),
+        }, data={"entry_id": entry.entry_id})
+
+
+def async_report_account_migration_failure(hass, entry, error) -> None:
+    """Publish the matching repair and bounded, non-secret diagnostic fields."""
+    from .phone_config import PhoneIdentityConflict, PhoneRouteConflict
+
+    identity = isinstance(error, PhoneIdentityConflict)
+    route = isinstance(error, PhoneRouteConflict)
+    async_sync_phone_identity_issue(hass, entry, error if identity else None)
+    async_sync_account_route_issue(hass, entry, error if route else None)
+    async_sync_account_migration_issue(hass, entry, None if identity or route else error)
+    if identity:
+        _LOGGER.error("Cannot migrate SIP account identities entry=%s: phone=%r native=%r previous=%r subentry=%r",
+            entry.entry_id, error.phone, error.canonical, error.legacy, error.subentry_id)
+    elif route:
+        _LOGGER.error("Cannot migrate SIP account routes entry=%s: account=%r route=%r",
+            entry.entry_id, error.phone, error.route)
+    else:
+        _LOGGER.error("Cannot migrate SIP accounts entry=%s: %s; no identity conflict was established",
+            entry.entry_id, _migration_error_origin(error))
 
 
 def async_sync_runtime_issues(hass: HomeAssistant) -> None:

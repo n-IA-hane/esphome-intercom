@@ -32,6 +32,7 @@ from homeassistant.helpers.selector import (
 
 from .config_validation import entry_route_mappings as _entry_route_mappings
 from .codec_policy_form import codec_form_fields, normalize_codec_form
+from .core.codec_capabilities import preload_codec_capabilities
 from homeassistant.data_entry_flow import Optional as visible_optional, Required as visible_required
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, trusted_networks
 from .config_validation import extension_conflicts, route_namespace_conflicts, mailbox_route_aliases, mailbox_namespace_conflicts
@@ -218,6 +219,7 @@ class TrunkFormMixin:
     async def async_step_trunk(self, user_input=None):
         from .inbound_identity_form import did_form_fields, validate_did_form
 
+        await self.hass.async_add_executor_job(preload_codec_capabilities)
         _current_entry, existing = self._current_entry_data()
         target_choices, target_default = _trunk_target_choices(self.hass, _current_entry, existing)
         register = getattr(
@@ -680,6 +682,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         _current_entry, existing = self._current_entry_data()
         if _current_entry is not None and self.source == SOURCE_USER:
             return self.async_abort(reason="single_instance_allowed")
+        await self.hass.async_add_executor_job(preload_codec_capabilities)
         defaults = {
             "sip_port": existing.get("sip_port", VOIP_STACK_SIP_PORT),
             "rtp_port": existing.get("rtp_port", VOIP_STACK_RTP_PORT),
@@ -1455,6 +1458,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
 
     async def async_step_sip_account(self, user_input=None):
         """Configure one standard SIP registrar account."""
+        await self.hass.async_add_executor_job(preload_codec_capabilities)
         from .physical_phone import async_account_physical_binding_options
         self._physical_binding_options = await async_account_physical_binding_options(
             self.hass, self._get_entry(), str(self._current_data().get(CONF_PHONE_ENDPOINT_ID) or ""))

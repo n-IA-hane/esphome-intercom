@@ -1203,6 +1203,21 @@
         }
       }
     },
+    "account_migration_failed": {
+      "title": "SIP-Kontomigration erneut versuchen",
+      "description": "Die Migration wurde nicht abgeschlossen. Fehler: {error_type}. Quelle: {source}. Prüfe das Integrationsprotokoll und behebe die gemeldete Ursache, bevor du es erneut versuchst. Dieser Fehler weist keinen Kontokonflikt nach.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Kontomigration erneut versuchen",
+            "description": "Versuche die vollständige Migration erneut, nachdem die gemeldete Ursache behoben wurde."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Die Migration ist weiterhin blockiert. Prüfe den gemeldeten Fehler und behebe seine Ursache vor dem nächsten Versuch."
+        }
+      }
+    },
     "phone_identity_conflict": {
       "title": "Telefonidentität muss wiederhergestellt werden",
       "description": "The saved references for {phone} require reconciliation (native: {canonical}, previous: {legacy}). Open the repair to correct the account settings and retry migration while preserving its Home Assistant device, entities and bindings.",

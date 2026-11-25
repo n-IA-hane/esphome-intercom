@@ -76,5 +76,18 @@ def codec_directions(name: str) -> dict[str, bool]:
     return {"send": codec_available(name), "receive": codec_available(name, receive=True)}
 
 
+def preload_codec_capabilities() -> None:
+    """Fill the existing directional cache from an executor before loop users.
+
+    Probe both directions independently: an absent encoder must not leave the
+    decoder's first library lookup to a later SDP or configuration request.
+    """
+    from .media.codecs import CODECS
+
+    for name in CODECS:
+        codec_available(name)
+        codec_available(name, receive=True)
+
+
 # Preserve the existing invalidation hook, clearing the directional probe owner.
 common_sip_codecs.cache_clear = codec_available.cache_clear

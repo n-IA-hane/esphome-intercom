@@ -842,11 +842,16 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None, stored
     validate_sip_account_namespace(prospective, [phone_subentry_data(row) for row in phone_subentries(prospective)])
     devices, entities = dr.async_get(hass), er.async_get(hass)
     device_updates, entity_updates = [], []
+    future_device_owners = {}
     for device in dr.async_entries_for_config_entry(devices, entry.entry_id):
         identifiers = {(domain, 'phone_endpoint:' + mapping[value[len('phone_endpoint:'):]])
                        if domain == DOMAIN and value.startswith('phone_endpoint:') and value[len('phone_endpoint:'):] in mapping
                        else (domain, value) for domain, value in device.identifiers}
         for identifier in identifiers:
+            previous = future_device_owners.setdefault(identifier, device)
+            if previous.id != device.id:
+                raise PhoneIdentityConflict(f'{device.name or entry.title} ({device.id})', identifier[1],
+                    previous.id, subentry_id=device.config_subentry_id or '')
             existing = devices.async_get_device_by_identifier(identifier, entry.entry_id)
             if existing is not None and existing.id != device.id:
                 raise PhoneIdentityConflict(device.name or entry.title, identifier[1], device.id)
@@ -902,6 +907,17 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None, stored
                 if unique_id != entity.unique_id:
                     entity_updates.append((entity.entity_id, unique_id))
                 break
+    # Looking up current registry keys alone misses two different old keys
+    # which this same batch would collapse onto one future native identity.
+    future_entity_ids = dict(entity_updates)
+    future_entity_owners = {}
+    for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
+        unique_id = future_entity_ids.get(entity.entity_id, entity.unique_id)
+        key = entity.domain, entity.platform, unique_id
+        previous = future_entity_owners.setdefault(key, entity)
+        if previous.entity_id != entity.entity_id:
+            raise PhoneIdentityConflict(entity.entity_id, unique_id, previous.entity_id,
+                subentry_id=entity.config_subentry_id or '')
     updates = [record for record in updates if record[0].subentry_id not in creations]
     original = (deepcopy(dict(entry.data)), deepcopy(dict(entry.options)),
                 {key: deepcopy(row.as_dict()) for key, row in entry.subentries.items()})

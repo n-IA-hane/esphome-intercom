@@ -221,16 +221,14 @@ async def async_migrate_entry(
         from .sip_account_identity import async_migrate_account_identities
         try:
             await async_migrate_account_identities(hass, config_entry)
-        except PhoneRouteConflict as error:
-            async_sync_account_route_issue(hass, config_entry, error)
-            return False
         except (ValueError, TypeError, KeyError, OSError, RuntimeError, ExceptionGroup) as error:
-            from .repairs import async_sync_phone_identity_issue
-            async_sync_phone_identity_issue(hass, config_entry, error)
-            _LOGGER.error("Cannot migrate SIP account identities; resolve the native identity conflict")
+            from .repairs import async_report_account_migration_failure
+            async_report_account_migration_failure(hass, config_entry, error)
             return False
-        from .repairs import async_sync_phone_identity_issue
+        from .repairs import async_sync_account_migration_issue, async_sync_phone_identity_issue
+        async_sync_account_route_issue(hass, config_entry)
         async_sync_phone_identity_issue(hass, config_entry)
+        async_sync_account_migration_issue(hass, config_entry)
         hass.config_entries.async_update_entry(config_entry, minor_version=4)
     return True
 
@@ -740,16 +738,22 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up VoIP Stack defaults from configuration.yaml."""
+    from .core.codec_capabilities import preload_codec_capabilities
+
+    await hass.async_add_executor_job(preload_codec_capabilities)
     await _async_setup_shared(hass, config)
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Set up VoIP Stack from a config entry (UI setup)."""
+    from .core.codec_capabilities import preload_codec_capabilities
+
     previous_runtime = _runtime_data(hass)
     previous_entry_runtime = getattr(entry, "runtime_data", None)
     if isinstance(previous_entry_runtime, VoipStackRuntime):
         await _async_stop_runtime(hass, previous_entry_runtime)
+    await hass.async_add_executor_job(preload_codec_capabilities)
     if CONF_INITIAL_PHONE_CREATED not in entry.data:
         async_bootstrap_browser_phone(hass, entry)
         data = dict(entry.data)

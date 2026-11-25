@@ -1203,6 +1203,21 @@
         }
       }
     },
+    "account_migration_failed": {
+      "title": "Retry the SIP account migration",
+      "description": "The migration did not finish. Error: {error_type}. Source: {source}. Check the integration log and resolve the reported cause before retrying. This error does not identify a conflicting account.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Retry account migration",
+            "description": "Retry the complete migration after resolving the reported cause."
+          }
+        },
+        "error": {
+          "migration_retry_failed": "Migration remains blocked. Check the reported error and resolve its cause before retrying."
+        }
+      }
+    },
     "phone_identity_conflict": {
       "title": "Phone identity needs recovery",
       "description": "The saved references for {phone} require reconciliation (native: {canonical}, previous: {legacy}). Open the repair to correct the account settings and retry migration while preserving its Home Assistant device, entities and bindings.",
