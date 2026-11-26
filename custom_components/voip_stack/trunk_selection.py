@@ -7,6 +7,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .config import normalized_trunk_config, trunk_config, trunk_enabled
 from .const import DOMAIN
+from .core.sip import SipUri
 from .runtime_data import require_runtime_data, sip_trunk
 from .store import config_entry
 from .trunk_config import trunk_subentries
@@ -33,6 +34,13 @@ class TrunkSelection:
                 "outgoing_trunk_not_selected",
             )
         return service_error("The selected SIP trunk is unavailable", "outgoing_trunk_unavailable")
+
+
+def trunk_destination_uri(config, destination) -> SipUri:
+    """Construct a logical trunk target independently from its transport hop."""
+    return SipUri(str(destination), str(config.get("trunk_domain") or config.get("trunk_server") or ""),
+                  int(config.get("trunk_port") or 5060),
+                  params=(("transport", str(config.get("trunk_transport") or "udp").lower()),))
 
 
 def resolve_trunk_selector(hass, value: str) -> str:

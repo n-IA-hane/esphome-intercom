@@ -30,6 +30,7 @@ from .runtime_data import require_runtime_data
 from .ringing_policy import resolve_ringing_timeout, wait_for_ringing_result
 from .sip_runtime import enable_reused_tcp_connection, uri_transport
 from .trunk_policy import is_trunk_uri
+from .trunk_selection import trunk_destination_uri
 from .route_abort import RouteAbortContext, RouteAbortIntent, async_abort_route
 
 
@@ -201,12 +202,9 @@ async def _async_originate_application_call(
         use_trunk = route.action is RouteAction.TRUNK
         cfg = trunk_selection.config
         if use_trunk:
-            from .core.sip import SipUri
-
             if not trunk_selection.available:
                 raise trunk_selection.unavailable_error()
-            uri = SipUri(route.target or target, cfg["trunk_server"], cfg["trunk_port"],
-                         (("transport", cfg["trunk_transport"]),))
+            uri = trunk_destination_uri(cfg, route.target or target)
         if uri is None and target.lower().startswith(('sip:', 'sips:')):
             from .core.sip import parse_sip_uri
             uri = parse_sip_uri(target)

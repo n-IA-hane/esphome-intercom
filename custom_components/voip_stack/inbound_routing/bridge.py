@@ -18,9 +18,6 @@ from ..const import (
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
-    CONF_TRUNK_PORT,
-    CONF_TRUNK_SERVER,
-    CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
 )
 from ..endpoint_registry import EndpointBusyError
@@ -104,12 +101,8 @@ def _resolve_bridge_uri(
     peer_target = peer_for_target(decision.target or invite.routing_target, peers)
     bridge_uri = None
     if bridge_to_trunk:
-        bridge_uri = parse_sip_uri(
-            f"sip:{decision.target or invite.routing_target}@"
-            f"{trunk_config[CONF_TRUNK_SERVER]}:"
-            f"{int(trunk_config[CONF_TRUNK_PORT])};"
-            f"transport={str(trunk_config[CONF_TRUNK_TRANSPORT]).lower()}"
-        )
+        from ..trunk_selection import trunk_destination_uri
+        bridge_uri = trunk_destination_uri(trunk_config, decision.target or invite.routing_target)
     elif peer_target is not None and peer_target.host:
         bridge_uri = sip_uri_for_peer(
             peer_target,

@@ -19,6 +19,8 @@ def reuse_registered_trunk_flow(
             getattr(trunk.config, "audio_ordered", True), getattr(trunk.config, "video_ordered", True),
             getattr(trunk.config, "audio_configured", None)))
         client.media_ip = trunk.config.outbound_media_address or client.local_ip
+        if getattr(trunk.config, "server", ""):
+            client.initial_next_hop = (trunk.config.server, int(trunk.config.port))
         from .trunk_media import discover_pending_media, prepare_trunk_media
         client.prepare_media = lambda host: prepare_trunk_media(
             client, trunk.config, host, getattr(trunk, "media_stun_urls", None)
@@ -37,6 +39,9 @@ def reuse_registered_trunk_flow(
     if opened is None:
         return False
     send, responses = opened
+    # The existing registration owner has already selected this UDP next hop.
+    # Do not pin subsequent dialog requests to it after Contact/Record-Route.
+    client.initial_next_hop = trunk.active_registrar_target
     client.use_reused_signaling_flow(
         send=send, responses=responses,
         close=lambda: trunk.close_outbound_dialog(call_id),

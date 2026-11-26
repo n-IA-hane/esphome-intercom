@@ -179,6 +179,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self.username = username or local_name
         self.password = password
         self.outbound_proxy = outbound_proxy
+        self.initial_next_hop: tuple[str, int] | None = None
         from .core.codec_policy import CodecPolicy
         self.codec_policy = codec_policy or CodecPolicy()
         self.include_common_codecs = bool(include_common_codecs)
