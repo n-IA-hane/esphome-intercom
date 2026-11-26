@@ -48,6 +48,8 @@
 # =============================================================================
 
 substitutions:
+  # Outgoing calls and REFER attempts: 0s leaves ringing unlimited.
+  voip_calling_timeout: 120s
   esp_video_renderer_components_source: "github://n-IA-hane/esphome-video-renderer@dev"
   esp_screenshot_components_source: "github://n-IA-hane/esphome-screenshot@dev"
   ext_components_source: "github://n-IA-hane/esphome-intercom@dev"

@@ -42,6 +42,7 @@ voip_stack:
   speaker: voip_speaker_input
   dc_offset_removal: false
   initial_contact: ${ voip_initial_contact | default('') }
+  calling_timeout: ${ voip_calling_timeout | default('120s') }
 select:
 - platform: template
   name: AEC Mode
