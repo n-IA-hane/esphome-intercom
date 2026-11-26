@@ -20,11 +20,9 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def trunk_default_target(trunk_config: dict) -> str:
-    """Return the explicit trunk fallback, preserving the HA compatibility alias."""
+    """Read the configured incoming destination without inventing a fallback."""
 
-    return (
-        str(trunk_config.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA").strip() or "HA"
-    )
+    return str(trunk_config.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "").strip()
 
 
 async def async_request_inbound_destination(

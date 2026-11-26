@@ -224,6 +224,7 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
         target = invite.routing_target if lookup_target is None else lookup_target
         return initial if target == "601" else selected_fallback
     runtime.inbound_route_decision = Mock(side_effect=route)
+    runtime.ha_router_decision = Mock(return_value=selected_fallback)
     runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     request = AsyncMock(return_value=AutomationRoute(action="decline"))
     monkeypatch.setattr(invite_router, "request_route_override", request)
@@ -240,7 +241,11 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     assert request.await_args.kwargs["decision"] == (initial if known else selected_fallback)
     assist.assert_not_awaited()
     assert runtime.inbound_route_decision.call_args_list[0].kwargs == {"lookup_target": "601"}
-    assert runtime.inbound_route_decision.call_count == (1 if known else 2)
+    assert runtime.inbound_route_decision.call_count == 1
+    if known:
+        runtime.ha_router_decision.assert_not_called()
+    else:
+        runtime.ha_router_decision.assert_called_once_with("Assistant", [])
     assert "Trunk Office received number 601, normalized to 601 from request_uri" in caplog.text
     assert "routing mode=direct" in caplog.text
     assert ("configured fallback is Assistant" in caplog.text) is not known
@@ -270,6 +275,7 @@ async def test_restricted_registered_caller_cannot_egress_after_route_override(m
     runtime.hass.data = {"voip_stack": {"registration": SimpleNamespace(route_trigger_filters={})}}
     monkeypatch.setattr(invite_router, "request_route_override", AsyncMock(return_value=SimpleNamespace(
         action="forward" if override else "", destination="441234567890" if override else "",
+        ringing_timeout=None,
     )))
     monkeypatch.setattr(invite_router, "automation_rejection", lambda **_: None)
     monkeypatch.setattr(invite_router, "resolve_inbound_target", lambda **kwargs: SimpleNamespace(

@@ -69,6 +69,7 @@ class DialOutcome:
     disposition: DialDisposition
     status: int = 0
     reason: str = ""
+    response_reason: str = ""
 
     @property
     def answered(self) -> bool:
@@ -79,17 +80,32 @@ def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
     """Reduce terminal branch outcomes without owning calls or transport state."""
     if not outcomes:
         return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
+    if (
+        len(outcomes) == 1
+        and 300 <= outcomes[0].status <= 699
+        and outcomes[0].response_reason
+    ):
+        return outcomes[0]
+
+    def reduced(disposition: DialDisposition, status: int, reason: str) -> DialOutcome:
+        response_reason = next(
+            (item.response_reason for item in outcomes
+             if item.disposition is disposition and item.status == status and item.response_reason),
+            "",
+        )
+        return DialOutcome(disposition, status, reason, response_reason)
+
     dispositions = [outcome.disposition for outcome in outcomes]
     if all(item is DialDisposition.DECLINED for item in dispositions):
-        return DialOutcome(DialDisposition.DECLINED, 603, "Decline")
+        return reduced(DialDisposition.DECLINED, 603, "Decline")
     if any(item is DialDisposition.TIMEOUT for item in dispositions):
-        return DialOutcome(DialDisposition.TIMEOUT, 408, "Request Timeout")
+        return reduced(DialDisposition.TIMEOUT, 408, "Request Timeout")
     if any(item is DialDisposition.BUSY for item in dispositions):
-        return DialOutcome(DialDisposition.BUSY, 486, "Busy Here")
+        return reduced(DialDisposition.BUSY, 486, "Busy Here")
     if any(item is DialDisposition.DND for item in dispositions):
-        return DialOutcome(DialDisposition.DND, 486, "DND")
+        return reduced(DialDisposition.DND, 486, "DND")
     if all(item is DialDisposition.MEDIA_INCOMPATIBLE for item in dispositions):
-        return DialOutcome(
+        return reduced(
             DialDisposition.MEDIA_INCOMPATIBLE,
             488,
             "Not Acceptable Here",
@@ -98,7 +114,7 @@ def reduce_dial_failures(outcomes: list[DialOutcome]) -> DialOutcome:
             and len({outcome.status for outcome in outcomes}) == 1
             and 300 <= outcomes[0].status <= 699):
         return outcomes[0]
-    return DialOutcome(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
+    return reduced(DialDisposition.UNAVAILABLE, 480, "Temporarily Unavailable")
 
 
 DialOperation = Callable[[], Awaitable[DialOutcome]]

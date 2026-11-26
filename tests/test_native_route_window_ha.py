@@ -8,7 +8,7 @@ import pytest
 from custom_components.voip_stack import trunk_inbound_router as router
 from custom_components.voip_stack.automation_routing import has_native_route_window, route_window_snapshot
 from custom_components.voip_stack.const import CONF_AUTOMATION_ROUTING_ENABLED
-from custom_components.voip_stack.router import RouteAction
+from custom_components.voip_stack.router import RouteAction, RouteDecision, RouteReason
 from custom_components.voip_stack.runtime_data import registration_data
 
 pytestmark = pytest.mark.ha
@@ -68,7 +68,11 @@ async def test_dtmf_native_trigger_opens_only_the_no_digits_live_window(hass, mo
     monkeypatch.setattr(router, "async_request_inbound_destination", window)
     monkeypatch.setattr(router, "route_inbound_trunk", Mock(return_value=SimpleNamespace(action=RouteAction.REJECT, target="")))
     monkeypatch.setattr(router, "EndpointTerminationHandler", lambda _: SimpleNamespace(terminate=termination))
-    runtime = router.TrunkInboundRuntime(hass=hass, config={}, local_ip="192.0.2.1", ha_peer_name="HA",
+    rejected = RouteDecision(RouteAction.REJECT, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
+    monkeypatch.setattr(router, "EndpointRouteResolver",
+                        lambda *_args, **_kwargs: SimpleNamespace(
+                            route=lambda *_args: rejected, is_ha_target=lambda _target: False))
+    runtime = router.TrunkInboundRuntime(hass=hass, config={"sip_port": 5060}, local_ip="192.0.2.1", ha_peer_name="HA",
         route_resolver=Mock(), forward_existing_call=AsyncMock(), defer_invite_to_softphone=Mock(),
         start_local_assist_bridge=AsyncMock())
     await router.async_route_trunk_invite(runtime, invite, bridge_ports=ports)

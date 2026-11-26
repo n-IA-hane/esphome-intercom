@@ -30,13 +30,11 @@ def test_trunk_identity_settings_survive_normalization(mode):
         "trunk_caller_id": "+3906123400",
         "trunk_caller_name": "Office",
         "trunk_inbound_account": "peer-main",
-        "trunk_inbound_unknown_target": "reject",
     })
     assert selected["trunk_caller_id_policy"] == mode
     assert selected["trunk_caller_id"] == "+3906123400"
     assert selected["trunk_caller_name"] == "Office"
     assert selected["trunk_inbound_account"] == "peer-main"
-    assert selected["trunk_inbound_unknown_target"] == "reject"
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)

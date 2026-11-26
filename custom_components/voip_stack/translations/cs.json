@@ -96,8 +96,7 @@
           "trunk_caller_id_policy": "Identita odchozího volajícího",
           "trunk_caller_id": "Číslo volajícího trunku",
           "trunk_caller_name": "Jméno volajícího trunku",
-          "trunk_inbound_account": "Ověřovat příchozí protistranu místním účtem SIP",
-          "trunk_inbound_unknown_target": "Neznámý příchozí cíl"
+          "trunk_inbound_account": "Ověřovat příchozí protistranu místním účtem SIP"
         },
         "data_description": {
           "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -124,8 +123,7 @@
           "trunk_caller_id_policy": "Identita trunku přepíše volajícího. Identita volajícího použije veřejné číslo účtu, je-li nastaveno. Uživatelské jméno účtu slouží pro vnitřní linky mezi ústřednami. Přihlašovací údaje Digest a Contact zůstávají oddělené. Přesměrované hovory z trunku v obou režimech volajícího zachovají původní From.",
           "trunk_caller_id": "Společné číslo používané pouze pro identitu trunku. Prázdná hodnota použije uživatelské jméno trunku. Nemění ověřování ani volané číslo.",
           "trunk_caller_name": "Společné zobrazované jméno pro identitu trunku. Prázdná hodnota použije jeho číslo volajícího.",
-          "trunk_inbound_account": "Existující povolený místní účet pro ověření příchozích INVITE vzdálené ústředny a prezentaci jejích volajících linek. Digest je vyžadován i pro známou zdrojovou IP. Jeden povolený trunk na účet.",
-          "trunk_inbound_unknown_target": "Použije původní náhradní cíl nebo odmítne neznámý cíl odpovědí SIP 404. Automatizace mohou stále vybrat konkrétní cíl. Vypršení aktivního rozhodovacího okna u odmítajícího trunku vrací SIP 504."
+          "trunk_inbound_account": "Existující povolený místní účet pro ověření příchozích INVITE vzdálené ústředny a prezentaci jejích volajících linek. Digest je vyžadován i pro známou zdrojovou IP. Jeden povolený trunk na účet."
         }
       },
       "trunk_mode": {
@@ -412,8 +410,7 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Vyberte podporovanou politiku a číslo nebo uživatelské jméno SIP bez adresy a řídicích znaků.",
       "trunk_inbound_account_invalid": "Vyberte existující povolený místní účet SIP.",
-      "trunk_inbound_account_in_use": "Tento účet je již přiřazen jinému povolenému trunku.",
-      "trunk_unknown_policy_invalid": "Pro neznámý cíl vyberte náhradní cíl nebo odmítnutí."
+      "trunk_inbound_account_in_use": "Tento účet je již přiřazen jinému povolenému trunku."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
@@ -658,8 +655,7 @@
             "trunk_caller_id_policy": "Identita odchozího volajícího",
             "trunk_caller_id": "Číslo volajícího trunku",
             "trunk_caller_name": "Jméno volajícího trunku",
-            "trunk_inbound_account": "Ověřovat příchozí protistranu místním účtem SIP",
-            "trunk_inbound_unknown_target": "Neznámý příchozí cíl"
+            "trunk_inbound_account": "Ověřovat příchozí protistranu místním účtem SIP"
           },
           "data_description": {
             "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
@@ -686,8 +682,7 @@
             "trunk_caller_id_policy": "Identita trunku přepíše volajícího. Identita volajícího použije veřejné číslo účtu, je-li nastaveno. Uživatelské jméno účtu slouží pro vnitřní linky mezi ústřednami. Přihlašovací údaje Digest a Contact zůstávají oddělené. Přesměrované hovory z trunku v obou režimech volajícího zachovají původní From.",
             "trunk_caller_id": "Společné číslo používané pouze pro identitu trunku. Prázdná hodnota použije uživatelské jméno trunku. Nemění ověřování ani volané číslo.",
             "trunk_caller_name": "Společné zobrazované jméno pro identitu trunku. Prázdná hodnota použije jeho číslo volajícího.",
-            "trunk_inbound_account": "Existující povolený místní účet pro ověření příchozích INVITE vzdálené ústředny a prezentaci jejích volajících linek. Digest je vyžadován i pro známou zdrojovou IP. Jeden povolený trunk na účet.",
-            "trunk_inbound_unknown_target": "Použije původní náhradní cíl nebo odmítne neznámý cíl odpovědí SIP 404. Automatizace mohou stále vybrat konkrétní cíl. Vypršení aktivního rozhodovacího okna u odmítajícího trunku vrací SIP 504."
+            "trunk_inbound_account": "Existující povolený místní účet pro ověření příchozích INVITE vzdálené ústředny a prezentaci jejích volajících linek. Digest je vyžadován i pro známou zdrojovou IP. Jeden povolený trunk na účet."
           }
         }
       },
@@ -709,8 +704,7 @@
         "trunk_did_invalid": "Invalid called-number source or prefix rules.",
         "trunk_caller_id_invalid": "Vyberte podporovanou politiku a číslo nebo uživatelské jméno SIP bez adresy a řídicích znaků.",
         "trunk_inbound_account_invalid": "Vyberte existující povolený místní účet SIP.",
-        "trunk_inbound_account_in_use": "Tento účet je již přiřazen jinému povolenému trunku.",
-        "trunk_unknown_policy_invalid": "Pro neznámý cíl vyberte náhradní cíl nebo odmítnutí."
+        "trunk_inbound_account_in_use": "Tento účet je již přiřazen jinému povolenému trunku."
       },
       "abort": {
         "reconfigure_successful": "Konfigurace trunku byla aktualizována."
@@ -1227,12 +1221,6 @@
         "trunk": "Identita trunku (přepsat volajícího)",
         "caller": "Identita volajícího (veřejné číslo, je-li nastaveno)",
         "account": "Uživatelské jméno účtu (interní linky mezi PBX)"
-      }
-    },
-    "trunk_inbound_unknown_target": {
-      "options": {
-        "fallback": "Použít náhradní cíl",
-        "reject": "Odmítnout neznámý cíl (404)"
       }
     }
   },

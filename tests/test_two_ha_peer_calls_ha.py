@@ -114,7 +114,7 @@ async def make_pbx(hass, *, username, inbound_account, port, remote_port, transp
         "trunk_port": remote_port, "trunk_transport": transport.lower(),
         "trunk_username": remote_account, "trunk_auth_username": remote_account,
         "trunk_password": PASSWORD, "trunk_caller_id_policy": "account",
-        "trunk_inbound_account": inbound_account, "trunk_inbound_unknown_target": "reject",
+        "trunk_inbound_account": inbound_account, "trunk_inbound_default_target": "",
         "trunk_audio_codecs": ["PCMA"],
     })
     hass.config_entries.async_add_subentry(entry, ConfigSubentry(

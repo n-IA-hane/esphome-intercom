@@ -38,7 +38,8 @@ from .fsm import (
     sip_terminal_reason,
 )
 from .inbound_answer import async_commit_runtime_answer
-from .inbound_routing.targets import resolve_inbound_target, validate_target_endpoint
+from .inbound_routing.automation import AutomationRoute, automation_rejection
+from .inbound_routing.targets import reject_route_decision, resolve_inbound_target, validate_target_endpoint
 from .media_ports import (
     RtpPortReservation,
     release_video_media_reservation,
@@ -56,8 +57,8 @@ from .peer import sip_uri_for_peer
 from .phone_endpoint import EndpointKind
 from .phonebook_runtime import registered_roster_entries
 from .roster import find_entry
-from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
-from .runtime_data import call_runtime_artifacts, endpoint_directory, preferred_browser_phone
+from .router import CallContext, RouteAction, route_inbound_trunk
+from .runtime_data import call_runtime_artifacts, endpoint_directory
 from .core.sip import SipUri, parse_sip_uri, sip_default_port
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
@@ -116,7 +117,9 @@ async def async_route_trunk_invite(
         bridge_ports.release()
         return
 
-    async def terminate_source(reason: str, *, status: int, answered: bool) -> None:
+    async def terminate_source(
+        reason: str, *, status: int, answered: bool, response_reason: str = "",
+    ) -> None:
         intent = (
             TerminationIntent.bye(
                 reason,
@@ -124,7 +127,7 @@ async def async_route_trunk_invite(
                 response_status=status,
             )
             if answered
-            else TerminationIntent.final_response(reason, status)
+            else TerminationIntent.final_response(reason, status, response_reason=response_reason)
         )
         await EndpointTerminationHandler(hass).terminate(invite.call_id, intent)
 
@@ -193,6 +196,8 @@ async def async_route_trunk_invite(
         route_resolver = EndpointRouteResolver(hass, runtime.local_ip, int(cfg["sip_port"]),
             trunk_id=selected_trunk_id)
     if automation_action in {"forward", "bridge"}:
+        if not selected_trunk_id:
+            route_resolver = EndpointRouteResolver(hass, runtime.local_ip, int(cfg["sip_port"]))
         automation_destination = str(
             automation_decision.get("destination") or ""
         ).strip()
@@ -207,28 +212,29 @@ async def async_route_trunk_invite(
             await runtime.forward_existing_call(
                 call_id=invite.call_id,
                 destination=destination,
-                on_failure="resume",
+                on_failure="terminate",
                 initial_selection=True,
                 ringing_timeout=automation_decision.get("ringing_timeout"),
             )
             return
-    if automation_action in {"decline", "busy", "cancel"}:
+    if rejected := automation_rejection(
+        hass=hass, invite=invite, route=AutomationRoute.from_payload(automation_decision),
+    ):
         preanswered = registry.resource_for(invite.call_id, "preanswered")
-        status = 486 if automation_action == "busy" else 603
-        reason = (
-            TerminalReason.BUSY.value
-            if automation_action == "busy"
-            else TerminalReason.CANCELLED.value
-            if automation_action == "cancel"
-            else TerminalReason.DECLINED.value
-        )
         answered = bool((preanswered or {}).get("final_response_sent", True))
-        await terminate_source(reason, status=status, answered=answered)
+        await terminate_source(
+            rejected.decline_reason, status=rejected.status, answered=answered,
+            response_reason=rejected.reason,
+        )
         return
 
     default_target = trunk_default_target(configured_trunk)
     route_hint = destination or digits
     requested = route_hint or default_target
+    if not selected_trunk_id and (destination or not digits):
+        route_resolver = EndpointRouteResolver(hass, runtime.local_ip, int(cfg["sip_port"]))
+    if route_resolver.is_ha_target(requested):
+        requested = runtime.ha_peer_name
     roster_entries = roster_from_peers(hass, peers, registered_roster_entries(hass))
     selected = find_entry(roster_entries, requested, include_number=False)
     explicit_account = (
@@ -253,18 +259,18 @@ async def async_route_trunk_invite(
         if failure is not None:
             preanswered = registry.resource_for(invite.call_id, "preanswered")
             await terminate_source(
-                failure.decline_reason, status=failure.status,
+                failure.decline_reason, status=failure.status, response_reason=failure.reason,
                 answered=bool((preanswered or {}).get("final_response_sent", True)),
             )
             return
         decision = account_dial_decision(hass, decision)
-    elif selected_trunk_id:
+    elif selected_trunk_id or destination or not digits:
         decision = route_resolver.route(requested, roster_entries)
     else:
         decision = route_inbound_trunk(
             CallContext(
                 call_id=invite.call_id, direction="inbound", origin="trunk",
-                caller=invite.caller, route_hint=route_hint, source_host=invite.source_host,
+                caller=invite.caller, route_hint=requested, source_host=invite.source_host,
             ),
             roster_entries, trunk_ready=False,
         )
@@ -276,10 +282,11 @@ async def async_route_trunk_invite(
         destination = route_hint or decision.target or default_target
     elif decision.action is RouteAction.REJECT:
         preanswered = registry.resource_for(invite.call_id, "preanswered")
-        terminal_reason = decision.reason.value if explicit_account else RouteReason.ROUTE_NOT_FOUND.value
-        trace_call(_LOGGER, invite.call_id, "No trunk route matches digits %s or target %s", digits or "none", route_hint or "none")
+        rejected = reject_route_decision(hass=hass, invite=invite, decision=decision, session=session)
+        trace_call(_LOGGER, invite.call_id, "Trunk route failed for digits %s or target %s", digits or "none", requested or "none")
         answered = bool((preanswered or {}).get("final_response_sent", True))
-        await terminate_source(terminal_reason, status=decision.status if explicit_account else 404, answered=answered)
+        await terminate_source(rejected.decline_reason, status=rejected.status, answered=answered,
+                               response_reason=rejected.reason)
         return
     else:
         destination = decision.target or route_hint or default_target
@@ -306,7 +313,7 @@ async def async_route_trunk_invite(
         # so its existing no-answer deadline also applies to a trunk caller.
         await runtime.forward_existing_call(
             call_id=invite.call_id, destination=destination, initial_selection=True,
-            on_failure="resume" if decision.action is RouteAction.GROUP else "terminate",
+            on_failure="terminate",
             _resolved_decision=decision if decision.action is not RouteAction.FORWARD else None,
             ringing_timeout=decision.ringing_timeout,
         )
@@ -321,7 +328,7 @@ async def async_route_trunk_invite(
         handler = route_queue_call if decision.action is RouteAction.QUEUE else route_paging_call
         result = await handler(runtime, invite, decision, registry, None)
         if result.status >= 300:
-            await terminate_source("application_rejected", status=result.status,
+            await terminate_source("application_rejected", status=result.status, response_reason=result.reason,
                                    answered=bool((registry.resource_for(invite.call_id, "preanswered") or {}).get("final_response_sent")))
         return
     if decision.action is RouteAction.ASSIST:
@@ -364,26 +371,6 @@ async def async_route_trunk_invite(
             )
         return
 
-    if not explicit_account and runtime.route_resolver.is_ha_target(destination):
-        endpoint = preferred_browser_phone(hass)
-        if endpoint is None:
-            preanswered = registry.resource_for(invite.call_id, "preanswered")
-            await terminate_source(
-                TerminalReason.TRANSPORT_UNREACHABLE.value,
-                status=480,
-                answered=bool((preanswered or {}).get("final_response_sent", True)),
-            )
-            return
-        runtime.defer_invite_to_softphone(
-            invite,
-            route_kind="trunk",
-            endpoint_id=endpoint.endpoint_id,
-            endpoint_device_id=endpoint.device_id,
-            callee=endpoint.name,
-            last_sip_event="DTMF_ROUTE",
-        )
-        return
-
     if not explicit_account:
         decision = route_resolver.route(destination, roster_entries)
     if decision.action is RouteAction.ANSWER_HA:
@@ -391,7 +378,7 @@ async def async_route_trunk_invite(
             decision.target or destination,
             peers,
             roster_entries,
-        ) or preferred_browser_phone(hass)
+        )
         if target_endpoint is not None and target_endpoint.supports_ha_client:
             runtime.defer_invite_to_softphone(
                 invite,
@@ -620,6 +607,7 @@ async def async_route_trunk_invite(
         await terminate_source(
             terminal_reason,
             status=client.last_sip_status_code if 300 <= client.last_sip_status_code <= 699 else 480,
+            response_reason=client.last_sip_reason if 300 <= client.last_sip_status_code <= 699 else "",
             answered=bool((preanswered or {}).get("final_response_sent", True)),
         )
         return

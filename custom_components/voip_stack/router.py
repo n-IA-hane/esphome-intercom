@@ -342,7 +342,4 @@ def route_inbound_trunk(ctx: CallContext, entries: list[RosterEntry], *, trunk_r
         return resolve_ha_router(ctx.route_hint, entries, trunk_ready=trunk_ready)
     if internal_entry is None:
         return RouteDecision(RouteAction.REJECT, target=ctx.route_hint, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
-    resolved = _route_ha_entry(internal_entry, internal_entry.id, trunk_ready=trunk_ready)
-    if resolved.action is RouteAction.REJECT:
-        return RouteDecision(RouteAction.REJECT, target=ctx.route_hint, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
-    return resolved
+    return _route_ha_entry(internal_entry, internal_entry.id, trunk_ready=trunk_ready)

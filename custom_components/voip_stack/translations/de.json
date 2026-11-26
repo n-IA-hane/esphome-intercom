@@ -96,8 +96,7 @@
           "trunk_caller_id_policy": "Ausgehende Anruferidentität",
           "trunk_caller_id": "Anrufernummer des Trunks",
           "trunk_caller_name": "Anrufername des Trunks",
-          "trunk_inbound_account": "Eingehenden Peer über lokales SIP-Konto authentifizieren",
-          "trunk_inbound_unknown_target": "Unbekanntes eingehendes Ziel"
+          "trunk_inbound_account": "Eingehenden Peer über lokales SIP-Konto authentifizieren"
         },
         "data_description": {
           "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -124,8 +123,7 @@
           "trunk_caller_id_policy": "Die Trunk-Identität ersetzt den Anrufer. Die Anruferidentität verwendet die öffentliche Kontonummer, falls konfiguriert. Der Kontobenutzername dient internen Verbindungen zwischen Telefonanlagen. Digest-Zugangsdaten und Contact bleiben getrennt. Weitergeleitete Trunk-Anrufe behalten in den beiden Anrufermodi ihren ursprünglichen From.",
           "trunk_caller_id": "Allgemeine Nummer nur für die Trunk-Identität. Leer verwendet den Trunk-Benutzernamen. Authentifizierung und Zielnummer bleiben unverändert.",
           "trunk_caller_name": "Allgemeiner Anzeigename für die Trunk-Identität. Leer verwendet deren Anrufernummer.",
-          "trunk_inbound_account": "Vorhandenes aktiviertes lokales Konto, mit dem eine entfernte Telefonanlage eingehende INVITEs authentifiziert und ihre Anrufer präsentieren darf. Digest ist auch bei bekannter Quell-IP erforderlich. Nur ein aktivierter Trunk pro Konto.",
-          "trunk_inbound_unknown_target": "Das bisherige Ersatzziel verwenden oder unbekannte Ziele mit SIP 404 ablehnen. Explizite Routing-Automationen bleiben möglich. Läuft ein aktives Entscheidungsfenster ab, antwortet ein ablehnender Trunk mit SIP 504."
+          "trunk_inbound_account": "Vorhandenes aktiviertes lokales Konto, mit dem eine entfernte Telefonanlage eingehende INVITEs authentifiziert und ihre Anrufer präsentieren darf. Digest ist auch bei bekannter Quell-IP erforderlich. Nur ein aktivierter Trunk pro Konto."
         }
       },
       "trunk_mode": {
@@ -412,8 +410,7 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Eine unterstützte Richtlinie und eine Nummer oder einen SIP-Benutzernamen ohne Adresse oder Steuerzeichen wählen.",
       "trunk_inbound_account_invalid": "Ein vorhandenes aktiviertes lokales SIP-Konto wählen.",
-      "trunk_inbound_account_in_use": "Dieses Konto ist bereits einem anderen aktivierten Trunk zugeordnet.",
-      "trunk_unknown_policy_invalid": "Ersatzziel oder Ablehnung für unbekannte Ziele wählen."
+      "trunk_inbound_account_in_use": "Dieses Konto ist bereits einem anderen aktivierten Trunk zugeordnet."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -658,8 +655,7 @@
             "trunk_caller_id_policy": "Ausgehende Anruferidentität",
             "trunk_caller_id": "Anrufernummer des Trunks",
             "trunk_caller_name": "Anrufername des Trunks",
-            "trunk_inbound_account": "Eingehenden Peer über lokales SIP-Konto authentifizieren",
-            "trunk_inbound_unknown_target": "Unbekanntes eingehendes Ziel"
+            "trunk_inbound_account": "Eingehenden Peer über lokales SIP-Konto authentifizieren"
           },
           "data_description": {
             "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -686,8 +682,7 @@
             "trunk_caller_id_policy": "Die Trunk-Identität ersetzt den Anrufer. Die Anruferidentität verwendet die öffentliche Kontonummer, falls konfiguriert. Der Kontobenutzername dient internen Verbindungen zwischen Telefonanlagen. Digest-Zugangsdaten und Contact bleiben getrennt. Weitergeleitete Trunk-Anrufe behalten in den beiden Anrufermodi ihren ursprünglichen From.",
             "trunk_caller_id": "Allgemeine Nummer nur für die Trunk-Identität. Leer verwendet den Trunk-Benutzernamen. Authentifizierung und Zielnummer bleiben unverändert.",
             "trunk_caller_name": "Allgemeiner Anzeigename für die Trunk-Identität. Leer verwendet deren Anrufernummer.",
-            "trunk_inbound_account": "Vorhandenes aktiviertes lokales Konto, mit dem eine entfernte Telefonanlage eingehende INVITEs authentifiziert und ihre Anrufer präsentieren darf. Digest ist auch bei bekannter Quell-IP erforderlich. Nur ein aktivierter Trunk pro Konto.",
-            "trunk_inbound_unknown_target": "Das bisherige Ersatzziel verwenden oder unbekannte Ziele mit SIP 404 ablehnen. Explizite Routing-Automationen bleiben möglich. Läuft ein aktives Entscheidungsfenster ab, antwortet ein ablehnender Trunk mit SIP 504."
+            "trunk_inbound_account": "Vorhandenes aktiviertes lokales Konto, mit dem eine entfernte Telefonanlage eingehende INVITEs authentifiziert und ihre Anrufer präsentieren darf. Digest ist auch bei bekannter Quell-IP erforderlich. Nur ein aktivierter Trunk pro Konto."
           }
         }
       },
@@ -709,8 +704,7 @@
         "trunk_did_invalid": "Invalid called-number source or prefix rules.",
         "trunk_caller_id_invalid": "Eine unterstützte Richtlinie und eine Nummer oder einen SIP-Benutzernamen ohne Adresse oder Steuerzeichen wählen.",
         "trunk_inbound_account_invalid": "Ein vorhandenes aktiviertes lokales SIP-Konto wählen.",
-        "trunk_inbound_account_in_use": "Dieses Konto ist bereits einem anderen aktivierten Trunk zugeordnet.",
-        "trunk_unknown_policy_invalid": "Ersatzziel oder Ablehnung für unbekannte Ziele wählen."
+        "trunk_inbound_account_in_use": "Dieses Konto ist bereits einem anderen aktivierten Trunk zugeordnet."
       },
       "abort": {
         "reconfigure_successful": "Trunk-Konfiguration aktualisiert."
@@ -1227,12 +1221,6 @@
         "trunk": "Trunk-Identität (Anrufer ersetzen)",
         "caller": "Anruferidentität (öffentliche Nummer, falls gesetzt)",
         "account": "Kontobenutzername (interne PBX-Verbindungen)"
-      }
-    },
-    "trunk_inbound_unknown_target": {
-      "options": {
-        "fallback": "Ersatzziel verwenden",
-        "reject": "Unbekanntes Ziel ablehnen (404)"
       }
     }
   },

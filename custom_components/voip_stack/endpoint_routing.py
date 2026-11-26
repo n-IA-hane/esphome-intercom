@@ -94,7 +94,8 @@ def is_ha_target(hass: HomeAssistant, value: str) -> bool:
     return same_route_name(value, _ha_peer_name(hass)) or same_route_name(value, "ha")
 
 
-def ha_router_decision(hass: HomeAssistant, target: str, entries: list, *, source_endpoint_id: str = "", trunk_id: str = ""):
+def ha_router_decision(hass: HomeAssistant, target: str, entries: list, *, source_endpoint_id: str = "",
+                       trunk_id: str = "", incoming_trunk: bool = False):
     """Resolve one target against the canonical HA dial plan."""
 
     if source_endpoint_id or trunk_id:
@@ -119,6 +120,12 @@ def ha_router_decision(hass: HomeAssistant, target: str, entries: list, *, sourc
         mailbox = resolve_mailbox_route(hass, target, entries, source_endpoint_id=source_endpoint_id)
         if mailbox is not None:
             return mailbox
+    if incoming_trunk and not trunk_id:
+        from .router import CallContext, route_inbound_trunk
+
+        return route_inbound_trunk(
+            CallContext(call_id="", direction="inbound", origin="trunk", route_hint=target), entries,
+        )
     runtime = runtime_data(hass)
     if source_endpoint_id or trunk_id or (runtime is not None and runtime.trunk_configs):
         from .trunk_selection import select_call_trunk
@@ -178,6 +185,7 @@ class EndpointRouteResolver:
     sip_port: int
     source_endpoint_id: str = ""
     trunk_id: str = ""
+    incoming_trunk: bool = False
 
     def for_call(self, call_id: str, *, trunk_id: str = ""):
         from .endpoint_lifecycle import call_registry
@@ -195,7 +203,7 @@ class EndpointRouteResolver:
 
     def route(self, target: str, entries: list):
         return ha_router_decision(self.hass, target, entries, source_endpoint_id=self.source_endpoint_id,
-                                  trunk_id=self.trunk_id)
+                                  trunk_id=self.trunk_id, incoming_trunk=self.incoming_trunk)
 
     def is_local_listener_uri(self, uri) -> bool:
         return is_local_listener_uri(

@@ -24,6 +24,7 @@ class RouteAbortIntent:
     reason: str
     action: str = "terminate"
     sip_status: int = 0
+    sip_reason: str = ""
 
 
 @dataclass(slots=True)
@@ -108,11 +109,15 @@ async def async_abort_route(
                     response_status=status,
                 )
                 if media is not None and bool(media.get("final_response_sent", True))
-                else TerminationIntent.final_response(intent.reason, status)
+                else TerminationIntent.final_response(
+                    intent.reason, status, response_reason=intent.sip_reason,
+                )
             )
         else:
             terminal = (
-                TerminationIntent.final_response(intent.reason, intent.sip_status)
+                TerminationIntent.final_response(
+                    intent.reason, intent.sip_status, response_reason=intent.sip_reason,
+                )
                 if intent.sip_status
                 else TerminationIntent(intent.reason)
             )

@@ -548,13 +548,18 @@ async def route_sip_bridge(
             to_tag="",
             decline_reason=TerminalReason.CANCELLED.value,
         )
+    def failure_response(result: str) -> tuple[int, str, str, str]:
+        status, reason, terminal_reason, public_state = sip_failure_response(result)
+        if 300 <= client.last_sip_status_code <= 699:
+            status = client.last_sip_status_code
+            reason = client.last_sip_reason or reason
+        return status, reason, terminal_reason, public_state
+
     from ..phone_policy_runtime import dispatch_phone_failure, phone_failure_destination
     if result not in {"ringing", "in_call"} and phone_failure_destination(
         logical_target_endpoint, client.last_sip_status_code if client.last_sip_status_code >= 300 else sip_failure_response(result)[0]
     ) is None:
-        status_code, sip_reason, terminal_reason, public_state = sip_failure_response(
-            result
-        )
+        status_code, sip_reason, terminal_reason, public_state = failure_response(result)
         await async_close_client_and_release(client, bridge_ports)
         if video_relay is not None:
             await video_relay.stop()
@@ -580,7 +585,7 @@ async def route_sip_bridge(
             final = await client.wait_for_final()
         if final != "in_call" or client.dialog is None:
             status_code, sip_reason, terminal_reason, public_state = (
-                sip_failure_response(final)
+                failure_response(final)
             )
             if dispatch_phone_failure(hass, registry.get_session(invite.call_id), logical_target_endpoint,
                                       phone_failure_destination(logical_target_endpoint, client.last_sip_status_code if client.last_sip_status_code >= 300 else status_code)):
@@ -596,7 +601,7 @@ async def route_sip_bridge(
             await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
                 TerminationIntent.final_response(
-                    terminal_reason, status_code
+                    terminal_reason, status_code, response_reason=sip_reason
                 ),
             )
             return

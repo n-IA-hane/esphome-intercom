@@ -32,13 +32,14 @@ async def test_authenticated_static_peer_can_be_saved_without_ip_trust_or_fallba
     form = await flow.async_step_trunk_mode({"trunk_register": False})
     data = form["data_schema"]({
         "trunk_server": "192.0.2.2", "trunk_inbound_account": "peer-main",
-        "trunk_inbound_unknown_target": "reject", "trunk_caller_id_policy": "account",
+        "trunk_inbound_default_target": "", "trunk_caller_id_policy": "account",
     })
     flow._store_entry = Mock(side_effect=lambda value: value)
     saved = await flow.async_step_trunk(data)
     assert saved["trunk_inbound_account"] == "peer-main"
     assert saved["trunk_allowed_ips"] == []
     assert saved["trunk_caller_id_policy"] == "account"
+    assert normalized_trunk_config(saved)["trunk_inbound_default_target"] == ""
     assert trunk_enabled(normalized_trunk_config(saved))
     assert next(iter(account_entry.subentries.values())).unique_id == "phone:peer-main"
 
@@ -65,7 +66,7 @@ def test_missing_or_disabled_account_is_an_explicit_form_error(hass, account_ent
 
 def test_editing_other_settings_keeps_identity_selection(account_entry):
     current = {"trunk_inbound_account": "peer-main", "trunk_caller_id_policy": "caller",
-        "trunk_caller_id": "+3906123400", "trunk_caller_name": "Office", "trunk_inbound_unknown_target": "reject"}
+        "trunk_caller_id": "+3906123400", "trunk_caller_name": "Office"}
     edit = {"trunk_domain": "voice.example"}
     assert not validate_trunk_identity_form(edit, current, account_entry)
     assert all(edit[key] == value for key, value in current.items())

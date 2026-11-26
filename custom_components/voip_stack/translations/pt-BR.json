@@ -96,8 +96,7 @@
           "trunk_caller_id_policy": "Identidade de saída do chamador",
           "trunk_caller_id": "Número de chamador do tronco",
           "trunk_caller_name": "Nome de chamador do tronco",
-          "trunk_inbound_account": "Autenticar o par de entrada com uma conta SIP local",
-          "trunk_inbound_unknown_target": "Destino de entrada desconhecido"
+          "trunk_inbound_account": "Autenticar o par de entrada com uma conta SIP local"
         },
         "data_description": {
           "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -124,8 +123,7 @@
           "trunk_caller_id_policy": "A identidade do tronco substitui o chamador. A identidade do chamador usa o número público da conta, se configurado. O usuário da conta serve para ramais privados entre PBXs. Credenciais Digest e Contact permanecem separados. Chamadas encaminhadas de um tronco preservam o From original nos dois modos de chamador.",
           "trunk_caller_id": "Número geral usado somente na identidade do tronco. Vazio usa o usuário do tronco. Não altera autenticação nem número chamado.",
           "trunk_caller_name": "Nome geral exibido com a identidade do tronco. Vazio usa seu número de chamador.",
-          "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta.",
-          "trunk_inbound_unknown_target": "Mantém o destino alternativo ou rejeita destinos desconhecidos com SIP 404. Automações ainda podem escolher um destino explícito. Uma janela ativa de decisão expirada retorna SIP 504 em troncos configurados para rejeitar."
+          "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta."
         }
       },
       "trunk_mode": {
@@ -412,8 +410,7 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Escolha uma política suportada e um número ou usuário SIP sem endereço nem caracteres de controle.",
       "trunk_inbound_account_invalid": "Selecione uma conta SIP local existente e habilitada.",
-      "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado.",
-      "trunk_unknown_policy_invalid": "Escolha um destino alternativo ou rejeição para destinos desconhecidos."
+      "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -658,8 +655,7 @@
             "trunk_caller_id_policy": "Identidade de saída do chamador",
             "trunk_caller_id": "Número de chamador do tronco",
             "trunk_caller_name": "Nome de chamador do tronco",
-            "trunk_inbound_account": "Autenticar o par de entrada com uma conta SIP local",
-            "trunk_inbound_unknown_target": "Destino de entrada desconhecido"
+            "trunk_inbound_account": "Autenticar o par de entrada com uma conta SIP local"
           },
           "data_description": {
             "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -686,8 +682,7 @@
             "trunk_caller_id_policy": "A identidade do tronco substitui o chamador. A identidade do chamador usa o número público da conta, se configurado. O usuário da conta serve para ramais privados entre PBXs. Credenciais Digest e Contact permanecem separados. Chamadas encaminhadas de um tronco preservam o From original nos dois modos de chamador.",
             "trunk_caller_id": "Número geral usado somente na identidade do tronco. Vazio usa o usuário do tronco. Não altera autenticação nem número chamado.",
             "trunk_caller_name": "Nome geral exibido com a identidade do tronco. Vazio usa seu número de chamador.",
-            "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta.",
-            "trunk_inbound_unknown_target": "Mantém o destino alternativo ou rejeita destinos desconhecidos com SIP 404. Automações ainda podem escolher um destino explícito. Uma janela ativa de decisão expirada retorna SIP 504 em troncos configurados para rejeitar."
+            "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta."
           }
         }
       },
@@ -709,8 +704,7 @@
         "trunk_did_invalid": "Invalid called-number source or prefix rules.",
         "trunk_caller_id_invalid": "Escolha uma política suportada e um número ou usuário SIP sem endereço nem caracteres de controle.",
         "trunk_inbound_account_invalid": "Selecione uma conta SIP local existente e habilitada.",
-        "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado.",
-        "trunk_unknown_policy_invalid": "Escolha um destino alternativo ou rejeição para destinos desconhecidos."
+        "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado."
       },
       "abort": {
         "reconfigure_successful": "Configuração do tronco atualizada."
@@ -1227,12 +1221,6 @@
         "trunk": "Identidade do tronco (substituir chamador)",
         "caller": "Identidade do chamador (número público se configurado)",
         "account": "Usuário da conta (ramais privados entre PBXs)"
-      }
-    },
-    "trunk_inbound_unknown_target": {
-      "options": {
-        "fallback": "Usar destino alternativo",
-        "reject": "Rejeitar destino desconhecido (404)"
       }
     }
   },

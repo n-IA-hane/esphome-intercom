@@ -685,6 +685,7 @@ class ForwardGroup:
         if winner is None:
             no_answer = fork_result.outcome.disposition is DialDisposition.TIMEOUT
             self.operation.failure_sip_status = 480 if no_answer else fork_result.outcome.status
+            self.operation.failure_sip_reason = "" if no_answer else fork_result.outcome.response_reason
             failure = (TerminalReason.NO_ANSWER.value if no_answer else terminal_reason(
                 fork_result.outcome.disposition,
                 fork_result.outcome.reason or "transport_unreachable",

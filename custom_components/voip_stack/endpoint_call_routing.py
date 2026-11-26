@@ -62,6 +62,7 @@ def inbound_route_decision(
         int(dialer.config["sip_port"]),
         source_endpoint_id=invite.identified_source_endpoint_id,
         trunk_id=invite.outbound_trunk_id,
+        incoming_trunk=invite.received_via_trunk,
     ).route(target, entries)
 
 
@@ -82,7 +83,10 @@ async def run_trunk_route(
                 config=dialer.config,
                 local_ip=dialer.local_ip,
                 ha_peer_name=home_phone_name(dialer.hass),
-                route_resolver=dialer.route_resolver,
+                route_resolver=EndpointRouteResolver(
+                    dialer.hass, dialer.local_ip, int(dialer.config["sip_port"]),
+                    trunk_id=invite.outbound_trunk_id, incoming_trunk=True,
+                ),
                 forward_existing_call=forward_call,
                 defer_invite_to_softphone=defer_to_phone,
                 start_local_assist_bridge=start_assist,

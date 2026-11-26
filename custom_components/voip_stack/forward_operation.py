@@ -134,6 +134,7 @@ class ForwardOperation:
         self.retained_video_answer = None
         self.preanswered = None
         self.failure_sip_status = 0
+        self.failure_sip_reason = ""
         self.owned_sip_source = source.owned_sip_source
 
     async def commit_source_answer(
@@ -1121,6 +1122,10 @@ class ForwardOperation:
                 and failure_sip_status
                 else 0
             )
+            sip_reason = self.failure_sip_reason or (
+                self.client.last_sip_reason
+                if self.client is not None and sip_status else ""
+            )
             failure_endpoint = failure_destination = None
             if self.plan.account is not None:
                 from .phone_policy_runtime import phone_failure_destination
@@ -1207,6 +1212,7 @@ class ForwardOperation:
                     and application is None)
                     else self.plan.on_failure,
                     sip_status=sip_status,
+                    sip_reason=sip_reason if sip_status else "",
                 ),
             )
             trace_call(

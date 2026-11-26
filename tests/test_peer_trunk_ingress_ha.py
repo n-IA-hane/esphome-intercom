@@ -29,9 +29,8 @@ def bind_peer(lab, *, enabled=True):
     # and validation are covered by the native trunk-flow tests.
     lab.runtime.trunk_configs["remote"] = {
         **normalized_trunk_config({"trunk_enabled": enabled, "trunk_server": "127.0.0.7",
-                                   "trunk_inbound_default_target": "bedroom1"}),
+                                   "trunk_inbound_default_target": ""}),
         "trunk_inbound_account": "remote_pbx",
-        "trunk_inbound_unknown_target": "reject",
     }
 
 
@@ -167,7 +166,7 @@ async def test_disabled_replacement_does_not_hide_the_enabled_peer_binding(lab):
 
 
 @pytest.mark.parametrize("answer", [False, True])
-async def test_peer_unknown_target_keeps_native_route_window_and_explicit_timeout(lab, answer):
+async def test_peer_unknown_target_keeps_native_route_window_and_original_route_outcome(lab, answer):
     from homeassistant.helpers.trigger import TriggerConfig
     from custom_components import voip_stack
     from custom_components.voip_stack import services
@@ -209,7 +208,7 @@ async def test_peer_unknown_target_keeps_native_route_window_and_explicit_timeou
             assert len(lab.phones[0].invites) == 1 and not lab.phones[1].invites
             await caller.terminate()
         else:
-            assert caller.last_sip_status_code == 504
+            assert caller.last_sip_status_code == 404
             assert not any(phone.invites for phone in lab.phones)
         async with asyncio.timeout(3):
             while lab.calls.sessions:
@@ -220,9 +219,9 @@ async def test_peer_unknown_target_keeps_native_route_window_and_explicit_timeou
         await caller.close()
 
 
-async def test_legacy_unknown_target_policy_keeps_configured_fallback(lab):
+async def test_unknown_target_keeps_explicitly_configured_destination(lab):
     bind_peer(lab)
-    del lab.runtime.trunk_configs["remote"]["trunk_inbound_unknown_target"]
+    lab.runtime.trunk_configs["remote"]["trunk_inbound_default_target"] = "bedroom1"
     caller = peer_client("UDP")
     try:
         state = await caller.invite(target="299", remote_host="127.0.0.1",

@@ -135,9 +135,15 @@ def _trunk_target_choices(hass, entry, existing):
             names.add(name)
         names.update(_group_route_values(item.get("ring_group"), item.get("conference_group")))
     selected = str(existing.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "").strip()
-    if not selected or (selected.casefold() == "ha" and selected not in names):
+    if CONF_TRUNK_INBOUND_DEFAULT_TARGET not in existing:
         preferred = preferred_browser_phone(hass) if runtime is not None else None
         selected = preferred.name if preferred is not None else ""
+    elif selected.casefold() == "ha" and selected not in names:
+        from .call_events import home_phone_name
+
+        initial_name = home_phone_name(hass)
+        if initial_name in names:
+            selected = initial_name
     return sorted(names, key=str.casefold), selected
 
 
@@ -161,7 +167,6 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
         {
             **normalized_outbound_identity_config(existing),
             "trunk_inbound_account": existing.get("trunk_inbound_account", ""),
-            "trunk_inbound_unknown_target": existing.get("trunk_inbound_unknown_target", "fallback"),
             "trunk_outbound_media_address": existing.get("trunk_outbound_media_address", ""),
             "trunk_media_nat": existing.get("trunk_media_nat") or (
                 "manual" if existing.get("trunk_outbound_media_address") else "auto"
@@ -178,9 +183,9 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
             CONF_TRUNK_PASSWORD: legacy_value(CONF_TRUNK_PASSWORD, ""),
             CONF_TRUNK_EXPIRES: int(legacy_value(CONF_TRUNK_EXPIRES, 300)),
             CONF_TRUNK_OUTBOUND_PROXY: legacy_value(CONF_TRUNK_OUTBOUND_PROXY, ""),
-            CONF_TRUNK_INBOUND_DEFAULT_TARGET: legacy_value(
-                CONF_TRUNK_INBOUND_DEFAULT_TARGET, "HA"
-            ),
+            CONF_TRUNK_INBOUND_DEFAULT_TARGET: str(
+                existing.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "HA") or ""
+            ).strip(),
             CONF_TRUNK_INBOUND_MODE: legacy_value(
                 CONF_TRUNK_INBOUND_MODE, TRUNK_INBOUND_MODE_DIRECT
             ),
@@ -407,9 +412,6 @@ class TrunkFormMixin:
                 errors["base"] = "trunk_username_required"
             elif register and not user_input[CONF_TRUNK_PASSWORD]:
                 errors["base"] = "trunk_password_required"
-            if (not user_input[CONF_TRUNK_INBOUND_DEFAULT_TARGET]
-                    and user_input["trunk_inbound_unknown_target"] != "reject"):
-                errors[CONF_TRUNK_INBOUND_DEFAULT_TARGET] = "trunk_target_required"
             from ipaddress import IPv4Address
             media_address = str(user_input.get(
                 "trunk_outbound_media_address",

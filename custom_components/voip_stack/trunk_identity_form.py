@@ -34,8 +34,6 @@ def trunk_identity_fields(entry, existing):
         vol.Optional("trunk_caller_name", default=defaults["trunk_caller_name"]): TextSelector(),
         vol.Optional("trunk_inbound_account", default=binding):
             SelectSelector({"options": choices, "mode": "dropdown"}),
-        vol.Optional("trunk_inbound_unknown_target", default=existing.get("trunk_inbound_unknown_target", "fallback")):
-            SelectSelector({"options": ["fallback", "reject"], "translation_key": "trunk_inbound_unknown_target"}),
     }
 
 
@@ -54,10 +52,7 @@ def validate_trunk_identity_form(user_input, existing, entry, *, trunk_id=""):
     except ValueError:
         binding = ""
         errors["trunk_inbound_account"] = "trunk_inbound_account_invalid"
-    unknown = merged.get("trunk_inbound_unknown_target") or "fallback"
-    if unknown not in {"fallback", "reject"}:
-        errors["trunk_inbound_unknown_target"] = "trunk_unknown_policy_invalid"
-    user_input.update(trunk_inbound_account=binding, trunk_inbound_unknown_target=unknown)
+    user_input.update(trunk_inbound_account=binding)
     if binding:
         if binding not in _accounts(entry):
             errors["trunk_inbound_account"] = "trunk_inbound_account_invalid"

@@ -92,7 +92,7 @@ existing named trunks. The crossed layout is:
 | Outgoing trunk password | Password of Sea home's `link-a` | Password of Main home's `link-b` |
 | Authenticated incoming account bound to this trunk | Main home's `link-b` | Sea home's `link-a` |
 | Outgoing caller identity | `account` | `account` |
-| Unknown incoming destination | `reject` | `reject` |
+| Incoming default destination | Empty | Empty |
 
 Each enabled incoming binding belongs to one enabled trunk. A disabled
 replacement can retain the setting without taking over the active binding.
@@ -154,11 +154,20 @@ trunk's native configuration exposes **Use as the default outgoing trunk**,
 including for a sole trunk; uncheck the currently selected line. The existing
 missing-default warning is still shown, but does not block explicit named
 routes or select another line automatically. A
-disabled automation does not reserve its former range. A bound incoming trunk
-set to `reject` returns 404 for an unresolved destination instead of silently
-using a fallback. If a matching active route decision is requested but never
-answered, its bounded decision window ends with 504. Both policies reuse the
-existing routing owner.
+disabled automation does not reserve its former range. Incoming calls follow
+ordinary routing on every trunk. The initial incoming destination is the SIP
+account created with the Home Assistant instance name, so a one-phone setup
+can receive calls without additional rules. Select another incoming destination
+or clear it when native routing rules should decide instead. An explicit empty
+value stays empty when the trunk is saved or reconfigured.
+
+A routing action selects the actual destination, including a complete SIP URI
+that is not in the local directory. Its result is returned to the caller: a
+missing route, an unavailable account, a busy phone and a peer rejection retain
+their respective SIP statuses and reason phrases. A failed selected route does
+not silently retry the initial Home Assistant account. Only a configured
+alternative may redirect the call. An unanswered automation decision keeps the
+ordinary route's result; it does not introduce a separate blanket 504 policy.
 
 ### Put another PBX between the two instances
 

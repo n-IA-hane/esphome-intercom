@@ -57,7 +57,7 @@ async def test_default_or_timeout_preserves_configured_fallback(window, caplog):
         registry=window.registry, session=window.session,
         trunk_config={"trunk_inbound_default_target": "  Test  "}, timeout=1.0)
     assert result == {}
-    assert trunk_routing.trunk_default_target({}) == "HA"
+    assert trunk_routing.trunk_default_target({}) == ""
     assert "Routing action keeps trunk fallback Test" in caplog.text
     assert "No routing action before the deadline" not in caplog.text
 
@@ -68,7 +68,8 @@ async def test_timeout_always_removes_pending_route(window, caplog):
         registry=window.registry, session=window.session, trunk_config={}, timeout=0.001)
     assert result == {}
     assert window.registry.artifact_for("call-1", "pending_route") is None
-    assert "No routing action before the deadline; using trunk fallback HA" in caplog.text
+    assert "No routing action before the deadline" in caplog.text
+    assert window.sink.call_args.kwargs["fallback_destination"] == ""
 
 
 async def test_default_destination_can_keep_an_explicit_outbound_line(window):

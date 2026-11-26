@@ -96,8 +96,7 @@
           "trunk_caller_id_policy": "Identità del chiamante in uscita",
           "trunk_caller_id": "Numero chiamante del trunk",
           "trunk_caller_name": "Nome chiamante del trunk",
-          "trunk_inbound_account": "Autentica il peer in ingresso con un account SIP locale",
-          "trunk_inbound_unknown_target": "Destinazione in ingresso sconosciuta"
+          "trunk_inbound_account": "Autentica il peer in ingresso con un account SIP locale"
         },
         "data_description": {
           "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -124,8 +123,7 @@
           "trunk_caller_id_policy": "L'identità del trunk riscrive il chiamante. L'identità del chiamante usa il numero pubblico dell'account, se configurato. Lo username dell'account serve per gli interni tra centralini. Credenziali Digest e Contact restano separati. Nei due modi chiamante, le chiamate inoltrate da un trunk conservano il From originale.",
           "trunk_caller_id": "Numero generico usato solo quando è selezionata l'identità del trunk. Vuoto usa lo username del trunk. Non modifica autenticazione o numero chiamato.",
           "trunk_caller_name": "Nome generico usato con l'identità del trunk. Vuoto usa il relativo numero chiamante.",
-          "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account.",
-          "trunk_inbound_unknown_target": "Mantiene la destinazione di ripiego oppure rifiuta una destinazione sconosciuta con SIP 404. Le automazioni possono ancora scegliere una destinazione esplicita. La scadenza di una finestra di decisione attiva restituisce SIP 504 sui trunk impostati per rifiutare."
+          "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account."
         }
       },
       "trunk_mode": {
@@ -412,8 +410,7 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Scegli una policy supportata e un numero o username SIP senza indirizzo né caratteri di controllo.",
       "trunk_inbound_account_invalid": "Seleziona un account SIP locale esistente e abilitato.",
-      "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato.",
-      "trunk_unknown_policy_invalid": "Scegli il ripiego o il rifiuto per una destinazione sconosciuta."
+      "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -658,8 +655,7 @@
             "trunk_caller_id_policy": "Identità del chiamante in uscita",
             "trunk_caller_id": "Numero chiamante del trunk",
             "trunk_caller_name": "Nome chiamante del trunk",
-            "trunk_inbound_account": "Autentica il peer in ingresso con un account SIP locale",
-            "trunk_inbound_unknown_target": "Destinazione in ingresso sconosciuta"
+            "trunk_inbound_account": "Autentica il peer in ingresso con un account SIP locale"
           },
           "data_description": {
             "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -686,8 +682,7 @@
             "trunk_caller_id_policy": "L'identità del trunk riscrive il chiamante. L'identità del chiamante usa il numero pubblico dell'account, se configurato. Lo username dell'account serve per gli interni tra centralini. Credenziali Digest e Contact restano separati. Nei due modi chiamante, le chiamate inoltrate da un trunk conservano il From originale.",
             "trunk_caller_id": "Numero generico usato solo quando è selezionata l'identità del trunk. Vuoto usa lo username del trunk. Non modifica autenticazione o numero chiamato.",
             "trunk_caller_name": "Nome generico usato con l'identità del trunk. Vuoto usa il relativo numero chiamante.",
-            "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account.",
-            "trunk_inbound_unknown_target": "Mantiene la destinazione di ripiego oppure rifiuta una destinazione sconosciuta con SIP 404. Le automazioni possono ancora scegliere una destinazione esplicita. La scadenza di una finestra di decisione attiva restituisce SIP 504 sui trunk impostati per rifiutare."
+            "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account."
           }
         }
       },
@@ -709,8 +704,7 @@
         "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide.",
         "trunk_caller_id_invalid": "Scegli una policy supportata e un numero o username SIP senza indirizzo né caratteri di controllo.",
         "trunk_inbound_account_invalid": "Seleziona un account SIP locale esistente e abilitato.",
-        "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato.",
-        "trunk_unknown_policy_invalid": "Scegli il ripiego o il rifiuto per una destinazione sconosciuta."
+        "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato."
       },
       "abort": {
         "reconfigure_successful": "Configurazione del trunk aggiornata."
@@ -1227,12 +1221,6 @@
         "trunk": "Identità del trunk (riscrive il chiamante)",
         "caller": "Identità del chiamante (numero pubblico se configurato)",
         "account": "Username dell'account (interni tra centralini)"
-      }
-    },
-    "trunk_inbound_unknown_target": {
-      "options": {
-        "fallback": "Usa la destinazione di ripiego",
-        "reject": "Rifiuta la destinazione sconosciuta (404)"
       }
     }
   },

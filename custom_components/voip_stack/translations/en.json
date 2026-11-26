@@ -96,8 +96,7 @@
           "trunk_caller_id_policy": "Outgoing caller identity",
           "trunk_caller_id": "Trunk caller number",
           "trunk_caller_name": "Trunk caller name",
-          "trunk_inbound_account": "Authenticate incoming peer with local SIP account",
-          "trunk_inbound_unknown_target": "Unknown incoming destination"
+          "trunk_inbound_account": "Authenticate incoming peer with local SIP account"
         },
         "data_description": {
           "trunk_transport": "SIP transport used from HA to the provider.",
@@ -124,8 +123,7 @@
           "trunk_caller_id_policy": "Choose the trunk identity to rewrite the caller, the caller identity to use the account's public number when configured, or the account username for private inter-PBX calls. Digest credentials and Contact stay separate. Forwarded incoming trunk calls preserve their original From in the two caller modes.",
           "trunk_caller_id": "Generic number used only when the trunk identity is selected. Empty uses the trunk username. Does not change authentication or the called number.",
           "trunk_caller_name": "Generic display name used with the trunk identity. Empty uses its caller number.",
-          "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account.",
-          "trunk_inbound_unknown_target": "Keep the existing fallback destination, or reject an unknown destination with SIP 404. Explicit routing automations can still choose a destination. An active decision window that expires on a rejecting trunk returns SIP 504."
+          "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account."
         }
       },
       "trunk_mode": {
@@ -412,8 +410,7 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Choose a supported caller policy and a number or SIP username without an address or control characters.",
       "trunk_inbound_account_invalid": "Select an existing enabled local SIP account.",
-      "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk.",
-      "trunk_unknown_policy_invalid": "Choose fallback or rejection for an unknown destination."
+      "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -658,8 +655,7 @@
             "trunk_caller_id_policy": "Outgoing caller identity",
             "trunk_caller_id": "Trunk caller number",
             "trunk_caller_name": "Trunk caller name",
-            "trunk_inbound_account": "Authenticate incoming peer with local SIP account",
-            "trunk_inbound_unknown_target": "Unknown incoming destination"
+            "trunk_inbound_account": "Authenticate incoming peer with local SIP account"
           },
           "data_description": {
             "trunk_transport": "SIP transport used from HA to the provider.",
@@ -686,8 +682,7 @@
             "trunk_caller_id_policy": "Choose the trunk identity to rewrite the caller, the caller identity to use the account's public number when configured, or the account username for private inter-PBX calls. Digest credentials and Contact stay separate. Forwarded incoming trunk calls preserve their original From in the two caller modes.",
             "trunk_caller_id": "Generic number used only when the trunk identity is selected. Empty uses the trunk username. Does not change authentication or the called number.",
             "trunk_caller_name": "Generic display name used with the trunk identity. Empty uses its caller number.",
-            "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account.",
-            "trunk_inbound_unknown_target": "Keep the existing fallback destination, or reject an unknown destination with SIP 404. Explicit routing automations can still choose a destination. An active decision window that expires on a rejecting trunk returns SIP 504."
+            "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account."
           }
         }
       },
@@ -709,8 +704,7 @@
         "trunk_did_invalid": "Invalid called-number source or prefix rules.",
         "trunk_caller_id_invalid": "Choose a supported caller policy and a number or SIP username without an address or control characters.",
         "trunk_inbound_account_invalid": "Select an existing enabled local SIP account.",
-        "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk.",
-        "trunk_unknown_policy_invalid": "Choose fallback or rejection for an unknown destination."
+        "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk."
       },
       "abort": {
         "reconfigure_successful": "Trunk configuration updated."
@@ -1227,12 +1221,6 @@
         "trunk": "Trunk identity (rewrite caller)",
         "caller": "Caller identity (public number when configured)",
         "account": "Account username (private inter-PBX calls)"
-      }
-    },
-    "trunk_inbound_unknown_target": {
-      "options": {
-        "fallback": "Use fallback destination",
-        "reject": "Reject unknown destination (404)"
       }
     }
   },

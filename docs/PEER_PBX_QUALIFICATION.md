@@ -60,7 +60,7 @@ Assertions cover:
 - Max-Forwards decreases across PBX legs.
 - BYE releases both HA call owners, their RTP reservations and registered-flow dialog usages. Asterisk ends with zero active channels.
 
-Other admission tests in `tests/test_peer_trunk_ingress_ha.py` cover incorrect Digest using independent raw UDP/TCP requests, ordinary phone From restrictions, disabled or duplicate account bindings, the owned registered-flow admission gate, unknown-target 404, a live native route decision, decision-window 504, and the unchanged legacy fallback.
+Other admission tests in `tests/test_peer_trunk_ingress_ha.py` cover incorrect Digest using independent raw UDP/TCP requests, ordinary phone From restrictions, disabled or duplicate account bindings, the owned registered-flow admission gate, ordinary missing-route results, live native route decisions, and explicitly configured incoming destinations. A decision window that makes no selection preserves the ordinary route outcome. Complete SIP URI destinations are attempted even when absent from the directory; selected peers retain their final SIP status and reason instead of falling back to the initial HA account.
 
 ## REGISTER defect discovered by this test
 

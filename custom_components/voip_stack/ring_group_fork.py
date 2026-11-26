@@ -23,7 +23,7 @@ from .core.sip import sip_default_port
 ForkPayload = OutboundLeg | BrowserLeg | dict[str, Any]
 
 
-def _outcome(result: str, *, sip_status: int = 0) -> DialOutcome:
+def _outcome(result: str, *, sip_status: int = 0, response_reason: str = "") -> DialOutcome:
     disposition = {
         "in_call": DialDisposition.ANSWERED,
         "in_call_browser": DialDisposition.ANSWERED,
@@ -38,7 +38,8 @@ def _outcome(result: str, *, sip_status: int = 0) -> DialOutcome:
         "reroute": DialDisposition.REROUTE,
     }.get(result, DialDisposition.UNAVAILABLE)
     return DialOutcome(disposition, status=sip_status if 300 <= sip_status <= 699 else 0,
-                       reason=result)
+                       reason=result,
+                       response_reason=response_reason if 300 <= sip_status <= 699 else "")
 
 
 def account_offer_outcome(results: list[str], *, pending: bool) -> str:
@@ -178,7 +179,8 @@ def build_ring_group_fork(
                 )
             if on_leg_state is not None:
                 on_leg_state(outbound, result)
-            return _outcome(result, sip_status=client.last_sip_status_code)
+            return _outcome(result, sip_status=client.last_sip_status_code,
+                            response_reason=getattr(client, "last_sip_reason", ""))
 
         async def _close_sip(
             mode: LegCloseMode,

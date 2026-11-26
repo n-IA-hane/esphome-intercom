@@ -100,14 +100,10 @@ def normalized_trunk_config(data) -> dict:
             TRUNK_INBOUND_MODE_DTMF if legacy_dtmf else TRUNK_INBOUND_MODE_DIRECT
         )
     dtmf_enabled = inbound_mode == TRUNK_INBOUND_MODE_DTMF and dtmf_timeout_ms > 0
-    unknown_target = identity_text(data.get("trunk_inbound_unknown_target") or "fallback", "unknown destination policy")
-    if unknown_target not in {"fallback", "reject"}:
-        raise ValueError("Invalid incoming trunk destination policy")
     return {
         **normalized_did_config(data),
         **normalized_outbound_identity_config(data),
         "trunk_inbound_account": identity_text(data.get("trunk_inbound_account", ""), "inbound account"),
-        "trunk_inbound_unknown_target": unknown_target,
         CONF_TRUNK_ENABLED: bool(data.get(CONF_TRUNK_ENABLED, False)),
         **codecs,
         "trunk_registration_id": int(data.get("trunk_registration_id") or 1),
@@ -131,9 +127,8 @@ def normalized_trunk_config(data) -> dict:
             data.get(CONF_TRUNK_OUTBOUND_PROXY) or ""
         ).strip(),
         CONF_TRUNK_INBOUND_DEFAULT_TARGET: str(
-            data.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA"
-        ).strip()
-        or "HA",
+            data.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "HA") or ""
+        ).strip(),
         CONF_TRUNK_INBOUND_MODE: inbound_mode,
         CONF_AUTOMATION_ROUTING_ENABLED: bool(
             data.get(CONF_AUTOMATION_ROUTING_ENABLED, False)

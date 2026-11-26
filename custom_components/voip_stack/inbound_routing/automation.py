@@ -68,7 +68,6 @@ async def request_route_override(
     automation_routing_enabled: bool,
     trunk_invite: bool,
     native_override: bool = False,
-    reject_on_timeout: bool = False,
 ) -> AutomationRoute:
     """Open one bounded automation window or keep the dialplan default."""
 
@@ -119,10 +118,8 @@ async def request_route_override(
             selected_tx_rtp_format=invite.send_format.wire_token(),
             selected_rx_rtp_format=invite.recv_format.wire_token(), audio_mode="full_duplex",
             rtp_format=f"{invite.selected_format.encoding}/{invite.selected_format.sample_rate}/{invite.selected_format.channels}")
-    timeout_result = ({"action": "decline", "status": 504, "reason": "Route decision timed out",
-                       "decline_reason": TerminalReason.TIMEOUT.value} if reject_on_timeout else None)
     payload = await request_route_window(hass, session, invite=invite, decision=decision,
-                                       timeout_result=timeout_result, **presentation)
+                                       **presentation)
     return AutomationRoute.from_payload(payload)
 
 

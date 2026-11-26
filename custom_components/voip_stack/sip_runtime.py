@@ -193,6 +193,7 @@ async def async_signal_termination(
     status, reason, _, _ = sip_failure_response(intent.reason)
     if intent.response_status:
         status = intent.response_status
+    reason = intent.response_reason or reason
     send_final_response(
         hass,
         call_id,

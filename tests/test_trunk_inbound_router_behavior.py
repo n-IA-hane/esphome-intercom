@@ -156,7 +156,7 @@ def test_dtmf_route_keeps_provisional_owner_until_bridge_commit() -> None:
 def _runtime() -> trunk_inbound_router.TrunkInboundRuntime:
     return trunk_inbound_router.TrunkInboundRuntime(
         hass=SimpleNamespace(),
-        config={},
+        config={"sip_port": 5060},
         local_ip="192.0.2.1",
         ha_peer_name="Casa",
         route_resolver=Mock(),
@@ -251,7 +251,9 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
         target="Casa",
         source_host="192.0.2.10",
     )
-    decision = SimpleNamespace(action=RouteAction.REJECT, target="")
+    from custom_components.voip_stack.router import RouteDecision, RouteReason
+
+    decision = RouteDecision(RouteAction.REJECT, status=404, reason=RouteReason.ROUTE_NOT_FOUND)
     monkeypatch.setattr(
         trunk_inbound_router,
         "call_runtime_artifacts",
@@ -290,6 +292,9 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
         Mock(return_value=decision),
     )
     monkeypatch.setattr(trunk_inbound_router, "trunk_default_target", lambda _cfg: "Casa")
+    monkeypatch.setattr(trunk_inbound_router, "EndpointRouteResolver",
+                        lambda *_args, **_kwargs: SimpleNamespace(
+                            route=lambda *_args: decision, is_ha_target=lambda _target: False))
     await trunk_inbound_router.async_route_trunk_invite(
         _runtime(), invite, bridge_ports=ports
     )
@@ -339,7 +344,7 @@ async def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     }
     runtime = SimpleNamespace(
         hass=SimpleNamespace(),
-        config={},
+        config={"sip_port": 5060},
         local_ip="192.0.2.1",
         run_trunk_inbound_route_guarded=AsyncMock(),
     )

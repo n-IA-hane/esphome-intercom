@@ -98,6 +98,7 @@ class TerminationIntent:
     public_state: str = ""
     sip_disposition: SipTerminationDisposition = SipTerminationDisposition.AUTO
     response_status: int = 0
+    response_reason: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reason", str(self.reason or "terminated").strip())
@@ -125,12 +126,15 @@ class TerminationIntent:
         reason: str,
         status: int,
         initiator: TerminationInitiator = TerminationInitiator.ROUTING,
+        *,
+        response_reason: str = "",
     ) -> "TerminationIntent":
         return cls(
             reason,
             initiator=initiator,
             sip_disposition=SipTerminationDisposition.FINAL_RESPONSE,
             response_status=status,
+            response_reason=response_reason,
         )
 
 
@@ -744,6 +748,7 @@ class EndpointCallSession:
                     public_state=intent.public_state,
                     sip_disposition=current.sip_disposition,
                     response_status=current.response_status,
+                    response_reason=current.response_reason,
                 )
             self._termination_initiator = asyncio.current_task()
             if self._termination_initiator is not None:
