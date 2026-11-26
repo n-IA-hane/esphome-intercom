@@ -2824,6 +2824,10 @@
         "ringing_timeout": {
           "name": "Standard-Klingeldauer",
           "description": "Optional ringing limit for this destination attempt. Omit to inherit the account or group and PBX policy; 0 is unlimited. Existing queue wait limits still apply."
+        },
+        "trunk_id": {
+          "name": "Abgehender SIP-Trunk",
+          "description": "Optionale konfigurierte abgehende Leitung für dieses Ziel."
         }
       },
       "sections": {

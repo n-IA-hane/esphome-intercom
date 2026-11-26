@@ -753,6 +753,14 @@ route:
           options: []
           custom_value: true
           mode: dropdown
+    trunk_id:
+      name: Outgoing SIP trunk
+      description: Optional configured outgoing line for this destination.
+      selector:
+        device:
+          filter:
+          - integration: voip_stack
+            model: SIP trunk
     status:
       name: SIP Status
       description: Optional final SIP status for decline/cancel decisions.

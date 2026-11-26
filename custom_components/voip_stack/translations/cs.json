@@ -2824,6 +2824,10 @@
         "ringing_timeout": {
           "name": "Výchozí doba vyzvánění",
           "description": "Optional ringing limit for this destination attempt. Omit to inherit the account or group and PBX policy; 0 is unlimited. Existing queue wait limits still apply."
+        },
+        "trunk_id": {
+          "name": "Odchozí SIP trunk",
+          "description": "Volitelná nakonfigurovaná odchozí linka pro tento cíl."
         }
       },
       "sections": {
