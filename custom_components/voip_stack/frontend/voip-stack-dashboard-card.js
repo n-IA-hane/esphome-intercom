@@ -36,7 +36,7 @@ class VoipStackDashboardCard extends HTMLElement {
     this._videoFocusCallId = "";
     this._connectionReady = () => {
       if (!this.isConnected) return;
-      this._devicesLoaded = false; this._deviceRequest = null;
+      this._entityIds.update(this._hass, () => this._catalogChanged());
       this._bind();
     };
     this._engineListener = () => {
@@ -81,7 +81,7 @@ class VoipStackDashboardCard extends HTMLElement {
     if (languageChanged && this._els) {
       this._resizeObserver.disconnect(); this._els = null; this._tiles.clear(); this._renderKey = "";
     }
-    this._entityIds.update(hass, () => { this._readRoster(); this._render(); });
+    this._entityIds.update(hass, () => this._catalogChanged());
     if (this.isConnected) this._bind();
     this._readRoster();
     this._render();
@@ -102,7 +102,6 @@ class VoipStackDashboardCard extends HTMLElement {
   disconnectedCallback() {
     this._epoch++;
     this._pending = "";
-    this._deviceRequest = null;
     this._connection?.removeEventListener?.("ready", this._connectionReady);
     this._resizeObserver.disconnect();
     this._unsubPhones?.(); this._unsubPhones = null;
@@ -118,11 +117,10 @@ class VoipStackDashboardCard extends HTMLElement {
     if (connection !== this._connection) {
       this._epoch++;
       this._pending = "";
-      this._deviceRequest = null;
       this._connection?.removeEventListener?.("ready", this._connectionReady);
       this._connection = connection;
       connection.addEventListener?.("ready", this._connectionReady);
-      this._store.reset(); this._devices = []; this._devicesLoaded = false;
+      this._store.reset(); this._devices = this._entityIds.devices;
       this._unsubPhones?.(); this._unsubPhones = null;
       this._releaseOwner(); this._ownerSnapshot = null;
     }
@@ -133,26 +131,15 @@ class VoipStackDashboardCard extends HTMLElement {
         if (this._store.apply(event)) { this._bindOwner(); this._render(); }
       });
     }
-    if (!this._devicesLoaded && !this._deviceRequest) this._loadDevices(connection);
+    this._entityIds.update(this._hass, () => this._catalogChanged());
     this._bindOwner();
   }
 
-  async _loadDevices(connection) {
-    const request = {};
-    this._deviceRequest = request;
-    try {
-      const result = await connection.sendMessagePromise({ type: "voip_stack/list_devices" });
-      if (this._deviceRequest !== request || this._hass?.connection !== connection) return;
-      this._devices = result?.devices || [];
-      this._devicesLoaded = true; this._devicesRevision++; this._error = "";
-      this._configurePhoneView(); this._bindOwner(); this._render();
-    } catch (error) {
-      if (this._deviceRequest === request && this._hass?.connection === connection) {
-        this._error = error?.message || String(error); this._render();
-      }
-    } finally {
-      if (this._deviceRequest === request) this._deviceRequest = null;
-    }
+  _catalogChanged() {
+    this._devices = this._entityIds.devices;
+    this._devicesRevision++;
+    this._error = this._entityIds.error;
+    this._readRoster(); this._configurePhoneView(); this._bindOwner(); this._render();
   }
 
   _readRoster() {
@@ -166,10 +153,12 @@ class VoipStackDashboardCard extends HTMLElement {
   _bindOwner() {
     const owner = this._owner();
     const selector = owner?.softphone ? owner.device_id : "";
-    if (selector === this._ownerSelector) return;
+    if (selector === this._ownerSelector && owner?.endpoint_id === this._ownerEndpointId) return;
     this._releaseOwner();
+    this._ownerSnapshot = null;
     if (!selector || !this.isConnected) return;
     this._ownerSelector = selector;
+    this._ownerEndpointId = owner.endpoint_id;
     const epoch = this._epoch;
     this._ownerPushEpoch = 0;
     const deliver = (state) => {
@@ -197,6 +186,7 @@ class VoipStackDashboardCard extends HTMLElement {
 
   _releaseOwner() {
     this._unsubOwner?.(); this._unsubOwner = null; this._ownerSelector = ""; this._syncKey = "";
+    this._ownerEndpointId = undefined;
   }
 
   _syncOwner() {

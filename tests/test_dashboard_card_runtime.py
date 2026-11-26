@@ -800,7 +800,7 @@ def test_dashboard_failed_device_load_recovers_on_the_same_connection_ready(dash
       window.connection=new EventTarget();window.deviceRequests=0;
       connection.sendMessagePromise=async()=>{
         deviceRequests++;
-        if(deviceRequests===2)throw new Error('Temporary device lookup failure');
+        if(deviceRequests===1)throw new Error('Temporary device lookup failure');
         return {devices,entity_ids:{phonebook:'sensor.renamed_phonebook'}};
       };
       window.recovered=document.createElement('voip-stack-dashboard-card');
@@ -809,14 +809,14 @@ def test_dashboard_failed_device_load_recovers_on_the_same_connection_ready(dash
       document.body.append(recovered);
     }""")
     page.wait_for_function("recovered._error==='Temporary device lookup failure'")
-    assert page.evaluate("deviceRequests") == 2
+    assert page.evaluate("deviceRequests") == 1
     page.evaluate("connection.dispatchEvent(new Event('ready'))")
-    page.wait_for_function("recovered._devicesLoaded")
+    page.wait_for_function("recovered._entityIds.loaded")
     assert page.evaluate("recovered._owner().device_id") == "reception-device"
     assert page.evaluate("recovered._error") == ""
-    assert page.evaluate("deviceRequests") == 3
+    assert page.evaluate("deviceRequests") == 2
     page.evaluate("recovered.remove();connection.dispatchEvent(new Event('ready'))")
-    assert page.evaluate("deviceRequests") == 3
+    assert page.evaluate("deviceRequests") == 2
 
 
 @pytest.mark.browser_real
@@ -829,25 +829,25 @@ def test_dashboard_device_load_ignores_the_old_connection_and_keeps_the_new_requ
       window.oldRequests=0;window.newRequests=0;
       oldConnection.sendMessagePromise=()=>{
         oldRequests++;
-        return oldRequests===1?Promise.resolve({devices}):new Promise(resolve=>window.finishOldDevices=resolve);
+        return new Promise(resolve=>window.finishOldDevices=resolve);
       };
       newConnection.sendMessagePromise=()=>{
         newRequests++;
-        return newRequests===1?Promise.resolve({devices}):new Promise(resolve=>window.finishNewDevices=resolve);
+        return new Promise(resolve=>window.finishNewDevices=resolve);
       };
       window.recovered=document.createElement('voip-stack-dashboard-card');
       recovered.setConfig({device_id:'reception-device'});
       recovered.hass={...hass,connection:oldConnection};document.body.append(recovered);
     }""")
-    page.wait_for_function("oldRequests===2")
+    page.wait_for_function("oldRequests===1")
     page.evaluate("recovered.hass={...hass,connection:newConnection}")
-    page.wait_for_function("newRequests===2")
+    page.wait_for_function("newRequests===1")
     page.evaluate("finishOldDevices({devices:[{name:'Obsolete owner'}]})")
     page.evaluate("recovered.hass={...hass,connection:newConnection}")
-    assert page.evaluate("newRequests") == 2
-    assert page.evaluate("recovered._devicesLoaded") is False
+    assert page.evaluate("newRequests") == 1
+    assert page.evaluate("recovered._entityIds.loaded") is False
     page.evaluate("finishNewDevices({devices:card._devices})")
-    page.wait_for_function("recovered._devicesLoaded")
+    page.wait_for_function("recovered._entityIds.loaded")
     assert page.evaluate("recovered._owner().device_id") == "reception-device"
     page.evaluate("recovered.remove()")
 
@@ -877,3 +877,66 @@ def test_dashboard_keypad_and_options_toggle_the_same_native_surface(dashboard_p
     page.evaluate("()=>card.setConfig({device_id:'missing-owner'})")
     assert keypad.is_disabled()
     assert options.is_disabled()
+
+
+@pytest.mark.browser_real
+def test_retained_dashboard_and_editor_share_native_catalog_updates(dashboard_page):
+    page = dashboard_page
+    page.evaluate("""()=>{
+      window.catalog=card._devices.map(device=>({...device}));
+      window.catalogRequests=0;
+      const connection=new EventTarget();
+      connection.sendMessagePromise=async()=>{
+        catalogRequests++;
+        return {devices:catalog.map(device=>({...device})),entity_ids:{phonebook:'sensor.renamed_phonebook'}};
+      };
+      window.catalogHass={...hass,connection,entities:{}};
+      card.hass=catalogHass;
+      window.editor=document.createElement('voip-stack-dashboard-card-editor');
+      editor.setConfig({device_id:'studio-device'});editor.hass=catalogHass;
+    }""")
+    page.wait_for_function("editor._devices.length===catalog.length && card._entityIds.loaded")
+    assert page.evaluate("catalogRequests") == 1
+    page.evaluate("""()=>{
+      window.added={endpoint_id:'new-account',device_id:'new-device',name:'New account',kind:'sip_account',
+        state:'idle',availability:'available',calls:[]};
+      catalog.push(added);
+      engine.push({kind:'delta',revision:1,phones:[added]});
+      catalogHass={...catalogHass,entities:{'sensor.new_phone':{entity_id:'sensor.new_phone'}}};
+      card.hass=catalogHass;editor.hass=catalogHass;
+      card.setConfig({device_id:'new-device'});
+    }""")
+    page.wait_for_function("card._owner()?.endpoint_id==='new-account'")
+    assert page.evaluate("catalogRequests") == 2
+    assert page.evaluate("editor._devices.some(device=>device.device_id==='new-device')")
+    assert page.locator("h2").inner_text() == "New account"
+    page.evaluate("""()=>{
+      added={...added,name:'Renamed account',device_id:'renamed-device'};
+      catalog=catalog.map(device=>device.endpoint_id===added.endpoint_id?added:device);
+      engine.push({kind:'delta',revision:2,phones:[added]});
+      catalogHass={...catalogHass,entities:{}};
+      card.hass=catalogHass;editor.hass=catalogHass;
+      card.setConfig({device_id:'renamed-device'});
+    }""")
+    page.wait_for_function("card._owner()?.device_id==='renamed-device'")
+    assert page.evaluate("catalogRequests") == 3
+    assert page.locator("h2").inner_text() == "Renamed account"
+    assert page.evaluate("editor._devices.some(device=>device.name==='Renamed account')")
+    page.evaluate("""()=>{
+      catalog=catalog.filter(device=>device.endpoint_id!==added.endpoint_id);
+      engine.push({kind:'delta',revision:3,phones:[],removed:[added.endpoint_id]});
+      catalogHass={...catalogHass,entities:{}};
+      card.hass=catalogHass;editor.hass=catalogHass;
+      editor.setConfig({device_id:'renamed-device'});
+    }""")
+    page.wait_for_function("card._owner()===null && !editor._devices.some(device=>device.endpoint_id==='new-account')")
+    assert page.evaluate("catalogRequests") == 4
+    assert page.evaluate("card._ownerSelector") == ""
+    assert page.evaluate("editor._form.schema[0].selector.select.options.some(option=>option.value==='renamed-device' && option.label==='Missing phone')")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is unavailable")
+def test_dashboard_catalog_lifecycle_without_polling():
+    result = subprocess.run(["node", str(Path(__file__).with_name("frontend_catalog_runtime.mjs"))],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
