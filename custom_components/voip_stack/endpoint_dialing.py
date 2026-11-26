@@ -306,6 +306,7 @@ class EndpointDialer:
                 local_uri_user=str(identity_config.get("trunk_username") or caller_user),
                 local_identity_uri=(identity.uri if identity is not None
                                     else policy.local_identity_uri or inbound_from_uri(invite)),
+                fixed_local_identity=identity.fixed if identity is not None else False,
                 local_sip_port=int(self.config["sip_port"]),
                 local_rtp_port=local_audio_port,
                 supported_send_formats=sip_send_formats,

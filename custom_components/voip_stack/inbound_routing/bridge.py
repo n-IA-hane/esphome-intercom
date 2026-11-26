@@ -288,6 +288,7 @@ async def route_sip_bridge(
             else invite.routing_caller or runtime.ha_peer_name(hass)
         ),
         local_identity_uri=identity.uri if identity is not None else inbound_from_uri(invite),
+        fixed_local_identity=identity.fixed if identity is not None else False,
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,

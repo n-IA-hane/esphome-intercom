@@ -722,6 +722,7 @@ async def _async_prepare_browser_sip_call(
             )
         ),
         local_identity_uri=identity.uri if identity is not None else "",
+        fixed_local_identity=identity.fixed if identity is not None else False,
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=local_rtp_port,
         supported_send_formats=sip_send_formats,

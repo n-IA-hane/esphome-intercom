@@ -47,6 +47,8 @@ class CallerIdentity:
     user: str
     name: str
     uri: str
+    # A forced presentation stays with this leg when a transfer retains it.
+    fixed: bool = False
 
 
 def resolve_trunk_caller(
@@ -84,7 +86,7 @@ def resolve_trunk_caller(
     # The client's reachable Contact is the fallback only for incomplete legacy
     # static-line configurations. It is never built from a public caller number.
     uri = str(sip.SipUri(user, domain)) if user and domain else ""
-    return CallerIdentity(user, name, uri)
+    return CallerIdentity(user, name, uri, fixed=mode == "trunk")
 
 
 def outbound_identity(

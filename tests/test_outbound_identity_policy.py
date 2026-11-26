@@ -17,6 +17,7 @@ def test_forwarded_originator_and_force_trunk_have_explicit_different_results(mo
     }, caller_user="+39061234101", caller_name="Remote caller", caller_uri="sip:+39061234101@origin.example")
     assert identity.uri == expected
     assert identity.name == ("Office" if mode == "trunk" else "Remote caller")
+    assert identity.fixed is (mode == "trunk")
 
 
 def test_outbound_account_number_does_not_change_account_or_trunk_selection():
