@@ -120,7 +120,7 @@ class BrowserPagingApplication(AutomationCall):
         if self.answered:
             return
         registry = call_registry(self.hass)
-        session = registry.transition(self.session.call_id, state="in_call", owner="paging",
+        session = registry.transition(self.session.call_id, state="in_call", owner=self.owner,
                                       media_client_id=str(call.data.get("media_client_id") or ""),
                                       expected_generation=self.session.generation)
         if session is None:
@@ -145,6 +145,18 @@ class BrowserPagingApplication(AutomationCall):
     async def close(self, reason):
         await super(BrowserPagingApplication, self).close(reason)
         await self.media.stop(reason)
+        await self.playback.close(reason)
+        self.accepted.set()
+
+
+class OutgoingBrowserPagingApplication(BrowserPagingApplication):
+    """Stage the browser adapter inside an outgoing application's one session."""
+
+    async def close(self, reason):
+        await AutomationCall.close(self, reason)
+        # A SIP winner's relay remains owned by the existing relay resource.
+        if isinstance(self.media, BrowserPagingMedia):
+            await self.media.stop(reason)
         await self.playback.close(reason)
         self.accepted.set()
 

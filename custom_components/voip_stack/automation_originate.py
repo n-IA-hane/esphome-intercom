@@ -72,6 +72,39 @@ def _application_call_routes(hass, preparation):
     return peers, entries
 
 
+async def _bind_outgoing_application_media(hass, registry, session, application, client, media, *, started=False):
+    """Install one admitted SIP output under the existing application owner."""
+    call_id = session.call_id
+    media.release_reservation_on_stop = False
+    registry.attach_relay(call_id, media)
+    client.audio_rtp_socket = None
+    application.media = media
+    media.on_dtmf = application.handle_dtmf
+    media.on_dtmf_fallback = application.send_dtmf_info
+    client.on_info_dtmf = lambda digit, _duration: application.handle_dtmf("right", digit, "sip_info")
+    async def update_media(_current, updated, _method):
+        commit = media.prepare_media_update(LocalAudioContract.from_dialog(updated))
+        async def apply():
+            if (not registry.is_generation_current(call_id, session.generation)
+                    or registry.resource_for(call_id, "relay") is not media):
+                raise RuntimeError("The local application media owner changed")
+            commit()
+        return apply
+    client.on_media_update = update_media
+    from .bridge_manager import async_watch_owned_sip_dialog
+    watcher = hass.async_create_task(async_watch_owned_sip_dialog(registry, call_id, client, session.generation))
+    registry.attach_client_watcher(client.dialog_ids.call_id, watcher)
+    application.require_current()
+    # Teardown must cancel preparation before closing its media/ports.
+    # Otherwise a remote BYE can leave start() waiting outside the owner.
+    if not started:
+        await session.create_task(media.start(), name="automation-media-start")
+    application.require_current()
+    if client.dialog is None:
+        raise ServiceValidationError("The destination ended before audio became ready")
+    application.answered = True
+
+
 async def _dial_attempt(hass, registry, session, attempt, destination, timeout, *, answer_mode="", audio_direction="sendrecv"):
     """Arbitrate an outgoing leg and route decisions with the existing fork."""
     client = attempt.client
@@ -238,7 +271,7 @@ async def _async_originate_application_call(
         route_resolver=resolver, sip_uri_transport=uri_transport,
         enable_reused_tcp_connection=enable_reused_tcp_connection,
     )
-    def prepare(target, *, initial=False):
+    def prepare(target, *, initial=False, contact=None):
         if answer_mode:
             from .ring_group import endpoint_preflight_disposition
 
@@ -254,6 +287,9 @@ async def _async_originate_application_call(
             if endpoint is None or account_uses_ha_only(hass, endpoint):
                 raise ServiceValidationError("Outgoing automation calls currently require a SIP or ESPHome destination")
         uri, _, _ = dialer.sip_uri_for_member(target, peers, entries)
+        if contact is not None:
+            from .core.sip import parse_sip_uri
+            uri = parse_sip_uri(contact.uri)
         route = resolve_route(target, entries)
         if route.reason is RouteReason.TRUNK_UNAVAILABLE:
             raise trunk_selection.unavailable_error()
@@ -274,6 +310,7 @@ async def _async_originate_application_call(
             member=target, peers=peers, roster_entries=entries,
             local_name=source.display_name, local_rtp_port_index=0,
             uri_override=str(uri),
+            roster_entry_override=contact.roster_entry if contact is not None else None,
             policy=OutboundLegPolicy(
                 call_id=routing_call_id if initial and routing_call_id else "",
                 local_uri_user=source.id if use_trunk and source.metadata.get("endpoint_kind") == "sip_account" else source.extension or source.id,
@@ -289,6 +326,24 @@ async def _async_originate_application_call(
         if candidate is None:
             raise ServiceValidationError("The destination cannot receive an outgoing automation call")
         return candidate
+
+    if answer_mode:
+        from .account_dialing import account_call_plan, account_dial_decision
+        account_decision = account_dial_decision(hass, resolved.decision, all_transports=True)
+        plan = account_call_plan(account_decision.entry)
+        browser_leg = dialer.browser_leg_for_member(destination, peers, entries)
+        if plan is not None and (browser_leg is not None or
+                len(account_decision.entry.metadata.get("sip_contacts") or ()) > 1):
+            from .account_paging import async_originate_account_paging
+            return await async_originate_account_paging(call, source=source,
+                endpoint=runtime.endpoints.require(plan.endpoint_id), decision=account_decision,
+                entries=entries, prepare=prepare, local_ip=local_ip,
+                answer_mode=answer_mode, audio_direction=audio_direction,
+                dial_attempt=_dial_attempt, bind_media=_bind_outgoing_application_media,
+                preferred_call_id=routing_call_id, allow_browser=browser_leg is not None,
+                policy_endpoint_ids=resolved.forwarded_endpoint_ids,
+                ringing_timeout=(initial_route.ringing_timeout
+                    if initial_route.ringing_timeout is not None else call.data.get("answer_timeout")))
 
     try:
         attempt = prepare(destination, initial=True)
@@ -443,33 +498,7 @@ async def _async_originate_application_call(
         )
         if not media.can_send:
             raise ServiceValidationError("The destination cannot receive announcement audio")
-        media.release_reservation_on_stop = False
-        registry.attach_relay(call_id, media)
-        client.audio_rtp_socket = None
-        application.media = media
-        media.on_dtmf = application.handle_dtmf
-        media.on_dtmf_fallback = application.send_dtmf_info
-        client.on_info_dtmf = lambda digit, _duration: application.handle_dtmf("right", digit, "sip_info")
-        async def update_media(_current, updated, _method):
-            commit = media.prepare_media_update(LocalAudioContract.from_dialog(updated))
-            async def apply():
-                if (not registry.is_generation_current(call_id, session.generation)
-                        or registry.resource_for(call_id, "relay") is not media):
-                    raise RuntimeError("The local application media owner changed")
-                commit()
-            return apply
-        client.on_media_update = update_media
-        from .bridge_manager import async_watch_owned_sip_dialog
-        watcher = hass.async_create_task(async_watch_owned_sip_dialog(registry, call_id, client, session.generation))
-        registry.attach_client_watcher(client.dialog_ids.call_id, watcher)
-        application.require_current()
-        # Teardown must cancel preparation before closing its media/ports.
-        # Otherwise a remote BYE can leave start() waiting outside the owner.
-        await session.create_task(media.start(), name="automation-media-start")
-        application.require_current()
-        if client.dialog is None:
-            raise ServiceValidationError("The destination ended before audio became ready")
-        application.answered = True
+        await _bind_outgoing_application_media(hass, registry, session, application, client, media)
 
 
         application.arm_deadline()
