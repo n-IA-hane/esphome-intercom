@@ -15,7 +15,7 @@ from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.inbound_routing import automation as route_automation
 from custom_components.voip_stack.peer import Peer
 from custom_components.voip_stack.roster import RosterEntry
-from .test_automation_originate_ha import lab, PHONE_PASSWORD, assert_call_resources_released
+from .test_automation_originate_ha import lab as lab, PHONE_PASSWORD, assert_call_resources_released
 
 pytestmark = pytest.mark.ha
 

@@ -8,7 +8,7 @@ import pytest
 from custom_components.voip_stack.call_queues import QueueDefinition, QueuePolicy
 from custom_components.voip_stack.roster import RosterEntry
 
-from .test_queue_call_ha import queue_lab, dial_queue, lab, trunks
+from .test_queue_call_ha import queue_lab as queue_lab, dial_queue, lab as lab, trunks as trunks
 
 pytestmark = pytest.mark.ha
 

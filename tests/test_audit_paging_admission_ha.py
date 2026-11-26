@@ -6,7 +6,7 @@ import pytest
 
 from custom_components.voip_stack import paging, automation_originate
 from custom_components.voip_stack.core import rtp
-from .test_automation_originate_ha import lab, tts_fixture
+from .test_automation_originate_ha import lab as lab, tts_fixture
 from .test_paging_ha import manager, announce
 
 pytestmark = pytest.mark.ha

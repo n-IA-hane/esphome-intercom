@@ -3,9 +3,9 @@
 import pytest
 
 from custom_components.voip_stack.core.sip import parse_sip_uri
-from .test_automation_originate_ha import lab
+from .test_automation_originate_ha import lab as lab
 from .test_trunk_calls_ha import (
-    trunks,
+    trunks as trunks,
     test_automation_announcement_uses_selected_trunk_and_preserves_registration as _automation,
     test_pending_announcement_forward_uses_explicit_trunk as _forward,
     test_browser_phone_preference_and_explicit_override_dial_the_selected_line as _browser,

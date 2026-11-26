@@ -8,7 +8,7 @@ from custom_components.voip_stack.endpoint_dialing import EndpointDialer, Outbou
 from custom_components.voip_stack.endpoint_routing import EndpointRouteResolver
 from custom_components.voip_stack.outbound_attempts import async_close_outbound_leg
 from custom_components.voip_stack.sip_runtime import enable_reused_tcp_connection, uri_transport
-from .test_trunk_calls_ha import trunks, lab, dial
+from .test_trunk_calls_ha import trunks as trunks, lab as lab, dial
 
 pytestmark = pytest.mark.ha
 
@@ -20,7 +20,7 @@ async def test_same_named_trunk_constructs_same_called_domain_for_group_and_auto
     lab.runtime.trunk_configs["home"] = {
         **lab.runtime.trunk_configs["home"], "trunk_domain": "voice.example.invalid"}
     context = Context()
-    result = await dial(lab, context, destination="External", trunk_id="home")
+    await dial(lab, context, destination="External", trunk_id="home")
     automation_target = parse_sip_uri(lab.phones[0].invites[-1].uri)
     await lab.hass.services.async_call("voip_stack", "hangup", {}, blocking=True, context=context)
     dialer = EndpointDialer(hass=lab.hass, local_ip="127.0.0.1", config=lab.runtime.transport_config,

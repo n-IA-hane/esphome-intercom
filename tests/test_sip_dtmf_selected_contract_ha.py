@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.voip_stack.core import sdp, sip
+from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.core.audio_format import AudioFormat, PcmFormat
 from custom_components.voip_stack.sip_client import SipCallClient
 
