@@ -61,7 +61,7 @@ async def initial_ha_account(lab, endpoint_id="default", *, bound=True):
 
 @asynccontextmanager
 async def incoming(lab, transport, *, destination=None, dtmf=False, outbound_port=None):
-    config = normalized_trunk_config({
+    config = normalized_trunk_config({"trunk_options_interval": 0,
         "trunk_enabled": True, "trunk_register": False,
         "trunk_server": "127.0.0.1", "trunk_allowed_ips": ["127.0.0.1/32"],
         "trunk_transport": transport.lower(),
@@ -108,8 +108,12 @@ async def final_outcome(caller, state):
 
 @pytest.mark.parametrize("transport", ["UDP", "TCP"])
 @pytest.mark.parametrize("dtmf", [False, True], ids=["direct", "dtmf"])
-async def test_untouched_trunk_rings_initial_ha_account(lab, transport, dtmf):
+@pytest.mark.parametrize("prefer_other", [False, True])
+async def test_untouched_trunk_rings_initial_ha_account(lab, transport, dtmf, prefer_other):
     initial = await initial_ha_account(lab)
+    if prefer_other:
+        other = await initial_ha_account(lab, "other")
+        lab.runtime.preferred_phone_device_id = other.device_id
     async with incoming(lab, transport, dtmf=dtmf) as (caller, config):
         assert config["trunk_inbound_default_target"] == "HA"
         assert await invite(lab, caller) == "ringing"
@@ -156,8 +160,11 @@ async def test_disabled_selected_account_preserves_unavailable_instead_of_404(la
 
 @pytest.mark.parametrize("transport", ["UDP", "TCP"])
 @pytest.mark.parametrize("dtmf", [False, True], ids=["direct", "dtmf"])
-async def test_deleted_initial_account_does_not_select_another_ha_phone(lab, transport, dtmf):
-    await initial_ha_account(lab, "other")
+@pytest.mark.parametrize("prefer_other", [False, True])
+async def test_deleted_initial_account_does_not_select_another_ha_phone(lab, transport, dtmf, prefer_other):
+    other = await initial_ha_account(lab, "other")
+    if prefer_other:
+        lab.runtime.preferred_phone_device_id = other.device_id
     assert lab.runtime.endpoints.get("default") is None
     assert lab.runtime.ha_bindings.has_binding("other")
     async with incoming(lab, transport, dtmf=dtmf) as (caller, _):

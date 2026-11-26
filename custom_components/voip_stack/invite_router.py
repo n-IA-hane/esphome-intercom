@@ -18,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from .trunk_policy import external_call_denied, is_trunk_uri, trunk_available
 from .core import sdp as sip_sdp  # noqa: F401 - Preserve the routing adapter's public module export.
 from .call_scope import pending_routes as _pending_routes
-from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
+from .runtime_data import endpoint_directory, initial_ha_phone, preferred_browser_phone, sip_trunk
 from .automation_routing import has_native_route_window
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
@@ -44,7 +44,7 @@ from .inbound_routing.targets import (
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .pbx_trace import trace_call
-from .router import RouteAction, RouteDecision
+from .router import RouteAction, RouteDecision, RouteReason
 from .sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -162,10 +162,11 @@ async def route_invite(
 
                 explicit = endpoint_registry.resolve(default_target)
                 if explicit is None and find_entry(roster_entries, default_target) is None:
-                    preferred = preferred_browser_phone(hass)
-                    if preferred is not None:
-                        selected_target = preferred.username or preferred.sip_uri_user
-            decision = _ha_router_decision(selected_target, roster_entries)
+                    initial = initial_ha_phone(hass)
+                    selected_target = (initial.username or initial.sip_uri_user) if initial is not None else ""
+            decision = (_ha_router_decision(selected_target, roster_entries) if selected_target else
+                        RouteDecision(RouteAction.REJECT, target=default_target, status=404,
+                                      reason=RouteReason.ROUTE_NOT_FOUND))
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
 

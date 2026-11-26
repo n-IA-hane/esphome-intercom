@@ -15,6 +15,7 @@ import pytest
 
 from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.sip_registrar import SipAccount
+from custom_components.voip_stack.store import config_entry
 from tools.ha_softphone_matrix import BareSip
 from .test_canonical_account_calls_ha import (
     canonical_browser as canonical_browser, logical_browser as logical_browser,
@@ -108,7 +109,7 @@ async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, f
         pytest.skip("SIPp is required for the independent trunk caller")
     lab.runtime.preferred_phone_device_id = "browser-casa"
     port = lab.runtime.transport_config["sip_port"]
-    config = normalized_trunk_config({
+    config = normalized_trunk_config({"trunk_options_interval": 0, 
         "trunk_enabled": True, "trunk_register": False, "trunk_server": "127.0.0.2",
         "trunk_allowed_ips": ["127.0.0.2/32"],
         "trunk_inbound_default_target": fallback,
@@ -191,6 +192,13 @@ async def test_trunk_compatibility_alias_cannot_override_a_disabled_account(
     from .test_browser_logical_availability_ha import resources
 
     lab, _, handsets = shared_account
+    # This compatibility case represents the migrated initial account, rather
+    # than an unrelated receiver selected only by the card's UI preference.
+    entry = config_entry(lab.hass)
+    row = entry.subentries[lab.browser_subentry.subentry_id]
+    lab.hass.config_entries.async_update_subentry(entry, row, data={**row.data,
+        "ha_bindings": [*row.data.get("ha_bindings", []),
+                        {"source": "migration", "reference": "legacy_ha_phone:default"}]})
     if forbidden:
         monkeypatch.setattr(lab.hass.config, "location_name", fallback)
         lab.runtime.endpoints.register(PhoneEndpoint(

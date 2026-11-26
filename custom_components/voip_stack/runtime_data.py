@@ -193,6 +193,24 @@ def select_preferred_phone(endpoints, configured_device_id="", *, ha_bound_endpo
     return candidates[0] if len(candidates) == 1 else None
 
 
+def initial_ha_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
+    """Resolve the original account identity without choosing another HA receiver."""
+    from .phone_config import phone_endpoint_id, phone_subentries
+    from .phone_endpoint import DEFAULT_ENDPOINT_ID
+    from .sip_account_identity import _ha_reference_origins
+    from .store import config_entry
+
+    endpoints = endpoint_directory(hass)
+    identities = {DEFAULT_ENDPOINT_ID}
+    entry = config_entry(hass)
+    if entry is not None:
+        identities.update(phone_endpoint_id(row) for row in phone_subentries(entry)
+                          if DEFAULT_ENDPOINT_ID in _ha_reference_origins(row.data))
+    matches = [endpoint for identity in identities
+               if (endpoint := endpoints.get(identity)) is not None and endpoint.supports_ha_client]
+    return matches[0] if len(matches) == 1 else None
+
+
 def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
     """Read the entry's preference through the shared selection policy."""
     runtime = require_runtime_data(hass)
