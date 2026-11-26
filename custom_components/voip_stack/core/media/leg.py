@@ -205,7 +205,11 @@ def negotiate_dtmf(remote_sdp, local_offer_sdp=None, *, audio=None,
         send_clock_rate, receive_clock_rate = audio.send.sample_rate, audio.recv.sample_rate
 
     def select(clock, *, receive):
-        clocks = tuple(dict.fromkeys((clock, 8000))) if clock is not None else tuple(
+        # Prefer the audio clock, then the conventional narrowband clock.
+        # RFC 4733 erratum 3489 permits independent clocks with separate SSRCs.
+        # Other mutually advertised clocks use the existing independent RTP
+        # timestamp/SSRC owner instead of silently losing telephone events.
+        clocks = tuple(dict.fromkeys((clock, 8000, *(item.sample_rate for item in remote)))) if clock is not None else tuple(
             dict.fromkeys(item.sample_rate for item in remote))
         for wanted in clocks:
             for peer in remote:
