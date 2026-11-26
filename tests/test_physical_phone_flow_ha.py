@@ -234,14 +234,14 @@ async def test_blf_editor_saves_auto_labels_and_keeps_custom_labels_on_reopen(ph
     assert invalid["type"] == "form" and invalid["errors"]["base"] == "phone_key_label_too_long"
     assert physical_record(state).data["keys"] == [stored]
 
-    values["keys"][0]["label"] = "Telefono ufficio"
+    values["keys"][0]["label"] = "Office phone"
     saved = await submit(state, invalid, values)
     assert saved["type"] == "abort" and saved["reason"] == "reconfigure_successful"
     form = await reconfigure(state, "bindings")
     displayed = form["data_schema"]({})["keys"][0]
     assert displayed["target"] == peer.name
-    assert displayed["label"] == "Telefono ufficio"
-    assert physical_record(state).data["keys"] == [{**key, "label": "Telefono ufficio"}]
+    assert displayed["label"] == "Office phone"
+    assert physical_record(state).data["keys"] == [{**key, "label": "Office phone"}]
 
 
 async def test_editor_selects_external_contact_created_through_the_contact_flow(physical_flow):

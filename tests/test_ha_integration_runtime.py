@@ -814,7 +814,7 @@ async def test_contact_migration_preserves_routes_without_phone_entities(hass):
     from homeassistant.helpers import device_registry, entity_registry
 
     records = [
-        {"id": "Prova", "name": "Prova", "extension": "", "ha_bridge": True,
+        {"id": "Sample contact", "name": "Sample contact", "extension": "", "ha_bridge": True,
          "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}},
         {"id": "external", "name": "External", "number": "+12025550123", "metadata": {"custom": "retained"}},
     ]
@@ -849,11 +849,11 @@ async def test_native_add_contact_flow_creates_only_a_contact(hass, monkeypatch)
     )
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"type": "automation"})
     assert result["step_id"] == "contact"
-    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"name": "Prova", "extension": "", "timeout": 30})
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"name": "Sample contact", "extension": "", "timeout": 30})
     assert result["type"] == "create_entry"
     contacts = contact_dicts(entry)
     assert len(contacts) == 1
-    assert contacts[0]["name"] == "Prova"
+    assert contacts[0]["name"] == "Sample contact"
     assert contacts[0]["metadata"]["virtual_endpoint"] == "automation"
     assert not contacts[0]["extension"]
     assert not device_registry.async_get(hass).devices

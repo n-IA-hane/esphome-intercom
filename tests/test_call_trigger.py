@@ -45,7 +45,7 @@ async def test_native_runner_binds_each_call_across_await(hass, registry, action
         return object()
 
     def runner(payload, description, context):
-        assert payload["call"]["callee"] == "Prova"
+        assert payload["call"]["callee"] == "Sample contact"
         task = asyncio.create_task(action())
         tasks.append(task)
         if len(tasks) == 2:
@@ -54,7 +54,7 @@ async def test_native_runner_binds_each_call_across_await(hass, registry, action
 
     subject = trigger.VoipCallTrigger(
         hass,
-        TriggerConfig("voip_stack.call_received", options={"destination": "Prova"}),
+        TriggerConfig("voip_stack.call_received", options={"destination": "Sample contact"}),
     )
     detach = await subject.async_attach_runner(runner)
     try:
@@ -65,7 +65,7 @@ async def test_native_runner_binds_each_call_across_await(hass, registry, action
                     "event_type": "automation_requested",
                     "call_id": session.call_id,
                     "generation": session.generation,
-                    "callee": "Prova",
+                    "callee": "Sample contact",
                 },
             )
         async with asyncio.timeout(2):
@@ -125,12 +125,12 @@ async def test_received_trigger_ignores_outgoing_ringing_but_keeps_local_applica
 def test_filters_use_snapshot_and_allow_optional_destination():
     snapshot = {
         "caller": "Alice",
-        "callee": "Prova",
+        "callee": "Sample contact",
         "called_extension": "666",
         "ingress": "extension",
     }
     assert trigger.matches_call(snapshot, {})
-    assert trigger.matches_call(snapshot, {"destination": "  prova "})
+    assert trigger.matches_call(snapshot, {"destination": "  sample contact "})
     assert trigger.matches_call(snapshot, {"destination": "666"})
     assert not trigger.matches_call(snapshot, {"caller": "Bob"})
     assert not trigger.matches_call(snapshot, {"ingress": "trunk"})
