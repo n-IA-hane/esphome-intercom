@@ -14,9 +14,10 @@ def authenticated_inbound_trunk(configs, username: str) -> str:
                if str(config.get("trunk_inbound_account") or "").strip().casefold() == principal]
     if not matches:
         return ""
-    if len(matches) != 1 or not matches[0][1].get("trunk_enabled", False):
+    enabled = [identity for identity, config in matches if config.get("trunk_enabled", False)]
+    if len(enabled) != 1:
         raise ValueError("The authenticated SIP account needs one enabled incoming trunk")
-    return matches[0][0]
+    return enabled[0]
 
 
 def select_trunk_id(configs, default_id: str, *, requested_id: str = "", phone_trunk_id: str = "") -> str:

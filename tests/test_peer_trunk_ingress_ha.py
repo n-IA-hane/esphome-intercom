@@ -148,6 +148,24 @@ async def test_invalid_peer_binding_never_falls_back_to_an_ordinary_account(lab,
         await caller.close()
 
 
+async def test_disabled_replacement_does_not_hide_the_enabled_peer_binding(lab):
+    bind_peer(lab)
+    lab.runtime.trunk_configs["replacement"] = {
+        **lab.runtime.trunk_configs["remote"], "trunk_enabled": False,
+    }
+    caller = peer_client("UDP")
+    try:
+        state = await caller.invite(target="bedroom0", remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
+        if state == "ringing":
+            state = await caller.wait_for_final(timeout=3)
+        assert state == "in_call"
+        assert lab.calls.get_session(caller.dialog_ids.call_id).metadata["inbound_trunk_id"] == "remote"
+        await caller.terminate()
+    finally:
+        await caller.close()
+
+
 @pytest.mark.parametrize("answer", [False, True])
 async def test_peer_unknown_target_keeps_native_route_window_and_explicit_timeout(lab, answer):
     from homeassistant.helpers.trigger import TriggerConfig
