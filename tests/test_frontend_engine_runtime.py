@@ -766,8 +766,14 @@ assert.equal(stableMetadata._callId, "stable-call");
 // permanent spectator.
 const recovered = new Engine();
 assert.equal(recovered.ownsSoftphoneSession("fresh-call", "kitchen"), false);
+assert.equal(recovered.tryRecoverSoftphoneSession("fresh-call", "kitchen"), false,
+  "An account observer cannot manufacture a media claim");
+recovered.rememberSoftphoneState({{endpoint_id:"kitchen",call_id:"fresh-call",state:"in_call",
+  media_owner:"self",can_attach_media:true}});
 assert.equal(recovered.tryRecoverSoftphoneSession("fresh-call", "kitchen"), true);
 assert.equal(recovered.ownsSoftphoneSession("fresh-call", "kitchen"), true);
+recovered.rememberSoftphoneState({{endpoint_id:"kitchen",call_id:"replacement-call",state:"in_call",
+  media_owner:"self",can_attach_media:true}});
 assert.equal(recovered.tryRecoverSoftphoneSession("replacement-call", "kitchen"), true);
 assert.equal(recovered.ownsSoftphoneSession("fresh-call", "kitchen"), false);
 assert.equal(recovered.ownsSoftphoneSession("replacement-call", "kitchen"), true);
@@ -1647,6 +1653,13 @@ await pcmSuccessor.reconcileSession({{call_id:"pcm-successor",state:"in_call",
 assert.equal(pcmSuccessor._audioSession.captureNode.options.processorOptions.format.sampleRate,48000);
 assert.equal(pcmSuccessor._audioSession.playbackNode.options.processorOptions.format.sampleRate,48000);
 assert.equal(pcmSuccessor._lastSessionPayload.selected_tx_format,"48000:s16le:1:20");
+// A delayed account snapshot may still describe the held consultation.
+// The active audio WebSocket owns its committed duplex direction too.
+await pcmSuccessor.reconcileSession({{call_id:"pcm-successor",state:"in_call",
+  audio_direction:"recvonly"}});
+assert.equal(pcmSuccessor._audioDirection,"sendrecv");
+assert.ok(pcmSuccessor._audioSession.captureNode);
+assert.ok(pcmSuccessor._audioSession.mediaStream);
 await pcmSuccessor.close("test");
 
 // Incoming codec/rate changes must never become the microphone TX contract.
@@ -2143,11 +2156,15 @@ const {voipStackEngine:engine}=await import(pathToFileURL(ENGINE));
 let calls=0,resumed=[];
 const proof={previous_call_id:'old-consultation',endpoint_id:'casa'};
 const state={endpoint_id:'casa',device_id:'browser-casa',call_id:'new-dialog',state:'in_call',can_attach_media:true,media_handoff:proof};
+engine.rememberSoftphoneState(state);
 let authorized={...state,media_owner:'self'};
 engine._hass={callWS:async request=>{calls++;assert.equal(request.media_client_id,engine.mediaClientId);return authorized;}};
 engine.resumeSession=async (...args)=>resumed.push(args);
 assert.equal(await engine._adoptSoftphoneReplacement(state),false);
 assert.equal(calls,0,'A spectator has no predecessor claim and cannot request adoption');
+assert.equal(engine.tryRecoverSoftphoneSession('new-dialog','casa'),false,
+  'Generic recovery must not give an observer a replacement claim');
+engine._lastSoftphoneStates.clear();
 engine.claimSoftphoneSession('old-consultation','casa');
 assert.equal(await engine._adoptSoftphoneReplacement({...state,media_handoff:{...proof,endpoint_id:'foreign'}}),false);
 assert.equal(calls,0);
@@ -2161,6 +2178,23 @@ assert.equal(await engine._adoptSoftphoneReplacement(state),true);
 assert.equal(engine.softphoneCallIdFor('casa'),'new-dialog');
 assert.equal(resumed.length,1);assert.equal(resumed[0][2].call_id,'new-dialog');
 assert.equal(await engine._adoptSoftphoneReplacement(state),false,'A replay cannot adopt twice');
+engine.releaseSoftphoneSession('new-dialog','casa');
+// A mounted card can recover the successor while the engine awaits its
+// backend guard. It must not strand the authorized replacement without media.
+const mounted=()=>{};
+engine._softphoneSubscribers.add(mounted);
+engine._softphoneSubscriberSelectors.set(mounted,{endpoint_id:'casa'});
+engine.rememberSoftphoneState(state);
+engine.claimSoftphoneSession('old-consultation','casa');
+let completeGuard;
+engine._hass.callWS=()=>new Promise(resolve=>{completeGuard=resolve;});
+const adopting=engine._adoptSoftphoneReplacement(state);
+assert.equal(typeof completeGuard,'function');
+assert.equal(engine.tryRecoverSoftphoneSession('new-dialog','casa'),true);
+completeGuard({...state,media_owner:'self'});
+assert.equal(await adopting,true);
+assert.equal(resumed.length,2);
+assert.equal(resumed[1][2].call_id,'new-dialog');
 engine.releaseSoftphoneSession('new-dialog','casa');
 '''.replace("ENGINE", json.dumps(str(ENGINE)))
     completed = subprocess.run(["node", "--input-type=module", "-e", script], cwd=ROOT,

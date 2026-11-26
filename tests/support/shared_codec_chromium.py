@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -39,7 +40,9 @@ with sync_playwright() as runner:
         "console",
         lambda message: (
             print("BROWSER " + message.text, file=sys.stderr, flush=True)
-            if message.type in {"warning", "error"}
+            if message.type in {"warning", "error"} or (
+                os.environ.get("VOIP_TEST_ENGINE_TRACE") and message.text.startswith("ENGINE_TRACE")
+            )
             else None
         ),
     )
@@ -105,6 +108,36 @@ with sync_playwright() as runner:
         }""",
             user_id,
         )
+        if os.environ.get("VOIP_TEST_ENGINE_TRACE"):
+            page.evaluate("""() => {
+              let count = 0;
+              const snapshot = () => ({call: engine._callId,
+                claim: engine.softphoneCallIdFor('casa'), attach: engine._sessionAttachKey?.callKey,
+                cleanup: !!engine._mediaCleanupPromise, socket: engine._ws?.readyState,
+                direction:engine._audioDirection, mode:engine._audioMode,
+                capture:!!engine._audioSession.captureNode, stream:!!engine._audioSession.mediaStream});
+              for (const name of ['_adoptSoftphoneReplacement','resumeSession','_resumeSessionLocked',
+                  '_setupAudioOrAbort','_setupAudio','_reconcileAudioMedia',
+                  '_connect','close','_mediaAttachState','_waitForMediaCleanup']) {
+                const original = engine[name];
+                engine[name] = function(...args) {
+                  const id = ++count;
+                  if (id < 300) console.log('ENGINE_TRACE', JSON.stringify({id,name,event:'enter',
+                    wanted:args.find(x=>x && typeof x==='object' && x.call_id)?.call_id,
+                    inputDirection:args.find(x=>x && typeof x==='object' && x.audio_direction)?.audio_direction,
+                    inputMode:args.find(x=>x && typeof x==='object' && x.audio_mode)?.audio_mode,...snapshot()}));
+                  const result = original.apply(this,args);
+                  if (result?.then) result.then(value => {
+                    if (id < 300) console.log('ENGINE_TRACE',JSON.stringify({id,name,event:'done',
+                      resultCall:value?.call_id,resultState:value?.state,owner:value?.media_owner,...snapshot()}));
+                  }, error => {
+                    if (id < 300) console.log('ENGINE_TRACE',JSON.stringify({id,name,event:'error',
+                      error:error?.message,...snapshot()}));
+                  });
+                  return result;
+                };
+              }
+            }""")
         print(json.dumps({"result": "ready"}), flush=True)
         for line in sys.stdin:
             command = json.loads(line)

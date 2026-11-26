@@ -895,6 +895,21 @@ class VoipStackEngine extends EventTarget {
       this._endpointId === endpoint &&
       this._callId === wanted
     ) return true;
+    const snapshot = this._lastSoftphoneStates.get(`endpoint:${endpoint}`);
+    if (String(snapshot?.call_id || "") === wanted && snapshot?.media_handoff) {
+      const predecessor = String(snapshot.media_handoff.previous_call_id || "");
+      if (!predecessor || snapshot.media_handoff.endpoint_id !== endpoint ||
+          (!this.ownsSoftphoneSession(predecessor, endpoint) &&
+            !this.ownsSoftphoneSession(wanted, endpoint))) return false;
+    }
+    const predecessor = String(snapshot?.media_handoff?.previous_call_id || "");
+    const retainedClaim = this.ownsSoftphoneSession(wanted, endpoint) ||
+      (predecessor && snapshot.media_handoff.endpoint_id === endpoint &&
+        this.ownsSoftphoneSession(predecessor, endpoint));
+    const backendOwner = String(snapshot?.call_id || "") === wanted &&
+      snapshot.media_owner === "self" && snapshot.can_attach_media !== false &&
+      hasAttachableCallMedia(snapshot);
+    if (!retainedClaim && !backendOwner) return false;
     const attemptKey = `${endpoint}|${wanted}`;
     if (this._mediaRecoveryAttempts.has(attemptKey)) {
       return this.ownsSoftphoneSession(wanted, endpoint);
@@ -1417,11 +1432,13 @@ class VoipStackEngine extends EventTarget {
     const endpointId = String(state?.endpoint_id || "");
     const callId = String(state?.call_id || "");
     const previousCallId = String(state?.media_handoff?.previous_call_id || "");
+    const ownedPredecessor = this.ownsSoftphoneSession(previousCallId, endpointId);
     const current = () => !this._pageHiding && endpointId && callId && previousCallId &&
       callId !== previousCallId && state.media_handoff?.endpoint_id === endpointId &&
       isEstablishedCallState(state.state) && state.can_attach_media === true &&
-      this.ownsSoftphoneSession(previousCallId, endpointId);
-    if (!current()) return false;
+      (this.ownsSoftphoneSession(previousCallId, endpointId) ||
+        this.ownsSoftphoneSession(callId, endpointId));
+    if (!ownedPredecessor || !current()) return false;
     // Recheck the existing backend client/user guard before moving a local
     // claim. Account observers receive the same state, never the media lease.
     const authorized = await this._mediaAttachState(callId, endpointId);
@@ -2275,16 +2292,11 @@ class VoipStackEngine extends EventTarget {
       !callId ||
       this._callId !== callId
     ) return;
-    if (statePayload.audio_direction) {
-      // SIP projections can describe the codec's decoded PCM. Only this
-      // WebSocket's negotiation may configure its capture/playback worklets.
-      const control = { ...statePayload };
-      for (const key of ["tx_format", "rx_format", "selected_tx_format", "selected_rx_format"]) {
-        delete control[key];
-      }
-      this._lastSessionPayload = { ...(this._lastSessionPayload || {}), ...control };
-      if (this._audioSession.ready) await this._reconcileAudioMedia(control);
-      else this._audioDirection = normaliseAudioDirection(control.audio_direction);
+    if (statePayload.audio_direction && !this._audioSession.ready) {
+      // Account snapshots may lag the replaced consultation. Once attached,
+      // this audio WebSocket owns both PCM formats and media direction;
+      // its media_update messages also carry hold and resume changes.
+      this._audioDirection = normaliseAudioDirection(statePayload.audio_direction);
     }
     await this._ensureVideo(statePayload);
   }
