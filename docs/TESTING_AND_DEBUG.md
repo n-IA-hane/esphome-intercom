@@ -170,10 +170,11 @@ board build and an explicitly authorized hardware session are separate gates.
 Live device qualification is a separate, explicitly started operation. CI runs
 software, HA-runtime and documentation checks on pushes and pull requests, but
 does not call your physical phones or flash devices. The local qualification
-tools resolve the current commits of `esphome-intercom`,
-`esphome-voip-stack`, `esphome-audio-stack` and
-`esphome-runtime-controller`, record them in `candidate-lock.json`, and use
-local component checkouts for candidate firmware builds.
+tools resolve the repositories and phone-profile catalog declared in
+`qualification/sources.json`, record their exact commits and toolchain in
+`candidate-lock.json`, and use the coordinated component checkouts for candidate
+firmware builds. The lock includes Intercom, VoIP, Audio Stack, Runtime
+Controller, camera, renderer, screenshot and phone profiles.
 
 The complete plan includes `software-full`, the real Home Assistant runtime,
 coverage, mutation, isolated peers, a real browser, firmware compilation and
@@ -198,41 +199,78 @@ Some tests deliberately lock down source-level routing contracts; they catch
 accidental branch removal but do not prove a real SIP transaction, browser
 codec or RTP path. Release evidence must include the real matrix below.
 
-The peer-live runner combines isolated peer groups with a final Home/Wildix
-witness. It requires operational authorization for the actual targets: it
-changes and restores DND and auto-answer on the selected real HA browser phone,
-deploys this checkout's component and restarts Home Assistant, then places the
-real Wildix-to-ESP routing call. Verify idle endpoints and the intended targets
-before execution.
+The peer-live wrapper combines the existing HA lab matrix, isolated SIP peer
+groups and direct called-number checks through already configured Fusion or
+HA-peer trunks. It does not deploy the integration, restart HA, create a trunk
+or substitute another provider. Its HA lab policy cases temporarily change and
+restore DND or Auto Answer on the explicitly selected policy phone. Verify the
+existing lab package, idle endpoints and authorization for the actual routes
+before starting.
 
-Supply `HOME_HA_URL`, `HOME_HA_AUTH_FILE` (a private auth-file path),
-`WILDIX_CONFIG` (a private peer-config path) and `P4_ROUTE_NAME`, as well as the
-HA test interpreter and explicit policy phone. The deployment's `HA_HOST`
-selects its SSH target separately from `HOME_HA_URL`; it defaults to `hass`.
-Review `HA_COMPONENT_DIR`, `HA_SERVICE` and backup policy for that target.
-After supplying those prerequisites, choose the phone as argument 2 or through
-the runner variable:
+Set and export `HA_PYTHON` for the installed native HA test interpreter and
+`VOIP_QUALIFICATION_POLICY_ENDPOINT_ID` to the actual lab policy endpoint.
+Set and export `TRUNK_DID_PROFILE` and `FUSION_DID_PROFILE` for private JSON files
+describing
+existing routes. The first profile supplies both direct called-number cases
+through `fusion` or `ha_peer`; the second must describe the configured
+Fusion-to-ESP route. Keep credentials, peer configuration and SIP logs private.
+After those variables identify the real configured resources, run:
 
 ```bash
-HA_PYTHON=/path/to/ha/.venv/bin/python \
-  ./scripts/run_peer_live_qualification.sh evidence/results <endpoint_id>
-
-VOIP_QUALIFICATION_POLICY_ENDPOINT_ID=<endpoint_id> \
-HA_PYTHON=/path/to/ha/.venv/bin/python \
-  ./scripts/run_peer_live_qualification.sh evidence/results
+./scripts/run_peer_live_qualification.sh "$EVIDENCE_DIR" \
+  "$VOIP_QUALIFICATION_POLICY_ENDPOINT_ID"
 ```
 
-The command fails before testing when the phone selection is absent. It never
-assumes the historical `default` endpoint. Other required live variables are
-checked after the isolated groups, not before the whole script. For isolated
-peer tests use `./scripts/test_suite.sh peer`; for an isolated HA candidate use
-the existing [`with_ha_lab_candidate.sh`](../scripts/with_ha_lab_candidate.sh)
-wrapper and applicable lab runner. This combined script has no lab-only switch.
+Choose a private task directory for `EVIDENCE_DIR`. The policy endpoint can
+also come from the environment when argument 2 is omitted; there is no assumed
+`default` phone. Missing interpreter, endpoint or route-profile variables fail
+before testing. The
+wrapper still requires its existing HA lab and peer prerequisites; it does not
+create them. For isolated peers only, use `./scripts/test_suite.sh peer`.
 
-The same peer-live command also executes the two explicit-extension precedence
-cases from `tools/inbound_routing_qualification.py`. Their separate JSON
-artifact must contain both exact scenario IDs. A generic green SIP matrix or
-only one extension case cannot satisfy the applicable routing contract.
+For the direct called-number runner, the private profile declares `route_kind`,
+`ha_url`, `auth_file`, `caller_config`, `entry_id`, `subentry_id`, `trunk_id` and
+its `cases`. Every case names an existing `dial_target`, expected
+`called_number` and `callee`. Its `wire` section points to independent
+`caller_trace` and `callee_trace` logs, with the expected
+`caller_request_uri` and `callee_request_uri`. Do not copy real profile values
+into an issue or public example. The runner reads the existing authenticated
+caller configuration; it does not replace it.
+
+`scripts/run_trunk_did_lab.py --help` documents the CLI. The wrapper requires
+these exact scenario IDs:
+
+- `trunk_primary_called_number_routes_directly`
+- `trunk_secondary_called_number_routes_directly`
+- `fusion_trunk_called_number_routes_to_esp`
+
+The runner checks the deployed native trunk form without submitting its final
+step, requires the retired menu fields to be absent and legacy automation
+routing to be disabled for these direct cases, then dials without post-answer
+digits. It observes the selected callee ringing, the actual trunk and normalized
+called number, current INVITEs from both independent peer logs, and cleanup.
+Missing routes or wire observations fail closed. These destination-selection
+checks do not establish answered media, speech or video. Automation-contact
+menus and established-call DTMF have their own tests.
+
+### Full qualification tooling limits
+
+The full plan still requires its selected software, browser, peer, firmware and
+physical-device scenarios. Current automated HIL validation accepts a bound
+transport measurement only for `esp-to-ha-answer-hangup`. The other selected
+S3/P4 scenarios lack measured validators and fail closed; the maintained device
+actors also do not yet produce the receipt expected by the HIL wrapper. Real
+captures and device observations remain useful evidence, but cannot be
+relabeled as a passing full qualification manifest.
+
+The ordinary CI workflow publishes source, test and build artifacts. It does
+not create the candidate lock, full qualification results or qualified package
+manifest. Promotion still requires clean coordinated sources, genuine results
+for the complete plan, `verify_qualification.py` acceptance and
+`verify_release_candidate.py` acceptance for the exact commit, CI run and source
+graph. Do not weaken the plan or synthesize passing receipts to bypass missing
+producers or validators. Until those gaps are closed, report the full
+qualification as incomplete even when a bounded live test or CI job passes.
 
 Important groups:
 
@@ -394,32 +432,28 @@ Wait for `READY_FOR_VIDEO_CALL`, then start a deterministic audio/video caller:
 See [SIP Video](SIP_VIDEO.md) for an outgoing probe,
 the current codec profile and deliberate limitations.
 
-### P4 to trunk media gate with PCAP
+### P4 to trunk media evidence with PCAP
 
 For changes to RTP framing, pacing, codec conversion, trunk bridging or
-audio-to-video re-INVITE, run the physical P4 against a real Wildix endpoint
-and collect the packet capture from the HA host:
+an audio-to-video re-INVITE, exercise the physical P4 through the actual
+configured Fusion or HA-peer route and preserve the independent packet capture
+from the existing HA service. The direct-DID runner above checks routing, not
+this media workload.
 
-```bash
-out="test_captures/p4-wildix-$(date -u +%Y%m%dT%H%M%SZ)"
-./scripts/run_p4_wildix_pcap_gate.sh "$out" --audio-only
-
-out="test_captures/p4-wildix-video-$(date -u +%Y%m%dT%H%M%SZ)"
-./scripts/run_p4_wildix_pcap_gate.sh "$out"
-```
-
-The first command qualifies bidirectional audio without renegotiation. The
-second starts with audio and adds bidirectional video through re-INVITE. The
-gate fails unless the call runner succeeds, the capture is readable, at least
-four RTP streams are observed and every audio stream has zero sequence loss.
+Record the exact codec, both media directions, answer and hangup, readable
+captures and final resource baseline. For an audio-to-video re-INVITE, retain
+both the initial audio interval and the later video interval, with independent
+decoded-video and presentation evidence. A packet capture alone does not prove
+speech or panel presentation. A bounded zero-loss audio gate requires every
+selected audio stream to have zero sequence loss; record failures as failures.
 Audio streams must also remain within 25 percent of the RTP cadence declared
 by their SDP clock and timestamp progression. Video sequence gaps are reported
 but are not a default failure across direction-changing re-INVITEs, because RTP
 produced while a destination leg is inactive is intentionally not forwarded.
 Use `tools/rtp_pcap_evidence.py --max-video-loss N` for a call interval whose
-video direction is continuously active. The gate stores
-`summary.json`, `ha-full.pcap`, `capinfos.txt`,
-`tcpdump.log` and `rtp-evidence.json` under the selected directory.
+video direction is continuously active. Preserve the call summary, raw capture,
+capture metadata and RTP report together in the selected private evidence
+directory.
 
 PCAP is required for tests whose oracle is SIP transaction order, RTP
 direction, sequence continuity, timestamp cadence or packet loss. It is not a
@@ -444,12 +478,13 @@ Exercise all public services with temporary data:
   occurrence;
 - `route` against an advanced forced route request;
 - `set_deadline` and `cancel_deadline` with current and stale call revisions;
-- `purge_devices`, verifying that HA rejects it without removing any Device.
+- verify that the retired `purge_devices` action is not registered and no
+  ESPHome-owned Device Registry entry is removed.
 
 Always restore:
 
 - HA softphone extension and group settings;
-- DND off;
+- the original DND and Auto Answer settings;
 - manual phonebook contacts;
 - temporary SIP accounts removed;
 - no pending HA softphone call.

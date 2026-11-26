@@ -106,6 +106,10 @@ resume it afterward when enabled and ready.
 
 _P4 FULL interface demo: shared contacts, available, ringing, in call and on hold._
 
+![Real ESP32-S3 phone showing its shared contact directory](docs/images/ws3-contacts-synchronized.jpg)
+
+_The shared contact directory on a real ESP32-S3 phone._
+
 ### An assistant with a face, and sometimes an attitude
 
 Display profiles can use animated avatars and separate listening, thinking,
