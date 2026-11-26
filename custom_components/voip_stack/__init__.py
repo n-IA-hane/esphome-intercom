@@ -240,6 +240,9 @@ async def async_migrate_entry(
         from .const import CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES
         data.setdefault(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=5)
+    if config_entry.version == 7 and config_entry.minor_version < 6:
+        from .trunk_config import migrate_trunk_menus
+        migrate_trunk_menus(hass, config_entry)
     return True
 
 

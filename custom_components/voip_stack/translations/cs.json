@@ -30,7 +30,6 @@
           "media_capture": "Explicitně zaznamenává zvuk soukromých hovorů: až 15 sekund pro každý směr HA-softphonu a 8 sekund pro každou větev přenosu. Data se ukládají jako WAV/JSON do ~/.cache/voip_stack_debug (režim 0700) a promazávají se na limit 24 souborů / 64 MiB. Ponechte zakázané, pokud zrovna neshromažďujete diagnostický vzorek.",
           "experimental_sip_video": "Povolí volitelné video pro kompatibilní zařízení a trasy. H.264, VP8 a JPEG v prohlížeči vyžadují zabezpečený kontext a kompatibilní prohlížeč. U ESP závisí podpora na nastaveném zařízení a profilu kodeku: podporované profily S3 s displejem přijímají JPEG; profily P4 mohou používat JPEG nebo H.264. Profily pouze pro zvuk a pouze pro kameru si zachovávají svá omezení.",
           "sip_registrar_enabled": "Přijímat REGISTER z lokálních SIP koncových bodů, jako jsou VoIP telefony, Zoiper, Linphone nebo baresip, pomocí účtů spravovaných službami VoIP Stack.",
-          "trunk_enabled": "Zobrazit nastavení trunku poskytovatele/ústředny. Pokud je tato možnost zakázána, nespustí se registrace trunku, externí trasa ani kolektor DTMF.",
           "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
@@ -77,10 +76,7 @@
           "trunk_register_expires": "Platnost REGISTER vyprší",
           "trunk_outbound_proxy": "Odchozí proxy",
           "trunk_inbound_default_target": "Záložní cíl",
-          "trunk_inbound_mode": "Zpracování příchozích hovorů",
           "automation_routing_enabled": "Povolit automatizacím vybrat příchozí cíl",
-          "trunk_dtmf_timeout_ms": "Časový limit DTMF (sekundy)",
-          "trunk_dtmf_terminator": "Terminátor DTMF",
           "trunk_allowed_ips": "Povolené příchozí IP adresy",
           "trunk_audio_codecs": "Audio codec preference",
           "trunk_video_codecs": "Video codec preference",
@@ -108,11 +104,6 @@
           "trunk_password": "Heslo pro Digest autentizaci.",
           "trunk_register_expires": "Doba platnosti registrace (REGISTER) v sekundách.",
           "trunk_outbound_proxy": "Volitelný proxy server (hostname nebo sip:host:port) použitý jako další skok (next hop) pro signalizaci.",
-          "trunk_inbound_default_target": "Vyberte přijímající telefon podle názvu nebo zadejte skupinu, klapku či kontakt typu Automation. Okamžité směrování použije tento cíl, pokud volaný cíl není v telefonním seznamu. Volba pomocí DTMF a automatizace směrování mohou vybrat jiný cíl.",
-          "trunk_inbound_mode": "Okamžité směrování přeskočí sběr číslic. Sběr klapky pomocí DTMF nejprve zvedne větev trunku (pre-answer) a umožní zadáním číslic vybrat klapku z telefonního seznamu.",
-          "automation_routing_enabled": "Před použitím záložního cíle publikovat krátký požadavek na směrování, na který může odpovědět automatizace. Explicitně zadané číslice DTMF mají vždy prioritu.",
-          "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
-          "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
           "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
           "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
@@ -636,10 +627,7 @@
             "trunk_register_expires": "Platnost REGISTER vyprší",
             "trunk_outbound_proxy": "Odchozí proxy",
             "trunk_inbound_default_target": "Záložní cíl",
-            "trunk_inbound_mode": "Zpracování příchozích hovorů",
             "automation_routing_enabled": "Povolit automatizacím vybrat příchozí cíl",
-            "trunk_dtmf_timeout_ms": "Časový limit DTMF (sekundy)",
-            "trunk_dtmf_terminator": "Terminátor DTMF",
             "trunk_allowed_ips": "Povolené příchozí IP adresy",
             "trunk_audio_codecs": "Audio codec preference",
             "trunk_video_codecs": "Video codec preference",
@@ -667,11 +655,6 @@
             "trunk_password": "Heslo pro Digest autentizaci.",
             "trunk_register_expires": "Doba platnosti registrace (REGISTER) v sekundách.",
             "trunk_outbound_proxy": "Volitelný proxy server (hostname nebo sip:host:port) použitý jako další skok (next hop) pro signalizaci.",
-            "trunk_inbound_default_target": "Vyberte přijímající telefon podle názvu nebo zadejte skupinu, klapku či kontakt typu Automation. Okamžité směrování použije tento cíl, pokud volaný cíl není v telefonním seznamu. Volba pomocí DTMF a automatizace směrování mohou vybrat jiný cíl.",
-            "trunk_inbound_mode": "Okamžité směrování přeskočí sběr číslic. Sběr klapky pomocí DTMF nejprve zvedne větev trunku (pre-answer) a umožní zadáním číslic vybrat klapku z telefonního seznamu.",
-            "automation_routing_enabled": "Před použitím záložního cíle publikovat krátký požadavek na směrování, na který může odpovědět automatizace. Explicitně zadané číslice DTMF mají vždy prioritu.",
-            "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
-            "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
             "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
             "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
             "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
@@ -998,12 +981,6 @@
     }
   },
   "selector": {
-    "trunk_inbound_mode": {
-      "options": {
-        "direct": "Směrovat okamžitě",
-        "dtmf": "Sbírat klapku pomocí DTMF"
-      }
-    },
     "call_ingress": {
       "options": {
         "extension": "Místní hovor",

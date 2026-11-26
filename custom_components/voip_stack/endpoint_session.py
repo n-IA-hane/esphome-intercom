@@ -268,7 +268,6 @@ class CallArtifacts:
     video_parameter_sets: tuple[bytes, ...] | None = None
     forward_claim: bool = False
     answer_commit: bool = False
-    trunk_info_queue: asyncio.Queue[Any] | None = None
     trunk_closed: bool = False
     delayed_offer_ports: Any | None = None
 
@@ -295,7 +294,6 @@ class CallArtifacts:
         self.video_parameter_sets = None
         self.forward_claim = False
         self.answer_commit = False
-        self.trunk_info_queue = None
         self.trunk_closed = True
         delayed_offer_ports = self.delayed_offer_ports
         self.delayed_offer_ports = None

@@ -81,7 +81,7 @@ async def test_home_and_replacement_esp_distinguish_native_ownership_from_reused
             assert entities.async_get(state.entity_id).unique_id == "phone_endpoint_default_call_state"
             return
         assert result is True
-        assert lab.entry.version == 7 and lab.entry.minor_version == 5
+        assert lab.entry.version == 7 and lab.entry.minor_version == 6
         assert (home.subentry_id, device.id, entities.async_get(state.entity_id).id, state.entity_id) == original
         assert devices.async_get(device.id).identifiers == {("voip_stack", "phone_endpoint:Home")}
         assert entities.async_get(state.entity_id).unique_id == "phone_endpoint_Home_call_state"

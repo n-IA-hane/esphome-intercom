@@ -22,10 +22,6 @@ from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
 from .automation_routing import has_native_route_window
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
-    CONF_TRUNK_DTMF_ENABLED,
-    CONF_TRUNK_DTMF_TIMEOUT_MS,
-    CONF_TRUNK_INBOUND_MODE,
-    TRUNK_INBOUND_MODE_DTMF,
 )
 from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_routing import (
@@ -46,7 +42,6 @@ from .inbound_routing.targets import (
     resolve_inbound_target,
     validate_target_endpoint,
 )
-from .inbound_routing.trunk import prepare_trunk_preanswer
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .pbx_trace import trace_call
 from .router import RouteAction, RouteDecision
@@ -81,7 +76,6 @@ class InviteRuntime:
     enable_reused_sip_tcp_connection: Callable[..., Any]
     ring_conference_members: Callable[..., Any]
     run_ring_group_call: Callable[..., Any]
-    run_trunk_inbound_route_guarded: Callable[..., Any]
     send_final_response: Callable[..., Any]
     sip_uri_transport: Callable[..., Any]
     start_local_assist_bridge: Callable[..., Any]
@@ -121,7 +115,6 @@ async def route_invite(
         registered_entries = _registered_roster_entries(hass)
     roster_entries = _roster_from_peers(hass, peers, registered_entries)
     trunk_invite = _is_trunk_invite(invite)
-    trunk_direct_preprocessed = False
     direct_fallback_target = ""
     registry = _call_registry(hass)
     endpoint_registry = endpoint_directory(hass)
@@ -155,24 +148,16 @@ async def route_invite(
         invite = replace(invite, outbound_trunk_id=decision.trunk_id)
     if trunk_invite:
         trunk_cfg = _get_inbound_trunk_config(hass)
-        dtmf_timeout_ms = max(0, int(trunk_cfg.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0))
-        dtmf_preanswer = bool(
-            trunk_cfg.get(CONF_TRUNK_INBOUND_MODE) == TRUNK_INBOUND_MODE_DTMF
-            and trunk_cfg.get(CONF_TRUNK_DTMF_ENABLED)
-            and dtmf_timeout_ms > 0
-        )
-        if not dtmf_preanswer:
-            from .trunk_routing import trunk_default_target
+        from .trunk_routing import trunk_default_target
 
-            default_target = trunk_default_target(trunk_cfg)
-            # Keep the original called address for routing automations. Only an
-            # unmatched destination uses the configured inbound fallback.
-            if (default_target and decision.entry is None and not decision.action.is_local_application
-                    and not _is_ha_target(invite.called_number)):
-                direct_fallback_target = default_target
-                selected_target = runtime.ha_peer_name(hass) if _is_ha_target(default_target) else default_target
-                decision = _ha_router_decision(selected_target, roster_entries)
-            trunk_direct_preprocessed = True
+        default_target = trunk_default_target(trunk_cfg)
+        # Keep the original called address for routing automations. Only an
+        # unmatched destination uses the configured inbound fallback.
+        if (default_target and decision.entry is None and not decision.action.is_local_application
+                and not _is_ha_target(invite.called_number)):
+            direct_fallback_target = default_target
+            selected_target = runtime.ha_peer_name(hass) if _is_ha_target(default_target) else default_target
+            decision = _ha_router_decision(selected_target, roster_entries)
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
 
@@ -205,12 +190,11 @@ async def route_invite(
     if trunk_invite:
         trace_call(
             _LOGGER, invite.call_id,
-            "Trunk %s received number %s, normalized to %s from %s; routing mode=%s",
+            "Trunk %s received number %s, normalized to %s from %s; routing mode=direct",
             trunk_cfg.get("name") or invite.trunk_id or "default",
             getattr(invite, "called_number_raw", "") or "not available",
             getattr(invite, "called_number", "") or "not available",
             getattr(invite, "called_number_source", "") or "none",
-            "direct" if trunk_direct_preprocessed else "DTMF collection",
         )
         if direct_fallback_target:
             trace_call(
@@ -218,16 +202,6 @@ async def route_invite(
                 "Trunk destination %s has no phonebook match; configured fallback is %s",
                 invite.routing_target, direct_fallback_target,
             )
-    if trunk_invite:
-        trunk_result = prepare_trunk_preanswer(
-            runtime=runtime,
-            invite=invite,
-            trunk_config=_get_inbound_trunk_config(hass),
-            direct_route_preprocessed=trunk_direct_preprocessed,
-            registry=registry,
-        )
-        if trunk_result is not None:
-            return trunk_result
     native_override = has_native_route_window(hass, invite, decision, trunk_invite=trunk_invite)
     automation_route = await request_route_override(
         runtime=runtime,

@@ -22,13 +22,11 @@ pytestmark = pytest.mark.ha
 
 @pytest.fixture(autouse=True)
 async def route_outcome_runtime(lab, monkeypatch):
-    from custom_components.voip_stack import trunk_dtmf
     from custom_components.voip_stack.ha_bindings import HaCardBindings
     from custom_components.voip_stack.store import config_entry
 
     bindings = HaCardBindings(lab.hass, config_entry(lab.hass), lab.runtime, lambda _ids: None)
     lab.runtime.ha_bindings = bindings
-    monkeypatch.setattr(trunk_dtmf, "_FIRST_DIGIT_TIMEOUT", .1)
     try:
         yield bindings
     finally:
@@ -289,7 +287,7 @@ async def test_selected_destination_preserves_peer_failure(
     await initial_ha_account(lab)
     target = lab.phones[0]
     port = target.transport.get_extra_info("sockname")[1]
-    destination = f"sip:outside-directory@127.0.0.1:{port}"
+    destination = f"sip:outside-directory@127.0.0.1:{port};transport=udp"
     assert not any(row.sip_uri == destination for row in lab.roster)
     # The independent peer sends the actual final response over its UDP socket.
     # The inbound provider leg independently exercises both UDP and TCP.

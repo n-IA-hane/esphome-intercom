@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from custom_components.voip_stack import sip_runtime, trunk_inbound_router
+from custom_components.voip_stack import sip_runtime
 from custom_components.voip_stack.core import sdp, sip
 from custom_components.voip_stack.core.codec_policy import CodecPolicy
 from custom_components.voip_stack.core.sdp import RtpPcmFormat
@@ -122,14 +122,6 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         registry.current_generation.return_value = 1
         ports = SimpleNamespace(ports=(44000, 44002), bind_audio_sockets=Mock(), release=Mock())
         hass = SimpleNamespace()
-        monkeypatch.setattr(trunk_inbound_router, "call_runtime_artifacts", lambda _: SimpleNamespace(artifacts_for=lambda _: artifacts))
-        monkeypatch.setattr(trunk_inbound_router, "call_registry", lambda _: registry)
-        monkeypatch.setattr(trunk_inbound_router, "trunk_config", lambda *_args, **_kwargs: {})
-        monkeypatch.setattr(trunk_inbound_router, "async_build_peer_snapshot", AsyncMock(return_value=[]))
-        monkeypatch.setattr(trunk_inbound_router, "registered_roster_entries", lambda _: [entry])
-        monkeypatch.setattr(trunk_inbound_router, "roster_from_peers", lambda *_: [entry])
-        monkeypatch.setattr(trunk_inbound_router, "route_inbound_trunk", lambda *_args, **_kwargs: decision)
-        monkeypatch.setattr(trunk_inbound_router, "trunk_default_target", lambda _: "phone")
         monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: ports)
         route_resolver = SimpleNamespace(route=lambda *_: decision, is_ha_target=lambda _: False,
             is_local_listener_uri=lambda _: False)
@@ -137,7 +129,7 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
             ha_peer_name=lambda _: "HA", route_resolver=route_resolver,
             sip_uri_transport=sip_runtime.uri_transport,
             enable_reused_sip_tcp_connection=sip_runtime.enable_reused_signaling_flow)
-        module = trunk_inbound_router if factory == "preanswered" else bridge
+        module = bridge
         real_profile = bridge.bridge_audio_profile
 
         def profile(*args, **kwargs):
@@ -165,13 +157,9 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
 
         monkeypatch.setattr(module, "SipCallClient", client_factory)
         with pytest.raises(_FactoryCompleted):
-            if factory == "preanswered":
-                runtime.ha_peer_name = "HA"
-                await module.async_route_trunk_invite(runtime, invite, bridge_ports=ports)
-            else:
-                await module.route_sip_bridge(runtime=runtime, invite=invite, decision=decision, peers=[],
-                    trunk_config={}, bridge_to_trunk=False, source_endpoint=None, target_endpoint=None,
-                    resolved_callee="phone", trunk_invite=False, registry=registry)
+            await module.route_sip_bridge(runtime=runtime, invite=invite, decision=decision, peers=[],
+                trunk_config={}, bridge_to_trunk=False, source_endpoint=None, target_endpoint=None,
+                resolved_callee="phone", trunk_invite=False, registry=registry)
         await asyncio.sleep(0)
         observed.update(peers=peers, contact=contact, clients=clients)
         if outbound:
@@ -211,18 +199,15 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         await asyncio.sleep(0)
 
 
-@pytest.mark.parametrize("outbound", [False, True], ids=["ordinary-udp", "authenticated-flow"])
-async def test_preanswered_factory_pins_wire_flow_and_preserves_ack_uri_route(monkeypatch, socket_enabled, outbound):
-    await _exercise_factory(monkeypatch, factory="preanswered", outbound=outbound)
 
 
-@pytest.mark.parametrize("factory", ["bridge", "preanswered"])
+@pytest.mark.parametrize("factory", ["bridge"])
 @pytest.mark.parametrize("advisory", [False, True, None], ids=["configured-capabilities", "cached-options", "no-cache"])
 async def test_inbound_factories_keep_common_audio_with_advisory_metadata(monkeypatch, socket_enabled, factory, advisory):
     await _exercise_factory(monkeypatch, factory=factory, advisory=advisory, encoding="PCMU")
 
 
-@pytest.mark.parametrize("factory", ["bridge", "preanswered"])
+@pytest.mark.parametrize("factory", ["bridge"])
 @pytest.mark.parametrize("allowed", [True, False], ids=["policy-permits-pcmu", "policy-l16-only"])
 async def test_inbound_factories_preserve_explicit_codec_policy(monkeypatch, socket_enabled, factory, allowed):
     policy = CodecPolicy(audio=("PCMU",) if allowed else ("L16",))

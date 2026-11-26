@@ -30,7 +30,6 @@
           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
           "experimental_sip_video": "Erlaubt optionales Video für kompatible Geräte und Verbindungen. H.264, VP8 und JPEG im Browser erfordern einen sicheren Kontext und einen kompatiblen Browser. Bei ESP hängt die Unterstützung vom konfigurierten Gerät und Codec-Profil ab: unterstützte S3-Profile mit Display empfangen JPEG; P4-Profile können JPEG oder H.264 verwenden. Reine Audio- und Kameraprofile behalten ihre jeweiligen Grenzen.",
           "sip_registrar_enabled": "Akzeptiert REGISTER von lokalen SIP-Endpunkten wie VoIP-Telefonen, Zoiper, Linphone oder baresip über Konten, die von VoIP Stack verwaltet werden.",
-          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet.",
           "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
@@ -77,10 +76,7 @@
           "trunk_register_expires": "REGISTER-Ablaufzeit",
           "trunk_outbound_proxy": "Ausgehender Proxy",
           "trunk_inbound_default_target": "Fallback-Ziel",
-          "trunk_inbound_mode": "Bearbeitung eingehender Anrufe",
           "automation_routing_enabled": "Erlauben Sie Automatisierungen, das eingehende Ziel auszuwählen",
-          "trunk_dtmf_timeout_ms": "DTMF-Timeout (Sekunden)",
-          "trunk_dtmf_terminator": "DTMF-Terminator",
           "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen",
           "trunk_audio_codecs": "Audio codec preference",
           "trunk_video_codecs": "Video codec preference",
@@ -108,11 +104,6 @@
           "trunk_password": "Digest-Authentifizierungskennwort.",
           "trunk_register_expires": "REGISTER-Ablauf in Sekunden.",
           "trunk_outbound_proxy": "Optionaler Proxy-Host oder sip:host:port, der als nächster Signalisierungs-Hop verwendet wird.",
-          "trunk_inbound_default_target": "Wähle das empfangende Telefon nach Namen oder gib eine Gruppe, Nebenstelle oder einen Automation-Kontakt ein. Die sofortige Weiterleitung verwendet dieses Ziel, wenn das angerufene Ziel nicht im Telefonbuch steht. DTMF-Auswahl und Automationen können ein anderes Ziel wählen.",
-          "trunk_inbound_mode": "Route überspringt sofort die Ziffernerfassung. Beim Sammeln der Nebenstelle mit DTMF wird zunächst die Amtsleitung beantwortet, und durch explizite Ziffern kann eine Telefonbuch-Nebenstelle ausgewählt werden.",
-          "automation_routing_enabled": "Veröffentlichen Sie vor der Verwendung des Fallback-Ziels eine kurze Routing-Anfrage, die möglicherweise von einer Automatisierung beantwortet wird. Explizite DTMF-Ziffern behalten immer Vorrang.",
-          "trunk_dtmf_timeout_ms": "Zeitüberschreitung zwischen Ziffern, die im DTMF-Modus verwendet wird. Die erste Ziffer darf 10 Sekunden lang sein. Der Standardwert beträgt 3 Sekunden, der Höchstwert 10 Sekunden.",
-          "trunk_dtmf_terminator": "Optionale Abschlussziffer, z. B. #. Leer bedeutet Zeitüberschreitung oder genaue Übereinstimmung mit der Telefonbucherweiterung.",
           "trunk_allowed_ips": "Jede erlaubte Quell-IP oder jedes CIDR-Netz einzeln eingeben. Diese können vom ausgehenden Server abweichen. Ohne Registrierung erforderlich.",
           "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
@@ -636,10 +627,7 @@
             "trunk_register_expires": "REGISTER-Ablaufzeit",
             "trunk_outbound_proxy": "Ausgehender Proxy",
             "trunk_inbound_default_target": "Fallback-Ziel",
-            "trunk_inbound_mode": "Bearbeitung eingehender Anrufe",
             "automation_routing_enabled": "Erlauben Sie Automatisierungen, das eingehende Ziel auszuwählen",
-            "trunk_dtmf_timeout_ms": "DTMF-Timeout (Sekunden)",
-            "trunk_dtmf_terminator": "DTMF-Terminator",
             "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen",
             "trunk_audio_codecs": "Audio codec preference",
             "trunk_video_codecs": "Video codec preference",
@@ -667,11 +655,6 @@
             "trunk_password": "Digest-Authentifizierungskennwort.",
             "trunk_register_expires": "REGISTER-Ablauf in Sekunden.",
             "trunk_outbound_proxy": "Optionaler Proxy-Host oder sip:host:port, der als nächster Signalisierungs-Hop verwendet wird.",
-            "trunk_inbound_default_target": "Wähle das empfangende Telefon nach Namen oder gib eine Gruppe, Nebenstelle oder einen Automation-Kontakt ein. Die sofortige Weiterleitung verwendet dieses Ziel, wenn das angerufene Ziel nicht im Telefonbuch steht. DTMF-Auswahl und Automationen können ein anderes Ziel wählen.",
-            "trunk_inbound_mode": "Route überspringt sofort die Ziffernerfassung. Beim Sammeln der Nebenstelle mit DTMF wird zunächst die Amtsleitung beantwortet, und durch explizite Ziffern kann eine Telefonbuch-Nebenstelle ausgewählt werden.",
-            "automation_routing_enabled": "Veröffentlichen Sie vor der Verwendung des Fallback-Ziels eine kurze Routing-Anfrage, die möglicherweise von einer Automatisierung beantwortet wird. Explizite DTMF-Ziffern behalten immer Vorrang.",
-            "trunk_dtmf_timeout_ms": "Zeitüberschreitung zwischen Ziffern, die im DTMF-Modus verwendet wird. Die erste Ziffer darf 10 Sekunden lang sein. Der Standardwert beträgt 3 Sekunden, der Höchstwert 10 Sekunden.",
-            "trunk_dtmf_terminator": "Optionale Abschlussziffer, z. B. #. Leer bedeutet Zeitüberschreitung oder genaue Übereinstimmung mit der Telefonbucherweiterung.",
             "trunk_allowed_ips": "Jede erlaubte Quell-IP oder jedes CIDR-Netz einzeln eingeben. Diese können vom ausgehenden Server abweichen. Ohne Registrierung erforderlich.",
             "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
             "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
@@ -998,12 +981,6 @@
     }
   },
   "selector": {
-    "trunk_inbound_mode": {
-      "options": {
-        "direct": "Sofort weiterleiten",
-        "dtmf": "Nebenstelle per DTMF erfassen"
-      }
-    },
     "call_ingress": {
       "options": {
         "extension": "Lokaler Anruf",

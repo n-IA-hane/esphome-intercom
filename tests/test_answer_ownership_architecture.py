@@ -13,7 +13,6 @@ APPLICATION_MODULES = (
     "forward_group.py",
     "ring_group_orchestrator.py",
     "softphone_answer.py",
-    "trunk_inbound_router.py",
     "inbound_routing/bridge.py",
 )
 

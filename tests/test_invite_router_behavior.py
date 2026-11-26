@@ -62,7 +62,6 @@ def _runtime() -> invite_router.InviteRuntime:
         enable_reused_sip_tcp_connection=Mock(),
         ring_conference_members=Mock(),
         run_ring_group_call=Mock(),
-        run_trunk_inbound_route_guarded=Mock(),
         send_final_response=Mock(),
         sip_uri_transport=Mock(),
         start_local_assist_bridge=Mock(),

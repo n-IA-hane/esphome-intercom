@@ -264,29 +264,3 @@ def test_sip_info_prefers_the_live_relay_callback(monkeypatch) -> None:
         hass, _InfoRequest("pickup", "6"), ("192.0.2.11", 5060), "udp",
     ))
     assert received == [("left", "5", "sip_info"), ("right", "6", "sip_info")]
-
-
-def test_sip_info_queues_trunk_digits_without_touching_the_relay(
-    monkeypatch,
-) -> None:
-    dtmf_events = _load_dtmf_events(monkeypatch)
-    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
-    hass = SimpleNamespace(
-        data={"voip_stack": {}},
-        artifacts=SimpleNamespace(
-            artifacts_for=lambda call_id: SimpleNamespace(
-                trunk_info_queue=queue if call_id == "call-2" else None
-            )
-        ),
-    )
-
-    asyncio.run(
-        dtmf_events.handle_sip_info(
-            hass,
-            _InfoRequest("call-2", "9"),
-            ("198.51.100.20", 5060),
-            "tcp",
-        )
-    )
-
-    assert queue.get_nowait() == "9"

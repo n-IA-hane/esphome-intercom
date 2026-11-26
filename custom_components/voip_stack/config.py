@@ -21,21 +21,15 @@ from .const import (
     CONF_TRUNK_ALLOWED_IPS,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_DOMAIN,
-    CONF_TRUNK_DTMF_ENABLED,
-    CONF_TRUNK_DTMF_TERMINATOR,
-    CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_ENABLED,
     CONF_TRUNK_EXPIRES,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
-    CONF_TRUNK_INBOUND_MODE,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
     CONF_TRUNK_PORT,
     CONF_TRUNK_SERVER,
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
-    TRUNK_INBOUND_MODE_DIRECT,
-    TRUNK_INBOUND_MODE_DTMF,
     VOIP_STACK_RTP_PORT,
     VOIP_STACK_SIP_PORT,
 )
@@ -88,18 +82,6 @@ def normalized_trunk_config(data) -> dict:
     codecs = {key: list(normalize_codec_rows(data[key], supported))
               for key, supported in (("trunk_audio_codecs", AUDIO_CODECS), ("trunk_video_codecs", VIDEO_CODECS))
               if data.get(key) is not None}
-    raw_dtmf_value = data.get(CONF_TRUNK_DTMF_TIMEOUT_MS)
-    raw_dtmf_timeout = 3000 if raw_dtmf_value in (None, "") else int(raw_dtmf_value)
-    dtmf_timeout_ms = (
-        raw_dtmf_timeout * 1000 if 0 <= raw_dtmf_timeout <= 10 else raw_dtmf_timeout
-    )
-    legacy_dtmf = bool(data.get(CONF_TRUNK_DTMF_ENABLED, False)) and dtmf_timeout_ms > 0
-    inbound_mode = str(data.get(CONF_TRUNK_INBOUND_MODE) or "").strip().lower()
-    if inbound_mode not in {TRUNK_INBOUND_MODE_DIRECT, TRUNK_INBOUND_MODE_DTMF}:
-        inbound_mode = (
-            TRUNK_INBOUND_MODE_DTMF if legacy_dtmf else TRUNK_INBOUND_MODE_DIRECT
-        )
-    dtmf_enabled = inbound_mode == TRUNK_INBOUND_MODE_DTMF and dtmf_timeout_ms > 0
     return {
         **normalized_did_config(data),
         **normalized_outbound_identity_config(data),
@@ -129,15 +111,9 @@ def normalized_trunk_config(data) -> dict:
         CONF_TRUNK_INBOUND_DEFAULT_TARGET: str(
             data.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "HA") or ""
         ).strip(),
-        CONF_TRUNK_INBOUND_MODE: inbound_mode,
         CONF_AUTOMATION_ROUTING_ENABLED: bool(
             data.get(CONF_AUTOMATION_ROUTING_ENABLED, False)
         ),
-        CONF_TRUNK_DTMF_ENABLED: dtmf_enabled,
-        CONF_TRUNK_DTMF_TIMEOUT_MS: max(0, min(10000, dtmf_timeout_ms)),
-        CONF_TRUNK_DTMF_TERMINATOR: str(
-            data.get(CONF_TRUNK_DTMF_TERMINATOR) or ""
-        ).strip(),
     }
 
 

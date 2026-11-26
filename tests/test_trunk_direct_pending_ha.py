@@ -7,7 +7,6 @@ import re
 
 import pytest
 
-from custom_components.voip_stack import trunk_dtmf
 from custom_components.voip_stack.config import normalized_trunk_config
 from custom_components.voip_stack.core import rtp, sip
 from custom_components.voip_stack.core.audio_format import AudioFormat
@@ -92,6 +91,10 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
             *registrar.accounts.values(), SipAccount("away", destination, "fixture-only"),
         ])
         assert not registrar.registered_contacts("away")
+        from custom_components.voip_stack.directory_runtime import compose_directory_entries
+        automation = [row for row in lab.roster if row.metadata.get("virtual_endpoint") == "automation"]
+        lab.roster[:] = [*compose_directory_entries(lab.hass, [], registrar.registered_roster_entries()), *automation]
+        lab.runtime.directory.replace(lab.roster)
     listener = ('127.0.0.1', lab.runtime.transport_config['sip_port'])
     config = normalized_trunk_config({'trunk_enabled': True, 'trunk_register': False,
         'trunk_server': '127.0.0.42', 'trunk_allowed_ips': ['127.0.0.42/32'],
@@ -101,7 +104,6 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
         local_sip_port=listener[1], trunk_id='direct-provider')
     lab.runtime.trunk_configs['direct-provider'] = config
     lab.calls.adopt_component('trunk:direct-provider', provider, closer=provider.stop)
-    monkeypatch.setattr(trunk_dtmf, '_FIRST_DIGIT_TIMEOUT', .1)
     clients, readers = [], []
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     media.bind(("127.0.0.42", 0))
@@ -215,12 +217,31 @@ async def test_answered_ivr_contact_failure_sends_bye_and_reuses_the_next_call(
     if target_kind == "account":
         await _register_target(lab, target, monkeypatch)
         destination = "bedroom0"
+    # An Automation contact owns answering before the transfer. Automatic
+    # trunk digit collection no longer answers every incoming call.
+    from homeassistant.helpers.script import Script
+    from homeassistant.helpers.trigger import TriggerConfig
+    from custom_components import voip_stack
+    from custom_components.voip_stack import automation_call, services, trigger
+    await services.async_register_services(lab.hass, {"wait_for_dtmf": automation_call.async_wait_for_dtmf,
+        "forward": voip_stack._handle_sip_forward_service})
+    lab.roster.append(RosterEntry("Welcome", metadata={"virtual_endpoint": "automation", "automation_timeout": 30}))
+    lab.runtime.directory.replace(lab.roster)
+    script = Script(lab.hass, [
+        {"action": "voip_stack.wait_for_dtmf", "data": {"timeout": 0.1}},
+        {"action": "voip_stack.forward", "data": {"destination": destination, "on_failure": "terminate"}},
+    ], "Answered IVR failure", "automation")
+    tasks = []
+    def runner(payload, description, context):
+        task = lab.hass.async_create_task(script.async_run({"trigger": payload}, context))
+        tasks.append(task)
+        return task
+    subject = trigger.VoipCallTrigger(lab.hass, TriggerConfig("voip_stack.call_received", options={"destination": "Welcome"}))
+    detach = await subject.async_attach_runner(runner)
     async with no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path,
-                               destination, calls=2) as caller:
-        # The stock SIPp UAC offers no telephone-event and is answered before
-        # SIP INFO collection. An earlier server BYE ends that stock scenario
-        # nonzero; the SIP trace independently proves both accepted dialogs.
-        assert await asyncio.wait_for(caller.wait(), 5) != 0
+                               "Welcome", calls=2) as caller:
+        # The independent trace proves both answered dialogs and server BYEs.
+        await asyncio.wait_for(caller.wait(), 5)
         wire = (tmp_path / "trunk-sip.log").read_text()
         assert wire.count("BYE sip:sipp@127.0.0.2") >= 2
         assert len(target.invites) == 2
@@ -230,3 +251,6 @@ async def test_answered_ivr_contact_failure_sends_bye_and_reuses_the_next_call(
             while lab.calls.sessions:
                 await asyncio.sleep(.01)
         assert resources(lab)['call_scoped_quiescent']
+
+    detach()
+    await asyncio.gather(*tasks, return_exceptions=True)

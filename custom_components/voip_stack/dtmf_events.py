@@ -11,7 +11,7 @@ from .dtmf import parse_sip_info_digit, parse_sip_info_duration
 from .core.sip import is_picture_fast_update
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
-from .runtime_data import call_runtime_artifacts, sip_endpoint_manager
+from .runtime_data import sip_endpoint_manager
 from .const import SIP_DTMF_EVENT
 
 
@@ -61,68 +61,52 @@ async def handle_sip_info(
         )
         return
     call_id = request.header("Call-ID")
-    artifacts = call_runtime_artifacts(hass).artifacts_for(call_id)
-    queue = artifacts.trunk_info_queue if artifacts is not None else None
-    if queue is None:
-        registry = call_registry(hass)
-        session_id = registry.resolve_session_id(call_id)
-        side = "right" if session_id != call_id else "left"
-        relay = registry.resource_for(session_id, "relay")
-        callback = getattr(relay, "on_dtmf", None)
-        if callback is not None:
-            if getattr(relay, "private_dtmf", False):
-                callback(side, digit, "sip_info")
-                return
-            event = getattr(relay, "on_info_dtmf", None)
-            if event is not None:
-                event(side, digit, parse_sip_info_duration(request.body))
-            else:
-                callback(side, digit, "sip_info")
-            _LOGGER.info(
-                "SIP in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
-                call_id,
-                digit,
-                transport,
-            )
+    registry = call_registry(hass)
+    session_id = registry.resolve_session_id(call_id)
+    side = "right" if session_id != call_id else "left"
+    relay = registry.resource_for(session_id, "relay")
+    callback = getattr(relay, "on_dtmf", None)
+    if callback is not None:
+        if getattr(relay, "private_dtmf", False):
+            callback(side, digit, "sip_info")
             return
-        if relay is not None or registry.resource_for(session_id, "softphone_media"):
-            session = registry.sessions.get(registry.resolve_session_id(call_id))
-            publish_dtmf_event(
-                hass,
-                call_id=session_id,
-                dest_call_id=registry.bridge_link_for(session_id),
-                caller=session.caller if session is not None else "",
-                callee=session.callee if session is not None else "",
-                side=side,
-                digit=digit,
-                transport="sip_info",
-            )
-            _LOGGER.info(
-                "SIP local in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
-                call_id,
-                digit,
-                transport,
-            )
-            return
+        event = getattr(relay, "on_info_dtmf", None)
+        if event is not None:
+            event(side, digit, parse_sip_info_duration(request.body))
+        else:
+            callback(side, digit, "sip_info")
         _LOGGER.info(
-            "SIP INFO DTMF arrived outside active call call_id=%s digit=%s",
+            "SIP in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
             call_id,
             digit,
+            transport,
         )
         return
-    if queue.full():
-        _LOGGER.warning(
-            "SIP INFO DTMF queue full call_id=%s; digit ignored",
+    if relay is not None or registry.resource_for(session_id, "softphone_media"):
+        session = registry.sessions.get(registry.resolve_session_id(call_id))
+        publish_dtmf_event(
+            hass,
+            call_id=session_id,
+            dest_call_id=registry.bridge_link_for(session_id),
+            caller=session.caller if session is not None else "",
+            callee=session.callee if session is not None else "",
+            side=side,
+            digit=digit,
+            transport="sip_info",
+        )
+        _LOGGER.info(
+            "SIP local in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
             call_id,
+            digit,
+            transport,
         )
         return
-    queue.put_nowait(digit)
     _LOGGER.info(
-        "SIP trunk INFO DTMF RX call_id=%s digit=%s transport=%s",
+        "SIP INFO DTMF arrived outside active call call_id=%s digit=%s",
         call_id,
         digit,
-        transport,
     )
+
 
 
 def publish_dtmf_event(

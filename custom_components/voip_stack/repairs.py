@@ -732,3 +732,17 @@ def async_sync_pbx_configuration_issues(hass: HomeAssistant) -> None:
                 translation_key=issue_id)
         else:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+
+def async_report_trunk_menu_retired(hass, entry, record) -> None:
+    """Keep a native migration notice until the owner dismisses it."""
+    ownership = {"config_entry_id": entry.entry_id}
+    if "config_subentry_id" in signature(ir.async_create_issue).parameters:
+        ownership["config_subentry_id"] = record.subentry_id
+    ir.async_create_issue(hass, DOMAIN, "trunk_dtmf_retired_" + record.subentry_id,
+        **ownership, is_fixable=False, is_persistent=True, severity=ir.IssueSeverity.WARNING,
+        translation_key="trunk_dtmf_retired", translation_placeholders={
+            "trunk": record.title,
+            "destination": str(record.data.get("trunk_inbound_default_target") or "No destination configured"),
+        }, learn_more_url="https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu")

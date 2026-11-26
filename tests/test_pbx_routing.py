@@ -60,17 +60,6 @@ def test_group_members_preserve_order_and_remove_case_duplicates(routing) -> Non
     ]
 
 
-def test_dtmf_routes_and_roster_resolution_are_exact(routing) -> None:
-    entries = [
-        SimpleNamespace(id="casa", name="Casa", extension="418"),
-        SimpleNamespace(id="test", name="Test", extension="667"),
-        SimpleNamespace(id="no-extension", name="Senza interno", extension=""),
-    ]
-
-    assert routing.dtmf_extension_routes(entries) == {"418": "418", "667": "667"}
-    assert routing.roster_entry_for_target("CASA", entries) is entries[0]
-    assert routing.roster_entry_for_target("667", entries) is entries[1]
-    assert routing.roster_entry_for_target("66", entries) is None
 
 
 @pytest.mark.parametrize(

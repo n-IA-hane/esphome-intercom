@@ -53,7 +53,8 @@ def migrate_legacy_trunk(hass, entry) -> None:
     if config["trunk_enabled"] or current is not None:
         identity = selected if current is not None else uuid4().hex
         title = current.title if current is not None else "SIP trunk"
-        data = {**config, "trunk_id": identity, "name": title}
+        data = {**config, **{key: value for key, value in entry.data.items()
+                           if key in LEGACY_TRUNK_MENU_KEYS}, "trunk_id": identity, "name": title}
         if current is None:
             hass.config_entries.async_add_subentry(entry, ConfigSubentry(
                 subentry_type=TRUNK_SUBENTRY_TYPE, title=title, data=data, unique_id=f"trunk:{identity}",
@@ -81,3 +82,32 @@ def sync_trunk_devices(hass, entry) -> None:
             manufacturer="VoIP Stack", model=TRUNK_DEVICE_MODEL,
             entry_type=dr.DeviceEntryType.SERVICE,
         )
+
+
+LEGACY_TRUNK_MENU_KEYS = frozenset({
+    "trunk_inbound_mode", "trunk_dtmf_enabled", "trunk_dtmf_timeout_ms", "trunk_dtmf_terminator",
+})
+
+
+def migrate_trunk_menus(hass, entry) -> None:
+    """Retire automatic collection without rewriting destinations or identities."""
+    from .repairs import async_report_trunk_menu_retired
+
+    migrate_legacy_trunk(hass, entry)
+    for record in trunk_subentries(entry):
+        data = dict(record.data)
+        mode = str(data.get("trunk_inbound_mode") or "").strip().lower()
+        raw_timeout = data.get("trunk_dtmf_timeout_ms")
+        timeout = 3000 if raw_timeout in (None, "") else int(raw_timeout)
+        if mode not in {"direct", "dtmf"}:
+            mode = "dtmf" if data.get("trunk_dtmf_enabled", False) and timeout > 0 else "direct"
+        # Match the retired normalizer: an explicit DTMF mode determined the
+        # effective flag, including persisted records with a stale false flag.
+        enabled = mode == "dtmf" and timeout > 0
+        if enabled:
+            async_report_trunk_menu_retired(hass, entry, record)
+        if LEGACY_TRUNK_MENU_KEYS.intersection(data):
+            hass.config_entries.async_update_subentry(entry, record,
+                data={key: value for key, value in data.items() if key not in LEGACY_TRUNK_MENU_KEYS})
+    data = {key: value for key, value in entry.data.items() if key not in LEGACY_TRUNK_MENU_KEYS}
+    hass.config_entries.async_update_entry(entry, data=data, minor_version=6)

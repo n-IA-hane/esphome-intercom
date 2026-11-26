@@ -30,7 +30,6 @@
           "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
           "experimental_sip_video": "Abilita il video opzionale per dispositivi e percorsi compatibili. H.264, VP8 e JPEG nel browser richiedono un contesto sicuro e un browser compatibile. Sugli ESP il supporto dipende dal dispositivo e dal profilo codec configurato: i profili S3 con display supportati ricevono JPEG; i profili P4 possono usare JPEG o H.264. I profili solo audio e solo camera mantengono i rispettivi limiti.",
           "sip_registrar_enabled": "Accetta REGISTER da softphone locali come Zoiper, Linphone o baresip usando account gestiti dai servizi VoIP Stack.",
-          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF.",
           "audio_codecs": "Trascina le righe in ordine di preferenza. Disattiva una riga per escludere il codec mantenendone la posizione. Mantieni almeno un codec audio attivo. La chiamata richiede un codec supportato da entrambi gli interlocutori.",
           "video_codecs": "Trascina le righe in ordine di preferenza e attiva i codec consentiti. Svuota la lista o disattiva tutte le righe per chiamate solo audio. Il video richiede interlocutori compatibili e un percorso video abilitato.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
@@ -77,10 +76,7 @@
           "trunk_register_expires": "Scadenza REGISTER",
           "trunk_outbound_proxy": "Proxy outbound",
           "trunk_inbound_default_target": "Destinazione di fallback",
-          "trunk_inbound_mode": "Gestione chiamate in ingresso",
           "automation_routing_enabled": "Consenti alle automazioni di scegliere la destinazione in ingresso",
-          "trunk_dtmf_timeout_ms": "Timeout DTMF (secondi)",
-          "trunk_dtmf_terminator": "Terminatore DTMF",
           "trunk_allowed_ips": "Indirizzi IP autorizzati in ingresso",
           "trunk_audio_codecs": "Preferenza codec audio",
           "trunk_video_codecs": "Preferenza codec video",
@@ -108,11 +104,6 @@
           "trunk_password": "Password digest auth.",
           "trunk_register_expires": "Scadenza REGISTER in secondi.",
           "trunk_outbound_proxy": "Proxy opzionale o sip:host:port usato come next hop di signaling.",
-          "trunk_inbound_default_target": "Seleziona il telefono destinatario per nome, oppure inserisci un gruppo, un interno o un contatto Automation. La modalità immediata usa questa destinazione quando il numero chiamato non corrisponde alla rubrica. La selezione DTMF e le automazioni possono scegliere un'altra destinazione.",
-          "trunk_inbound_mode": "Instrada subito evita la raccolta cifre. Raccogli interno con DTMF risponde prima sul trunk e permette alle cifre esplicite di scegliere un interno della rubrica.",
-          "automation_routing_enabled": "Prima di usare la destinazione di fallback, pubblica una breve richiesta di instradamento a cui può rispondere un'automazione. Le cifre DTMF esplicite mantengono sempre la priorità.",
-          "trunk_dtmf_timeout_ms": "Timeout tra cifre usato in modalità DTMF. Per la prima cifra sono disponibili 10 secondi. Default 3 secondi, massimo 10 secondi.",
-          "trunk_dtmf_terminator": "Terminatore opzionale, per esempio #. Vuoto significa che decide timeout o match esatto con una extension in rubrica.",
           "trunk_allowed_ips": "Inserisci separatamente ogni IP sorgente o rete CIDR autorizzati. Possono differire dal server in uscita. Obbligatori senza registrazione.",
           "trunk_audio_codecs": "Trascina le righe in ordine di preferenza. Disattiva una riga per escludere il codec mantenendone la posizione. Mantieni almeno un codec audio attivo. La chiamata richiede un codec supportato da entrambi gli interlocutori.",
           "trunk_video_codecs": "Trascina le righe in ordine di preferenza e attiva i codec consentiti. Svuota la lista o disattiva tutte le righe per chiamate solo audio. Il video richiede interlocutori compatibili e un percorso video abilitato.",
@@ -636,10 +627,7 @@
             "trunk_register_expires": "Scadenza REGISTER",
             "trunk_outbound_proxy": "Proxy outbound",
             "trunk_inbound_default_target": "Destinazione di fallback",
-            "trunk_inbound_mode": "Gestione chiamate in ingresso",
             "automation_routing_enabled": "Consenti alle automazioni di scegliere la destinazione in ingresso",
-            "trunk_dtmf_timeout_ms": "Timeout DTMF (secondi)",
-            "trunk_dtmf_terminator": "Terminatore DTMF",
             "trunk_allowed_ips": "Indirizzi IP autorizzati in ingresso",
             "trunk_audio_codecs": "Preferenza codec audio",
             "trunk_video_codecs": "Preferenza codec video",
@@ -667,11 +655,6 @@
             "trunk_password": "Password digest auth.",
             "trunk_register_expires": "Scadenza REGISTER in secondi.",
             "trunk_outbound_proxy": "Proxy opzionale o sip:host:port usato come next hop di signaling.",
-            "trunk_inbound_default_target": "Seleziona il telefono destinatario per nome, oppure inserisci un gruppo, un interno o un contatto Automation. La modalità immediata usa questa destinazione quando il numero chiamato non corrisponde alla rubrica. La selezione DTMF e le automazioni possono scegliere un'altra destinazione.",
-            "trunk_inbound_mode": "Instrada subito evita la raccolta cifre. Raccogli interno con DTMF risponde prima sul trunk e permette alle cifre esplicite di scegliere un interno della rubrica.",
-            "automation_routing_enabled": "Prima di usare la destinazione di fallback, pubblica una breve richiesta di instradamento a cui può rispondere un'automazione. Le cifre DTMF esplicite mantengono sempre la priorità.",
-            "trunk_dtmf_timeout_ms": "Timeout tra cifre usato in modalità DTMF. Per la prima cifra sono disponibili 10 secondi. Default 3 secondi, massimo 10 secondi.",
-            "trunk_dtmf_terminator": "Terminatore opzionale, per esempio #. Vuoto significa che decide timeout o match esatto con una extension in rubrica.",
             "trunk_allowed_ips": "Inserisci separatamente ogni IP sorgente o rete CIDR autorizzati. Possono differire dal server in uscita. Obbligatori senza registrazione.",
             "trunk_audio_codecs": "Trascina le righe in ordine di preferenza. Disattiva una riga per escludere il codec mantenendone la posizione. Mantieni almeno un codec audio attivo. La chiamata richiede un codec supportato da entrambi gli interlocutori.",
             "trunk_video_codecs": "Trascina le righe in ordine di preferenza e attiva i codec consentiti. Svuota la lista o disattiva tutte le righe per chiamate solo audio. Il video richiede interlocutori compatibili e un percorso video abilitato.",
@@ -998,12 +981,6 @@
     }
   },
   "selector": {
-    "trunk_inbound_mode": {
-      "options": {
-        "direct": "Instrada subito",
-        "dtmf": "Raccogli interno con DTMF"
-      }
-    },
     "call_ingress": {
       "options": {
         "extension": "Chiamata locale",

@@ -675,9 +675,10 @@ async def test_trunk_flow_persists_codec_choices_and_preserves_them_when_disable
         await async_stop_sip_trunk(hass)
 
 
-def test_trunk_destination_picker_uses_real_phone_names(hass, catalog):
+def test_trunk_destination_picker_uses_real_phone_names(hass, catalog, monkeypatch):
     from custom_components.voip_stack.config_flow import _trunk_target_choices
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+    monkeypatch.setattr(hass.config, 'location_name', 'Casa')
     runtime = catalog.runtime_data
     runtime.endpoints.register(PhoneEndpoint(endpoint_id='browser:initial', name='Casa', kind='browser', device_id='home-device'))
     runtime.endpoints.register(PhoneEndpoint(endpoint_id='browser:test', name='Test', kind='browser', device_id='test-device'))

@@ -27,16 +27,6 @@ def unique_group_members(value: object) -> list[str]:
     return members
 
 
-def dtmf_extension_routes(entries: list[RosterEntry]) -> dict[str, str]:
-    """Build exact extension routes accepted by the trunk DTMF collector."""
-
-    return {
-        str(entry.extension).strip(): str(entry.extension).strip()
-        for entry in entries
-        if str(getattr(entry, "extension", "") or "").strip()
-    }
-
-
 def roster_entry_for_target(
     target: str,
     entries: list[RosterEntry],

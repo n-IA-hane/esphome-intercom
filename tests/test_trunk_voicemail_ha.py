@@ -12,7 +12,6 @@ import pytest
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import callback
 
-from custom_components.voip_stack import trunk_dtmf
 from custom_components.voip_stack.config import normalized_trunk_config
 from custom_components.voip_stack.core import rtp, sip
 from custom_components.voip_stack.mailbox import EVENT_VOICEMAIL_RECEIVED, get_archive
@@ -82,12 +81,15 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                                                    **({"ringing_timeout": 1} if policy == "no_answer" else {})}))
     if policy == "always":
         endpoints.update(mailbox_id, dnd=True)
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    automation = [row for row in runtime.roster if row.metadata.get("virtual_endpoint") == "automation"]
+    runtime.roster[:] = [*compose_directory_entries(hass, [], runtime.calls.component("registrar").registered_roster_entries()), *automation]
+    runtime.runtime.directory.replace(runtime.roster)
     config = normalized_trunk_config({
         "trunk_enabled": True, "trunk_register": False, "trunk_server": PROVIDER_HOST,
         "trunk_allowed_ips": [f"{PROVIDER_HOST}/32"], "trunk_inbound_mode": "dtmf", "trunk_dtmf_enabled": True,
-        "trunk_dtmf_timeout_ms": 200, "trunk_inbound_default_target": "Unused fallback" if select_digits else "Kitchen",
+        "trunk_dtmf_timeout_ms": 200, "trunk_inbound_default_target": "Kitchen",
     })
-    monkeypatch.setattr(trunk_dtmf, "_FIRST_DIGIT_TIMEOUT", 0.4)
     provider = SipTrunkClient(config=trunk_client_config(config), local_ip=listener[0],
                               local_sip_port=listener[1], trunk_id="test-provider")
     runtime.runtime.trunk_configs["test-provider"] = config
@@ -141,25 +143,10 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
                             return msg
 
             await send("INVITE", 1, body=sdp)
-            offer = await response("INVITE", 183 if rtp_digits else 200)
+            offer = await response("INVITE", 200)
             to = offer.header("To")
             target = (listener[0], int(re.search(rb"m=audio (\d+)", offer.body)[1]))
-            if not rtp_digits:
-                await send("ACK", 1)
-            if select_digits and rtp_digits:
-                for sequence, duration, flags in ((1, 160, 10), (2, 640, 0x8A), (3, 640, 0x8A)):
-                    event = struct.pack("!BBH", 4, flags, duration)
-                    packet = rtp.RtpPacket(101, sequence, 1600, 701 + attempt, event)
-                    await hass.loop.sock_sendto(media, rtp.build_packet(packet), target)
-                    await asyncio.sleep(.02)
-            elif select_digits:
-                await send("INFO", 2, body=b"Signal=4\r\nDuration=120\r\n", content_type="application/dtmf-relay")
-                await response("INFO", 200)
-            if rtp_digits:
-                final = await response("INVITE", 200)
-                assert final.header("To") == to
-                await send("ACK", 1)
-                target = (listener[0], int(re.search(rb"m=audio (\d+)", final.body)[1]))
+            await send("ACK", 1)
             await asyncio.wait_for(recording.wait(), 4)
             assert runtime.calls.get_session(call_id).owner == "voicemail"
             if peer_failure:

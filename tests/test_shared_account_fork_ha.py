@@ -99,7 +99,6 @@ async def assert_no_active_calls(peers):
 @asynccontextmanager
 async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback, *, calls=1):
     """Originate from an independent provider at the trusted trunk IP."""
-    from custom_components.voip_stack import trunk_dtmf
     from custom_components.voip_stack.config import normalized_trunk_config
     from custom_components.voip_stack.sip_trunk import SipTrunkClient
     from custom_components.voip_stack.trunk_runtime import trunk_client_config
@@ -107,7 +106,6 @@ async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, f
     executable = shutil.which("sipp")
     if executable is None:
         pytest.skip("SIPp is required for the independent trunk caller")
-    monkeypatch.setattr(trunk_dtmf, "_FIRST_DIGIT_TIMEOUT", 0.1)
     lab.runtime.preferred_phone_device_id = "browser-casa"
     port = lab.runtime.transport_config["sip_port"]
     config = normalized_trunk_config({

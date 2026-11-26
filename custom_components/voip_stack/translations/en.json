@@ -30,7 +30,7 @@
           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
           "experimental_sip_video": "Allow optional video for compatible endpoints and routes. Browser H.264, VP8 and JPEG require a secure context and a compatible browser. ESP support follows the configured device and codec profile: supported S3 display profiles receive JPEG; P4 profiles can use JPEG or H.264. Audio-only and camera-only profiles retain their respective limits.",
           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
-          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts.",
+          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration or external route starts.",
           "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
@@ -77,10 +77,7 @@
           "trunk_register_expires": "REGISTER expires",
           "trunk_outbound_proxy": "Outbound proxy",
           "trunk_inbound_default_target": "Fallback destination",
-          "trunk_inbound_mode": "Incoming call handling",
           "automation_routing_enabled": "Allow automations to select the inbound destination",
-          "trunk_dtmf_timeout_ms": "DTMF timeout (seconds)",
-          "trunk_dtmf_terminator": "DTMF terminator",
           "trunk_allowed_ips": "Allowed incoming IP addresses",
           "trunk_audio_codecs": "Audio codec preference",
           "trunk_video_codecs": "Video codec preference",
@@ -108,11 +105,8 @@
           "trunk_password": "Digest auth password.",
           "trunk_register_expires": "REGISTER expiration in seconds.",
           "trunk_outbound_proxy": "Optional proxy host or sip:host:port used as signaling next hop.",
-          "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. Immediate routing uses this destination when the called destination is not in the phonebook. DTMF selection and routing automations can choose another destination.",
-          "trunk_inbound_mode": "Route immediately skips digit collection. Collect extension with DTMF answers the trunk leg first and lets explicit digits select a phonebook extension.",
-          "automation_routing_enabled": "Before using the fallback destination, publish a short routing request that an automation may answer. Explicit DTMF digits always keep priority.",
-          "trunk_dtmf_timeout_ms": "Inter-digit timeout used in DTMF mode. The first digit is allowed 10 seconds. Default is 3 seconds, maximum is 10 seconds.",
-          "trunk_dtmf_terminator": "Optional terminator digit such as #. Empty means timeout or exact phonebook extension match decides.",
+          "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. This destination receives calls when the called number has no phonebook match. A routing automation can override the selected destination.",
+          "automation_routing_enabled": "Allow a routing automation to override the selected called number or configured destination before ringing. For an interactive keypad menu, select an Automation contact as the incoming destination.",
           "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration.",
           "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
@@ -636,10 +630,7 @@
             "trunk_register_expires": "REGISTER expires",
             "trunk_outbound_proxy": "Outbound proxy",
             "trunk_inbound_default_target": "Fallback destination",
-            "trunk_inbound_mode": "Incoming call handling",
             "automation_routing_enabled": "Allow automations to select the inbound destination",
-            "trunk_dtmf_timeout_ms": "DTMF timeout (seconds)",
-            "trunk_dtmf_terminator": "DTMF terminator",
             "trunk_allowed_ips": "Allowed incoming IP addresses",
             "trunk_audio_codecs": "Audio codec preference",
             "trunk_video_codecs": "Video codec preference",
@@ -667,11 +658,8 @@
             "trunk_password": "Digest auth password.",
             "trunk_register_expires": "REGISTER expiration in seconds.",
             "trunk_outbound_proxy": "Optional proxy host or sip:host:port used as signaling next hop.",
-            "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. Immediate routing uses this destination when the called destination is not in the phonebook. DTMF selection and routing automations can choose another destination.",
-            "trunk_inbound_mode": "Route immediately skips digit collection. Collect extension with DTMF answers the trunk leg first and lets explicit digits select a phonebook extension.",
-            "automation_routing_enabled": "Before using the fallback destination, publish a short routing request that an automation may answer. Explicit DTMF digits always keep priority.",
-            "trunk_dtmf_timeout_ms": "Inter-digit timeout used in DTMF mode. The first digit is allowed 10 seconds. Default is 3 seconds, maximum is 10 seconds.",
-            "trunk_dtmf_terminator": "Optional terminator digit such as #. Empty means timeout or exact phonebook extension match decides.",
+            "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. This destination receives calls when the called number has no phonebook match. A routing automation can override the selected destination.",
+            "automation_routing_enabled": "Allow a routing automation to override the selected called number or configured destination before ringing. For an interactive keypad menu, select an Automation contact as the incoming destination.",
             "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration.",
             "trunk_audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
             "trunk_video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
@@ -998,12 +986,6 @@
     }
   },
   "selector": {
-    "trunk_inbound_mode": {
-      "options": {
-        "direct": "Route immediately",
-        "dtmf": "Collect extension with DTMF"
-      }
-    },
     "call_ingress": {
       "options": {
         "extension": "Local call",
@@ -1428,6 +1410,10 @@
     "esphome_account_setup_required": {
       "title": "ESPHome phone account needs native setup",
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
+    },
+    "trunk_dtmf_retired": {
+      "title": "Automatic trunk extension collection was removed",
+      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
     }
   },
   "exceptions": {

@@ -19,19 +19,17 @@ from .core.audio_format import HA_SIP_PCM_RX_FORMATS, HA_SIP_PCM_TX_FORMATS
 from .endpoint_group_calls import EndpointGroupCalls
 from .endpoint_lifecycle import call_registry
 from .endpoint_routing import EndpointRouteResolver
-from .endpoint_session import TerminationInitiator, TerminationIntent
+from .endpoint_session import TerminationInitiator
 from .endpoint_termination import EndpointTerminationHandler
 from .fsm import CallState, TerminalReason
 from .inbound_routing.softphone import defer_invite, publish_pending_ringing
 from .invite_router import InviteRuntime, route_invite
-from .media_ports import RtpPortReservation, reserve_delayed_offer_ports, take_delayed_offer_ports
+from .media_ports import reserve_delayed_offer_ports, take_delayed_offer_ports
 from .media_renegotiation import async_prepare_media_update
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
-from .router import RouteReason
 from .runtime_data import sip_endpoint_manager
 from .sip_listener import SipInitialInvite, SipInvite, SipInviteResult, UasDelayedOfferPlan
 from .sip_runtime import send_final_response, uri_transport
-from .trunk_inbound_router import TrunkInboundRuntime, async_route_trunk_invite
 
 if TYPE_CHECKING:
     from .assist_endpoint import AssistEndpoint
@@ -64,44 +62,6 @@ def inbound_route_decision(
         trunk_id=invite.outbound_trunk_id,
         incoming_trunk=invite.received_via_trunk,
     ).route(target, entries)
-
-
-async def run_trunk_route(
-    dialer: EndpointDialer,
-    forward_call: Callable,
-    defer_to_phone: Callable,
-    start_assist: Callable,
-    invite: SipInvite,
-    *,
-    bridge_ports: RtpPortReservation,
-) -> None:
-    """Route a detached trunk call using the current HA name and release it on failure."""
-    try:
-        await async_route_trunk_invite(
-            TrunkInboundRuntime(
-                hass=dialer.hass,
-                config=dialer.config,
-                local_ip=dialer.local_ip,
-                ha_peer_name=home_phone_name(dialer.hass),
-                route_resolver=EndpointRouteResolver(
-                    dialer.hass, dialer.local_ip, int(dialer.config["sip_port"]),
-                    trunk_id=invite.outbound_trunk_id, incoming_trunk=True,
-                ),
-                forward_existing_call=forward_call,
-                defer_invite_to_softphone=defer_to_phone,
-                start_local_assist_bridge=start_assist,
-            ),
-            invite,
-            bridge_ports=bridge_ports,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 - detached call boundary.
-        _LOGGER.exception("SIP trunk inbound routing failed call_id=%s", invite.call_id)
-        await EndpointTerminationHandler(dialer.hass).terminate(
-            invite.call_id,
-            TerminationIntent.bye(RouteReason.TARGET_UNREACHABLE.value, TerminationInitiator.ROUTING),
-        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -335,9 +295,6 @@ def compose_call_routing(
         enable_reused_sip_tcp_connection=dialer.enable_reused_tcp_connection,
         ring_conference_members=conference,
         run_ring_group_call=ring_group,
-        run_trunk_inbound_route_guarded=partial(
-            run_trunk_route, dialer, forward, defer_to_phone, assist.start
-        ),
         send_final_response=send_final_response,
         sip_uri_transport=uri_transport,
         start_local_assist_bridge=assist.start,

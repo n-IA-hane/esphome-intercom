@@ -76,7 +76,7 @@ async def test_migration_75_stores_prefill_once_without_overwriting_values(hass,
         data={"initial_phone_created": True, "unrelated": "preserved", **existing})
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert entry.data["max_dialog_subscription_expires"] == 60
     assert entry.data["default_ringing_timeout"] == existing.get("default_ringing_timeout", 120)
     before = deepcopy(entry.as_dict())
@@ -108,7 +108,7 @@ async def test_75_does_not_run_past_real_73_identity_conflict(hass):
     devices.async_remove_device(other.id)
     await hass.async_block_till_done()
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 5 and entry.data["default_ringing_timeout"] == 120
+    assert entry.minor_version == 6 and entry.data["default_ringing_timeout"] == 120
     assert devices.async_get(one.id) is not None
     assert row.subentry_id in entry.subentries
 
