@@ -1465,6 +1465,64 @@ videoParking._softphoneSnapshot.video_active = false;
 videoParking._render();
 assert.equal(videoParking._els.parkBtn.disabled, false);
 
+// Early media does not start the duration clock. The final answer starts a
+// ticking clock even when the media path already opened for a selected 183.
+const earlyDuration = makeCard();
+const realDateNow = Date.now;
+const realSetInterval = context.setInterval;
+const realClearInterval = context.clearInterval;
+let durationTick = null;
+let durationClock = 1800000000;
+let durationMonotonic = 1000;
+context.performance = {{now: () => durationMonotonic}};
+Date.now = () => durationClock * 1000;
+context.setInterval = callback => {{ durationTick = callback; return 123456; }};
+context.clearInterval = () => {{ durationTick = null; }};
+try {{
+  const earlyCall = {{...base,call_id:"early-duration",early_media:true,
+    state:"remote_ringing",connected_at:0,connected_elapsed:0,can_attach_media:true,media_owner:"self",sequence:1}};
+  assert.equal(earlyDuration._applySoftphoneSnapshot(earlyCall),true);
+  earlyDuration._render();
+  assert.equal(earlyDuration._els.hangupDuration.textContent,"00:00");
+  assert.equal(Boolean(earlyDuration._videoDurationTimer),false);
+  durationClock += 20;
+  assert.equal(earlyDuration._applySoftphoneSnapshot({{...earlyCall,
+    state:"in_call",early_media:false,connected_at:durationClock + 3600,connected_elapsed:0,sequence:2}}),true);
+  earlyDuration._render();
+  assert.equal(earlyDuration._els.hangupDuration.textContent,"00:00");
+  assert.equal(typeof durationTick,"function");
+  durationMonotonic += 7000;
+  durationTick();
+  assert.equal(earlyDuration._els.hangupDuration.textContent,"00:07");
+  assert.equal(earlyDuration._els.audioCallDuration.textContent,"00:07");
+  earlyDuration._applySoftphoneSnapshot({{...earlyCall,state:"held",
+    connected_at:durationClock + 3600,connected_elapsed:6,sequence:3}});
+  durationMonotonic += 2000;
+  durationTick();
+  assert.equal(earlyDuration._els.hangupDuration.textContent,"00:08");
+  const partialHeld = {{...earlyCall,state:"held",connected_at:0,sequence:4}};
+  delete partialHeld.connected_elapsed;
+  earlyDuration._applySoftphoneSnapshot(partialHeld);
+  earlyDuration._render();
+  durationMonotonic += 1000;
+  durationTick();
+  assert.equal(earlyDuration._els.hangupDuration.textContent,"00:09");
+  const reconnectedDuration = makeCard();
+  reconnectedDuration._applySoftphoneSnapshot({{...earlyCall,state:"in_call",
+    connected_at:durationClock + 3600,connected_elapsed:40,sequence:4}});
+  durationMonotonic += 2000;
+  assert.equal(reconnectedDuration._formatVideoCallDuration(),"00:42");
+  earlyDuration._applySoftphoneSnapshot({{...earlyCall,call_id:"new-early-duration",sequence:6}});
+  earlyDuration._render();
+  assert.equal(earlyDuration._els.hangupDuration.textContent,"00:00");
+  assert.equal(Boolean(earlyDuration._videoDurationTimer),false);
+}} finally {{
+  earlyDuration._syncVideoDurationTimer(false);
+  Date.now = realDateNow;
+  context.setInterval = realSetInterval;
+  context.clearInterval = realClearInterval;
+}}
+
 // An account observed from HA retains the same duration UI when a native SIP
 // Contact owns media. The existing timer updates its text without a rerender.
 const sipDurationObserver = makeCard();

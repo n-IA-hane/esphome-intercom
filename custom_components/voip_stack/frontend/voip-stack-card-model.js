@@ -187,7 +187,11 @@ export function audioModeLabel(mode) {
 export function formatCallDuration(connectedAt, nowSeconds = Date.now() / 1000) {
   const connected = Number(connectedAt || 0);
   if (!connected) return "00:00";
-  const elapsed = Math.max(0, Math.floor(Number(nowSeconds) - connected));
+  return formatDurationSeconds(Number(nowSeconds) - connected);
+}
+
+export function formatDurationSeconds(durationSeconds) {
+  const elapsed = Math.max(0, Math.floor(Number(durationSeconds) || 0));
   const hours = Math.floor(elapsed / 3600);
   const minutes = Math.floor((elapsed % 3600) / 60);
   const seconds = elapsed % 60;

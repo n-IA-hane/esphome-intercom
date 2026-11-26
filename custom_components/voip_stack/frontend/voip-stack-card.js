@@ -37,6 +37,7 @@ const [
     phoneCallPresentation,
     formatListFromMetadata,
     formatCallDuration,
+    formatDurationSeconds,
     formatEndReason,
     formatKnownReason,
     formatVideoFailureReason,
@@ -632,6 +633,15 @@ class VoipStackCard extends HTMLElement {
       String(context.previousCallId || "") === String(current?.call_id || "");
     if (payload.kind !== "closed" && !reconciledIdle && !softphoneSnapshotSupersedes(current, snapshot)) return false;
     this._softphoneSnapshot = snapshot;
+    // HA owns elapsed call time. Continue it locally with a monotonic clock,
+    // independent of differences or adjustments to the browser's wall clock.
+    const elapsed = snapshot.connected_elapsed;
+    const established = ["in_call", "held", "transferring"].includes(snapshot.state);
+    if (established && typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed >= 0) {
+      this._callDurationAnchor = { elapsed, monotonic: performance.now() };
+    } else if (!established || snapshot.call_id !== current?.call_id) {
+      this._callDurationAnchor = null;
+    }
     const mailboxChanged = ["new", "old", "total"].some(
       key => current?.voicemail?.[key] !== snapshot.voicemail?.[key],
     );
@@ -754,6 +764,10 @@ class VoipStackCard extends HTMLElement {
   }
 
   _formatVideoCallDuration() {
+    if (this._callDurationAnchor) {
+      return formatDurationSeconds(this._callDurationAnchor.elapsed +
+        Math.max(0, performance.now() - this._callDurationAnchor.monotonic) / 1000);
+    }
     return formatCallDuration(this._softphoneSnapshot?.connected_at);
   }
 
@@ -2032,10 +2046,11 @@ class VoipStackCard extends HTMLElement {
     els.videoCanvas.hidden = !videoVisible;
     els.videoShade.hidden = !visualMediaVisible;
     const connectedAt = Number(this._softphoneSnapshot?.connected_at || 0);
-    this._syncVideoDurationTimer(showHangup && connectedAt > 0);
+    const hasCallTime = connectedAt > 0 || !!this._callDurationAnchor;
+    this._syncVideoDurationTimer(showHangup && hasCallTime);
     const activePeer = (!softphoneMode && this._mirroredConnectedPeer) || caller || destination || this._t("Active call");
     const callDuration = this._formatVideoCallDuration();
-    const showCallTime = showHangup && !visualMediaVisible && connectedAt > 0 && isEstablishedCallState(espState);
+    const showCallTime = showHangup && !visualMediaVisible && hasCallTime && isEstablishedCallState(espState);
     els.audioCallSummary.hidden = !showCallTime;
     els.audioCallDuration.textContent = callDuration;
     if (els.hangupPeer) {

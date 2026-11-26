@@ -1,5 +1,6 @@
 """A real 183/SDP opens browser media while final answer is withheld."""
 import asyncio
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -52,6 +53,7 @@ async def test_browser_183_keeps_media_owner_and_releases(lab, monkeypatch, fina
         assert state['state']=='remote_ringing' and not lab.calls.get_session(call_id).answer_committed
         assert state.get('early_media') is True, state
         assert state['can_attach_media'] is True
+        assert state['connected_elapsed'] == 0.0
         media=audio_ws_view._active_softphone_media_session(lab.hass,source.endpoint_id)
         assert media is not None, 'Actual provisional SDP must resolve the same browser RTP owner'
         assert media.remote_rtp_port==phone.rtp_socket.getsockname()[1]
@@ -78,6 +80,10 @@ async def test_browser_183_keeps_media_owner_and_releases(lab, monkeypatch, fina
                     await asyncio.sleep(.01)
             assert client.dialog is not None and not ended.is_set()
             assert _ha_softphone_state(lab.hass,source.endpoint_id)['early_media'] is False
+            answered_state = _ha_softphone_state(lab.hass,source.endpoint_id)
+            context = lab.calls.event_context(call_id)
+            assert answered_state['connected_elapsed'] == pytest.approx(
+                time.monotonic() - context.connected_at, abs=0.1)
             assert lab.runtime.media.sessions_for('audio')[active_key] is media
             assert media.rtp_socket is client.audio_rtp_socket
             assert media.local_audio_direction == 'recvonly'

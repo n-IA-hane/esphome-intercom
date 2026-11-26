@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -563,6 +564,13 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "connected_at": (
             event_context.connected_at_epoch
             if session is not None and session.live and event_context is not None
+            and store.get("state") in {"in_call", "held", "transferring"}
+            else 0.0
+        ),
+        "connected_elapsed": (
+            max(0.0, time.monotonic() - event_context.connected_at)
+            if session is not None and session.live and event_context is not None
+            and event_context.connected_at
             and store.get("state") in {"in_call", "held", "transferring"}
             else 0.0
         ),
