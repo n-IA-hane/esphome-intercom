@@ -305,14 +305,11 @@ def _rejected_media_line(section: dict) -> str:
     return f"m={section['media']} 0 {section['transport']} {formats}"
 
 
-def _offered_time_lines(sdp_body: str | bytes) -> list[str]:
+def _offered_time_lines(sdp_body: str | bytes | SdpDocument) -> list[str]:
     """Return the offer's RFC 3264 session time description unchanged."""
 
-    if isinstance(sdp_body, bytes):
-        sdp_body = sdp_body.decode("utf-8", errors="strict")
     lines: list[str] = []
-    for raw in sdp_body.replace("\r\n", "\n").split("\n"):
-        line = raw.strip()
+    for line in SdpDocument.parse(sdp_body).lines:
         if line.startswith("m="):
             break
         if line.startswith(("t=", "r=")):
@@ -325,7 +322,7 @@ def _answer_with_offered_media_order(
     origin_ip: str,
     media_ip: str,
     audio_lines: list[str],
-    remote_sdp: str | bytes,
+    remote_sdp: str | bytes | SdpDocument,
     video_port: int,
     video_format: RtpH264Format | None,
     video_direction: str | None = None,
@@ -452,7 +449,7 @@ def build_answer_directional(
     dtmf: RtpDtmfFormat | None = None,
     dtmf_direction=None,
     audio_rtcp: bool = False,
-    remote_sdp: str | bytes | None = None,
+    remote_sdp: str | bytes | SdpDocument | None = None,
     video_port: int = 0,
     video_format: RtpH264Format | None = None,
     audio_direction: str | None = None,

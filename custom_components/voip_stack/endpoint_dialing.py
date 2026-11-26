@@ -30,6 +30,7 @@ from .pbx_routing import roster_entry_for_target
 from .peer import sip_uri_for_peer
 from .runtime_data import preferred_browser_phone, sip_trunk
 from .trunk_signaling import reuse_registered_trunk_flow
+from .trunk_selection import trunk_destination_uri
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied, is_any_trunk_uri
 from .core.sip import SipUri, parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
@@ -179,9 +180,7 @@ class EndpointDialer:
                 selected = select_call_trunk(self.hass, inherited=inherited)
                 if selected.available:
                     cfg = selected.config
-                    uri = SipUri(decision.target, str(cfg.get("trunk_domain") or cfg.get("trunk_server") or ""),
-                                 int(cfg.get("trunk_port") or 5060),
-                                 params=(("transport", str(cfg.get("trunk_transport") or "udp")),))
+                    uri = trunk_destination_uri(cfg, decision.target)
                     policy = replace(policy, use_trunk_flow=True, trunk_id=selected.identity,
                         username=str(cfg.get("trunk_username") or ""),
                         auth_username=str(cfg.get("trunk_auth_username") or ""),

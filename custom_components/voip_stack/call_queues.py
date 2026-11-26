@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from .queue_policy import QueuePolicy as QueuePolicy
 from .phone_endpoint import EndpointAvailability
+from .endpoint_registry import EndpointRegistryEventType
 from .roster import RosterEntry, normalize_roster_key
 
 EVENT_QUEUE_CHANGED = "voip_stack.queue_changed"
@@ -150,6 +151,7 @@ class QueueManager:
     def reconcile(self, memberships, *, records=None):
         """Only persistent declarations create or remove queues, never presence."""
         previous_policies = dict(self.policies)
+        previous_definitions = self.definitions
         grouped: dict[str, tuple[str, list[str]]] = {}
         for endpoint_id, names in memberships:
             for name in names:
@@ -179,7 +181,10 @@ class QueueManager:
                   for member in definition.members}
             for key, definition in wanted.items()
         }
-        self._changed(persist=True)
+        affected = {key for key in previous_definitions.keys() | wanted.keys()
+                    if previous_definitions.get(key) != wanted.get(key)
+                    or previous_policies.get(key) != self.policies.get(key)}
+        self._changed(queue_ids=affected, persist=True)
 
     def refresh(self):
         from .phone_queue_membership import iter_phone_queue_memberships
@@ -215,7 +220,7 @@ class QueueManager:
         self.definitions[queue.queue_id] = replace(queue, members=ordered)
         self.policies[queue.queue_id] = updated
         self._event("policy_changed", queue_id=queue.queue_id)
-        self._changed(persist=True)
+        self._changed(queue_ids={queue.queue_id}, persist=True)
 
     def set_agent_state(self, ref, endpoint_id, state, reason=""):
         queue = self.resolve(ref)
@@ -233,7 +238,29 @@ class QueueManager:
         self.agent_states[queue.queue_id][endpoint_id] = state
         self._event("agent_state_changed", queue_id=queue.queue_id, endpoint_id=endpoint_id,
                     state=state, previous_state=previous, reason=stats["pause_reason"] or "manual")
-        self._changed(persist=True)
+        self._changed(queue_ids={queue.queue_id}, persist=True)
+
+    def _queues_for_endpoints(self, *endpoint_ids):
+        """Project affected membership from the existing queue declarations."""
+        identities = frozenset(identity for identity in endpoint_ids if identity)
+        return {key for key, queue in self.definitions.items() if identities.intersection(queue.members)}
+
+    @staticmethod
+    def _is_online(endpoint):
+        return bool(endpoint and endpoint.availability is EndpointAvailability.AVAILABLE)
+
+    def has_online_agents(self, ref, *, exclude_endpoint_id="") -> bool:
+        """Answer waiting policy without allocating the UI projection.
+
+        Busy, DND, reserved and wrap-up agents still count as online. Only
+        operator availability and transport presence govern no-agent waiting.
+        """
+        queue = self.resolve(ref)
+        if queue is None:
+            return False
+        states = self.agent_states.get(queue.queue_id, {})
+        return any(member != exclude_endpoint_id and states.get(member) == "available"
+            and self._is_online(self.endpoints.get(member)) for member in queue.members)
 
     def eligible(self, ref, *, call_id="") -> tuple[str, ...]:
         queue = self.resolve(ref)
@@ -283,7 +310,7 @@ class QueueManager:
             return ticket
         self.waiting.setdefault(queue.queue_id, deque()).append(ticket)
         self._event("entered", ticket)
-        self._changed()
+        self._changed(queue_ids={queue.queue_id})
         return ticket
 
     def record_rejection(self, ref, call_id, generation, reason):
@@ -330,7 +357,9 @@ class QueueManager:
         self._event("exited", previous, **previous.exit.event_fields(),
                     wait_seconds=max(0, self.clock() - previous.enqueued))
         self._event("entered", prepared)
-        self._changed()
+        members = tuple(member for key in (previous.queue_id, prepared.queue_id)
+                        if (queue := self.definitions.get(key)) is not None for member in queue.members)
+        self._changed(queue_ids={previous.queue_id, prepared.queue_id} | self._queues_for_endpoints(*members))
 
     def rollback_transfer(self, prepared):
         if self.staged_admissions.get(prepared.entry_id) is prepared:
@@ -402,7 +431,7 @@ class QueueManager:
         ticket.tried.add(endpoint_id)
         self.round_robin[ticket.queue_id] = endpoint_id
         self._event("offer_started", ticket, endpoint_id=endpoint_id, attempt_id=identity)
-        self._changed(persist=True)
+        self._changed(queue_ids={ticket.queue_id}, persist=True)
         return identity
 
     def finish_offer(self, ticket, endpoint_id, outcome, rang, attempt_id, *, notify=True):
@@ -425,9 +454,10 @@ class QueueManager:
         self._event("offer_ended", ticket, endpoint_id=endpoint_id, attempt_id=attempt_id,
                     outcome=outcome, reason="no_answer" if outcome == "timeout" and rang else outcome)
         if notify:
-            self._changed(persist=True)
+            self._changed(queue_ids={ticket.queue_id}, persist=True)
 
     def release_attempt(self, ticket, *, notify=True):
+        affected = {ticket.queue_id} | self._queues_for_endpoints(*ticket.reserved)
         for identity, (member, _started) in tuple(ticket.offers.items()):
             self.finish_offer(ticket, member, "cancelled", False, identity, notify=False)
         for member in ticket.reserved:
@@ -435,11 +465,12 @@ class QueueManager:
                 self.reservations.pop(member)
         ticket.reserved = ()
         if notify:
-            self._changed()
+            self._changed(queue_ids=affected)
 
     def finish(self, ticket, *, connected_endpoint="", reason="abandoned", queue_exit=None, notify=True):
         if ticket.closed:
             return
+        affected = {ticket.queue_id} | self._queues_for_endpoints(*ticket.reserved, connected_endpoint)
         ticket.closed = True
         self.staged_admissions.pop(ticket.entry_id, None)
         pending = self.waiting.get(ticket.queue_id)
@@ -455,11 +486,12 @@ class QueueManager:
         if connected_endpoint:
             self.start_wrap_up(ticket.queue_id, connected_endpoint, duration=ticket.policy.wrap_up, notify=False)
         if notify:
-            self._changed()
+            self._changed(queue_ids=affected)
 
     def connected(self, ticket, endpoint_id):
         if ticket.closed or ticket.connected_at is not None:
             return
+        affected = {ticket.queue_id} | self._queues_for_endpoints(*ticket.reserved, endpoint_id)
         for identity, (phone, _started) in tuple(ticket.offers.items()):
             if phone == endpoint_id:
                 self.finish_offer(ticket, phone, "in_call", True, identity, notify=False)
@@ -471,9 +503,9 @@ class QueueManager:
         self._event("answered", ticket, endpoint_id=endpoint_id,
                     wait_seconds=max(0, ticket.connected_at - ticket.enqueued))
         self.finish(ticket, notify=False)
-        self._changed(persist=True)
+        self._changed(queue_ids=affected, persist=True)
 
-    def complete_conversation(self, ticket, endpoint_id, reason):
+    def complete_conversation(self, ticket, endpoint_id, reason, *, notify=True):
         if ticket.completed or ticket.connected_at is None:
             return
         ticket.completed = True
@@ -486,29 +518,45 @@ class QueueManager:
                     disposition="completed", destination=endpoint_id,
                     wait_seconds=max(0, ticket.connected_at - ticket.enqueued),
                     talk_seconds=max(0, self.clock() - ticket.connected_at))
-        self._changed(persist=True)
+        if notify:
+            self._changed(queue_ids={ticket.queue_id} | self._queues_for_endpoints(endpoint_id), persist=True)
 
     def endpoint_changed(self, event):
         previous = event.previous
         endpoint = event.endpoint
+        affected = self._queues_for_endpoints(endpoint.endpoint_id,
+            previous.endpoint_id if previous is not None else "")
+        # Config and directory owners reconcile declarations. Runtime presence,
+        # DND and call-claim events only affect queues containing this endpoint.
+        membership_changed = (previous is None
+            or event.event_type is EndpointRegistryEventType.REMOVED
+            or (previous.endpoint_id, previous.username, previous.queues)
+                != (endpoint.endpoint_id, endpoint.username, endpoint.queues))
+        if membership_changed and self.hass is not None:
+            self.refresh()
+            affected |= self._queues_for_endpoints(endpoint.endpoint_id)
+        persist = False
         if previous is not None and previous.active_call_id and previous.active_call_id != endpoint.active_call_id:
             conversation = self.conversations.get(endpoint.endpoint_id)
             if conversation is not None and conversation.call_id == previous.active_call_id:
-                self.complete_conversation(conversation, endpoint.endpoint_id, "agent_leg_ended")
+                self.complete_conversation(conversation, endpoint.endpoint_id, "agent_leg_ended", notify=False)
+                affected.add(conversation.queue_id)
+                persist = True
             sip = getattr(self.entry.runtime_data, "sip", None)
             session = sip.get_session(previous.active_call_id) if sip is not None else None
             connected_leg = session is not None and any(
                 leg.endpoint_id == endpoint.endpoint_id and (leg.state == "in_call" or leg.phase in {"answered", "held"})
                 for leg in session.legs.values())
-            # An answered caller does not make an unanswered fork candidate a
-            # completed conversation. Use the released endpoint's actual leg.
+            # A released ringing fork leg is not a completed conversation.
             if conversation is not None or connected_leg:
                 self.last_ended[endpoint.endpoint_id] = time.time()
-                for queue in self.definitions.values():
-                    if endpoint.endpoint_id in queue.members:
-                        self._stats(queue.queue_id, endpoint.endpoint_id)["last_ended"] = self.last_ended[endpoint.endpoint_id]
-        self.refresh() if self.hass is not None else None
-        self._changed(persist=True)
+                for queue_id in affected:
+                    queue = self.definitions.get(queue_id)
+                    if queue is not None and endpoint.endpoint_id in queue.members:
+                        self._stats(queue_id, endpoint.endpoint_id)["last_ended"] = self.last_ended[endpoint.endpoint_id]
+                persist = True
+        if affected:
+            self._changed(queue_ids=affected, persist=persist)
 
     def start_wrap_up(self, queue_id, endpoint_id, *, duration=None, notify=True):
         if duration is None:
@@ -517,7 +565,7 @@ class QueueManager:
             self.wrap_until[endpoint_id] = max(self.wrap_until.get(endpoint_id, 0), self.clock() + duration)
             self._schedule_wrap_expiry()
             if notify:
-                self._changed()
+                self._changed(queue_ids=self._queues_for_endpoints(endpoint_id))
 
     def _schedule_wrap_expiry(self):
         if self._wrap_timer is not None:
@@ -534,15 +582,20 @@ class QueueManager:
         for endpoint in expired:
             self.wrap_until.pop(endpoint)
         if expired:
-            self._changed()
+            self._changed(queue_ids=self._queues_for_endpoints(*expired))
         self._schedule_wrap_expiry()
 
     def subscribe(self, callback):
         self._listeners.add(callback)
         return lambda: self._listeners.discard(callback)
 
-    def _changed(self, *, persist=False):
-        for tickets in self.waiting.values():
+    def _changed(self, *, queue_ids=None, persist=False):
+        if queue_ids is not None:
+            queue_ids = frozenset(queue_ids)
+            if not queue_ids:
+                return
+        waiting = self.waiting.values() if queue_ids is None else (self.waiting.get(key, ()) for key in queue_ids)
+        for tickets in waiting:
             for ticket in tickets:
                 ticket.changed.set()
         if persist and self.store is not None:
@@ -572,7 +625,7 @@ class QueueManager:
             members.append({"phone": member, "state": state, "logged_in": state != "logged_out",
                 "paused": state == "paused", "busy": bool(endpoint and endpoint.active_call_id),
                 "available": member in eligible,
-                "online": bool(endpoint and endpoint.availability is EndpointAvailability.AVAILABLE),
+                "online": self._is_online(endpoint),
                 "dnd": bool(endpoint and endpoint.dnd),
                 **self._stats(queue.queue_id, member),
                 "reserved_queue_id": self.reservations[member].queue_id if member in self.reservations else None,

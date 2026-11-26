@@ -72,8 +72,24 @@ def _rtpmap_encoding(spec: str) -> tuple[str, int, int]:
     return encoding.upper(), rate, channels
 
 
-def parse_sdp(sdp: str | bytes, *, capabilities: bool = False) -> dict:
+def parse_sdp(sdp: str | bytes | SdpDocument, *, capabilities: bool = False) -> dict:
+    """Interpret each document once per mode and return an independent view."""
     document = SdpDocument.parse(sdp)
+    facts = document._audio_facts.get(capabilities)
+    if facts is None:
+        facts = _parse_audio_document(document, capabilities=capabilities)
+        document._audio_facts[capabilities] = facts
+    # Existing consumers receive mutable dictionaries. Their edits cannot
+    # alter this document's facts or another consumer's result.
+    return {
+        **facts,
+        "payload_order": list(facts["payload_order"]),
+        "rtpmap": dict(facts["rtpmap"]),
+        "fmtp": dict(facts["fmtp"]),
+    }
+
+
+def _parse_audio_document(document: SdpDocument, *, capabilities: bool) -> dict:
     session_conn = ""
     media_conn = ""
     media_port = 0

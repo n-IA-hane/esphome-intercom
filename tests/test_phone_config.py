@@ -193,7 +193,7 @@ def test_phone_policy_survives_rename_and_config_roundtrip():
 
 
 def test_invalid_phone_policy_never_reaches_persistence():
-    subentry = types.SimpleNamespace(
+    subentry = _ConfigSubentry(
         subentry_type=phone_config.PHONE_SUBENTRY_TYPE,
         title="Kitchen",
         data={
@@ -202,11 +202,11 @@ def test_invalid_phone_policy_never_reaches_persistence():
             phone_config.CONF_PHONE_KIND: "sip_account",
         },
     )
-    entry = types.SimpleNamespace(data={}, subentries={"phone": subentry})
+    entry = types.SimpleNamespace(data={}, subentries={subentry.subentry_id: subentry})
     # No config_entries interface: validation must fail before any write.
-    with pytest.raises(ValueError, match="set together"):
+    with pytest.raises(ValueError, match="between 0 and 3600 seconds"):
         phone_config.update_phone_subentry(types.SimpleNamespace(), entry, "sip:stable", {
-            phone_config.CONF_PHONE_POLICY: {"ringing_timeout": 25},
+            phone_config.CONF_PHONE_POLICY: {"ringing_timeout": -1},
         })
     assert phone_config.CONF_PHONE_POLICY not in subentry.data
 

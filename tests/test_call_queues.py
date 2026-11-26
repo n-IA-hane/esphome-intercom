@@ -112,7 +112,7 @@ def test_removed_queue_wakes_waiters_and_releases_without_ending_connected_calls
 
 @pytest.mark.parametrize("field,value", [
     ("max_waiting", 0), ("max_waiting", 65), ("max_waiting", True),
-    ("max_wait", 0), ("ring_timeout", 121), ("retry_delay", 0),
+    ("max_wait", 0), ("ring_timeout", 3601), ("retry_delay", 0),
     ("wrap_up", -1), ("enabled", "yes"), ("unknown", 1),
 ])
 def test_invalid_policy_cannot_partially_change_queue(manager, field, value):
@@ -312,3 +312,101 @@ def test_sequential_queue_never_reselects_its_own_caller_ahead_of_idle_agent(man
     ticket = manager.enqueue('1002', 'caller-also-agent', 1)
     assert manager.claim_turn(ticket) == ('sip:2',)
     assert 'sip:1' not in manager.reservations
+
+
+@pytest.mark.parametrize("duration", [None, 0, 121, 3600])
+def test_ringing_policy_retains_inheritance_zero_and_supported_finite_range(manager, duration):
+    manager.configure("1002", {"ring_timeout": duration})
+    assert manager.policy("1002").ring_timeout == duration
+
+
+def test_unrelated_endpoint_change_does_not_reconcile_persist_or_wake(manager, monkeypatch):
+    manager.endpoints.register(phones.PhoneEndpoint(endpoint_id="unrelated", name="Other", username="other",
+        kind=phones.EndpointKind.SIP_ACCOUNT, availability=phones.EndpointAvailability.AVAILABLE))
+    tickets = [manager.enqueue(name, name, 1) for name in ("1002", "Support")]
+    for ticket in tickets:
+        ticket.changed.clear()
+    calls = []
+    manager.hass = SimpleNamespace(bus=SimpleNamespace(async_fire=lambda *_: calls.append("event")))
+    manager.store = SimpleNamespace(async_delay_save=lambda *_: calls.append("save"))
+    monkeypatch.setattr(manager, "refresh", lambda: calls.append("refresh"))
+    manager.subscribe(lambda: calls.append("listener"))
+    manager.endpoints.subscribe(manager.endpoint_changed)
+    manager.endpoints.update("unrelated", dnd=True)
+    assert calls == []
+    assert all(not ticket.changed.is_set() for ticket in tickets)
+
+
+def test_member_runtime_change_notifies_only_its_queues_without_configuration_work(manager, monkeypatch):
+    own = manager.enqueue("1002", "own", 1)
+    other = manager.enqueue("Support", "other", 1)
+    own.changed.clear()
+    other.changed.clear()
+    calls = []
+    manager.hass = SimpleNamespace(bus=SimpleNamespace(async_fire=lambda *_: calls.append("event")))
+    manager.store = SimpleNamespace(async_delay_save=lambda *_: calls.append("save"))
+    monkeypatch.setattr(manager, "refresh", lambda: calls.append("refresh"))
+    manager.subscribe(lambda: calls.append("listener"))
+    manager.endpoints.subscribe(manager.endpoint_changed)
+    manager.endpoints.update("sip:1", dnd=True)
+    assert own.changed.is_set() and not other.changed.is_set()
+    assert calls == ["event", "listener"]
+
+
+@pytest.mark.parametrize("mutation", ["add", "membership", "remove", "identity"])
+def test_endpoint_declaration_changes_still_reconcile(manager, monkeypatch, mutation):
+    calls = []
+    manager.hass = SimpleNamespace(bus=SimpleNamespace(async_fire=lambda *_: None))
+    monkeypatch.setattr(manager, "refresh", lambda: calls.append("refresh"))
+    manager.endpoints.subscribe(manager.endpoint_changed)
+    if mutation == "add":
+        manager.endpoints.register(phones.PhoneEndpoint(endpoint_id="new", name="New", username="new",
+            kind=phones.EndpointKind.SIP_ACCOUNT))
+    elif mutation == "remove":
+        manager.endpoints.remove("sip:1")
+    elif mutation == "identity":
+        manager.endpoints.update("sip:1", username="renamed")
+    else:
+        manager.endpoints.update("sip:1", queues=("Support",))
+    assert calls == ["refresh"]
+
+
+def test_releasing_reserved_agent_wakes_another_queue_that_can_now_offer(manager):
+    first = manager.enqueue("1002", "first", 1)
+    shared = manager.enqueue("Support", "shared", 1)
+    assert manager.claim_turn(first) == ("sip:1", "sip:2")
+    assert not manager.claim_turn(shared)
+    shared.changed.clear()
+    manager.release_attempt(first)
+    assert shared.changed.is_set()
+    assert manager.claim_turn(shared) == ("sip:2",)
+
+
+@pytest.mark.parametrize("blocking", ["busy", "dnd", "reserved", "wrap_up"])
+def test_online_agent_query_preserves_no_agent_semantics_for_temporarily_busy_agents(manager, blocking):
+    manager.set_agent_state("1002", "sip:2", "logged_out")
+    if blocking == "busy":
+        manager.endpoints.claim_call("sip:1", "elsewhere")
+    elif blocking == "dnd":
+        manager.endpoints.update("sip:1", dnd=True)
+    elif blocking == "reserved":
+        ticket = manager.enqueue("1002", "reserved", 1)
+        manager.claim_turn(ticket)
+    else:
+        manager.start_wrap_up("1002", "sip:1", duration=5)
+    assert not manager.eligible("1002")
+    assert manager.has_online_agents("1002")
+    assert not manager.has_online_agents("1002", exclude_endpoint_id="sip:1")
+
+
+@pytest.mark.parametrize("state", ["logged_out", "paused", "offline", "removed"])
+def test_online_agent_query_excludes_unavailable_operator_or_presence(manager, state):
+    manager.set_agent_state("1002", "sip:2", "logged_out")
+    if state in {"paused", "logged_out"}:
+        manager.set_agent_state("1002", "sip:1", state)
+    elif state == "removed":
+        manager.endpoints.remove("sip:1")
+    else:
+        manager.endpoints.update("sip:1", availability=phones.EndpointAvailability.OFFLINE)
+    assert not manager.has_online_agents("1002")
+    assert not manager.has_online_agents("missing")

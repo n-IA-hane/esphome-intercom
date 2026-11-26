@@ -141,10 +141,9 @@ class QueueCall(LocalCallApplication):
                 if not policy.enabled or now >= self.ticket.deadline:
                     await self._fallback(policy, "queue_disabled" if not policy.enabled else "queue_timeout")
                     return
-                state = self.manager.get_state(definition.queue_id)
                 source_endpoint_id = self.session.metadata.get("source_endpoint_id", "")
-                online_agents = any(member["phone"] != source_endpoint_id
-                    and member["state"] == "available" and member["online"] for member in state["members"])
+                online_agents = self.manager.has_online_agents(
+                    definition.queue_id, exclude_endpoint_id=source_endpoint_id)
                 if online_agents:
                     no_agent_since = None
                 elif no_agent_since is None:
@@ -244,6 +243,12 @@ async def route_queue_call(runtime, invite, decision, registry, source_endpoint)
     return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
 
 
+def _queue_application_policy(session, ticket, manager):
+    """Carry one admitted policy through initial and transactional queue entry."""
+    return {"ticket": ticket, "manager": manager, "policy_snapshot": ticket.policy,
+            "ringing_timeout": session.metadata.get("route_ringing_timeout")}
+
+
 def start_queue_application(hass, session, invite, contact, local_ip, *, previous=None, local_source=None):
     """Enter a queue through inbound routing or the same forwarding dispatcher."""
     registry = call_registry(hass)
@@ -254,9 +259,8 @@ def start_queue_application(hass, session, invite, contact, local_ip, *, previou
                                   callee=contact.display_name, route_kind="queue")
     registry.set_pending_invite(invite.call_id, invite)
     application = attach_local_application(QueueCall, hass, session, invite, contact, local_ip,
-                                           previous=previous, local_source=local_source, ticket=ticket, manager=manager,
-                                           policy_snapshot=manager.policy(queue_id),
-                                           ringing_timeout=session.metadata.get("route_ringing_timeout"))
+                                           previous=previous, local_source=local_source,
+                                           **_queue_application_policy(session, ticket, manager))
     application.waiter = session.create_task(application.run(), name=f"queue-waiter:{queue_id}:{ticket.entry_id}")
     return application
 
@@ -285,7 +289,7 @@ async def transfer_queue_application(hass, session, invite, contact, local_ip, p
     next_app = QueueCall(hass, session, invite, contact, local_ip,
         media=previous.media, answered=previous.answered, playback=previous.playback,
         local_source=previous.local_source, source_client=previous.source_client,
-        ticket=ticket, manager=manager, policy_snapshot=ticket.policy, resource_key=key)
+        resource_key=key, **_queue_application_policy(session, ticket, manager))
     resource = session.add_resource(key, next_app, lambda _reason: manager.rollback_transfer(ticket), stage=CleanupStage.MEDIA)
     try:
         await previous.stop_music()

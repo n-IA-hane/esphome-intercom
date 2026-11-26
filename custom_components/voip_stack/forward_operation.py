@@ -15,9 +15,6 @@ from .const import (
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
-    CONF_TRUNK_PORT,
-    CONF_TRUNK_SERVER,
-    CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
     CONF_VIDEO_TRANSCODING,
 )
@@ -615,11 +612,8 @@ class ForwardOperation:
                 if selected_trunk_id
                 else _get_trunk_config(hass)
             )
-            uri_override = (
-                f"sip:{target}@{trunk_cfg[CONF_TRUNK_SERVER]}:"
-                f"{int(trunk_cfg[CONF_TRUNK_PORT])};"
-                f"transport={str(trunk_cfg[CONF_TRUNK_TRANSPORT]).lower()}"
-            )
+            from .trunk_selection import trunk_destination_uri
+            uri_override = str(trunk_destination_uri(trunk_cfg, target))
         else:
             uri_override = str(decision.sip_uri or "")
 

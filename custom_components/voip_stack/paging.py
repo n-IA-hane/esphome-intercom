@@ -12,7 +12,7 @@ from homeassistant.core import Context, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import async_require_service_admin
-from .automation_originate import async_originate_application_call
+from .automation_originate import async_originate_application_call, async_prepare_application_calls
 from .dial_fork import DialCandidate, DialDisposition, DialForkController, DialOutcome
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, TerminationIntent
@@ -110,6 +110,7 @@ class PagingJob:
     state: str = "preparing"
     finishing: bool = False
     error: str = ""
+    preparation: object | None = None
 
     def report(self):
         return {"announcement_id": self.identity, "state": self.state,
@@ -163,7 +164,7 @@ class PagingJob:
                 token = await async_originate_application_call(
                     call, source=RosterEntry(f"paging:{self.identity}", name="Announcement",
                                             metadata={"virtual_endpoint": "paging", "automation_timeout": self.data["timeout"]}),
-                    answer_mode="Auto", audio_direction="sendonly",
+                    answer_mode="Auto", audio_direction="sendonly", preparation=self.preparation,
                 )
             self.calls[endpoint.endpoint_id] = token
             self.results[endpoint.endpoint_id] = {"status": "ready"}
@@ -293,6 +294,9 @@ class PagingJob:
         registry = call_registry(self.manager.hass)
         try:
             async with asyncio.timeout(self.data["timeout"]):
+                from .account_dialing import account_uses_ha_only
+                if any(not account_uses_ha_only(self.manager.hass, target) for target in self.targets):
+                    self.preparation = await async_prepare_application_calls(self.manager.hass)
                 candidates = []
                 for target in self.targets:
                     async def dial(endpoint=target):

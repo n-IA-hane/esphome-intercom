@@ -57,6 +57,13 @@ class BrowserPagingMedia:
             ended.cancel()
             await asyncio.gather(pending, ended, return_exceptions=True)
 
+    async def _enqueue_frame(self, frame):
+        """The bounded queue owns admission and interrupts puts on shutdown."""
+        try:
+            await self.tx_queue.put(frame)
+        except asyncio.QueueShutDown as error:
+            raise ConnectionError("The browser paging recipient disconnected") from error
+
     async def play_pcm_stream(self, chunks, *, source_format=BROWSER_PAGING_PCM):
         converter = PcmFrameConverter(source_format, BROWSER_PAGING_PCM)
         frame_bytes = source_format.nominal_frame_bytes
@@ -70,11 +77,11 @@ class BrowserPagingMedia:
                     raw = bytes(pending[:frame_bytes])
                     del pending[:frame_bytes]
                     for frame in converter.convert(raw):
-                        await self._while_open(self.tx_queue.put(frame))
+                        await self._enqueue_frame(frame)
         if pending:
             pending.extend(bytes(frame_bytes - len(pending)))
             for frame in converter.convert(bytes(pending)):
-                await self._while_open(self.tx_queue.put(frame))
+                await self._enqueue_frame(frame)
 
     async def drain_output(self):
         await self._while_open(self.tx_queue.join())

@@ -49,8 +49,8 @@ def subscription_filter(event_header):
     return tuple(values.get(key, "") for key in ("call-id", "to-tag", "from-tag"))
 
 
-def snapshot_all(runtime):
-    """Project all call legs once; the registry remains the sole state owner."""
+def _snapshot(runtime, selected_endpoint_id=None):
+    """Project current legs, optionally limiting DTO assembly to one endpoint."""
     calls = runtime.sip
     if calls is None:
         return {}
@@ -73,12 +73,17 @@ def snapshot_all(runtime):
         for leg in session.legs.values():
             if leg.endpoint_id and leg.phase not in {LegPhase.CLOSING, LegPhase.CLOSED}:
                 legs.setdefault(leg.endpoint_id, []).append(leg)
+        endpoint_ids = session.endpoint_claims.keys() | legs.keys()
+        if selected_endpoint_id is not None:
+            if selected_endpoint_id not in endpoint_ids:
+                continue
+            endpoint_ids = (selected_endpoint_id,)
         retired = {
             resource.value.endpoint_id
             for resource in session.resources
             if resource.name.startswith("retired_destination:")
         }
-        for endpoint_id in session.endpoint_claims.keys() | legs.keys():
+        for endpoint_id in endpoint_ids:
             source = endpoint_id == session.metadata.get("source_endpoint_id")
             matching = legs.get(endpoint_id, ())
             endpoint = runtime.endpoints.get(endpoint_id)
@@ -239,6 +244,8 @@ def snapshot_all(runtime):
     lot = calls.component("parking")
     if lot is not None:
         for slot, parked in lot.calls.items():
+            if selected_endpoint_id is not None and selected_endpoint_id != "parking:" + slot:
+                continue
             if parked.session.live:
                 session = parked.session
                 result["parking:" + slot] = [
@@ -255,6 +262,11 @@ def snapshot_all(runtime):
     return {endpoint: tuple(states) for endpoint, states in result.items()}
 
 
+def snapshot_all(runtime):
+    """Project all call legs once; the registry remains the sole state owner."""
+    return _snapshot(runtime)
+
+
 def filter_dialogs(states, match=("", "", "")):
     return tuple(
         item
@@ -269,7 +281,7 @@ def filter_dialogs(states, match=("", "", "")):
 
 
 def snapshot(runtime, endpoint_id, match=("", "", "")):
-    return filter_dialogs(snapshot_all(runtime).get(endpoint_id, ()), match)
+    return filter_dialogs(_snapshot(runtime, endpoint_id).get(endpoint_id, ()), match)
 
 
 def document(entity, version, states):

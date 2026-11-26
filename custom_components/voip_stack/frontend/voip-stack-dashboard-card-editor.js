@@ -1,5 +1,6 @@
 const VERSION = (() => { try { return new URL(import.meta.url).searchParams.get("v") || "dev"; } catch (_) { return "dev"; } })();
 const { normaliseDashboardConfig, dashboardTranslate } = await import(`./voip-stack-dashboard-model.js?v=${encodeURIComponent(VERSION)}`);
+const { VoipEntityIds } = await import(`./voip-stack-entity-ids.js?v=${encodeURIComponent(VERSION)}`);
 const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VERSION)}`);
 
 const { ensureNativeForm } = await import(`./voip-stack-form.js?v=${encodeURIComponent(VERSION)}`);
@@ -10,9 +11,7 @@ class VoipStackDashboardCardEditor extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = {};
     this._devices = [];
-    this._connection = null;
-    this._loading = false;
-    this._loaded = false;
+    this._entityIds = new VoipEntityIds();
     this._error = "";
   }
 
@@ -24,27 +23,21 @@ class VoipStackDashboardCardEditor extends HTMLElement {
     const changed = this._hass?.connection !== hass?.connection;
     const languageChanged = this._hass?.language !== hass?.language;
     this._hass = hass;
-    if (changed) { this._loaded = false; this._error = ""; this._connection = hass?.connection; }
-    if (!this._loaded && !this._loading && !this._error) this._load();
+    this._entityIds.update(hass, () => this._catalogChanged());
     if (changed || languageChanged || !this.shadowRoot.childElementCount) this._render();
   }
 
-  async _load() {
-    const connection = this._hass?.connection;
-    if (!connection?.sendMessagePromise || this._loading) return;
-    this._loading = true;
-    try {
-      const response = await connection.sendMessagePromise({ type: "voip_stack/list_devices" });
-      if (this._hass?.connection !== connection) return;
-      this._devices = (response?.devices || []).filter((device) => {
-        const kind = String(device.kind || device.endpoint_type || (device.softphone ? "browser" : "esphome"));
-        return device.device_id && ["browser", "ha_softphone", "sip_account", "esphome"].includes(kind);
-      });
-      this._loaded = true;
-      this._error = "";
-    } catch (error) {
-      if (this._hass?.connection === connection) this._error = error?.message || String(error);
-    } finally { this._loading = false; this._render(); }
+  _load() {
+    return this._entityIds.refresh(this._hass, () => this._catalogChanged());
+  }
+
+  _catalogChanged() {
+    this._devices = this._entityIds.devices.filter((device) => {
+      const kind = String(device.kind || device.endpoint_type || (device.softphone ? "browser" : "esphome"));
+      return device.device_id && ["browser", "ha_softphone", "sip_account", "esphome"].includes(kind);
+    });
+    this._error = this._entityIds.error;
+    this._render();
   }
 
   _changed(key, value) {

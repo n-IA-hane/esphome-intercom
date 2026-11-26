@@ -25,9 +25,6 @@ from .const import (
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
-    CONF_TRUNK_PORT,
-    CONF_TRUNK_SERVER,
-    CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
     CONF_VIDEO_CAMERA_SEND,
     HA_PEER_FALLBACK_NAME,
@@ -588,10 +585,8 @@ async def _async_dispatch_browser_call_route(
         route = replace(route, action=RouteAction.BRIDGE, sip_uri=route_uri)
     if use_trunk:
         trunk_target = route.target or target
-        route_uri = (
-            f"sip:{trunk_target}@{trunk_cfg[CONF_TRUNK_SERVER]}:{int(trunk_cfg[CONF_TRUNK_PORT])};"
-            f"transport={str(trunk_cfg[CONF_TRUNK_TRANSPORT]).lower()}"
-        )
+        from .trunk_selection import trunk_destination_uri
+        route_uri = str(trunk_destination_uri(trunk_cfg, trunk_target))
     if not use_trunk and (
         route.action
         not in {

@@ -303,11 +303,16 @@ class SipInviteTransactions:
         exchange = InviteExchange.for_target(
             target, remote_host, remote_sip_port, request_uri, self.signaling_transport,
         )
+        if self.initial_next_hop is not None:
+            # A trunk's transport address is independent of the called domain.
+            # Only the initial transaction uses it; dialog routing stays owned
+            # by the accepted Contact and Record-Route values.
+            exchange.host, exchange.port = self.initial_next_hop
         route = exchange.next_hop(self.outbound_proxy)
         self._tls_server_name = route.host
-        self._signaling_nominal = (remote_host, int(remote_sip_port))
+        self._signaling_nominal = (exchange.host, exchange.port)
         try:
-            if self._reused_flow_send is not None and self._reused_udp_send_to is None:
+            if self._reused_flow_send is not None and (self._reused_udp_send_to is None or self.initial_next_hop is not None):
                 exchange.replace_endpoints(((exchange.host, exchange.port, self.signaling_transport),))
             else:
                 async with asyncio.timeout_at(self._invite_setup_deadline):

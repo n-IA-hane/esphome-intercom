@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
@@ -30,7 +30,46 @@ from .runtime_data import require_runtime_data
 from .ringing_policy import resolve_ringing_timeout, wait_for_ringing_result
 from .sip_runtime import enable_reused_tcp_connection, uri_transport
 from .trunk_policy import is_trunk_uri
+from .trunk_selection import trunk_destination_uri
 from .route_abort import RouteAbortContext, RouteAbortIntent, async_abort_route
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationCallPreparation:
+    """Directory and network discovery shared only by one bounded paging job."""
+
+    peers: tuple
+    entries: tuple
+    local_ip: str
+
+
+async def async_prepare_application_calls(hass):
+    """Prepare shared routing inputs before the per-call owners start."""
+    local_ip = await async_advertise_host(hass)
+    peers = await async_build_peer_snapshot(hass)
+    entries = roster_from_peers(hass, peers, registered_roster_entries(hass))
+    return ApplicationCallPreparation(tuple(peers), tuple(entries), local_ip)
+
+
+def _application_call_routes(hass, preparation):
+    """Rejoin shared declarations with current Contact and endpoint owners."""
+    from .directory_runtime import routing_snapshot
+
+    runtime = require_runtime_data(hass)
+    directory = runtime.directory
+    entries = (routing_snapshot(runtime, entries=preparation.entries)
+               if directory is not None and not directory.closed else list(preparation.entries))
+    phone_kinds = {"sip_account", "esphome", "browser", "ha_softphone"}
+    retired = {entry.id.casefold() for entry in preparation.entries
+               if entry.metadata.get("endpoint_kind") in phone_kinds
+               and runtime.endpoints.get(entry.metadata.get("endpoint_id", "")) is None}
+    entries = [entry for entry in entries if entry.id.casefold() not in retired
+               and (entry.metadata.get("endpoint_kind") not in phone_kinds
+                    or runtime.endpoints.get(entry.metadata.get("endpoint_id", "")) is not None)]
+    # Physical peers are discovery inputs, not a Contact cache. Their current
+    # routes and capabilities now come from the registrar overlay above.
+    peers = [peer for peer in preparation.peers if peer.endpoint_kind not in phone_kinds]
+    return peers, entries
 
 
 async def _dial_attempt(hass, registry, session, attempt, destination, timeout, *, answer_mode="", audio_direction="sendrecv"):
@@ -115,7 +154,7 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
 
 
 async def _async_originate_application_call(
-    call: ServiceCall, *, source=None, answer_mode="", audio_direction="sendrecv", routing_scope,
+    call: ServiceCall, *, source=None, answer_mode="", audio_direction="sendrecv", routing_scope, preparation=None,
 ) -> dict:
     """Share the existing application originate owner with server-side paging."""
     await async_require_service_admin(call.hass, call)
@@ -128,8 +167,8 @@ async def _async_originate_application_call(
     hass = call.hass
     runtime = require_runtime_data(hass)
     registry = call_registry(hass)
-    peers = await async_build_peer_snapshot(hass)
-    entries = roster_from_peers(hass, peers, registered_roster_entries(hass))
+    preparation = preparation or await async_prepare_application_calls(hass)
+    peers, entries = _application_call_routes(hass, preparation)
     supplied_source = source is not None
     source = source or roster_entry_for_target(str(call.data['source_automation']), entries)
     if source is None or not source.enabled or (not supplied_source and source.metadata.get('virtual_endpoint') != 'automation'):
@@ -180,6 +219,7 @@ async def _async_originate_application_call(
         if override.action in {"forward", "bridge"} and override.destination:
             destination = override.destination
             explicit_route = True
+        peers, entries = _application_call_routes(hass, preparation)
         initial_route = replace(resolve_route(destination, entries), ringing_timeout=override.ringing_timeout)
         routing_call_id = routing_session.call_id
     resolved = resolve_phone_target(
@@ -191,7 +231,7 @@ async def _async_originate_application_call(
         raise ServiceValidationError(f"Phone routing failed: {resolved.failure.decline_reason}")
     if resolved.decision != initial_route:
         destination = resolved.decision.target
-    local_ip = await async_advertise_host(hass)
+    local_ip = preparation.local_ip
     resolver = EndpointRouteResolver(hass=hass, local_ip=local_ip, sip_port=int(runtime.transport_config['sip_port']))
     dialer = EndpointDialer(
         hass=hass, local_ip=local_ip, config=runtime.transport_config,
@@ -199,6 +239,13 @@ async def _async_originate_application_call(
         enable_reused_tcp_connection=enable_reused_tcp_connection,
     )
     def prepare(target, *, initial=False):
+        if answer_mode:
+            from .ring_group import endpoint_preflight_disposition
+
+            endpoint = resolver.logical_endpoint(target, peers, entries)
+            disposition = endpoint_preflight_disposition(endpoint, call_id=routing_call_id or "", browser=False)
+            if disposition is not None:
+                raise ServiceValidationError(f"The paging destination is {disposition.value}")
         if dialer.browser_leg_for_member(target, peers, entries) is not None:
             raise ServiceValidationError("Outgoing automation calls currently require a SIP or ESPHome destination")
         uri, _, _ = dialer.sip_uri_for_member(target, peers, entries)
@@ -208,12 +255,9 @@ async def _async_originate_application_call(
         use_trunk = route.action is RouteAction.TRUNK
         cfg = trunk_selection.config
         if use_trunk:
-            from .core.sip import SipUri
-
             if not trunk_selection.available:
                 raise trunk_selection.unavailable_error()
-            uri = SipUri(route.target or target, cfg["trunk_server"], cfg["trunk_port"],
-                         (("transport", cfg["trunk_transport"]),))
+            uri = trunk_destination_uri(cfg, route.target or target)
         if uri is None and target.lower().startswith(('sip:', 'sips:')):
             from .core.sip import parse_sip_uri
             uri = parse_sip_uri(target)
@@ -278,11 +322,12 @@ async def _async_originate_application_call(
             stage=CleanupStage.MEDIA, generation=session.generation,
         )
         async def install_attempt(target, selection):
-            nonlocal attempt, client, destination, trunk_selection
+            nonlocal attempt, client, destination, trunk_selection, peers, entries
             session.ensure_live()
             if registry.resource_for(call_id, "automation") is not application:
                 raise ServiceValidationError("The outgoing call changed application")
             trunk_selection = selection
+            peers, entries = _application_call_routes(hass, preparation)
             rerouted = resolve_phone_target(
                 decision=resolve_route(target, entries), endpoint_registry=runtime.endpoints,
                 roster_entries=entries, route_resolver=resolve_route, call_id=call_id,
@@ -439,12 +484,12 @@ async def _async_originate_application_call(
         raise
 
 
-async def async_originate_application_call(call, *, source=None, answer_mode="", audio_direction="sendrecv"):
+async def async_originate_application_call(call, *, source=None, answer_mode="", audio_direction="sendrecv", preparation=None):
     """Close the existing pre-call session if an application route cannot start."""
     routing_scope = {}
     try:
         return await _async_originate_application_call(call, source=source, answer_mode=answer_mode,
-            audio_direction=audio_direction, routing_scope=routing_scope)
+            audio_direction=audio_direction, routing_scope=routing_scope, preparation=preparation)
     except BaseException:
         session = routing_scope.get("session")
         if session is not None and session.live:
