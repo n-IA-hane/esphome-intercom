@@ -13,9 +13,11 @@ from custom_components.voip_stack.phone_policy import PhonePolicy
 
 from .test_automation_originate_ha import lab as lab, tts_fixture
 from .test_browser_phone_policy_ha import browser_lab as browser_lab, originate
-from .test_browser_paging_ha import browser_lab as paging_browser_lab, _ringing
+from .test_browser_paging_ha import browser_lab as _paging_browser_lab, _ringing
 from .test_group_pickup_regressions_ha import prepare_browser_group
 from .test_paging_ha import manager, announce
+
+paging_browser_lab = _paging_browser_lab
 
 pytestmark = pytest.mark.ha
 

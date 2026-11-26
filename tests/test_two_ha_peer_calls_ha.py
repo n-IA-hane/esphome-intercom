@@ -75,7 +75,8 @@ async def register_phone(pbx):
     response = await exchange(1)
     assert response.status_code == 401
     challenge = dict(re.findall(r'(\w+)="([^"]*)"', response.header("WWW-Authenticate")))
-    md5 = lambda value: hashlib.md5(value.encode()).hexdigest()
+    def md5(value):
+        return hashlib.md5(value.encode()).hexdigest()
     digest = md5(f'{md5(pbx.username + ":" + challenge["realm"] + ":" + PASSWORD)}:'
                  f'{challenge["nonce"]}:00000001:phone:auth:{md5("REGISTER:" + uri)}')
     authorization = (f'Digest username="{pbx.username}", realm="{challenge["realm"]}", '

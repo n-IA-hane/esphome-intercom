@@ -41,39 +41,46 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
         registry.set_pending_route(session.call_id, {"future": decision, "outgoing_automation": True})
 
     async def dial():
-        # Bind the advertised media port before SIP can allocate an ephemeral
-        # socket or the peer can send its first RTP packet (RFC 3264, 5.1).
-        client.audio_rtp_socket = attempt.ports.take_audio_socket(client.local_rtp_port)
-        if client.audio_rtp_socket is None:
-            client.audio_rtp_socket = bind_sip_rtp_socket(client.local_rtp_port)
-        result = await client.invite(
-            target=attempt.uri.user, target_display_name=destination,
-            remote_host=attempt.uri.host, remote_sip_port=sip_default_port(attempt.uri),
-            request_uri=str(attempt.uri),
-            **({"answer_mode": answer_mode, "audio_direction": audio_direction}
-               if answer_mode or audio_direction != "sendrecv" else {}),
-        )
-        if result in {"ringing", "calling", "remote_ringing"}:
-            registry.transition(session.call_id, state=CallState.REMOTE_RINGING.value,
-                                expected_generation=session.generation)
-            publish_bridge_projection(hass, session, event_type="remote_ringing",
-                                      direction="outgoing", route_kind="automation")
-            if answer_mode:
-                remaining = (None if timeout is None else
-                    max(0.0, client.invite_sent_at + timeout - hass.loop.time()))
-                result = await wait_for_ringing_result(client, remaining)
-            else:
-                # The session policy owns ringing; protocol timers stay in SIP.
-                result = await client.wait_for_final()
-        if result == "in_call" and session.owner == "automation":
-            registry.transition(session.call_id, state=CallState.IN_CALL.value,
-                                expected_generation=session.generation)
-        if result != "in_call" and not decision.done():
-            decision.set_result({"action": "failed"})
-        return DialOutcome(
-            DialDisposition.ANSWERED if result == "in_call" and client.dialog is not None
-            else DialDisposition.UNAVAILABLE, reason=result,
-        )
+        try:
+            # Bind the advertised media port before SIP can allocate an ephemeral
+            # socket or the peer can send its first RTP packet (RFC 3264, 5.1).
+            client.audio_rtp_socket = attempt.ports.take_audio_socket(client.local_rtp_port)
+            if client.audio_rtp_socket is None:
+                client.audio_rtp_socket = bind_sip_rtp_socket(client.local_rtp_port)
+            result = await client.invite(
+                target=attempt.uri.user, target_display_name=destination,
+                remote_host=attempt.uri.host, remote_sip_port=sip_default_port(attempt.uri),
+                request_uri=str(attempt.uri),
+                **({"answer_mode": answer_mode, "audio_direction": audio_direction}
+                   if answer_mode or audio_direction != "sendrecv" else {}),
+            )
+            if result in {"ringing", "calling", "remote_ringing"}:
+                registry.transition(session.call_id, state=CallState.REMOTE_RINGING.value,
+                                    expected_generation=session.generation)
+                publish_bridge_projection(hass, session, event_type="remote_ringing",
+                                          direction="outgoing", route_kind="automation")
+                if answer_mode:
+                    remaining = (None if timeout is None else
+                        max(0.0, client.invite_sent_at + timeout - hass.loop.time()))
+                    result = await wait_for_ringing_result(client, remaining)
+                else:
+                    # The session policy owns ringing; protocol timers stay in SIP.
+                    result = await client.wait_for_final()
+            if result == "in_call" and session.owner == "automation":
+                registry.transition(session.call_id, state=CallState.IN_CALL.value,
+                                    expected_generation=session.generation)
+            if result != "in_call" and not decision.done():
+                decision.set_result({"action": "failed"})
+            return DialOutcome(
+                DialDisposition.ANSWERED if result == "in_call" and client.dialog is not None
+                else DialDisposition.UNAVAILABLE, reason=result,
+            )
+        except Exception:
+            # A local setup/media failure ends this attempt before a SIP
+            # result exists. Release its route-control waiter as well.
+            if not decision.done():
+                decision.set_result({"action": "failed"})
+            raise
 
     async def reroute():
         route = await decision

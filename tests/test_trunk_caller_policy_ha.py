@@ -67,7 +67,8 @@ async def test_registered_phone_caller_policy_is_applied_on_real_trunk_wire(trun
                     extra_headers=(("WWW-Authenticate", 'Digest realm="provider", nonce="wire-nonce", algorithm=MD5, qop="auth"'),)), address)
                 return
             fields = {key: value.strip('"') for key, value in re.findall(r'(\w+)=("[^"]*"|[^, ]+)', authorization)}
-            md5 = lambda value: hashlib.md5(value.encode()).hexdigest()
+            def md5(value):
+                return hashlib.md5(value.encode()).hexdigest()
             expected_digest = md5(f'{md5("provider-login:provider:test-only")}:{fields["nonce"]}:{fields["nc"]}:{fields["cnonce"]}:auth:{md5("INVITE:" + request.uri)}')
             if fields.get("username") != "provider-login" or fields.get("response") != expected_digest:
                 provider.transport.sendto(sip.build_uas_response(request, 403, "Forbidden"), address)

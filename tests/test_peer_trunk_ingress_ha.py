@@ -311,7 +311,8 @@ async def test_independent_wire_peer_with_invalid_digest_cannot_present_a_caller
         assert challenge.status_code == 401
         fields = dict(re.findall(r'(\w+)="([^"]*)"', challenge.header("WWW-Authenticate")))
         nonce, realm = fields["nonce"], fields["realm"]
-        md5 = lambda value: hashlib.md5(value.encode()).hexdigest()
+        def md5(value):
+            return hashlib.md5(value.encode()).hexdigest()
         digest = md5(f'{md5("remote_pbx:" + realm + ":incorrect-secret")}:{nonce}:00000001:wire:auth:{md5("INVITE:" + uri)}')
         auth = (f'Digest username="remote_pbx", realm="{realm}", nonce="{nonce}", uri="{uri}", '
                 f'response="{digest}", algorithm=MD5, qop=auth, nc=00000001, cnonce="wire"')

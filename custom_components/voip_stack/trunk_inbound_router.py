@@ -603,7 +603,6 @@ async def async_route_trunk_invite(
     )
     if result == "ringing":
         from .ringing_policy import resolve_ringing_timeout, wait_for_ringing_result
-        from .runtime_data import endpoint_directory
         target_endpoint = endpoint_directory(hass).resolve(destination)
         result = await wait_for_ringing_result(client,
             resolve_ringing_timeout(cfg, account=target_endpoint, override=decision.ringing_timeout))
