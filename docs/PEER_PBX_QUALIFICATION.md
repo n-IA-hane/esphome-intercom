@@ -50,7 +50,7 @@ Assertions cover:
 - The called username and presented From survive both PBXs unless the intermediary explicitly rewrites From.
 - Digest principal, From and Contact are distinct. No private SIP headers are required.
 - A bound account proves its identity even when it has already registered.
-- Both calls can coexist through one authenticated peer account without merging their session or RTP ownership.
+- Both calls can coexist through one authenticated peer account without merging their session or RTP ownership. The concurrent calls carry distinct PCM signals to detect swapped media paths.
 - UDP and TCP actually reach the receiving HA listener as the requested transport.
 - G.711 A-law is negotiated on the inter-PBX hop. Independent PCM signals travel in both directions through the real RTP relays and resamplers.
 - Max-Forwards decreases across PBX legs.

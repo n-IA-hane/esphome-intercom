@@ -298,24 +298,27 @@ async def call_between(pair, source, destination, *, connected=None):
         assert hop[2] == pair.transport
         assert int(request.header("Max-Forwards")) < int(hop[0].header("Max-Forwards"))
         dialog = caller.dialog
+        # Distinct signals also detect swapped RTP ownership during concurrency.
+        outbound_sample = 1008 if source.username in {"101", "202"} else 2016
+        returned_sample = 2016 if destination.username in {"101", "202"} else 4032
         async with asyncio.timeout(5):
             for index in range(3):
                 packet = rtp.build_packet(rtp.RtpPacket(dialog.send_format.payload_type,
-                    index, index * 320, 901, struct.pack("!320h", *([1008] * 320))))
+                    index, index * 320, 901, struct.pack("!320h", *([outbound_sample] * 320))))
                 await source.hass.loop.sock_sendto(audio, packet, (dialog.remote_rtp_host, dialog.remote_rtp_port))
             for _ in range(3):
                 received = rtp.parse_packet(await destination.phone.audio.get())
             # G.711 and the 16/8 kHz resamplers have startup transients. The
             # settled frame must carry the originating signal in each direction.
-            assert max(abs(value - 1008) for value in struct.unpack("!320h", received.payload)) <= 64
+            assert max(abs(value - outbound_sample) for value in struct.unpack("!320h", received.payload)) <= outbound_sample / 15
             peer_port = int(re.search(rb"m=audio (\d+)", request.body)[1])
             for index in range(3):
                 packet = rtp.build_packet(rtp.RtpPacket(destination.phone.payload_type,
-                    index, index * 320, 902, struct.pack("!320h", *([2016] * 320))))
+                    index, index * 320, 902, struct.pack("!320h", *([returned_sample] * 320))))
                 await source.hass.loop.sock_sendto(destination.phone.rtp_socket, packet, ("127.0.0.1", peer_port))
             for _ in range(3):
                 returned = rtp.parse_packet(await source.hass.loop.sock_recv(audio, 4096))
-            assert max(abs(value - 2016) for value in struct.unpack("!320h", returned.payload)) <= 128
+            assert max(abs(value - returned_sample) for value in struct.unpack("!320h", returned.payload)) <= returned_sample / 15
         await caller.terminate()
         async with asyncio.timeout(5):
             while source.calls.sessions or destination.calls.sessions:
