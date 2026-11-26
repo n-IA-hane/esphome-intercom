@@ -159,10 +159,11 @@ class VoipStackDashboardCard extends HTMLElement {
     if (!selector || !this.isConnected) return;
     this._ownerSelector = selector;
     this._ownerEndpointId = owner.endpoint_id;
+    const binding = this._ownerBinding = {};
     const epoch = this._epoch;
     this._ownerPushEpoch = 0;
     const deliver = (state) => {
-      if (!this.isConnected || epoch !== this._epoch || this._ownerSelector !== selector) return;
+      if (!this.isConnected || epoch !== this._epoch || this._ownerBinding !== binding) return;
       if (state?.device_id && state.device_id !== selector) return;
       if (owner.endpoint_id && state?.endpoint_id && owner.endpoint_id !== state.endpoint_id) return;
       if (this._ownerSnapshot && !softphoneSnapshotSupersedes(this._ownerSnapshot, state)) return;
@@ -170,6 +171,7 @@ class VoipStackDashboardCard extends HTMLElement {
       this._syncOwner(); this._render();
     };
     this._unsubOwner = voipStackEngine.subscribeSoftphoneState((state) => {
+      if (this._ownerBinding !== binding) return;
       this._ownerPushEpoch++;
       deliver(state);
     }, { device_id: selector });
@@ -178,13 +180,14 @@ class VoipStackDashboardCard extends HTMLElement {
       media_client_id: voipStackEngine.mediaClientId }).then((state) => {
       if (this._ownerPushEpoch === readEpoch) deliver(state);
     }).catch((error) => {
-      if (epoch === this._epoch && this._ownerSelector === selector) {
+      if (epoch === this._epoch && this._ownerBinding === binding) {
         this._error = error?.message || String(error); this._render();
       }
     });
   }
 
   _releaseOwner() {
+    this._ownerBinding = null;
     this._unsubOwner?.(); this._unsubOwner = null; this._ownerSelector = ""; this._syncKey = "";
     this._ownerEndpointId = undefined;
   }

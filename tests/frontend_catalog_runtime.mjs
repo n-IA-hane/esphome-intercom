@@ -17,9 +17,9 @@ class Element {
   attachShadow() {this.shadowRoot={};}
 }
 class Observer {observe(){} disconnect(){}}
-const phoneListeners=new Set();
+const phoneListeners=new Set(),ownerListeners=[];
 const engine={configure(){}, subscribePhoneStates(cb){phoneListeners.add(cb);return()=>phoneListeners.delete(cb);},
-  subscribeSoftphoneState(){return()=>{}}, dashboardSyncOwner(){}, active:false, callId:'', endpointId:'',
+  subscribeSoftphoneState(callback){ownerListeners.push(callback);return()=>{}}, dashboardSyncOwner(){}, active:false, callId:'', endpointId:'',
   mediaClientId:'fixture-only'};
 const context=vm.createContext({HTMLElement:Element, ResizeObserver:Observer, VoipEntityIds,
   voipStackEngine:engine, ...model, ...cardModel,
@@ -145,7 +145,38 @@ retry.refresh();await retry._pending;assert.equal(retries,3);
 // Reconnect refresh follows the dashboard's real event handler.
 for(const callback of readyCallbacks)callback();await settle();assert.equal(requests,5);
 
+// Reusing a native device ID must not admit a previous binding's read or push.
+const readRequests=[];
+let bindingCatalog=[{...old,endpoint_id:'account-A',device_id:'same-device'}];
+let bindingHass={...hass,entities:{},connection:{sendMessagePromise:async()=>({devices:bindingCatalog})},
+  callWS:()=>new Promise((resolve,reject)=>readRequests.push({resolve,reject}))};
+const boundCard=new context.Card();boundCard._render=()=>{};
+boundCard.setConfig({device_id:'same-device'});boundCard.hass=bindingHass;await settle();
+assert.equal(readRequests.length,1);
+const originalPush=ownerListeners.at(-1);
+const rebind=async identity=>{
+  bindingCatalog=[{...old,endpoint_id:identity,device_id:'same-device'}];
+  bindingHass={...bindingHass,entities:{}};boundCard.hass=bindingHass;await settle();
+};
+await rebind('account-B');assert.equal(readRequests.length,2);
+originalPush({endpoint_id:'account-A',device_id:'same-device',state:'ringing',call_id:'obsolete-push'});
+assert.equal(boundCard._ownerPushEpoch,0);assert.equal(boundCard._ownerSnapshot,null);
+readRequests[0].resolve({endpoint_id:'account-A',device_id:'same-device',state:'ringing',call_id:'obsolete-read'});
+await settle();assert.equal(boundCard._ownerSnapshot,null);
+readRequests[1].resolve({endpoint_id:'account-B',device_id:'same-device',state:'idle'});
+await settle();assert.equal(boundCard._ownerSnapshot.endpoint_id,'account-B');
+
+// Returning to A still creates a distinct binding; an older A read remains stale.
+await rebind('account-A');const firstReturn=readRequests.at(-1);
+await rebind('account-B');const obsoleteError=readRequests.at(-1);
+await rebind('account-A');const currentReturn=readRequests.at(-1);
+firstReturn.resolve({endpoint_id:'account-A',device_id:'same-device',state:'ringing',call_id:'obsolete-return'});
+obsoleteError.reject(new Error('Obsolete owner read failure'));
+await settle();assert.equal(boundCard._ownerSnapshot,null);assert.equal(boundCard._error,'');
+currentReturn.resolve({endpoint_id:'account-A',device_id:'same-device',state:'idle'});
+await settle();assert.equal(boundCard._ownerSnapshot.endpoint_id,'account-A');
+
 console.log(JSON.stringify({before,after_native_registry_update_and_reconfigure:refreshed,
   rename_and_device_identity:true,remove_selected:true,shared_request:true,
   late_registry_and_connection_responses:true,shared_disappearance_and_inflight_invalidation:true,
-  failed_refresh_recovery:true,reconnect:true}));
+  failed_refresh_recovery:true,reconnect:true,same_device_owner_rebinding:true}));
