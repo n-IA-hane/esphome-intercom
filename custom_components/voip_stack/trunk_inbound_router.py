@@ -268,7 +268,8 @@ async def async_route_trunk_invite(
             ),
             roster_entries, trunk_ready=False,
         )
-    decision = replace(decision, ringing_timeout=automation_decision.get("ringing_timeout"))
+    if "ringing_timeout" in automation_decision:
+        decision = replace(decision, ringing_timeout=automation_decision["ringing_timeout"])
     if decision.action is RouteAction.ANSWER_HA and not explicit_account:
         # ANSWER_HA identifies the endpoint kind, not necessarily the default
         # browser phone. Preserve explicit DTMF extensions for the second pass.

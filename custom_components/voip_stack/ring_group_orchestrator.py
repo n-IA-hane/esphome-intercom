@@ -140,10 +140,8 @@ async def run_ring_group_call(
         else:
             from .ringing_policy import resolve_ringing_timeout
             metadata = dict(entry.metadata)
-            if ringing_timeout is not None:
-                metadata["ring_policy"] = {**metadata.get("ring_policy", {}), "overall_timeout": ringing_timeout}
             ring_policy = RingPolicy.from_metadata(metadata,
-                default_timeout=resolve_ringing_timeout(runtime.config))
+                default_timeout=resolve_ringing_timeout(runtime.config), timeout_override=ringing_timeout)
     except (TypeError, ValueError) as err:
         _LOGGER.error(
             "SIP ring group has invalid policy call_id=%s group=%s: %s",

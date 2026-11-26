@@ -22,7 +22,8 @@ class RingPolicy:
     tier_strategies: Mapping[int, ForkStrategy] = field(default_factory=dict)
 
     @classmethod
-    def from_metadata(cls, metadata: Mapping[str, Any] | None, *, default_timeout: float | None = None) -> "RingPolicy":
+    def from_metadata(cls, metadata: Mapping[str, Any] | None, *, default_timeout: float | None = None,
+                      timeout_override: float | None = None) -> "RingPolicy":
         raw = dict(metadata or {})
         nested = raw.get("ring_policy")
         if isinstance(nested, Mapping):
@@ -34,6 +35,8 @@ class RingPolicy:
         inherited = configured is None
         if inherited:
             configured = default_timeout
+        if timeout_override is not None:
+            configured = timeout_override
         if configured is not None and (isinstance(configured, bool)
                 or not isinstance(configured, (int, float)) or not math.isfinite(configured)
                 or not 0 <= configured <= 3600):
@@ -42,7 +45,7 @@ class RingPolicy:
         step_timeout = float(raw.get("step_timeout") or min(15.0, overall_timeout))
         if not math.isfinite(step_timeout) or step_timeout <= 0.0:
             raise ValueError("ring step_timeout must be positive and finite")
-        if inherited:
+        if inherited or timeout_override is not None:
             step_timeout = min(step_timeout, overall_timeout)
         elif step_timeout > overall_timeout:
             raise ValueError("ring step_timeout must be no longer than overall_timeout")

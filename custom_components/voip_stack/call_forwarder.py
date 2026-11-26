@@ -726,10 +726,8 @@ class _ForwardAdmission:
         group_policy = None
         if decision.action is RouteAction.GROUP and account_plan is None:
             metadata = dict(decision.entry.metadata if decision.entry is not None else {})
-            if timeout_override is not None:
-                metadata["ring_policy"] = {**metadata.get("ring_policy", {}), "overall_timeout": timeout_override}
             group_policy = RingPolicy.from_metadata(metadata,
-                default_timeout=resolve_ringing_timeout(self.runtime.config))
+                default_timeout=resolve_ringing_timeout(self.runtime.config), timeout_override=timeout_override)
             ring_timeout = None if group_policy.overall_timeout == float("inf") else group_policy.overall_timeout
         else:
             ring_timeout = resolve_ringing_timeout(self.runtime.config,

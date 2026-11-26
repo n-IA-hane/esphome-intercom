@@ -125,3 +125,30 @@ async def test_global_update_does_not_request_transport_reload(hass, ringing, mo
     await async_config_entry_updated(hass, entry)
     assert not reload.called
     assert runtime.transport_config["default_ringing_timeout"] == 0
+
+
+def test_rule_inheritance_preserves_explicit_values_and_unlimited():
+    from custom_components.voip_stack.dial_plan import RingPolicy
+    from custom_components.voip_stack.group_config import normalize_group_data
+    from custom_components.voip_stack.parking_config import normalize_parking_config
+    from custom_components.voip_stack.queue_policy import QueuePolicy
+    from custom_components.voip_stack.ringing_policy import cap_ringing_timeout, resolve_ringing_timeout
+
+    group = normalize_group_data({'kind': 'ring', 'name': 'Support'})
+    assert group['policy']['overall_timeout'] is None
+    assert RingPolicy.from_metadata(group['policy'], default_timeout=120).overall_timeout == 120
+    assert RingPolicy.from_metadata(group['policy'], default_timeout=1).step_timeout == 1
+    explicit = normalize_group_data({'kind': 'ring', 'name': 'Support', 'policy': {'overall_timeout': 30}})
+    assert RingPolicy.from_metadata(explicit['policy'], default_timeout=120).overall_timeout == 30
+    unlimited = RingPolicy.from_metadata(explicit['policy'], default_timeout=120, timeout_override=0)
+    assert unlimited.overall_timeout == float('inf')
+    short = RingPolicy.from_metadata(explicit['policy'], timeout_override=0.5)
+    assert short.overall_timeout == short.step_timeout == 0.5
+    assert QueuePolicy.from_data({}).ring_timeout is None
+    assert QueuePolicy.from_data({'ring_timeout': 20}).ring_timeout == 20
+    assert QueuePolicy.from_data({'ring_timeout': 0}).ring_timeout == 0
+    assert normalize_parking_config({})['return_timeout'] is None
+    assert normalize_parking_config({'return_timeout': 30})['return_timeout'] == 30
+    assert normalize_parking_config({'return_timeout': 0})['return_timeout'] == 0
+    assert cap_ringing_timeout(resolve_ringing_timeout({'default_ringing_timeout': 120}, override=0), 7) == 7
+    assert resolve_ringing_timeout({}) is None

@@ -67,7 +67,7 @@ async def test_native_ring_editor_projects_policy_and_public_destinations(phone_
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
         "name": "Reception", "members": [{"device": device.id}, {"destination": "+3902123456"},
                                              {"destination": "sip:door@example.net"}],
-        "strategy": "sequential", "overall_timeout": 30, "step_timeout": 15,
+        "strategy": "sequential", "inherit_ringing_timeout": False, "overall_timeout": 30, "step_timeout": 15,
         "fallback": "Literal @ account", "keep_empty": True,
     }))
     assert result["type"] == "create_entry"

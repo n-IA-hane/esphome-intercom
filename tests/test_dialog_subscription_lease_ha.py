@@ -150,3 +150,49 @@ async def test_configured_dialog_lease_is_snapshotted_and_uses_no_sleeping_task(
     await methods.stop()
     assert all(handle.cancelled() for handle in handles)
     assert not methods.subscription_timers and not methods.tasks
+
+
+async def test_refreshed_timer_ignores_old_deadline_then_expires_once(blf, lab, monkeypatch):
+    methods, notifications, send = blf
+    lab.runtime.transport_config['max_dialog_subscription_expires'] = 600
+    loop = asyncio.get_running_loop()
+    clock = loop.time
+    offset = [0.0]
+    monkeypatch.setattr(loop, 'time', lambda: clock() + offset[0])
+    first = await methods.handle(subscribe(expires=1), ('127.0.0.3', 5060), 'UDP', send)
+    first.follow_up_scheduler()
+    await notifications.get()
+    await drained(methods)
+    owner = next(iter(methods.subscriptions.values()))
+    timer = methods.subscription_timers[owner.key]
+    old_callback, old_args = timer._callback, timer._args
+    refreshed = await methods.handle(subscribe(tag=first.to_tag, cseq=2, expires=600),
+                                      ('127.0.0.3', 5060), 'UDP', send)
+    refreshed.follow_up_scheduler()
+    await notifications.get()
+    await drained(methods)
+    offset[0] = 2
+    old_callback(*old_args)
+    assert methods.subscriptions[owner.key] is owner
+    assert not notifications.qsize()
+    offset[0] = 601
+    # The actual event-loop handle fires; no sleeping expiry task is needed.
+    terminal = await asyncio.wait_for(notifications.get(), 1)
+    assert dict(terminal.headers)['Subscription-State'] == 'terminated;reason=timeout'
+    await drained(methods)
+    assert not methods.subscriptions and not methods.subscription_timers and not methods.tasks
+    assert notifications.empty()
+
+
+async def test_failed_notify_retires_the_lease_handle(blf):
+    methods, notifications, send = blf
+    async def gone(request, address, result):
+        await send(request, address, result)
+        return sip.SipMessage(status_code=481, reason='Call/Transaction Does Not Exist')
+    response = await methods.handle(subscribe(expires=3600), ('127.0.0.3', 5060), 'UDP', gone)
+    timer = next(iter(methods.subscription_timers.values()))
+    response.follow_up_scheduler()
+    await notifications.get()
+    await drained(methods)
+    assert timer.cancelled()
+    assert not methods.subscriptions and not methods.subscription_timers and not methods.tasks
