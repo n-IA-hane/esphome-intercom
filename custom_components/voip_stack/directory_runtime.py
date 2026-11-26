@@ -8,12 +8,12 @@ from .roster import RosterEntry
 from .runtime_data import require_runtime_data, runtime_data
 
 
-def routing_snapshot(runtime):
+def routing_snapshot(runtime, *, entries=None):
     """Join configured identities with current binding owners without I/O."""
     directory = getattr(runtime, "directory", None)
     if directory is None or directory.closed:
         raise ValueError("Phone directory is unavailable")
-    entries = list(directory.snapshot())
+    entries = list(directory.snapshot() if entries is None else entries)
     video_disabled = {row.metadata.get('endpoint_id') for row in entries
                       if row.metadata.get('configured_video_enabled') is False}
     sip_runtime = getattr(runtime, "sip", None)
