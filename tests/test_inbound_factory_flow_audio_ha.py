@@ -116,7 +116,6 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
             source_host="127.0.0.9", source_port=5090, remote_sdp=source_offer.encode(),
             remote_rtp_host="127.0.0.9", remote_rtp_port=34000,
             send_format=media, recv_format=media, recv_formats=(media,), send_formats=(media,))
-        artifacts = SimpleNamespace(trunk_closed=False, trunk_info_queue=None)
         registry = Mock()
         registry.resource_for.return_value = None
         registry.current_generation.return_value = 1

@@ -20,9 +20,9 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "scripts"))
-from inbound_routing_qualification import BareSip, EventTrace, HomeAssistantApi, schema_defaults, trace_types, wait_event_state, wait_for
-from live_voip_qualification import candidate_revision
-from run_answered_sipp_lab import runtime_quiescence
+from inbound_routing_qualification import BareSip, EventTrace, HomeAssistantApi, schema_defaults, trace_types, wait_event_state, wait_for  # noqa: E402
+from live_voip_qualification import candidate_revision  # noqa: E402
+from run_answered_sipp_lab import runtime_quiescence  # noqa: E402
 
 SCENARIO_IDS = (
     "trunk_primary_called_number_routes_directly",

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 

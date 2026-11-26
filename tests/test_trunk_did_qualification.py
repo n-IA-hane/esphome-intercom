@@ -1,7 +1,5 @@
 """Configured direct-DID producers do not claim retired menu evidence."""
-from pathlib import Path
 import json
-from types import SimpleNamespace
 
 import pytest
 

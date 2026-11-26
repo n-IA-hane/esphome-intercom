@@ -3,7 +3,6 @@
 import asyncio
 import re
 import socket
-import struct
 import wave
 from contextlib import closing
 

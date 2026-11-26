@@ -1,13 +1,10 @@
-"""Direct and DTMF no-digits ingress use one native route-window matcher."""
+"""Incoming trunk calls use one native route-window matcher."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from custom_components.voip_stack.automation_routing import has_native_route_window, route_window_snapshot
-from custom_components.voip_stack.const import CONF_AUTOMATION_ROUTING_ENABLED
-from custom_components.voip_stack.router import RouteAction, RouteDecision, RouteReason
 from custom_components.voip_stack.runtime_data import registration_data
 
 pytestmark = pytest.mark.ha
