@@ -1,7 +1,6 @@
 """Outbound SIP dialogs, transactions and RTP media negotiation."""
 
 from __future__ import annotations
-from .core.media.negotiator import negotiate_dtmf
 
 from .sip_client_types import (
     DialogMediaCommit as DialogMediaCommit,
@@ -1458,18 +1457,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 if video is not None
                 else "inactive"
             )
-            dtmf_direction = (
-                sdp.negotiate_dtmf_answer_directional(
-                    request.body, local_offer_sdp, audio=selected
-                )
-                if local_offer_sdp
-                else negotiate_dtmf(request.body, audio=selected)
-            )
-            if dtmf_direction is not None:
-                dtmf_recv, dtmf_send = dtmf_direction.recv, dtmf_direction.send
-            else:
-                dtmf_recv = sdp.dtmf_format_for_clock(request.body, selected.recv.sample_rate)
-                dtmf_send = sdp.dtmf_format_for_clock(request.body, selected.send.sample_rate)
+            dtmf_direction = selected.dtmf_direction
+            dtmf_recv = dtmf_direction.recv if dtmf_direction is not None else None
+            dtmf_send = dtmf_direction.send if dtmf_direction is not None else None
             answer = local_offer_sdp or sdp.build_answer_directional(
                 self.local_ip,
                 self.media_ip,
@@ -2814,11 +2804,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 remote_video,
                 rtcp_mux=False,
             )
-            dtmf_pair = sdp.negotiate_dtmf_answer_directional(
-                answer.body,
-                offer,
-                audio=audio,
-            )
+            dtmf_pair = audio.dtmf_direction
             dtmf_recv = dtmf_pair.recv if dtmf_pair is not None else None
             dtmf_send = dtmf_pair.send if dtmf_pair is not None else None
             remote_target = sip.contact_target_uri(answer) or current.remote_target_uri

@@ -654,22 +654,10 @@ class SipLocalOffers:
             video_directional.recv if video_directional is not None else None
         )
         remote_video = sdp.parse_video_sdp(msg.body) if video_answer is not None else None
-        answered_dtmf_formats = sdp.offered_dtmf_formats(msg.body)
-        dtmf_direction = (
-            sdp.negotiate_dtmf_answer_directional(msg.body, self._local_sdp_body, audio=selected)
-            if self._local_sdp_body
-            else None
-        )
-        dtmf_recv = (
-            dtmf_direction.recv
-            if dtmf_direction is not None
-            else next(iter(answered_dtmf_formats), None)
-        )
-        dtmf_send = (
-            dtmf_direction.send
-            if dtmf_direction is not None
-            else dtmf_recv
-        )
+        # None is a selected outcome, not permission to infer another contract.
+        dtmf_direction = selected.dtmf_direction
+        dtmf_recv = dtmf_direction.recv if dtmf_direction is not None else None
+        dtmf_send = dtmf_direction.send if dtmf_direction is not None else None
         try:
             audio_payloads = _audio_payload_update(audio_payloads,
                 send=selected.send_formats or (selected.send,), receive=selected.recv_formats or (selected.recv,),
