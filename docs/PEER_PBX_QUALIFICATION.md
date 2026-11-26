@@ -45,6 +45,10 @@ The phone models register by constructing Digest independently with Python's MD5
 
 Every topology uses native HA route triggers with numeric ranges 200 through 299 on A and 100 through 199 on B. Each action explicitly selects the existing named trunk. Neither HA has a default trunk. The intermediary uses the ordinary Asterisk `_1XX` and `_2XX` dialplan patterns.
 
+The native trunk form exposes "Use as the default outgoing trunk" for every trunk, including the first and the sole existing trunk. It starts checked for a new first trunk. Uncheck it to create a named-route-only configuration, or reconfigure the current default and uncheck it to clear the selection. Editing another trunk while leaving its checkbox unchecked does not clear the selected default. No storage edit is needed.
+
+The existing "Choose the default outgoing SIP trunk" repair warning remains visible whenever trunks exist without a selected default. This is informational for an intentional named-route-only configuration. It does not select a replacement trunk or block explicitly routed calls. The native flow regression covers first-trunk opt-out, current-default clearing, preserving a different default, persistence and runtime reconciliation.
+
 Assertions cover:
 
 - The called username and presented From survive both PBXs unless the intermediary explicitly rewrites From.
