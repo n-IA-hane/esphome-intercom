@@ -110,8 +110,7 @@ async def no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, f
     port = lab.runtime.transport_config["sip_port"]
     config = normalized_trunk_config({
         "trunk_enabled": True, "trunk_register": False, "trunk_server": "127.0.0.2",
-        "trunk_allowed_ips": ["127.0.0.2/32"], "trunk_inbound_mode": "dtmf",
-        "trunk_dtmf_enabled": True, "trunk_dtmf_timeout_ms": 100,
+        "trunk_allowed_ips": ["127.0.0.2/32"],
         "trunk_inbound_default_target": fallback,
     })
     provider = SipTrunkClient(config=trunk_client_config(config), local_ip="127.0.0.1",
@@ -182,7 +181,9 @@ async def test_dtmf_trunk_fallback_offers_each_client_after_account_policy(
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
-@pytest.mark.parametrize(("fallback", "forbidden"), [("HA", False), ("Disabled site phone", True)])
+@pytest.mark.parametrize(("fallback", "forbidden"), [
+    ("HA", False), ("Disabled site phone", True), ("HA", True),
+])
 async def test_trunk_compatibility_alias_cannot_override_a_disabled_account(
     shared_account, hass_ws_client, monkeypatch, unused_udp_port_factory, tmp_path, fallback, forbidden,
 ):
@@ -200,14 +201,19 @@ async def test_trunk_compatibility_alias_cannot_override_a_disabled_account(
     try:
         async with no_digits_trunk(lab, monkeypatch, unused_udp_port_factory, tmp_path, fallback) as caller:
             if forbidden:
-                # The stock UAC offers no telephone-event. HA answers before
-                # collecting SIP INFO, so rejection must end that dialog.
+                # Direct trunk routing rejects the unavailable account before
+                # creating any answered dialog or ringing another client.
                 assert await asyncio.wait_for(caller.wait(), 4) != 0
                 wire = (tmp_path / "trunk-sip.log").read_text()
-                assert "SIP/2.0 200 OK" in wire and "BYE sip:sipp@127.0.0.2" in wire
+                assert "SIP/2.0 480 Temporarily Unavailable" in wire
+                assert "SIP/2.0 200 OK" not in wire and "BYE sip:sipp@127.0.0.2" not in wire
                 assert "SIP/2.0 180" not in wire
                 assert (await browser_snapshot(observer))["state"] == "idle"
             else:
+                # The compatibility alias selects the canonical account,
+                # including its registered clients and HA card.
+                for handset in handsets:
+                    await asyncio.to_thread(handset.wait_for, "Incoming call", 4)
                 async with asyncio.timeout(4):
                     while (ringing := await browser_snapshot(observer))["state"] != "ringing":
                         await asyncio.sleep(.01)
@@ -215,8 +221,9 @@ async def test_trunk_compatibility_alias_cannot_override_a_disabled_account(
                     "device_id": "browser-casa", "call_id": ringing["call_id"], "media_client_id": "legacy-card",
                 }, blocking=True)
                 assert await asyncio.wait_for(caller.wait(), 5) == 0
-            assert all("Incoming call" not in handset.read() for handset in handsets)
+            assert all(("Incoming call" not in handset.read()) is forbidden for handset in handsets)
             await wait_for(lambda: not lab.calls.sessions)
+            await assert_no_active_calls(handsets)
             assert resources(lab)["call_scoped_quiescent"]
     finally:
         await observer.close()

@@ -524,6 +524,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             source_endpoint_id=str(session.metadata.get("source_endpoint_id") or ""),
             dest_endpoint_id=picker,
             response_already_sent=source_answered or local_source is not None,
+            media_contract=source,
         )
         if not result.committed:
             raise ServiceValidationError(

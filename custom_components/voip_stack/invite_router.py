@@ -156,7 +156,15 @@ async def route_invite(
         if (default_target and decision.entry is None and not decision.action.is_local_application
                 and not _is_ha_target(invite.called_number)):
             direct_fallback_target = default_target
-            selected_target = runtime.ha_peer_name(hass) if _is_ha_target(default_target) else default_target
+            selected_target = default_target
+            if _is_ha_target(default_target):
+                from .roster import find_entry
+
+                explicit = endpoint_registry.resolve(default_target)
+                if explicit is None and find_entry(roster_entries, default_target) is None:
+                    preferred = preferred_browser_phone(hass)
+                    if preferred is not None:
+                        selected_target = preferred.username or preferred.sip_uri_user
             decision = _ha_router_decision(selected_target, roster_entries)
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement

@@ -9,8 +9,131 @@ import pytest
 from custom_components.voip_stack.store import config_entry
 from .test_sip_phone_transfers_ha import registered_phones as registered_phones
 from .test_trunk_calls_ha import trunks as trunks, lab as lab
+from .test_canonical_account_calls_ha import canonical_browser as canonical_browser
+from .test_browser_logical_availability_ha import logical_browser as logical_browser
 
 pytestmark = pytest.mark.ha
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("logical_browser", [{"ringing_timeout": 30}], indirect=True)
+@pytest.mark.parametrize("registered_phones", [{"audio_codecs": {"transfer_c": "opus/48000/2"}}], indirect=True)
+@pytest.mark.parametrize("hangup_side", ["caller", "picker"])
+async def test_jpeg_sip_caller_to_ha_account_can_be_picked_up_by_audio_only_phone(
+    canonical_browser, registered_phones, tmp_path, caplog, hangup_side
+):
+    """P4-like JPEG caller, Casa HA account and Fanvil-like audio-only picker."""
+    import socket
+
+    from custom_components.voip_stack.const import CONF_SIP_VIDEO
+    from custom_components.voip_stack.core import rtp, sdp
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from .test_browser_logical_availability_ha import resources
+
+    runtime = canonical_browser
+    entry = config_entry(runtime.hass)
+    runtime.hass.config_entries.async_update_entry(entry, data={
+        **entry.data, "parking": {"enabled": True, "timeout": 180}, CONF_SIP_VIDEO: True,
+    })
+    runtime.runtime.transport_config[CONF_SIP_VIDEO] = True
+    for endpoint in runtime.calls.component("udp_listener")._dialog_endpoints():
+        endpoint.enable_video = True
+    audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    audio.bind(("127.0.0.2", 0))
+    audio.setblocking(False)
+    video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    video.bind(("127.0.0.2", 0))
+    video.setblocking(False)
+    caller = SipCallClient(
+        local_ip="127.0.0.2", local_name="transfer_a", username="transfer_a",
+        password="isolated-test-only", local_sip_port=0,
+        local_rtp_port=audio.getsockname()[1], supported_formats=[AudioFormat(16000, frame_ms=20)],
+        local_video_rtp_port=video.getsockname()[1],
+        video_formats=(sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10),),
+    )
+    caller.audio_rtp_socket = audio
+    picker = registered_phones[2]
+    sending = None
+
+    async def wait_for(predicate):
+        async with asyncio.timeout(5):
+            while not predicate():
+                await asyncio.sleep(.01)
+
+    try:
+        result = await caller.invite(target="Casa", remote_host="127.0.0.1",
+            remote_sip_port=runtime.runtime.transport_config["sip_port"], timeout=5)
+        assert result == "ringing", (result, caplog.text)
+        session, = runtime.calls.sessions.values()
+        assert session.artifacts.pending_invite is not None
+        assert session.artifacts.pending_invite.video_format.encoding == "JPEG"
+        original_id = session.call_id
+        await asyncio.to_thread(picker.dial, "pickup.Casa")
+        assert await caller.wait_for_final(timeout=4) == "in_call", caplog.text
+        await wait_for(lambda: session.state == "in_call" and "Call established" in picker.read())
+        assert len(runtime.calls.sessions) == 1 and session.call_id == original_id
+        assert caller.dialog.video_format is None
+        relay = runtime.calls.resource_for(original_id, "relay")
+        assert relay.video_relay is None
+        assert relay.right.inbound_rtp_format.encoding == "OPUS"
+
+        async def source_audio():
+            for sequence in range(50):
+                samples = [int(12000 * math.sin(2 * math.pi * 450 * (sequence * 320 + i) / 16000))
+                           for i in range(320)]
+                payload = struct.pack(">320h", *samples)
+                raw = rtp.build_packet(rtp.RtpPacket(caller.dialog.send_format.payload_type,
+                    sequence, sequence * 320, 0x4A504547, payload))
+                await runtime.hass.loop.sock_sendto(audio, raw,
+                    (caller.dialog.remote_rtp_host, caller.dialog.remote_rtp_port))
+                await asyncio.sleep(.02)
+
+        sending = asyncio.create_task(source_audio())
+        received = []
+        async with asyncio.timeout(3):
+            while len(received) < 3200:
+                raw, _address = await runtime.hass.loop.sock_recvfrom(audio, 65535)
+                packet = rtp.parse_packet(raw)
+                if packet.payload_type == caller.dialog.recv_format.payload_type:
+                    received.extend(struct.unpack(f">{len(packet.payload) // 2}h", packet.payload))
+        def power(hz):
+            return abs(sum(value * complex(
+                math.cos(2 * math.pi * hz * i / 16000), math.sin(2 * math.pi * hz * i / 16000))
+                for i, value in enumerate(received)))
+        assert power(650) > max(power(450), power(1000)) * 5
+        await sending
+        await wait_for(lambda: relay.left_tx_packets >= 20 and relay.right_tx_packets >= 20)
+        if hangup_side == "picker":
+            await asyncio.to_thread(picker.hangup)
+        else:
+            await caller.terminate()
+        await wait_for(lambda: not runtime.calls.sessions)
+    finally:
+        if sending is not None:
+            sending.cancel()
+            await asyncio.gather(sending, return_exceptions=True)
+        await caller.terminate()
+        await caller.close()
+        video.close()
+        await asyncio.to_thread(picker.hangup)
+        await wait_for(lambda: not runtime.calls.sessions)
+        assert resources(runtime)["call_scoped_quiescent"]
+        await asyncio.to_thread(picker.close)
+    decoded_tone = False
+    for path in (tmp_path / "transfer_c").glob("*-dec.wav"):
+        with wave.open(str(path), "rb") as recorded:
+            assert recorded.getsampwidth() == 2
+            rate, channels = recorded.getframerate(), recorded.getnchannels()
+            samples = struct.unpack(f"<{recorded.getnframes() * channels}h",
+                                    recorded.readframes(recorded.getnframes()))[::channels][-1600:]
+        if len(samples) < 800:
+            continue
+        powers = {hz: abs(sum(value * complex(
+            math.cos(2 * math.pi * hz * i / rate), math.sin(2 * math.pi * hz * i / rate))
+            for i, value in enumerate(samples))) for hz in (450, 650, 1000)}
+        decoded_tone |= powers[450] > max(powers[650], powers[1000]) * 5 and powers[450] > 10000
+    assert decoded_tone, "The audio-only picker must decode the JPEG caller's microphone"
 
 
 @pytest.mark.parametrize("trunks", [True], indirect=True)
