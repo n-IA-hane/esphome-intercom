@@ -260,10 +260,10 @@ affecting the call.
 - External numbers and unresolved number-like targets can use the selected
   available trunk. Registered trunks need a usable registration; static trunks
   use their configured route without REGISTER.
-- Inbound trunk DTMF digits resolve against phonebook `extension` values. No
-  DTMF route hint means "use the configured inbound default target". A
-  received explicit route hint that cannot be resolved terminates as
-  `route_not_found`; it does not silently fall back to HA or another target.
+- Inbound trunks use DID and called-address matching, then their configured
+  destination. An explicit Automation menu can collect digits and forward to
+  a phonebook `extension`; an unknown selected extension is not silently
+  replaced with another destination.
 - A matching native `voip_stack.route_requested` trigger opens a bounded
   initial decision window; its action selects the target with
   `voip_stack.select_inbound_destination`. Legacy Event Entity rules use the

@@ -232,7 +232,7 @@ wrapper and applicable lab runner. This combined script has no lab-only switch.
 The same peer-live command also executes the two explicit-extension precedence
 cases from `tools/inbound_routing_qualification.py`. Their separate JSON
 artifact must contain both exact scenario IDs. A generic green SIP matrix or
-only one extension case cannot satisfy the DTMF routing contract.
+only one extension case cannot satisfy the applicable routing contract.
 
 Important groups:
 
@@ -350,8 +350,9 @@ least:
 - RTP/AVP compatibility plus RTP/AVPF compound RR/SDES and negotiated PLI/FIR
   recovery after attach;
 - exact-codec RTP and RTCP relay between two standard SIP legs;
-- trunk DTMF selection into a video-capable logical HA phone, including a
-  missing-extension rejection with no retained session or RTP reservation;
+- direct trunk routing into a video-capable logical HA phone, plus explicit
+  Automation menus and missing-destination rejection without retained sessions
+  or RTP reservations;
 - per-phone state isolation: the selected phone reaches `in_call`, unrelated
   phones remain idle and every involved phone returns to idle after teardown;
 - compact 6-column, default, wide and tall card geometry with long caller text;

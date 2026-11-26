@@ -70,7 +70,7 @@ entities in HA. It appears in the central phonebook so it can be called.
 Creating the contact does not create an automation. The contact makes the
 service callable; the automation defines what that service does. A numeric
 extension is optional. Assign one if people should reach it by typing digits
-on a SIP phone or in the trunk's extension menu.
+on a SIP phone or in an explicitly configured Automation menu.
 
 ## Create your first greeting in the editor
 
@@ -244,9 +244,10 @@ external provider forwards an unanswered call to a mobile phone.
 1. Add a phonebook contact of type **Automation**, named `No answer`. Leave its
    fallback empty. No address, SIP account or physical phone is needed.
 2. Route the desired incoming calls to that contact. For a trunk fallback,
-   select it as the direct incoming destination and do not use DTMF collection,
-   which answers first. Normal explicit called-number routing still takes
-   precedence; use your routing automation if all trunk calls must be overridden.
+   select it as the configured incoming destination. Do not add a greeting or
+   keypad-input action to this unanswered sequence, because those answer the
+   call. Normal called-number routing still takes precedence; use your routing
+   automation if all trunk calls must be overridden.
 3. In the automation editor choose **VoIP call received**, destination
    `No answer`, then the action **Wait without answering**.
 
@@ -274,8 +275,8 @@ timer, so set the duration longer than that timer and verify the result with
 your provider. This is not packet dropping or a SIP `486 Busy` response.
 
 To send **every trunk call** to this contact instead of relying on a fallback
-only for unknown called numbers, add this routing automation as well. Keep the
-trunk in direct routing mode rather than DTMF mode:
+only for unknown called numbers, add this routing automation as well. The
+selected contact waits without answering; no menu action is involved:
 
 ```yaml
 alias: VoIP - Incoming trunk to No answer
@@ -364,9 +365,9 @@ activates the existing decision window automatically; new automations do not
 need the older automation-routing switch. For a greeting, input menu or other
 longer sequence, route to an **Automation contact** instead.
 
-A caller-entered extension in the trunk's initial DTMF menu remains explicit:
-a broad initial-routing rule does not replace it. An unknown explicit extension
-fails instead of silently selecting another phone.
+An Automation menu handles input after initial routing. Its explicit forward
+uses the collected destination and does not silently replace an unknown
+extension with another phone.
 
 ## Choose conditions without writing templates
 
@@ -643,11 +644,11 @@ are the most common patterns. Complete copyable examples follow the table:
 | Notify on a no-answer timeout | That phone's Event Entity receives `missed` | Send a normal HA notification; no routing action is required |
 | React to keypad input during a connected call | The phone or aggregate Event Entity receives `dtmf` | Run a gate, light or other HA action |
 
-An explicit DTMF extension entered during initial trunk collection remains
-authoritative and bypasses the automation override. This prevents a broad
-automation from replacing a destination deliberately dialled by the caller.
-Likewise, a false condition should normally perform no action: after the short
-decision window, VoIP Stack follows the configured fallback transparently.
+Initial routing and menu input have separate owners. A matching routing
+automation selects the initial destination; a later Automation contact can
+collect digits and forward its own call. A false routing condition should
+normally perform no action: after the short decision window, VoIP Stack follows
+the configured destination transparently.
 
 ### Route to reception during office hours
 
@@ -1066,34 +1067,21 @@ session.
 
 ## DTMF during a connected call
 
-Initial trunk extension selection and established-call DTMF are deliberately
-separate:
+An Automation menu and established-call DTMF are separate uses of the same
+negotiated keypad input. A menu's **Wait for keypad input** action waits for its
+caller's digits. During a connected HA-managed call, each negotiated key can
+also emit a scoped `dtmf` occurrence while audio continues.
 
-- Digits used before routing select a phonebook extension and do not become
-  in-call automation events.
-- During an HA-bridged established call, each negotiated key emits one `dtmf`
-  occurrence while audio continues.
-- DTMF processing remains HA-side and adds no work to ESP firmware.
+This supports actions such as opening a gate when the answering participant
+presses a key. It does not create a second trunk routing state machine.
 
-This supports actions such as opening a gate when a participant presses a key,
-without turning the keypad into a second routing state machine.
+### Dial a phonebook extension from a menu
 
-### Dial a phonebook extension during initial trunk routing
-
-This path does not need an automation:
-
-1. Open the target phone Device and set its **Extension** entity, for example
-   `667` for the `Test` phone. A registered SIP account receives its extension
-   through the Add phone or Reconfigure flow. A manual contact receives it in
-   the optional `extension` field of `voip_stack.add_contact`.
-2. Reconfigure the trunk and select **Collect extension with DTMF**.
-3. Set a collection timeout and a normal fallback destination.
-4. Call the trunk and enter `667`. The phonebook routes the call to `Test`.
-
-Explicit digits are authoritative. A valid extension does not emit
-`route_requested` and cannot be replaced by a broad initial-routing
-automation. If the caller enters no digits, the optional automation decision
-and then the configured fallback are evaluated as described above.
+Give the target its real extension, such as `667` for the `Test` SIP account.
+Then route the incoming call to the `Welcome` Automation contact and use the
+[complete keypad-menu recipe](#build-a-small-keypad-menu). Its forward action
+resolves the collected digits through the same directory as an ordinary call.
+An optional inter-digit timeout belongs to that wait action, not the trunk.
 
 ### See received digits in persistent notifications
 
@@ -1137,7 +1125,7 @@ caller, receiving phone, key and source side.
 | --- | --- |
 | "Press 1 for reception" on an Automation contact | Speak the choices, then **Wait for keypad input**, then **Choose** |
 | "Press 5 during this door conversation to open the gate" | **VoIP call keypad digit received**, filtered to key 5 and the intended side |
-| Dial an extension in the incoming trunk menu | The trunk's existing extension-routing configuration |
+| Dial an extension after a trunk greeting | Route to an Automation contact, then use the [keypad-menu recipe](#build-a-small-keypad-menu) |
 
 **Wait for keypad input** accepts the caller's input on its Automation contact.
 Its usual result is one key. Under Advanced options you can request multiple
@@ -1147,28 +1135,9 @@ caller presses the terminator first, the received digits can be empty. A timeout
 is a separate result even if some digits were collected before it expired.
 Optional **Time between digits** (`inter_digit_timeout`, in seconds) restarts
 following each digit. The total `timeout` remains an absolute limit. For an
-extension menu, wait for up to 32 digits with a three-second gap and a
-30-second total limit, then route the collected number, including when the
-result status is `timeout`:
-
-```yaml
-actions:
-  - action: voip_stack.wait_for_dtmf
-    data:
-      timeout: 30
-      inter_digit_timeout: 3
-      max_digits: 32
-    response_variable: selection
-  - if: "{{ selection.digits | length > 0 }}"
-    then:
-      - action: voip_stack.forward
-        data:
-          destination: "{{ selection.digits }}"
-```
-
-Copy the entries under `actions` after the greeting in the Automation contact's
-existing call-received automation. Forwarding retains the current call and uses
-the normal destination and authorization rules.
+extension menu, use the [complete Welcome recipe](#build-a-small-keypad-menu).
+It forwards collected digits even when the wait ends with `timeout`, so an
+inter-digit gap does not discard a valid extension.
 
 The **Caller keypad input matches** condition reads the result of the latest
 input wait in this execution. You do not need a response variable for ordinary
@@ -1262,7 +1231,8 @@ data:
 
 Omit `extension` to call it by its phonebook name only. The same contact can be
 called from an ESP, a browser phone, a registered SIP phone, or selected by its
-extension in the incoming trunk DTMF menu. It is not an unknown external number.
+extension in an explicitly configured Automation menu. It is not an unknown
+external number.
 Use the call-received trigger for this service, rather than keeping an initial
 routing decision open during the greeting.
 
@@ -1332,13 +1302,22 @@ actions:
 
 ## Build a small keypad menu
 
-Create an Automation contact named `Welcome`. In the editor, add a greeting,
-**Wait for keypad input**, then **Choose**. Each choice uses **Caller keypad
-input matches**. Leave the response variable unused; the condition obtains
-this execution's input result automatically.
+This menu is an ordinary HA automation controlling an Automation contact.
+There is no trunk-wide digit collector to enable.
+
+Before adding the automation:
+
+1. In VoIP Stack, choose **Add contact**, select **Automation**, and name it
+   `Welcome`. An optional extension lets internal phones dial the same menu.
+2. Select `Welcome` as the named trunk's incoming destination. Existing DID
+   rules can instead select it only for the public numbers that need a menu.
+3. Give the receiving SIP accounts or other callable destinations their actual
+   extensions, for example `100` for Reception and `667` for Test.
+4. Replace `tts.piper` below with a working TTS entity from your installation.
+   Keep one controlling automation for this contact.
 
 ```yaml
-alias: VoIP - Welcome menu
+alias: VoIP - Welcome extension menu
 mode: parallel
 triggers:
   - trigger: voip_stack.call_received
@@ -1348,66 +1327,53 @@ actions:
   - action: voip_stack.tts_say
     data:
       tts_entity_id: tts.piper
-      message: "Press one for reception or two for the assistant."
+      message: "Welcome. Enter the extension, then press hash or wait three seconds."
   - action: voip_stack.wait_for_dtmf
     data:
-      timeout: 10
-  - choose:
-      - conditions:
-          - condition: voip_stack.is_dtmf_result
-            options:
-              status: received
-              digits: "1"
-        sequence:
-          - action: voip_stack.forward
-            data:
-              destination: Reception
-      - conditions:
-          - condition: voip_stack.is_dtmf_result
-            options:
-              status: received
-              digits: "2"
-        sequence:
-          - action: voip_stack.forward
-            data:
-              destination: "1666"
-      - conditions:
-          - condition: voip_stack.is_dtmf_result
-            options:
-              status: timeout
-        sequence:
-          - action: voip_stack.tts_say
-            data:
-              tts_entity_id: tts.piper
-              message: "There was no selection. Connecting you to the assistant."
-          - action: voip_stack.forward
-            data:
-              destination: "1666"
-    default:
+      timeout: 30
+      inter_digit_timeout: 3
+      max_digits: 32
+      terminator: "#"
+    response_variable: selection
+  - if: "{{ selection.digits | length > 0 }}"
+    then:
+      - action: voip_stack.forward
+        data:
+          destination: "{{ selection.digits }}"
+          on_failure: terminate
+    else:
       - action: voip_stack.tts_say
         data:
           tts_entity_id: tts.piper
-          message: "That selection is not available. Please call again."
+          message: "No extension was entered. Please call again."
 ```
 
-The default branch ends after its message. To repeat the menu after an invalid or empty selection, put the greeting,
-input wait and choices inside HA's **Repeat** action, choose a fixed count, and
-use **Stop** immediately after a forward action. This repeats input collection,
-not failed attempts to reach a phone. Do not use an unlimited repeat: someone
-who never presses a key must eventually reach the fallback or finish the call.
-Digits entered before the input wait begins are not collected. The `#` key ends
-input by default; it is not included in the returned digits.
+The greeting answers the menu call and completes before input collection.
+`#` ends input without becoming part of the extension. Otherwise, a three-second
+gap after the latest digit ends the wait. The 30-second total limit still
+applies. The action returns both the collected digits and a status; the example
+checks the digits, so `timeout` with `667` still forwards to `667`. Pressing only
+`#` or entering no digits takes the no-input branch and ends after its message.
 
-### Use the menu for incoming trunk calls
+Forwarding retains the current logical call and uses the normal destination,
+availability and authorization rules. It does not create a second incoming
+call. An unknown extension is not silently replaced with another destination. The
+explicit `on_failure: terminate` ends the menu call if its destination fails.
+The native call-received trigger binds each execution to its own call, so the
+recipe needs no manually entered Call-ID. Caller hangup cancels the pending
+menu work. After forwarding, the established conversation uses the same
+negotiated DTMF path for ordinary in-call keys.
 
-Keep the greeting, **Wait for keypad input** and **Choose** in the same
-automation. The wait stores the caller's selection for the following conditions;
+## Use the menu for incoming trunk calls
+
+Keep the greeting, **Wait for keypad input** and forwarding decision in the
+same automation. The wait returns the caller's digits to that execution;
 you do not need a separate DTMF event automation or a Call-ID template.
 
 For calls from your provider, first select `Welcome` with the native
 `voip_stack.route_requested` trigger filtered to `ingress: trunk` and the
 `voip_stack.select_inbound_destination` action. The menu above then runs when
-that call reaches Welcome. Each choice can forward to a phonebook name, an
+that call reaches Welcome. A menu can forward to a phonebook name, an
 extension or a ring group. For example, use destination `"1"` if that is your
 home ring group's actual name or extension.
 
@@ -1496,7 +1462,7 @@ explains how to inspect those traces.
 | A caller gets the contact's fallback while the automation is waiting | Check whether a long delay occurs before its first call-handling action, and review the initial waiting limit |
 | No DTMF notification appears | Confirm HA handles that call's signaling/media, the peer sends SIP INFO or negotiated RTP telephone-event, and the filters match the sender side |
 | A TTS action refuses an ordinary ongoing conversation | Announcements belong to Automation contacts; they are not an audio injection action for arbitrary two-party calls |
-| Initial routing ignores a rule | Check the trigger filters and caller recognition; initial overrides are restricted to trusted configured/registered sources, and explicit trunk extension digits retain precedence |
+| Initial routing ignores a rule | Check the trigger filters and caller recognition; initial overrides are restricted to trusted configured/registered sources; later menu input belongs to the selected Automation contact |
 
 To test failure behavior, make one deliberate change at a time: disable the
 matching automation to check the contact's fallback, try a no-answer call, or

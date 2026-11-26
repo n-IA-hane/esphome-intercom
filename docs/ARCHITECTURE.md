@@ -450,18 +450,18 @@ step establishes the calling account's identity.
 
 The optional SIP trunk is used only when enabled and ready. A registered trunk
 requires a current registration; a static trunk requires an active runtime and
-configured trusted networks. HA maps provider-side numbers or DTMF extension
-digits to local SIP targets. Trunk selection does not register ESP accounts or
-silently fail over to another provider. See [SIP trunks](SIP_TRUNK.md).
+configured trusted networks. HA maps provider-side called numbers to local
+SIP targets. Trunk selection does not register ESP accounts or silently fail
+over to another provider. See [SIP trunks](SIP_TRUNK.md).
 
-Inbound trunk calls use deterministic policy:
+Inbound trunk calls use the existing DID and called-address rules, then the
+configured inbound destination. Applicable routing overrides can select a
+different target through the bounded decision window. Missing or unavailable
+destinations retain their specific rejection and fallback policies; there is
+no implicit digit collector or generated menu.
 
-- no explicit route hint: resolve the configured inbound default target;
-- explicit DTMF/SIP route hint that resolves: bridge to that target;
-- explicit DTMF/SIP route hint that does not resolve: terminate
-  `route_not_found`.
-
-DTMF is a route-hint source for provider/trunk callers only. Internal ESP
+Initial trunk routing uses DID and configured destinations. An Automation
+contact can collect DTMF input and explicitly forward its call. Internal ESP
 routing uses SIP request context and the phonebook; it does not encode ESP
 routing as DTMF.
 

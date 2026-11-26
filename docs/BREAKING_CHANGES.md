@@ -19,6 +19,30 @@ the normal 401 challenge on new calls. Their account IDs, logins and passwords
 are preserved. Existing provider trunks retain their incoming routing.
 See [incoming SIP access](SIP_TRUNK.md#who-can-call-home-assistant).
 
+## Retired trunk extension menu
+
+Incoming trunks no longer have a universal DTMF extension-selection mode.
+DID and called-address routing, the configured inbound destination and
+applicable automation overrides determine where a call goes. Ordinary incoming
+calls do not answer or wait for keypad input unless the selected destination
+explicitly does so.
+
+Migration preserves each named trunk, credentials, configured inbound target
+and unrelated settings. It removes the old trunk-menu configuration and raises
+a persistent Home Assistant Repair for a previously enabled menu. It does not
+create contacts or automations automatically. A blank target remains blank;
+check the trunk's intended destination before relying on incoming calls.
+
+To retain a spoken extension menu, create an Automation contact named `Welcome`,
+select it as the appropriate incoming destination and add the [complete keypad-menu automation](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
+It speaks a greeting, waits for up to 32 digits with a 30-second total limit,
+a three-second inter-digit gap and `#` as the end key, then forwards collected
+digits. An inter-digit timeout with a non-empty extension still forwards it.
+Configure a working TTS entity and real receiving extensions before testing.
+
+The older trunk-routing migration sections below describe their original
+release behavior. For the current preview, use this explicit Automation menu.
+
 ## Updating from 2026.11.0 to the 2026.12 preview
 
 1. **Home Assistant only.** On HA 2026.11.1 or newer, make a Home Assistant

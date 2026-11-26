@@ -218,9 +218,10 @@ configured. Unresolved external targets can use the selected available HA
 trunk, either registered or static. Missing endpoint metadata must
 not invent a direct SIP route.
 
-Inbound trunk calls can use RFC2833/telephone-event DTMF digits as local
-extension selectors. Digits are mapped by HA to central phonebook `extension`
-values; ESP devices do not need provider-side extensions or registrations.
+Inbound trunk calls follow the configured DID and destination rules. An
+Automation contact can run an explicit menu and forward collected DTMF digits
+to a central phonebook extension. This is separate from a provider-side account
+or registration. See the [Welcome menu](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
 
 ## State
 

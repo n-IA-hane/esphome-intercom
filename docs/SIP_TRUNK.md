@@ -105,9 +105,7 @@ trunk details:
 - optional outbound proxy
 - allowed audio codecs and video codecs for this line
 - inbound default target
-- incoming routing mode: Direct or DTMF extension selection
 - optional experimental automation routing override
-- DTMF timeout and optional terminator
 
 Registered trunks are tested before saving. A failed registration leaves the
 previous saved configuration and working connection intact. A successful edit
@@ -332,18 +330,20 @@ as their default dial plan. **Fallback destination** accepts a phonebook name,
 extension, group, registered SIP phone, Assist extension, SIP URI or routable
 number. Select the actual HA phone by its displayed name.
 
-Choose one routing mode in that named trunk's configuration:
+Incoming calls use the existing DID and called-address matching rules, then
+resolve the configured inbound destination when no called destination matches.
+The destination can be a SIP account, group, queue, Assist destination or
+Automation contact. Applicable routing automations can override the selected
+route through the normal bounded decision window. Unknown-destination and
+unavailable-target policies still apply; a blank configured destination is not
+replaced with an invented phone or menu.
 
-- **Route immediately** first resolves the destination from the incoming SIP
-  request against the phonebook. A known extension or contact keeps its normal
-  routing and availability rules. An unknown destination uses **Fallback
-  destination**, unless **Unknown incoming destination** is set to reject,
-  which returns 404. Routing automations can override this choice; their event retains
-  the original called address in `target_route`, `dialed_target` and
-  `called_extension`, including when the fallback points to Assist or a group.
-- **DTMF extension selection** answers the trunk leg with SDP, collects
-  negotiated telephone-event or SIP INFO digits, and resolves explicit digits
-  as phonebook extensions.
+HA does not answer every incoming trunk call to collect an extension. For a
+spoken menu, create an Automation contact named `Welcome`, select it as this
+trunk's incoming destination, and add the [complete keypad-menu automation](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
+Its greeting answers that call, its input action collects the extension, and
+its forward action chooses the destination. Ordinary direct calls have no
+menu or digit-collection delay.
 
 Routing events distinguish the original called address from the number used
 for DID routing. `called_extension`, `target_route` and `dialed_target` preserve
@@ -354,32 +354,11 @@ extension** also accepts the preserved original called address, in addition to
 the configured destination extension. Use the number filter when matching a
 rewritten DID.
 
-DTMF digits resolve against the central phonebook `extension` field:
-
-For example, assign extension `100` to the Kitchen phone in its configuration.
-For an ESP, edit its exposed extension control. Creating a name-only contact
-does not create a physical or browser phone: the destination must be callable.
-
-Example user flow:
-
-1. A caller dials the public provider number.
-2. HA answers the trunk leg.
-3. The caller sends post-dial digits such as `100`.
-4. HA routes the call to the phonebook entry whose `extension` is `100`.
-5. If no digits/route hint arrive before timeout, HA resolves the configured
-   fallback destination selected for that trunk.
-6. If explicit digits arrive but do not resolve, HA terminates the answered leg
-   as `route_not_found`.
-
-No final `#` is required. `trunk_dtmf_terminator` can be set if a deployment
-wants one, but the normal path is a short timeout. Ambiguous prefixes are
-resolved against the live phonebook extensions: HA collects within the timeout,
-tries the final digit buffer, and fails loudly if that explicit buffer cannot
-be resolved.
-
-The route collector prefers negotiated RTP `telephone-event` and also accepts
-the widely deployed legacy SIP INFO DTMF representation. Acoustic in-band
-tones are not decoded.
+An explicit menu accepts negotiated RTP `telephone-event` and compatible SIP
+INFO digits through the call's existing DTMF owner. Acoustic in-band tones are
+not decoded. The [menu recipe](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+sets its own total wait, time between digits and `#` end key; those are
+Automation action settings, not trunk-wide configuration.
 
 ## Experimental automation override
 
@@ -391,10 +370,9 @@ native trigger opens the bounded decision window automatically; its
 legacy Event Entity rules and is disabled by default. Both use the same bounded
 `route_requested` decision point:
 
-- Direct mode exposes it before the default target.
-- DTMF mode exposes it only after the digit window produced no digits.
-- Explicit DTMF digits always retain priority and never enter the automation
-  path.
+The decision point precedes the configured destination when the applicable
+routing policy admits an override. Collecting digits is an explicit Automation
+contact action after routing, not a second trunk ingress mode.
 
 If no matching automation acts within 1.5 seconds, the original phonebook route
 continues under the fallback policy. A bound peer configured to reject unknown
@@ -404,9 +382,11 @@ routing without replacing the normal dial plan. See
 [Automation Dial Plan](AUTOMATION_DIALPLAN.md) for native UI-compatible
 examples.
 
-Version 1 entries migrate without changing their route. Existing DTMF-enabled
-entries with a non-zero timeout become DTMF mode; other entries become Direct
-mode. Automation routing stays off until explicitly enabled.
+The preview removes the retired trunk menu settings while preserving the named
+trunk, credentials, configured inbound destination and unrelated policies. A
+previously enabled menu raises a Home Assistant Repair explaining how to
+create the explicit `Welcome` automation. Migration does not create an
+automation or a contact on your behalf. See the [migration notes](BREAKING_CHANGES.md#retired-trunk-extension-menu).
 
 ## Media
 
@@ -442,7 +422,7 @@ For another line, inspect these same fields under its `sip_trunks` entry rather
 than assuming the default line's status applies to all providers.
 
 INFO logs describe normal call progress. DEBUG logs should be used when tracing
-REGISTER, INVITE, DTMF routing and RTP relay behavior.
+REGISTER, INVITE, Automation menu input and RTP relay behavior.
 
 ### Outgoing media through NAT
 

@@ -242,38 +242,24 @@ except itself.
 If the selected trunk is unavailable, HA rejects with `trunk_unavailable`.
 There is no implicit fallback to another provider. See [SIP trunks](SIP_TRUNK.md).
 
-## Trunk inbound: direct mode
+## Trunk inbound
 
 1. A provider or PBX sends an INVITE through its configured registered or
    static trunk. Static ingress must match the configured trusted sources.
-2. HA replaces the provider Request-URI with the configured inbound default
-   target.
-3. Without an applicable automation override, HA resolves that target
-   immediately through the phonebook.
-4. The result can ring HA, bridge to an ESP or registered phone, join a ring or
-   conference group, or start the configured Assist destination.
+2. HA applies the existing DID and called-address routing rules, then selects
+   the named trunk's configured inbound destination when needed.
+3. An applicable routing automation can select a different destination through
+   the normal bounded decision window.
+4. The result can ring an account or registered phone, join a group or queue,
+   call Assist, or reach an Automation contact.
 5. HA negotiates and bridges the source and destination media legs when the
    route needs a bridge.
 
-There is no DTMF collection and no pre-answer delay in Direct mode.
-
-## Trunk inbound: DTMF mode
-
-1. HA answers the trunk leg with its negotiated audio, telephone-event and,
-   when offered and enabled, compatible video formats. Video sockets are
-   pre-bound before the answer.
-2. HA collects RTP telephone-event and SIP INFO digits for the configured
-   timeout.
-3. Explicit digits are resolved only as canonical phonebook extensions.
-4. A valid extension routes to its entry. An HA browser phone inherits the
-   pre-bound video sockets; an audio-only target releases them. An unknown
-   explicit extension ends as `route_not_found`, releases every reservation
-   and never falls back to another destination.
-5. If the caller enters no digits, HA follows the configured default target.
-
-The initial extension digits are route selection, not established-call DTMF
-events. Once a bridged call is connected, later negotiated keys are published
-as individual `dtmf` occurrences without interrupting media.
+The trunk has no implicit pre-answer digit collector. An Automation contact
+can answer with a greeting and run [an explicit keypad menu](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
+Its input action owns the total wait, inter-digit timeout and end key; forwarding
+keeps the existing logical call. Once connected, later negotiated keys remain
+ordinary in-call DTMF events without restarting initial routing.
 
 ## Optional automation decision
 
@@ -286,11 +272,9 @@ is disabled by default.
 When the dispatcher admits an applicable override, HA publishes one
 `route_requested` occurrence and waits up to 1.5 seconds for a decision:
 
-- before the default route in Direct mode;
-- before the no-digits fallback in DTMF mode.
-
-Explicit DTMF extensions never enter this decision path. If no automation
-acts, the original phonebook decision continues. A forward action moves the
+The decision occurs before the configured destination when the ingress and
+matching policy admit the override. If no automation acts, the original
+phonebook decision continues. A forward action moves the
 same logical source call and does not create a second inbound call.
 
 The legacy public surface is the `route_requested` type on
@@ -304,12 +288,11 @@ particular, the legacy path does not open it for:
 - registered endpoint calling another roster target;
 - HA/card calling a roster target;
 - ESP calling a known roster target;
-- an explicit DTMF extension;
 - an inbound call without an enabled legacy option or matching native override.
 
 A matching native routing trigger can admit a registered caller to the window;
 registration alone is not a universal exclusion. Trusted-ingress checks and
-the earlier explicit-extension and routing branches still apply.
+the earlier DID, called-address and routing branches still apply.
 
 ## Unanswered HA forward
 

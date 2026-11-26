@@ -263,17 +263,17 @@ trunk or a video-capable PBX. An authenticated `401` or `407` retry preserves
 the complete audio/video SDP offer, including media direction and codec
 parameters.
 
-For inbound trunk video, **Direct to default destination** reaches the selected
-phone without digit-collection delay. **DTMF extension selection** can also
-preserve video when the initial trunk offer contains a compatible video stream:
-HA pre-binds and advertises the audio/video ports while collecting digits, then
-hands those exact sockets to the selected HA browser phone. Selecting an
-audio-only destination releases the unused video resources.
+Incoming trunk calls can route directly to a video-capable account through the
+ordinary DID and configured-destination rules. Audio and video remain owned
+by the selected call legs. A trunk is not pre-answered by a universal DTMF
+collector. An [explicit Automation contact menu](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+answers and handles its own greeting and input before forwarding; that does
+not imply that every menu or destination supports every offered video codec.
 
-With RTP/AVP there may be no negotiated key-frame feedback. A browser that
-attaches after DTMF collection can therefore wait until the remote sender's
-next natural keyframe. VoIP Stack deliberately does not send unnegotiated PLI,
-FIR or proprietary SIP picture-update messages.
+With RTP/AVP there may be no negotiated key-frame feedback. A late-attaching
+browser can therefore wait until the remote sender's next natural keyframe.
+VoIP Stack does not send unnegotiated PLI, FIR or proprietary SIP picture-update
+messages.
 
 For a converted stream, negotiated PLI/FIR requests recovery from the remote
 source. The running FFmpeg output encoder currently uses periodic keyframes;

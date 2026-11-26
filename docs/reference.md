@@ -436,21 +436,15 @@ The named trunk configuration contains:
 | `trunk_outbound_proxy` | Optional proxy host or `sip:host:port` used as signaling next hop. |
 | `trunk_media_nat` | Outgoing trunk media: `auto` (new default) discovers each actual RTP/RTCP socket's mapped IPv4 destination using HA's STUN servers for public IPv4 peers; `direct` keeps local destinations; `manual` uses the address override below with unchanged ports. Existing saved overrides retain manual behavior. STUN is not ICE or TURN. See [external media](SIP_VIDEO.md#external-media-address-on-a-trunk). |
 | `trunk_outbound_media_address` | Optional advertised IPv4 override, required in `manual` mode. HA must be reachable at this address with the advertised RTP/RTCP ports unchanged. Preserved for existing configurations; update it when the public egress address changes. |
-| `trunk_inbound_default_target` | Receiving phone or dial-plan destination selected by name. Used when no called phonebook destination matches, or as the DTMF no-digits fallback. |
-| `trunk_inbound_mode` | `direct` resolves the default target immediately; `dtmf` pre-answers and collects an explicit phonebook extension. |
-| `automation_routing_enabled` | Legacy event-based routing opt-in, disabled by default. Matching native routing triggers activate the decision window themselves. Explicit trunk extension digits are never overridden. |
-| `trunk_dtmf_timeout_ms` | DTMF inter-digit timeout. The first digit is allowed 10 s. The setup UI shows seconds; internally this is stored in milliseconds. Default 3 s, maximum 10 s. |
-| `trunk_dtmf_terminator` | Optional terminator digit such as `#`. Empty means timeout or exact phonebook extension match decides. |
+| `trunk_inbound_default_target` | Receiving phone or dial-plan destination selected by name, used when no called destination matches. An Automation contact can supply an explicit spoken menu. |
+| `automation_routing_enabled` | Legacy event-based routing opt-in, disabled by default. Matching native routing triggers activate the bounded decision window themselves. |
 
-Ambiguous DTMF digit prefixes are resolved at runtime against the live
-phonebook `extension` fields. HA collects within the timeout and tries the
-final buffer. If no digits arrive, HA uses `trunk_inbound_default_target`. If
-explicit digits arrive and do not resolve, HA logs the digits and terminates
-the answered leg as `route_not_found`.
-
-Version 1 config entries migrate without changing their effective behavior:
-an enabled non-zero DTMF configuration becomes `dtmf`, other configurations
-become `direct`, and automation routing remains disabled until selected.
+Incoming trunks follow the shared DID and configured-destination rules. The
+retired `trunk_inbound_mode`, `trunk_dtmf_enabled`, `trunk_dtmf_timeout_ms`
+and `trunk_dtmf_terminator` settings are no longer trunk options. Migration preserves
+the configured target and raises a Repair for a previously enabled menu; it
+does not create a replacement automation. Use the [Welcome menu](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+for TTS, a total input limit, an inter-digit timeout and explicit forwarding.
 
 ## Home Assistant automation events
 

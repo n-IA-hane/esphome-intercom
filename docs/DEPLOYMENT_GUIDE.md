@@ -383,15 +383,12 @@ Choose a default outgoing line, then optionally override it in phone settings
 or a call action. An unavailable selected line never silently switches to a
 different provider. See [SIP trunks](SIP_TRUNK.md) for setup and examples.
 
-With DTMF extension selection enabled, HA answers the incoming call to collect digits through
-RTP `telephone-event` or compatible legacy SIP INFO. Normal mobile dialers can use
-post-dial pauses, for example a contact that dials the provider number, waits,
-and sends `100`. If no digits arrive, HA resolves the configured default target
-selected for that named trunk. If digits arrive, HA resolves them through
-central phonebook `extension` values.
-If digits arrive and do not resolve, HA terminates the answered leg with
-`route_not_found`.
-Direct mode routes the incoming call without this digit-collection step.
+Incoming calls follow DID rules and the named trunk's configured destination
+without a universal digit-collection step. For a menu, create an Automation
+contact such as `Welcome` and route the appropriate calls to it. Its ordinary
+HA automation can speak a greeting, collect an extension with an optional
+inter-digit timeout, then forward that same call. See the [complete menu recipe](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+and the [migration note for retired trunk menus](BREAKING_CHANGES.md#retired-trunk-extension-menu).
 
 ## Media
 

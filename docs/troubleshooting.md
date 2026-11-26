@@ -447,15 +447,18 @@ the dialog if that ACK never arrives.
 
 ## Inbound trunk call routes to the wrong target
 
-- Confirm the provider offers RFC2833/telephone-event DTMF in SDP.
-- Prefer negotiated RTP `telephone-event`. The widely deployed legacy SIP INFO
-  DTMF representation is also accepted; acoustic in-band tones are not.
-- Check that the target exists in the central phonebook and has the matching
-  `extension` value.
-- Keep the inbound DTMF timeout short, normally 3 seconds. Set it to `0` when you do not want trunk pre-answer/DTMF and want inbound calls to follow the normal dialplan immediately.
-- If no digits arrive, HA uses `trunk_inbound_default_target`.
-- If digits arrive but do not resolve, HA logs them and terminates the answered
-  trunk leg as `route_not_found`.
+- Check the received called number and any matching DID rule, then the named
+  trunk's configured inbound destination.
+- Check any matching native routing automation and its selected destination.
+- For a spoken menu, route to the intended Automation contact and verify that
+  its call-received automation runs. Trunks no longer collect extensions
+  automatically.
+- Verify the receiving account or contact has the extension entered by the
+  caller. The [Welcome menu](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+  forwards non-empty digits even when the wait returns `timeout` after a gap.
+- Menu input requires negotiated RTP `telephone-event` or compatible SIP INFO.
+  Acoustic in-band tones are not decoded. A valid initial route is separate
+  from whether a peer sends usable in-call digits.
 
 ## Card state looks wrong
 
