@@ -2,6 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.core import Context, ServiceCall
@@ -33,6 +34,65 @@ def announce(lab, **kwargs):
     return ServiceCall(lab.hass, "voip_stack", "announce", {
         "targets": ["paging:all", "bedroom0"], "tts_entity_id": "tts.test", "message": "Wake up", **kwargs,
     }, context=Context())
+
+
+@pytest.mark.parametrize("contact_removed", [False, True])
+async def test_registered_account_with_saved_ha_card_receives_paging(lab, monkeypatch, contact_removed):
+    from custom_components.voip_stack.ha_bindings import HaCardBindings
+    from .test_automation_originate_ha import assert_call_resources_released
+
+    owner = manager(lab, monkeypatch)
+    stream = tts_fixture(monkeypatch, lab)
+    entry = lab.hass.config_entries.async_entries("voip_stack")[0]
+    subentry = next(value for value in entry.subentries.values()
+        if value.subentry_type == "phone" and value.data.get("username") == "bedroom0")
+    lab.hass.config_entries.async_update_subentry(entry, subentry, data={**subentry.data,
+        "ha_bindings": [{"source": "migration", "reference": "legacy_ha_phone:paging-account"}]})
+    bindings = lab.runtime.ha_bindings = HaCardBindings(lab.hass, entry, lab.runtime, lambda _changed: None)
+    await bindings.async_start()
+    assert bindings.has_binding("bedroom0")
+    assert lab.calls.component("registrar").registered_contacts("bedroom0")
+    assert lab.runtime.endpoints.require("bedroom0").supports_ha_client
+    browser = AsyncMock(side_effect=ServiceValidationError("browser path witness"))
+    owner.browser_originate = browser
+    if contact_removed:
+        from custom_components.voip_stack.account_runtime import recompute_account_availability
+        lab.calls.component("registrar").remove_registration("bedroom0")
+        lab.runtime.softphone_presence["bedroom0"] = 1
+        recompute_account_availability(lab.hass)
+    try:
+        result = await asyncio.wait_for(paging.async_announce(announce(lab, targets=["bedroom0"])), 8)
+        if contact_removed:
+            assert result["state"] == "no_recipients", result
+            assert result["targets"] == [{"endpoint_id": "bedroom0", "status": "skipped", "reason": "browser path witness"}]
+            browser.assert_awaited_once()
+            assert not lab.phones[0].invites
+            with pytest.raises(ServiceValidationError, match="require a SIP or ESPHome destination"):
+                await lab.hass.services.async_call("voip_stack", "call", {
+                    "source_automation": "Wakeup-Caller", "destination": "bedroom0",
+                }, blocking=True, return_response=True)
+            assert_call_resources_released(lab)
+            return
+        browser.assert_not_awaited()
+        assert result["state"] == "completed", result
+        assert result["targets"] == [{"endpoint_id": "bedroom0", "status": "completed"}]
+        assert len(stream.calls) == 1
+        assert len(lab.phones[0].invites) == 1
+        assert lab.phones[0].invites[0].header("Answer-Mode") == "Auto"
+        assert lab.phones[0].bye.is_set()
+        received = bytearray()
+        while not lab.phones[0].audio.empty():
+            raw, _timestamp = lab.phones[0].audio.get_nowait()
+            payload = rtp.parse_packet(raw).payload
+            if any(payload):
+                received.extend(payload)
+        expected = b"".join(stream.pcm[index:index + 2][::-1] for index in range(0, len(stream.pcm), 2))
+        assert bytes(received) == expected
+        assert not owner.jobs
+        assert_call_resources_released(lab)
+    finally:
+        await bindings.async_close()
+        lab.runtime.ha_bindings = None
 
 
 async def test_two_phones_receive_one_complete_synthesis_and_release_claims(lab, monkeypatch):

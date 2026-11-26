@@ -246,8 +246,13 @@ async def _async_originate_application_call(
             disposition = endpoint_preflight_disposition(endpoint, call_id=routing_call_id or "", browser=False)
             if disposition is not None:
                 raise ServiceValidationError(f"The paging destination is {disposition.value}")
-        if dialer.browser_leg_for_member(target, peers, entries) is not None:
-            raise ServiceValidationError("Outgoing automation calls currently require a SIP or ESPHome destination")
+        browser_leg = dialer.browser_leg_for_member(target, peers, entries)
+        if browser_leg is not None:
+            from .account_dialing import account_uses_ha_only
+
+            endpoint = runtime.endpoints.get(browser_leg.endpoint_id)
+            if endpoint is None or account_uses_ha_only(hass, endpoint):
+                raise ServiceValidationError("Outgoing automation calls currently require a SIP or ESPHome destination")
         uri, _, _ = dialer.sip_uri_for_member(target, peers, entries)
         route = resolve_route(target, entries)
         if route.reason is RouteReason.TRUNK_UNAVAILABLE:
