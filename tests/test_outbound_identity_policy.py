@@ -38,3 +38,9 @@ def test_legacy_trunk_default_keeps_registration_user_and_domain_fallback():
         caller_user="101", caller_name="Reception")
     assert selected.uri == "sip:provider-user@pbx.example"
     assert selected.name == "provider-user"
+
+
+def test_explicit_logical_domain_is_distinct_from_the_registrar_address():
+    selected = resolve_trunk_caller({"trunk_username": "427", "trunk_domain": "voice.example", "trunk_server": "192.0.2.1"},
+        caller_user="101", caller_name="Reception")
+    assert selected.uri == "sip:427@voice.example"

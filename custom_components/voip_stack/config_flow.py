@@ -302,7 +302,7 @@ class TrunkFormMixin:
                     CONF_TRUNK_OUTBOUND_PROXY,
                     default=defaults[CONF_TRUNK_OUTBOUND_PROXY],
                 ): TextSelector(),
-                vol.Required(
+                vol.Optional(
                     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
                     **({"default": target_default} if target_default else {}),
                 ): SelectSelector(SelectSelectorConfig(
@@ -405,7 +405,8 @@ class TrunkFormMixin:
                 errors["base"] = "trunk_username_required"
             elif register and not user_input[CONF_TRUNK_PASSWORD]:
                 errors["base"] = "trunk_password_required"
-            if not user_input[CONF_TRUNK_INBOUND_DEFAULT_TARGET]:
+            if (not user_input[CONF_TRUNK_INBOUND_DEFAULT_TARGET]
+                    and user_input["trunk_inbound_unknown_target"] != "reject"):
                 errors[CONF_TRUNK_INBOUND_DEFAULT_TARGET] = "trunk_target_required"
             from ipaddress import IPv4Address
             media_address = str(user_input.get(
@@ -1105,8 +1106,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             return SelectSelector({'options': destinations, 'custom_value': True, 'mode': 'dropdown'})
 
         fields: dict[Any, Any] = {
-            vol.Optional("outbound_caller_id", default=policy.outbound_caller_id): TextSelector(),
-            vol.Optional("outbound_caller_name", default=policy.outbound_caller_name): TextSelector(),
             vol.Required(
                 CONF_PHONE_NAME,
                 default=str(current.get(CONF_PHONE_NAME) or ""),
@@ -1171,6 +1170,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             }
         )
         fields.update({
+            vol.Optional("outbound_caller_id", default=policy.outbound_caller_id): TextSelector(),
+            vol.Optional("outbound_caller_name", default=policy.outbound_caller_name): TextSelector(),
             vol.Required(CONF_PHONE_AUTO_ANSWER, default=bool(current.get(CONF_PHONE_AUTO_ANSWER, False))): BooleanSelector(),
             visible_required(CONF_PHONE_SEND_VIDEO, default=bool(current.get(CONF_PHONE_SEND_VIDEO, False)),
                 visible={"field": CONF_PHONE_VIDEO_ENABLED, "value": True}): BooleanSelector(),

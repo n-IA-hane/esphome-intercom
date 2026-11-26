@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
+from custom_components.voip_stack.phone_policy import PhonePolicy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,13 +109,6 @@ def softphone_originate(monkeypatch):
                 "transport_config": Mock(return_value={}),
                 "trunk_config": Mock(return_value={}),
                 "trunk_enabled": Mock(return_value=False),
-                "trunk_identity_uri": lambda cfg: (
-                    f"sip:{cfg['trunk_username']}@"
-                    f"{cfg.get('trunk_domain') or cfg.get('trunk_server')}"
-                ),
-                "trunk_leg_identity": lambda cfg, fallback="": str(
-                    cfg.get("trunk_username") or fallback
-                ).strip(),
             },
         "const": {
             "CONF_SIP_VIDEO": "sip_video",
@@ -293,49 +287,9 @@ def _call(hass, **data):
         hass.runtime = SimpleNamespace()
     if not hasattr(hass.runtime, "directory"):
         hass.runtime.directory = SimpleNamespace(snapshot=lambda: ())
+    if not hasattr(hass.runtime, "endpoints"):
+        hass.runtime.endpoints = SimpleNamespace(get=lambda _identity: None, by_username=lambda _username: None)
     return SimpleNamespace(hass=hass, data=data, context=object())
-
-
-def test_provider_leg_uses_trunk_account_identity(softphone_originate) -> None:
-    assert (
-        softphone_originate._trunk_leg_identity(
-            {"trunk_username": "+41440000000"},
-            "Kitchen tablet",
-        )
-        == "+41440000000"
-    )
-
-
-def test_direct_leg_preserves_local_display_name(softphone_originate) -> None:
-    assert softphone_originate._trunk_leg_identity({}, "Kitchen tablet") == (
-        "Kitchen tablet"
-    )
-
-
-def test_provider_identity_uri_uses_logical_domain(softphone_originate) -> None:
-    assert (
-        softphone_originate._trunk_identity_uri(
-            {
-                "trunk_username": "+41440000000",
-                "trunk_domain": "voip.example",
-                "trunk_server": "registrar.example",
-            },
-        )
-        == "sip:+41440000000@voip.example"
-    )
-
-
-def test_provider_identity_uri_falls_back_to_server(softphone_originate) -> None:
-    assert (
-        softphone_originate._trunk_identity_uri(
-            {
-                "trunk_username": "427",
-                "trunk_domain": "",
-                "trunk_server": "pbx.example",
-            },
-        )
-        == "sip:427@pbx.example"
-    )
 
 
 @pytest.mark.parametrize("camera", [False, True])
@@ -545,6 +499,7 @@ def test_static_dahua_contact_builds_full_offer_for_direct_and_trunk(
     module = softphone_originate
     endpoint = SimpleNamespace(
         endpoint_id="caller", device_id="browser", sip_uri_user="browser",
+        username="browser", policy=PhonePolicy(),
         availability=_Availability.AVAILABLE, supports=lambda _cap: True,
     )
     hass = SimpleNamespace(
@@ -613,6 +568,7 @@ def test_trunk_video_reception_is_independent_from_camera_capture(softphone_orig
     module = softphone_originate
     endpoint = SimpleNamespace(
         endpoint_id="caller", device_id="browser", sip_uri_user="browser",
+        username="browser", policy=PhonePolicy(),
         availability=_Availability.AVAILABLE, supports=lambda _cap: True,
     )
     hass = SimpleNamespace(
