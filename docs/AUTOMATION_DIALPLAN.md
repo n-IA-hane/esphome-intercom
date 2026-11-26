@@ -1311,8 +1311,10 @@ Before adding the automation:
    `Welcome`. An optional extension lets internal phones dial the same menu.
 2. Select `Welcome` as the named trunk's incoming destination. Existing DID
    rules can instead select it only for the public numbers that need a menu.
-3. Give the receiving SIP accounts or other callable destinations their actual
-   extensions, for example `100` for Reception and `667` for Test.
+3. Create or select the real callable destinations `Reception` and `Support`,
+   or replace those names below. Give other receiving accounts their actual
+   extensions, for example `667` for Test. Menu choices `1` and `2` take
+   precedence over dialing destinations with those exact extension strings.
 4. Replace `tts.piper` below with a working TTS entity from your installation.
    Keep one controlling automation for this contact.
 
@@ -1327,7 +1329,7 @@ actions:
   - action: voip_stack.tts_say
     data:
       tts_entity_id: tts.piper
-      message: "Welcome. Enter the extension, then press hash or wait three seconds."
+      message: "Welcome. Press one for Reception, two for Support, or enter an extension. Then press hash or wait three seconds."
   - action: voip_stack.wait_for_dtmf
     data:
       timeout: 30
@@ -1335,30 +1337,51 @@ actions:
       max_digits: 32
       terminator: "#"
     response_variable: selection
-  - if: "{{ selection.digits | length > 0 }}"
-    then:
-      - action: voip_stack.forward
-        data:
-          destination: "{{ selection.digits }}"
-          on_failure: terminate
-    else:
+  - choose:
+      - conditions: "{{ selection.digits == '1' }}"
+        sequence:
+          - action: voip_stack.forward
+            data:
+              destination: Reception
+              on_failure: terminate
+      - conditions: "{{ selection.digits == '2' }}"
+        sequence:
+          - action: voip_stack.forward
+            data:
+              destination: Support
+              on_failure: terminate
+      - conditions: "{{ selection.digits | length > 0 }}"
+        sequence:
+          - action: voip_stack.forward
+            data:
+              destination: "{{ selection.digits }}"
+              on_failure: terminate
+    default:
       - action: voip_stack.tts_say
         data:
           tts_entity_id: tts.piper
-          message: "No extension was entered. Please call again."
+          message: "No selection was entered. Please call again."
 ```
 
 The greeting answers the menu call and completes before input collection.
 `#` ends input without becoming part of the extension. Otherwise, a three-second
 gap after the latest digit ends the wait. The 30-second total limit still
 applies. The action returns both the collected digits and a status; the example
-checks the digits, so `timeout` with `667` still forwards to `667`. Pressing only
-`#` or entering no digits takes the no-input branch and ends after its message.
+checks the complete collected digits, so `1#` selects Reception, `2#` selects
+Support, and `timeout` with `667` still forwards to extension `667`. Pressing
+only `#` or entering no digits takes the explicit no-input branch and ends
+after its message.
+
+The menu waits for completion before comparing choices. It does not route on
+the first digit: `100` remains an extension even though it starts with menu
+choice `1`. Tune `inter_digit_timeout`, `timeout` and `terminator` to your
+callers' needs; an empty terminator disables the end key. Keep the gap long
+enough for the intended users to finish a multi-digit extension.
 
 Forwarding retains the current logical call and uses the normal destination,
 availability and authorization rules. It does not create a second incoming
-call. An unknown extension is not silently replaced with another destination. The
-explicit `on_failure: terminate` ends the menu call if its destination fails.
+call. An unknown extension is not silently replaced with another destination.
+The explicit `on_failure: terminate` ends the menu call if its destination fails.
 The native call-received trigger binds each execution to its own call, so the
 recipe needs no manually entered Call-ID. Caller hangup cancels the pending
 menu work. After forwarding, the established conversation uses the same

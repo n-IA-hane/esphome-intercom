@@ -74,6 +74,16 @@ building with ESPHome 2026.11.
 
 ## Work and exit conditions
 
+The maintained FULL firmware has been exercised on an ESP32-S3 Box V2 and a
+P4 in eight controlled calls: four ESP-to-ESP and four ESP-to-HA calls. Each
+20-second observation had bidirectional RTP audio with zero reported sequence
+loss. The P4 JPEG presentation path and a non-empty recording containing the
+known digital 650 Hz test signal were also observed. These are bounded
+transport, presentation and recording checks. They do not qualify acoustic
+speech quality, every board or codec profile, or the separate H.264 firmware.
+The [full qualification tooling limits](TESTING_AND_DEBUG.md#full-qualification-tooling-limits)
+still apply; these results are not a complete release qualification.
+
 The table lists exit conditions, not a claim that every item is complete.
 Coordinated publication and the remaining physical checks are in progress.
 The JPEG checks below cover both the recommended SDK and an explicit forward
