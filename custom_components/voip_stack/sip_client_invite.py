@@ -657,6 +657,7 @@ class SipInviteTransactions:
             )
         except Exception as err:
             _LOGGER.info("SIP digest auth failed to build INVITE response: %s", err)
+            self._invite_transaction_active = False
             return sip.sip_failure_reason(msg.status_code)
         self.dialog_ids.cseq += 1
         self.dialog_ids.branch = sip.make_branch()
