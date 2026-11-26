@@ -853,9 +853,19 @@ provider plus a message, or an audio file from the media picker. Busy targets
 are skipped. The answer window inherits each account's ringing limit or the
 stored PBX setting unless `answer_timeout` overrides it; `0` is unlimited.
 The separate total job limit is 120 seconds unless configured otherwise.
-A recipient must support and permit the requested auto-answer or answer within
-the applicable window. A closed browser has no speaker for an announcement,
-even when its saved association keeps the account logically available.
+Each target is an account. When several clients share that account, its
+eligible clients receive the offer according to its ringing policy; the first
+accepted client with a ready audio output plays the announcement. Other offers
+for that account close before the message starts. Distinct target accounts
+still receive the announcement together.
+
+A physical phone must permit trusted intercom or paging auto-answer from its
+PBX, or be answered within the applicable window. A phone that only rings has
+not played the announcement. A receiving HA card needs an active client able
+to play audio, but its ordinary **Auto Answer** setting can remain off. Paging
+does not open its microphone. A closed browser has no speaker for an
+announcement, even when its saved association keeps the account logically
+available. See [paging compatibility](PAGING.md#automatic-answer-and-compatibility).
 
 This example assumes the existing account `Reception` and a configured TTS
 entity `tts.piper`; select your own account/group and provider in the editor:

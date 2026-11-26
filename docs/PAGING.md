@@ -36,6 +36,18 @@ data:
     media_content_type: audio/wav
 ```
 
+Targets are logical accounts. If an account has a card and several registered
+clients, paging offers the call through its eligible clients using the account's
+ringing policy. The first client that accepts and has a ready audio output
+receives that account's announcement. Other client offers are closed before the
+message source starts. Sharing an account does not make every handset on that
+account play at once.
+
+Several distinct target accounts still receive the same announcement. For
+example, targeting Reception and Warehouse sends the shared message to the
+selected output of each available account; it does not choose only one account
+from that list.
+
 Busy, DND and unreachable phones are skipped. The result identifies each target
 and its outcome. The answer window closes before the message starts, so a late
 recipient does not join halfway through. With no available recipients there is
@@ -70,7 +82,8 @@ announcement is a different dialplan destination. Calling that contact starts
 its incoming automation and waits for a routing decision. The originating
 card shows outgoing progress and offers **Hang up**.
 
-Call that extension from a SIP phone to make a live one-way announcement.
+Call that extension from a SIP phone to make a live one-way announcement to
+the available target accounts.
 The originating phone supplies the audio; recipients do not send microphone
 audio back to it.
 
@@ -78,7 +91,11 @@ audio back to it.
 
 VoIP Stack requests per-call automatic answer with the standard
 `Answer-Mode: Auto` header. A phone must support and authorize this behavior.
-This request does not change its persistent autoanswer setting.
+This request does not change its persistent autoanswer setting. A physical
+phone must permit trusted intercom or paging auto-answer from the configured
+PBX. If that policy is off, the phone can ring without playing automatically;
+a SIP 180 response proves ringing, not delivery. Use the phone's scoped trusted
+paging policy rather than enabling ordinary automatic answer for every call.
 
 For ESP phones, use firmware containing the paging feature. The managed HA
 account authorizes this path; manually configured SIP accounts require
@@ -86,8 +103,10 @@ account authorizes this path; manually configured SIP accounts require
 account does not inherit that consent. A busy ESP still rejects another call.
 Direct peers require an explicit trusted-peer configuration.
 
-A browser phone must have an active card/client and be able to start playback.
-It receives the announcement without opening its microphone. Browser autoplay,
+A browser phone must have a valid active receiving card/client and be able to
+start audio playback. Its ordinary **Auto Answer** setting can remain off:
+paging uses the accepted playback-only path. It receives the announcement
+without opening its microphone. Browser autoplay,
 background suspension and mobile operating-system restrictions still apply;
 a closed Companion app is not an always-listening paging speaker.
 
