@@ -1073,7 +1073,12 @@ class SipApplicationMethods:
         trunk_id = flow_trunk_id or ((session.metadata.get("inbound_trunk_id") or "") if session is not None else "")
         if trunk_id:
             trunk = sip_trunks(self.hass).get(trunk_id)
-            if trunk is not None and trunk.registered and trunk.public_gruu:
+            # An authenticated peer may reach the main listener while its
+            # crossed registration belongs to another socket. Its PRACK/ACK
+            # must return to the listener that owns this dialog, not that flow.
+            main_listener_peer = (not flow_trunk_id and trunk is not None
+                                  and getattr(trunk.config, "inbound_account", ""))
+            if trunk is not None and trunk.registered and trunk.public_gruu and not main_listener_peer:
                 return trunk.public_gruu
         user = sip.parse_sip_uri(request.uri).user or "voip"
         params = (("transport", transport.lower()),)
