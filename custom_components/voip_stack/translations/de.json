@@ -92,7 +92,12 @@
           "trunk_did_fallbacks": "Alternative sources in priority order",
           "trunk_did_prefix_rules": "Ordered prefix replacements",
           "trunk_audio_codecs_inherit": "Use integration audio codecs",
-          "trunk_video_codecs_inherit": "Use integration video codecs"
+          "trunk_video_codecs_inherit": "Use integration video codecs",
+          "trunk_caller_id_policy": "Ausgehende Anruferidentität",
+          "trunk_caller_id": "Anrufernummer des Trunks",
+          "trunk_caller_name": "Anrufername des Trunks",
+          "trunk_inbound_account": "Eingehenden Peer über lokales SIP-Konto authentifizieren",
+          "trunk_inbound_unknown_target": "Unbekanntes eingehendes Ziel"
         },
         "data_description": {
           "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -115,7 +120,12 @@
           "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
           "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
           "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+          "trunk_caller_id_policy": "Die Trunk-Identität ersetzt den Anrufer. Die Anruferidentität verwendet die öffentliche Kontonummer, falls konfiguriert. Der Kontobenutzername dient internen Verbindungen zwischen Telefonanlagen. Digest-Zugangsdaten und Contact bleiben getrennt. Weitergeleitete Trunk-Anrufe behalten in den beiden Anrufermodi ihren ursprünglichen From.",
+          "trunk_caller_id": "Allgemeine Nummer nur für die Trunk-Identität. Leer verwendet den Trunk-Benutzernamen. Authentifizierung und Zielnummer bleiben unverändert.",
+          "trunk_caller_name": "Allgemeiner Anzeigename für die Trunk-Identität. Leer verwendet deren Anrufernummer.",
+          "trunk_inbound_account": "Vorhandenes aktiviertes lokales Konto, mit dem eine entfernte Telefonanlage eingehende INVITEs authentifiziert und ihre Anrufer präsentieren darf. Digest ist auch bei bekannter Quell-IP erforderlich. Nur ein aktivierter Trunk pro Konto.",
+          "trunk_inbound_unknown_target": "Das bisherige Ersatzziel verwenden oder unbekannte Ziele mit SIP 404 ablehnen. Explizite Routing-Automationen bleiben möglich. Läuft ein aktives Entscheidungsfenster ab, antwortet ein ablehnender Trunk mit SIP 504."
         }
       },
       "trunk_mode": {
@@ -399,7 +409,11 @@
       "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
       "managed_esphome_missing": "Select a connected ESPHome phone whose managed SIP account was removed.",
       "phone_policy_invalid": "Choose a ringing time from 0 to 3600 seconds. Zero means unlimited.",
-      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease."
+      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
+      "trunk_caller_id_invalid": "Eine unterstützte Richtlinie und eine Nummer oder einen SIP-Benutzernamen ohne Adresse oder Steuerzeichen wählen.",
+      "trunk_inbound_account_invalid": "Ein vorhandenes aktiviertes lokales SIP-Konto wählen.",
+      "trunk_inbound_account_in_use": "Dieses Konto ist bereits einem anderen aktivierten Trunk zugeordnet.",
+      "trunk_unknown_policy_invalid": "Ersatzziel oder Ablehnung für unbekannte Ziele wählen."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -463,7 +477,9 @@
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
             "no_answer_to": "No-answer destination",
-            "inherit_ringing_timeout": "Klingeldauer der Telefonanlage übernehmen"
+            "inherit_ringing_timeout": "Klingeldauer der Telefonanlage übernehmen",
+            "outbound_caller_id": "Öffentliche ausgehende Anrufernummer",
+            "outbound_caller_name": "Ausgehender Anrufername"
           },
           "data_description": {
             "voicemail_enabled": "Beim Deaktivieren werden Nachrichten, Dateien, PIN und Mailbox-Einstellungen dauerhaft gelöscht. Erneutes Aktivieren erstellt eine leere Mailbox.",
@@ -482,7 +498,9 @@
             "unavailable_to": "Used by the selected unavailable action.",
             "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout.",
+            "outbound_caller_id": "Optionale öffentliche Durchwahl für Trunks mit Anruferidentität. Kontobenutzername und gespeicherte Geräte- und Entitäts-IDs bleiben unverändert. Trunks mit Kontobenutzernamen ignorieren diese Nummer.",
+            "outbound_caller_name": "Optionaler Name für Trunks mit Anruferidentität. Leer behält den Anrufernamen des Kontos."
           }
         },
         "reconfigure": {
@@ -498,7 +516,9 @@
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
             "no_answer_to": "No-answer destination",
-            "inherit_ringing_timeout": "Klingeldauer der Telefonanlage übernehmen"
+            "inherit_ringing_timeout": "Klingeldauer der Telefonanlage übernehmen",
+            "outbound_caller_id": "Öffentliche ausgehende Anrufernummer",
+            "outbound_caller_name": "Ausgehender Anrufername"
           },
           "data_description": {
             "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
@@ -510,7 +530,9 @@
             "unavailable_to": "Used by the selected unavailable action.",
             "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout.",
+            "outbound_caller_id": "Optionale öffentliche Durchwahl für Trunks mit Anruferidentität. Kontobenutzername und gespeicherte Geräte- und Entitäts-IDs bleiben unverändert. Trunks mit Kontobenutzernamen ignorieren diese Nummer.",
+            "outbound_caller_name": "Optionaler Name für Trunks mit Anruferidentität. Leer behält den Anrufernamen des Kontos."
           }
         }
       },
@@ -632,7 +654,12 @@
             "trunk_did_fallbacks": "Alternative sources in priority order",
             "trunk_did_prefix_rules": "Ordered prefix replacements",
             "trunk_audio_codecs_inherit": "Use integration audio codecs",
-            "trunk_video_codecs_inherit": "Use integration video codecs"
+            "trunk_video_codecs_inherit": "Use integration video codecs",
+            "trunk_caller_id_policy": "Ausgehende Anruferidentität",
+            "trunk_caller_id": "Anrufernummer des Trunks",
+            "trunk_caller_name": "Anrufername des Trunks",
+            "trunk_inbound_account": "Eingehenden Peer über lokales SIP-Konto authentifizieren",
+            "trunk_inbound_unknown_target": "Unbekanntes eingehendes Ziel"
           },
           "data_description": {
             "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -655,7 +682,12 @@
             "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
             "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
             "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+            "trunk_caller_id_policy": "Die Trunk-Identität ersetzt den Anrufer. Die Anruferidentität verwendet die öffentliche Kontonummer, falls konfiguriert. Der Kontobenutzername dient internen Verbindungen zwischen Telefonanlagen. Digest-Zugangsdaten und Contact bleiben getrennt. Weitergeleitete Trunk-Anrufe behalten in den beiden Anrufermodi ihren ursprünglichen From.",
+            "trunk_caller_id": "Allgemeine Nummer nur für die Trunk-Identität. Leer verwendet den Trunk-Benutzernamen. Authentifizierung und Zielnummer bleiben unverändert.",
+            "trunk_caller_name": "Allgemeiner Anzeigename für die Trunk-Identität. Leer verwendet deren Anrufernummer.",
+            "trunk_inbound_account": "Vorhandenes aktiviertes lokales Konto, mit dem eine entfernte Telefonanlage eingehende INVITEs authentifiziert und ihre Anrufer präsentieren darf. Digest ist auch bei bekannter Quell-IP erforderlich. Nur ein aktivierter Trunk pro Konto.",
+            "trunk_inbound_unknown_target": "Das bisherige Ersatzziel verwenden oder unbekannte Ziele mit SIP 404 ablehnen. Explizite Routing-Automationen bleiben möglich. Läuft ein aktives Entscheidungsfenster ab, antwortet ein ablehnender Trunk mit SIP 504."
           }
         }
       },
@@ -674,7 +706,11 @@
         "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
         "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen.",
         "trunk_media_nat_invalid": "Choose auto, direct or manual.",
-        "trunk_did_invalid": "Invalid called-number source or prefix rules."
+        "trunk_did_invalid": "Invalid called-number source or prefix rules.",
+        "trunk_caller_id_invalid": "Eine unterstützte Richtlinie und eine Nummer oder einen SIP-Benutzernamen ohne Adresse oder Steuerzeichen wählen.",
+        "trunk_inbound_account_invalid": "Ein vorhandenes aktiviertes lokales SIP-Konto wählen.",
+        "trunk_inbound_account_in_use": "Dieses Konto ist bereits einem anderen aktivierten Trunk zugeordnet.",
+        "trunk_unknown_policy_invalid": "Ersatzziel oder Ablehnung für unbekannte Ziele wählen."
       },
       "abort": {
         "reconfigure_successful": "Trunk-Konfiguration aktualisiert."
@@ -1179,6 +1215,19 @@
         "forward": "Forward",
         "voicemail": "Voicemail",
         "hangup": "End call"
+      }
+    },
+    "trunk_caller_id_policy": {
+      "options": {
+        "trunk": "Trunk-Identität (Anrufer ersetzen)",
+        "caller": "Anruferidentität (öffentliche Nummer, falls gesetzt)",
+        "account": "Kontobenutzername (interne PBX-Verbindungen)"
+      }
+    },
+    "trunk_inbound_unknown_target": {
+      "options": {
+        "fallback": "Ersatzziel verwenden",
+        "reject": "Unbekanntes Ziel ablehnen (404)"
       }
     }
   },

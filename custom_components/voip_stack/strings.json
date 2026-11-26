@@ -92,7 +92,12 @@
           "trunk_did_fallbacks": "Alternative sources in priority order",
           "trunk_did_prefix_rules": "Ordered prefix replacements",
           "trunk_audio_codecs_inherit": "Use integration audio codecs",
-          "trunk_video_codecs_inherit": "Use integration video codecs"
+          "trunk_video_codecs_inherit": "Use integration video codecs",
+          "trunk_caller_id_policy": "Outgoing caller identity",
+          "trunk_caller_id": "Trunk caller number",
+          "trunk_caller_name": "Trunk caller name",
+          "trunk_inbound_account": "Authenticate incoming peer with local SIP account",
+          "trunk_inbound_unknown_target": "Unknown incoming destination"
         },
         "data_description": {
           "trunk_transport": "SIP transport used from HA to the provider.",
@@ -115,7 +120,12 @@
           "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
           "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
           "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+          "trunk_caller_id_policy": "Choose the trunk identity to rewrite the caller, the caller identity to use the account's public number when configured, or the account username for private inter-PBX calls. Digest credentials and Contact stay separate. Forwarded incoming trunk calls preserve their original From in the two caller modes.",
+          "trunk_caller_id": "Generic number used only when the trunk identity is selected. Empty uses the trunk username. Does not change authentication or the called number.",
+          "trunk_caller_name": "Generic display name used with the trunk identity. Empty uses its caller number.",
+          "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account.",
+          "trunk_inbound_unknown_target": "Keep the existing fallback destination, or reject an unknown destination with SIP 404. Explicit routing automations can still choose a destination. An active decision window that expires on a rejecting trunk returns SIP 504."
         }
       },
       "trunk_mode": {
@@ -399,7 +409,11 @@
       "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
       "managed_esphome_missing": "Select a connected ESPHome phone whose managed SIP account was removed.",
       "phone_policy_invalid": "Choose a ringing time from 0 to 3600 seconds. Zero means unlimited.",
-      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease."
+      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
+      "trunk_caller_id_invalid": "Choose a supported caller policy and a number or SIP username without an address or control characters.",
+      "trunk_inbound_account_invalid": "Select an existing enabled local SIP account.",
+      "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk.",
+      "trunk_unknown_policy_invalid": "Choose fallback or rejection for an unknown destination."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -463,7 +477,9 @@
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
             "no_answer_to": "No-answer destination",
-            "inherit_ringing_timeout": "Inherit PBX ringing time"
+            "inherit_ringing_timeout": "Inherit PBX ringing time",
+            "outbound_caller_id": "Public outbound caller number",
+            "outbound_caller_name": "Outbound caller name"
           },
           "data_description": {
             "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
@@ -482,7 +498,9 @@
             "unavailable_to": "Used by the selected unavailable action.",
             "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout.",
+            "outbound_caller_id": "Optional public direct number used by trunks configured for caller identity. The account username and saved device/entity IDs stay unchanged. Trunks using account username ignore this public number.",
+            "outbound_caller_name": "Optional name presented by trunks configured for caller identity. Empty keeps the account's calling name."
           }
         },
         "reconfigure": {
@@ -498,7 +516,9 @@
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
             "no_answer_to": "No-answer destination",
-            "inherit_ringing_timeout": "Inherit PBX ringing time"
+            "inherit_ringing_timeout": "Inherit PBX ringing time",
+            "outbound_caller_id": "Public outbound caller number",
+            "outbound_caller_name": "Outbound caller name"
           },
           "data_description": {
             "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
@@ -510,7 +530,9 @@
             "unavailable_to": "Used by the selected unavailable action.",
             "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout.",
+            "outbound_caller_id": "Optional public direct number used by trunks configured for caller identity. The account username and saved device/entity IDs stay unchanged. Trunks using account username ignore this public number.",
+            "outbound_caller_name": "Optional name presented by trunks configured for caller identity. Empty keeps the account's calling name."
           }
         }
       },
@@ -632,7 +654,12 @@
             "trunk_did_fallbacks": "Alternative sources in priority order",
             "trunk_did_prefix_rules": "Ordered prefix replacements",
             "trunk_audio_codecs_inherit": "Use integration audio codecs",
-            "trunk_video_codecs_inherit": "Use integration video codecs"
+            "trunk_video_codecs_inherit": "Use integration video codecs",
+            "trunk_caller_id_policy": "Outgoing caller identity",
+            "trunk_caller_id": "Trunk caller number",
+            "trunk_caller_name": "Trunk caller name",
+            "trunk_inbound_account": "Authenticate incoming peer with local SIP account",
+            "trunk_inbound_unknown_target": "Unknown incoming destination"
           },
           "data_description": {
             "trunk_transport": "SIP transport used from HA to the provider.",
@@ -655,7 +682,12 @@
             "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
             "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
             "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+            "trunk_caller_id_policy": "Choose the trunk identity to rewrite the caller, the caller identity to use the account's public number when configured, or the account username for private inter-PBX calls. Digest credentials and Contact stay separate. Forwarded incoming trunk calls preserve their original From in the two caller modes.",
+            "trunk_caller_id": "Generic number used only when the trunk identity is selected. Empty uses the trunk username. Does not change authentication or the called number.",
+            "trunk_caller_name": "Generic display name used with the trunk identity. Empty uses its caller number.",
+            "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account.",
+            "trunk_inbound_unknown_target": "Keep the existing fallback destination, or reject an unknown destination with SIP 404. Explicit routing automations can still choose a destination. An active decision window that expires on a rejecting trunk returns SIP 504."
           }
         }
       },
@@ -674,7 +706,11 @@
         "trunk_target_required": "Choose a receiving phone or enter a dial-plan destination.",
         "trunk_media_address_invalid": "Enter a reachable unicast IPv4 address, or leave empty.",
         "trunk_media_nat_invalid": "Choose auto, direct or manual.",
-        "trunk_did_invalid": "Invalid called-number source or prefix rules."
+        "trunk_did_invalid": "Invalid called-number source or prefix rules.",
+        "trunk_caller_id_invalid": "Choose a supported caller policy and a number or SIP username without an address or control characters.",
+        "trunk_inbound_account_invalid": "Select an existing enabled local SIP account.",
+        "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk.",
+        "trunk_unknown_policy_invalid": "Choose fallback or rejection for an unknown destination."
       },
       "abort": {
         "reconfigure_successful": "Trunk configuration updated."
@@ -1179,6 +1215,19 @@
         "forward": "Forward",
         "voicemail": "Voicemail",
         "hangup": "End call"
+      }
+    },
+    "trunk_caller_id_policy": {
+      "options": {
+        "trunk": "Trunk identity (rewrite caller)",
+        "caller": "Caller identity (public number when configured)",
+        "account": "Account username (private inter-PBX calls)"
+      }
+    },
+    "trunk_inbound_unknown_target": {
+      "options": {
+        "fallback": "Use fallback destination",
+        "reject": "Reject unknown destination (404)"
       }
     }
   },

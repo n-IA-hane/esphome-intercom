@@ -92,7 +92,12 @@
           "trunk_did_fallbacks": "Alternative sources in priority order",
           "trunk_did_prefix_rules": "Ordered prefix replacements",
           "trunk_audio_codecs_inherit": "Use integration audio codecs",
-          "trunk_video_codecs_inherit": "Use integration video codecs"
+          "trunk_video_codecs_inherit": "Use integration video codecs",
+          "trunk_caller_id_policy": "Identidade de saída do chamador",
+          "trunk_caller_id": "Número de chamador do tronco",
+          "trunk_caller_name": "Nome de chamador do tronco",
+          "trunk_inbound_account": "Autenticar o par de entrada com uma conta SIP local",
+          "trunk_inbound_unknown_target": "Destino de entrada desconhecido"
         },
         "data_description": {
           "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -115,7 +120,12 @@
           "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
           "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
           "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+          "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+          "trunk_caller_id_policy": "A identidade do tronco substitui o chamador. A identidade do chamador usa o número público da conta, se configurado. O usuário da conta serve para ramais privados entre PBXs. Credenciais Digest e Contact permanecem separados. Chamadas encaminhadas de um tronco preservam o From original nos dois modos de chamador.",
+          "trunk_caller_id": "Número geral usado somente na identidade do tronco. Vazio usa o usuário do tronco. Não altera autenticação nem número chamado.",
+          "trunk_caller_name": "Nome geral exibido com a identidade do tronco. Vazio usa seu número de chamador.",
+          "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta.",
+          "trunk_inbound_unknown_target": "Mantém o destino alternativo ou rejeita destinos desconhecidos com SIP 404. Automações ainda podem escolher um destino explícito. Uma janela ativa de decisão expirada retorna SIP 504 em troncos configurados para rejeitar."
         }
       },
       "trunk_mode": {
@@ -399,7 +409,11 @@
       "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
       "managed_esphome_missing": "Select a connected ESPHome phone whose managed SIP account was removed.",
       "phone_policy_invalid": "Choose a ringing time from 0 to 3600 seconds. Zero means unlimited.",
-      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease."
+      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
+      "trunk_caller_id_invalid": "Escolha uma política suportada e um número ou usuário SIP sem endereço nem caracteres de controle.",
+      "trunk_inbound_account_invalid": "Selecione uma conta SIP local existente e habilitada.",
+      "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado.",
+      "trunk_unknown_policy_invalid": "Escolha um destino alternativo ou rejeição para destinos desconhecidos."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -463,7 +477,9 @@
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
             "no_answer_to": "No-answer destination",
-            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
+            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX",
+            "outbound_caller_id": "Número público de saída do chamador",
+            "outbound_caller_name": "Nome de saída do chamador"
           },
           "data_description": {
             "voicemail_enabled": "Desativar exclui permanentemente as mensagens, arquivos, PIN e configurações da caixa postal. Ativar novamente cria uma caixa vazia.",
@@ -482,7 +498,9 @@
             "unavailable_to": "Used by the selected unavailable action.",
             "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout.",
+            "outbound_caller_id": "Número público direto opcional para troncos com identidade do chamador. O usuário e os IDs salvos de dispositivos e entidades não mudam. Troncos configurados para usuário da conta ignoram esse número.",
+            "outbound_caller_name": "Nome opcional para troncos com identidade do chamador. Vazio mantém o nome de chamada da conta."
           }
         },
         "reconfigure": {
@@ -498,7 +516,9 @@
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
             "no_answer_to": "No-answer destination",
-            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
+            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX",
+            "outbound_caller_id": "Número público de saída do chamador",
+            "outbound_caller_name": "Nome de saída do chamador"
           },
           "data_description": {
             "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
@@ -510,7 +530,9 @@
             "unavailable_to": "Used by the selected unavailable action.",
             "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout.",
+            "outbound_caller_id": "Número público direto opcional para troncos com identidade do chamador. O usuário e os IDs salvos de dispositivos e entidades não mudam. Troncos configurados para usuário da conta ignoram esse número.",
+            "outbound_caller_name": "Nome opcional para troncos com identidade do chamador. Vazio mantém o nome de chamada da conta."
           }
         }
       },
@@ -632,7 +654,12 @@
             "trunk_did_fallbacks": "Alternative sources in priority order",
             "trunk_did_prefix_rules": "Ordered prefix replacements",
             "trunk_audio_codecs_inherit": "Use integration audio codecs",
-            "trunk_video_codecs_inherit": "Use integration video codecs"
+            "trunk_video_codecs_inherit": "Use integration video codecs",
+            "trunk_caller_id_policy": "Identidade de saída do chamador",
+            "trunk_caller_id": "Número de chamador do tronco",
+            "trunk_caller_name": "Nome de chamador do tronco",
+            "trunk_inbound_account": "Autenticar o par de entrada com uma conta SIP local",
+            "trunk_inbound_unknown_target": "Destino de entrada desconhecido"
           },
           "data_description": {
             "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -655,7 +682,12 @@
             "trunk_outbound_media_address": "Used only in manual mode. HA IPv4 address reachable by the PBX, with RTP/RTCP ports reachable without port translation.",
             "trunk_media_nat": "Automatic discovers RTP/RTCP addresses and ports using Home Assistant STUN servers. Direct uses routed networking. Manual uses the IPv4 override.",
             "trunk_audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
-            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls."
+            "trunk_video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
+            "trunk_caller_id_policy": "A identidade do tronco substitui o chamador. A identidade do chamador usa o número público da conta, se configurado. O usuário da conta serve para ramais privados entre PBXs. Credenciais Digest e Contact permanecem separados. Chamadas encaminhadas de um tronco preservam o From original nos dois modos de chamador.",
+            "trunk_caller_id": "Número geral usado somente na identidade do tronco. Vazio usa o usuário do tronco. Não altera autenticação nem número chamado.",
+            "trunk_caller_name": "Nome geral exibido com a identidade do tronco. Vazio usa seu número de chamador.",
+            "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta.",
+            "trunk_inbound_unknown_target": "Mantém o destino alternativo ou rejeita destinos desconhecidos com SIP 404. Automações ainda podem escolher um destino explícito. Uma janela ativa de decisão expirada retorna SIP 504 em troncos configurados para rejeitar."
           }
         }
       },
@@ -674,7 +706,11 @@
         "trunk_target_required": "Selecione um telefone de destino ou informe um destino do plano de discagem.",
         "trunk_media_address_invalid": "Informe um endereço IPv4 unicast acessível ou deixe vazio.",
         "trunk_media_nat_invalid": "Choose auto, direct or manual.",
-        "trunk_did_invalid": "Invalid called-number source or prefix rules."
+        "trunk_did_invalid": "Invalid called-number source or prefix rules.",
+        "trunk_caller_id_invalid": "Escolha uma política suportada e um número ou usuário SIP sem endereço nem caracteres de controle.",
+        "trunk_inbound_account_invalid": "Selecione uma conta SIP local existente e habilitada.",
+        "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado.",
+        "trunk_unknown_policy_invalid": "Escolha um destino alternativo ou rejeição para destinos desconhecidos."
       },
       "abort": {
         "reconfigure_successful": "Configuração do tronco atualizada."
@@ -1179,6 +1215,19 @@
         "forward": "Forward",
         "voicemail": "Voicemail",
         "hangup": "End call"
+      }
+    },
+    "trunk_caller_id_policy": {
+      "options": {
+        "trunk": "Identidade do tronco (substituir chamador)",
+        "caller": "Identidade do chamador (número público se configurado)",
+        "account": "Usuário da conta (ramais privados entre PBXs)"
+      }
+    },
+    "trunk_inbound_unknown_target": {
+      "options": {
+        "fallback": "Usar destino alternativo",
+        "reject": "Rejeitar destino desconhecido (404)"
       }
     }
   },

@@ -1,4 +1,4 @@
-# Caller identity and calls between PBXs
+# Caller identity and calls between PBX systems
 
 VoIP Stack keeps the SIP caller, the credentials used to authenticate a trunk,
 the dialog's Contact and the called destination separate. A trunk can therefore
@@ -22,6 +22,11 @@ New trunk forms also show that choice explicitly. Use `caller` for an outside
 line that accepts the account's direct number, or `account` for a private
 extension plan shared by two PBXs.
 
+A legacy static trunk with neither a caller number nor a trunk username keeps
+the supplied caller as its last compatibility fallback. Configure a trunk
+caller number when this otherwise anonymous static line must present a fixed
+generic identity.
+
 For example, account `101` can have public outgoing number `+39061234101`, while
 the outside trunk has generic caller number `+3906123400`:
 
@@ -41,6 +46,11 @@ does not replace that PBX's individual callers in the phone registry.
 The common caller resolver is used by SIP phone calls, the dashboard phone,
 Automation contacts, forwarding and explicit trunk selection. Media continues
 through the existing SIP/SDP/RTP owners and negotiation engine.
+
+A forced identity also stays with an established outgoing leg if a transfer
+retains that leg. Connected-party updates cannot replace its From with a local
+extension; its subsequent BYE uses the same forced presentation. The other
+policies retain ordinary negotiated connected-identity updates.
 
 ## What this option does not imply
 

@@ -36,7 +36,7 @@ A directory contact remains a destination you can dial. Its address or
 display name does not authorize incoming calls. Existing configured trunks
 continue to use their own source and routing settings.
 
-### Calls between PBXs
+### Calls between PBX systems
 
 Use [Caller identity and calls between PBXs](TRUNK_CALLER_IDENTITY.md) for the
 explicit caller-versus-trunk policy, crossed SIP accounts, native extension
