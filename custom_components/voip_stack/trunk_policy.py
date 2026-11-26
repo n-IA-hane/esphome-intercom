@@ -5,6 +5,20 @@ from __future__ import annotations
 import ipaddress
 
 
+def authenticated_inbound_trunk(configs, username: str) -> str:
+    """Resolve an existing account's explicit peer binding after Digest succeeds."""
+    principal = str(username or "").casefold()
+    if not principal:
+        return ""
+    matches = [(identity, config) for identity, config in configs.items()
+               if str(config.get("trunk_inbound_account") or "").strip().casefold() == principal]
+    if not matches:
+        return ""
+    if len(matches) != 1 or not matches[0][1].get("trunk_enabled", False):
+        raise ValueError("The authenticated SIP account needs one enabled incoming trunk")
+    return matches[0][0]
+
+
 def select_trunk_id(configs, default_id: str, *, requested_id: str = "", phone_trunk_id: str = "") -> str:
     """Resolve an explicit choice, phone preference or default without failover."""
     selected = str(requested_id or phone_trunk_id or default_id or "").strip()
@@ -23,7 +37,8 @@ def validate_static_trunk_sources(configs) -> None:
     """Reject overlapping source rules on the same signaling transport."""
     seen = []
     for identity, config in configs.items():
-        if not config.get("trunk_enabled", False) or config.get("trunk_register", True):
+        if (not config.get("trunk_enabled", False) or config.get("trunk_register", True)
+                or config.get("trunk_inbound_account")):
             continue
         transport = str(config.get("trunk_transport") or "udp").casefold()
         for network in trusted_networks(config.get("trunk_allowed_ips")):

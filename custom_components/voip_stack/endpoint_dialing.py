@@ -193,7 +193,9 @@ class EndpointDialer:
         codec_policy = effective_codec_policy(self.hass,
             endpoint_id=endpoint_id_override or (target_endpoint.endpoint_id if target_endpoint is not None else ""),
             trunk_id=policy.trunk_id if policy.use_trunk_flow else None)
-        registration_only = getattr(invite, "authenticated_username", "") and not getattr(invite, "identified_source_endpoint_id", "")
+        registration_only = (getattr(invite, "authenticated_username", "")
+                             and not getattr(invite, "received_via_trunk", False)
+                             and not getattr(invite, "identified_source_endpoint_id", ""))
         if self.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS) or registration_only or source_call_id:
             from .runtime_data import require_runtime_data
 

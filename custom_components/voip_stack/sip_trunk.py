@@ -93,6 +93,7 @@ class SipTrunkConfig:
     outbound_proxy: str = ""
     register: bool = True
     allowed_ips: tuple[str, ...] = ()
+    inbound_account: str = ""
     registration_id: int = 1
     audio_codecs: tuple[str, ...] | None = None
     video_codecs: tuple[str, ...] | None = None
@@ -137,7 +138,7 @@ class SipTrunkClient:
         self._registration_attempted = asyncio.Event()
         self.on_state_change: Callable[[], None] | None = None
         self._trusted_networks = (
-            trusted_networks(config.allowed_ips) if not config.register else ()
+            trusted_networks(config.allowed_ips) if not config.register and not config.inbound_account else ()
         )
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
@@ -332,7 +333,7 @@ class SipTrunkClient:
     def ready(self) -> bool:
         """Static peers use the existing listener and per-call SIP transports."""
         return not self._stopped and (
-            self.registered if self.config.register else bool(self._trusted_networks)
+            self.registered if self.config.register else bool(self.config.inbound_account or self._trusted_networks)
         )
 
     async def wait_for_registration(self, *, timeout: float = 15.0) -> bool:
@@ -774,6 +775,8 @@ class SipTrunkClient:
         """Identify an inbound request using the trunk source policy."""
 
         del source_port
+        if self.config.inbound_account:
+            return False  # The registrar's Digest owner admits this peer.
         if not self.config.register:
             source = self._normalize_ip(source_host)
             return bool(

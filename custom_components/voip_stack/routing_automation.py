@@ -11,7 +11,7 @@ _RESULT = "routing_decisions"
 
 
 async def request_route_window(hass, session, *, invite=None, decision=None,
-                               timeout=SIP_ROUTE_DECISION_TIMEOUT, stage="initial", **presentation):
+                               timeout=SIP_ROUTE_DECISION_TIMEOUT, stage="initial", timeout_result=None, **presentation):
     """Share the original future, deadline and accepted result without a registry."""
     registry = call_registry(hass)
     if registry.get_session(session.call_id, generation=session.generation) is not session or not session.live:
@@ -26,7 +26,7 @@ async def request_route_window(hass, session, *, invite=None, decision=None,
         if existing["decision_scope"] == scope:
             return result
         return await request_route_window(hass, session, invite=invite, decision=decision,
-            timeout=timeout, stage=stage, **presentation)
+            timeout=timeout, stage=stage, timeout_result=timeout_result, **presentation)
     if existing is not None:
         raise RuntimeError("Another route operation owns this call's decision")
     future = asyncio.get_running_loop().create_future()
@@ -43,7 +43,7 @@ async def request_route_window(hass, session, *, invite=None, decision=None,
             try:
                 payload = await asyncio.wait_for(asyncio.shield(future), max(0, deadline - time.time()))
             except TimeoutError:
-                payload = {}
+                payload = dict(timeout_result or {})
                 if not future.done():
                     future.set_result(payload)
             payload = dict(payload) if isinstance(payload, dict) else {}
