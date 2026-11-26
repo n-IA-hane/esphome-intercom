@@ -397,7 +397,32 @@ ha_tests=(
   tests/test_one_way_answer_ha.py
   tests/test_pbx_route_gate_ha.py
   tests/test_sdp_attribute_isolation_ha.py
-  tests/test_trunk_routing.py
+  tests/test_trunk_retirement_ha.py
+  tests/test_browser_early_media_pcm_ha.py
+  tests/test_shared_account_direct_video_ha.py
+  tests/test_call_recording_participant_ha.py
+  tests/test_application_preparation_ha.py
+  tests/test_audit_paging_admission_ha.py
+  tests/test_audit_queue_transfer_budget_ha.py
+  tests/test_audit_trunk_destination_ha.py
+  tests/test_browser_early_media_ha.py
+  tests/test_browser_paging_admission_ha.py
+  tests/test_peer_trunk_ingress_ha.py
+  tests/test_pickup_paging_ringing_ha.py
+  tests/test_projection_work_ha.py
+  tests/test_ringing_budget_wire_ha.py
+  tests/test_ringing_policy_configuration_ha.py
+  tests/test_sip_auth_terminal_ha.py
+  tests/test_sip_dtmf_selected_contract_ha.py
+  tests/test_sip_event_capacity_ha.py
+  tests/test_trunk_caller_policy_ha.py
+  tests/test_trunk_connected_identity_policy_ha.py
+  tests/test_trunk_domain_paths_ha.py
+  tests/test_trunk_group_outcome_ha.py
+  tests/test_trunk_identity_form_ha.py
+  tests/test_trunk_route_outcomes_ha.py
+  tests/test_trunk_route_resolution_ha.py
+  tests/test_two_ha_peer_calls_ha.py
 )
 ha_ignores=()
 for test_path in "${ha_tests[@]}"; do

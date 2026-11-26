@@ -648,11 +648,11 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
             {
                 "results": [
                     {
-                        "name": "dtmf_primary_extension_bypasses_automation",
+                        "name": "trunk_primary_called_number_routes_directly",
                         "status": "pass",
                     },
                     {
-                        "name": "dtmf_secondary_extension_bypasses_automation",
+                        "name": "trunk_secondary_called_number_routes_directly",
                         "status": "pass",
                     },
                 ]
@@ -666,7 +666,7 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
             {
                 "results": [
                     {
-                        "name": "wildix_trunk_dtmf_route_to_esp",
+                        "name": "fusion_trunk_called_number_routes_to_esp",
                         "status": "pass",
                     }
                 ]
@@ -690,12 +690,20 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
         }
     )
 
+    # Retired menu receipts must never satisfy called-number route evidence.
+    dtmf.write_text(json.dumps({"results": [
+        {"name": "dtmf_primary_extension_bypasses_automation", "status": "pass"},
+        {"name": "dtmf_secondary_extension_bypasses_automation", "status": "pass"},
+    ]}))
+    with pytest.raises(EvidenceError, match="did not prove exact scenarios"):
+        derive_scenario_evidence("peer-live", plan, [matrix, dtmf, wildix])
+
     dtmf.write_text(
         json.dumps(
             {
                 "results": [
                     {
-                        "name": "dtmf_primary_extension_bypasses_automation",
+                        "name": "trunk_primary_called_number_routes_directly",
                         "status": "pass",
                     }
                 ]
@@ -707,9 +715,9 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
         derive_scenario_evidence("peer-live", plan, [matrix, dtmf, wildix])
     except EvidenceError as error:
         assert "did not prove exact scenarios" in str(error)
-        assert "dtmf_secondary_extension_bypasses_automation" in str(error)
+        assert "trunk_secondary_called_number_routes_directly" in str(error)
     else:
-        raise AssertionError("partial DTMF evidence was accepted")
+        raise AssertionError("partial called-number evidence was accepted")
 
 
 def test_push_to_dev_selects_complete_firmware_matrix() -> None:

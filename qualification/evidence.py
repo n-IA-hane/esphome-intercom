@@ -54,14 +54,14 @@ CLAIMS: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {
         ),
     },
     ("trunk-dtmf-routing-and-established-dtmf", "peer-live"): {
-        "executors": ("home-ha", "wildix", "sipp"),
+        "executors": ("home-ha", "fusion", "sipp"),
         "oracles": (
             "both-peer-dialogs",
             "sip-trace",
             "selected-destination",
         ),
         "postconditions": (
-            "digits-consumed-once",
+            "called-number-preserved",
             "cleanup-barrier",
             "resources-at-baseline",
         ),
@@ -172,9 +172,9 @@ ARTIFACT_SCENARIOS: dict[tuple[str, str], tuple[str, ...]] = {
         "concurrent_route_requests_remain_distinct",
     ),
     ("trunk-dtmf-routing-and-established-dtmf", "peer-live"): (
-        "dtmf_primary_extension_bypasses_automation",
-        "dtmf_secondary_extension_bypasses_automation",
-        "wildix_trunk_dtmf_route_to_esp",
+        "trunk_primary_called_number_routes_directly",
+        "trunk_secondary_called_number_routes_directly",
+        "fusion_trunk_called_number_routes_to_esp",
     ),
     ("trunk-dtmf-routing-and-established-dtmf", "browser-real"): (
         "in_call_registered_sip_info_dtmf_event",

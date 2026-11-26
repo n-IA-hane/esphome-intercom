@@ -69,12 +69,12 @@ class QualificationScenarioCatalogTest(unittest.TestCase):
         all_dnd = by_id["ring-group-esp-all_dnd"]
         self.assertEqual(all_dnd.expected, "486_dnd")
 
-    def test_explicit_dtmf_always_precedes_automation(self) -> None:
+    def test_matched_called_number_routes_with_automation_disabled(self) -> None:
         scenarios = matrix.generate_usage_matrix()
         dtmf = [
             scenario
             for scenario in scenarios
-            if scenario.selection == "valid_extension_automation_ignored"
+            if scenario.selection == "matched_called_number_automation_off"
         ]
 
         self.assertEqual(
@@ -82,7 +82,7 @@ class QualificationScenarioCatalogTest(unittest.TestCase):
             {"ha_softphone", "esp", "registered_sip", "assist"},
         )
         self.assertTrue(
-            all("dtmf_precedes_automation" in scenario.assertions for scenario in dtmf)
+            all("called_number_preserved" in scenario.assertions for scenario in dtmf)
         )
 
 

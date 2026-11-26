@@ -53,6 +53,7 @@ EXECUTOR_JOBS = {
     "sipp": "peer-live",
     "software-replay": "software-full",
     "wildix": "peer-live",
+    "fusion": "peer-live",
     "ws3": "hil-s3",
 }
 
@@ -250,13 +251,13 @@ SCENARIOS = (
     ScenarioContract(
         "trunk-dtmf-routing-and-established-dtmf",
         frozenset({"ha_lifecycle", "sip_core"}),
-        frozenset({"home-ha", "wildix", "sipp"}),
+        frozenset({"home-ha", "fusion", "sipp"}),
         frozenset(
             {"both-peer-dialogs", "sip-trace", "dtmf-events", "selected-destination"}
         ),
         frozenset(
             {
-                "digits-consumed-once",
+                "called-number-preserved",
                 "no-in-call-reroute",
                 "cleanup-barrier",
                 "resources-at-baseline",

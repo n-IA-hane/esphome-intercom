@@ -212,7 +212,7 @@ def generate_usage_matrix() -> list[UsageScenario]:
                     )
                 )
 
-    # Inbound selection priority. Explicit trunk DTMF wins over automation;
+    # Called-number routing may use an explicit bounded automation override;
     # registered and unknown SIP peers use the central dial plan without an
     # automation wait, while a trusted ESP may offer the bounded override.
     for destination in INTERNAL_DESTINATIONS:
@@ -269,42 +269,42 @@ def generate_usage_matrix() -> list[UsageScenario]:
     for destination in ("ha_softphone", "esp", "registered_sip", "assist"):
         scenarios.append(
             _usage(
-                f"dtmf-selection-trunk-{destination}-valid",
-                "preanswer_dtmf",
+                f"called-number-trunk-{destination}-valid",
+                "initial_routing",
                 "trunk",
                 destination,
-                "valid_extension_automation_ignored",
+                "matched_called_number_automation_off",
                 "available",
                 "canonical_destination",
-                "one_digit_event_per_key",
-                "dtmf_precedes_automation",
+                "called_number_preserved",
+                "no_route_request",
                 home_live=True,
             )
         )
     for destination in INTERNAL_DESTINATIONS:
         scenarios.append(
             _usage(
-                f"dtmf-selection-trunk-{destination}-no-digits",
-                "preanswer_dtmf",
+                f"called-number-trunk-{destination}-unmatched",
+                "initial_routing",
                 "trunk",
                 destination,
-                "no_digits_then_automation_or_fallback",
+                "unmatched_called_number_configured_destination",
                 "available",
-                "selected_or_fallback_destination",
-                "one_route_request",
+                "configured_destination",
+                "fallback_preserved",
                 home_live=True,
             )
         )
     scenarios.append(
         _usage(
-            "dtmf-selection-trunk-unknown-extension",
-            "preanswer_dtmf",
+            "called-number-trunk-unknown-without-fallback",
+            "initial_routing",
             "trunk",
             "unknown",
-            "unknown_extension",
+            "unknown_called_number_without_fallback",
             "available",
             "404_route_not_found",
-            "preanswer_media_released",
+            "no_menu_collection",
             home_live=True,
         )
     )
@@ -402,7 +402,7 @@ def validate_usage_matrix(scenarios: Iterable[UsageScenario]) -> list[str]:
     required_ids = {
         "selection-trunk-ha_softphone-automation-off",
         "selection-trunk-ring_group-automation-forward",
-        "dtmf-selection-trunk-unknown-extension",
+        "called-number-trunk-unknown-without-fallback",
         "ring-group-esp-ha_dnd_esp_answers",
         "ring-group-esp-all_dnd",
         "ring-group-trunk-origin_member_excluded",

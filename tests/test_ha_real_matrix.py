@@ -26,8 +26,8 @@ def load_runner() -> ModuleType:
 
 
 def load_dtmf_runner() -> ModuleType:
-    path = ROOT / "scripts/run_dtmf_precedence_lab.py"
-    spec = importlib.util.spec_from_file_location("run_dtmf_precedence_lab", path)
+    path = ROOT / "scripts/run_trunk_did_lab.py"
+    spec = importlib.util.spec_from_file_location("run_trunk_did_lab", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -100,7 +100,7 @@ def test_external_dtmf_contracts_have_real_executors() -> None:
         assert case_name in path.read_text(encoding="utf-8")
 
 
-def test_dtmf_peer_uses_early_media_rfc4733_and_preserves_bind_host(
+def test_direct_did_peer_preserves_existing_bind_and_authenticated_profile(
     tmp_path: Path,
 ) -> None:
     runner = load_dtmf_runner()
@@ -112,13 +112,14 @@ def test_dtmf_peer_uses_early_media_rfc4733_and_preserves_bind_host(
     )
     (source / "accounts").write_text("stale\n", encoding="utf-8")
 
-    destination, host = runner._caller_config(source, tmp_path / "peer", port=19999)
+    destination, host = runner._caller_config(source)
 
     assert host == "192.0.2.10"
-    assert "192.0.2.10:19999" in (destination / "config").read_text()
+    assert destination == source
+    assert "192.0.2.10:15101" in (destination / "config").read_text()
     account = (destination / "accounts").read_text()
-    assert "dtmfmode=rtp" in account
-    assert "dtmfmode=info" not in account
+    assert account == "stale\n"
+    assert not any(field in account for field in ("trunk_inbound_mode", "trunk_dtmf_timeout_ms"))
 
 
 def test_lab_wrapper_uses_existing_service_owner() -> None:
@@ -204,8 +205,11 @@ def test_peer_live_wrapper_requires_explicit_policy_endpoint(
     assert "requires an explicit policy endpoint" in completed.stdout
     wrapper = (ROOT / "scripts/run_peer_live_qualification.sh").read_text()
     assert '--policy-endpoint-id "$policy_endpoint_id"' in wrapper
-    assert "wildix_trunk_dtmf_route_to_esp" in wrapper
-    assert 'VOIP_SECONDARY_EXTENSION="${P4_EXTENSION:-1000}"' in wrapper
+    assert "fusion_trunk_called_number_routes_to_esp" in wrapper
+    assert 'FUSION_DID_PROFILE' in wrapper
+    assert '--require-route-kind fusion' in wrapper
+    assert 'WILDIX_CONFIG' not in wrapper
+    assert 'deploy_ha_voip_stack.sh' not in wrapper
 
 
 def test_qualification_package_uses_public_selection_and_real_ring_delay() -> None:

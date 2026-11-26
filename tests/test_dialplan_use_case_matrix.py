@@ -39,9 +39,9 @@ def test_live_dialplan_classes_bind_exact_artifact_scenarios() -> None:
         "stale_route_sequence_is_rejected",
         "concurrent_route_requests_remain_distinct",
     )
-    assert QUALIFICATION_CLASSES["trunk-dtmf-live"].scenario_ids == (
-        "dtmf_primary_extension_bypasses_automation",
-        "dtmf_secondary_extension_bypasses_automation",
+    assert QUALIFICATION_CLASSES["trunk-called-number-live"].scenario_ids == (
+        "trunk_primary_called_number_routes_directly",
+        "trunk_secondary_called_number_routes_directly",
     )
     assert all(
         scenario.endswith("_ha_runtime")

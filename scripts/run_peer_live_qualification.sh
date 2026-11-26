@@ -11,14 +11,19 @@ policy_endpoint_id=${2:-${VOIP_QUALIFICATION_POLICY_ENDPOINT_ID:-}}
   echo "peer-live requires an explicit policy endpoint as argument 2 or VOIP_QUALIFICATION_POLICY_ENDPOINT_ID" >&2
   exit 2
 }
+did_profile=${TRUNK_DID_PROFILE:?TRUNK_DID_PROFILE must describe existing Fusion or HA-peer DID routes}
+fusion_profile=${FUSION_DID_PROFILE:?FUSION_DID_PROFILE must describe the existing Fusion-to-ESP route}
 mkdir -p "$evidence_root"
 
 "$ha_python" scripts/run_ha_real_matrix.py \
   --out-dir "$evidence_root/ha-real-matrix" \
   --policy-endpoint-id "$policy_endpoint_id" \
   --summary-output "$evidence_root/peer-live.json"
-"$ha_python" scripts/run_dtmf_precedence_lab.py \
-  --out "$evidence_root/dtmf-extension-precedence.json"
+"$ha_python" scripts/run_trunk_did_lab.py \
+  --profile "$did_profile" \
+  --required-scenario trunk_primary_called_number_routes_directly \
+  --required-scenario trunk_secondary_called_number_routes_directly \
+  --out "$evidence_root/direct-called-number.json"
 "$ha_python" scripts/run_sip_extensions_lab.py \
   --out-dir "$evidence_root/sip-extensions"
 "$ha_python" scripts/run_sipp_rfc_lab.py \
@@ -39,20 +44,10 @@ SSL_CERT_FILE="$certificate_dir/server.crt" "$ha_python" \
   --server-key "$certificate_dir/server.key" \
   --out-dir "$evidence_root/sip-transport"
 
-# The isolated lab proves routing mechanics. This final witness proves the
-# public Wildix trunk and real ESP destination against this exact checkout.
-home_ha_url=${HOME_HA_URL:?HOME_HA_URL is required for the Wildix witness}
-home_ha_auth=${HOME_HA_AUTH_FILE:?HOME_HA_AUTH_FILE is required for the Wildix witness}
-wildix_config=${WILDIX_CONFIG:?WILDIX_CONFIG is required for the Wildix witness}
-p4_route_name=${P4_ROUTE_NAME:?P4_ROUTE_NAME is required for the Wildix witness}
-./tools/deploy_ha_voip_stack.sh
-HA_BASE="$home_ha_url" \
-HA_AUTH_FILE="$home_ha_auth" \
-WILDIX_CONFIG="$wildix_config" \
-VOIP_SECONDARY_EXTENSION="${P4_EXTENSION:-1000}" \
-VOIP_SECONDARY_CALLEE="$p4_route_name" \
-VOIP_SECONDARY_EXPECTED_STATE=ringing \
-  "$ha_python" tools/inbound_routing_qualification.py \
-    --only dtmf_secondary_extension_bypasses_automation \
-    --result-name wildix_trunk_dtmf_route_to_esp \
-    --out "$evidence_root/wildix-trunk-dtmf.json"
+# The external path must already exist on the authorized Fusion PBX. Missing
+# routes remain blocked; no provider substitution or deployment happens here.
+"$ha_python" scripts/run_trunk_did_lab.py \
+  --profile "$fusion_profile" \
+  --require-route-kind fusion \
+  --required-scenario fusion_trunk_called_number_routes_to_esp \
+  --out "$evidence_root/fusion-trunk-called-number.json"

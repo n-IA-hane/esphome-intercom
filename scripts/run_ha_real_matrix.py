@@ -71,13 +71,13 @@ CONCURRENCY_CASES = (
     "concurrent_route_requests_remain_distinct",
 )
 EXTERNAL_EXECUTABLE_CONTRACTS = {
-    "dtmf_extension_bypasses_automation": (
-        "scripts/run_dtmf_precedence_lab.py",
-        "dtmf_primary_extension_bypasses_automation",
+    "called_number_routes_without_implicit_menu": (
+        "scripts/run_trunk_did_lab.py",
+        "trunk_primary_called_number_routes_directly",
     ),
-    "ingress_extension_is_not_overridden": (
-        "scripts/run_dtmf_precedence_lab.py",
-        "dtmf_secondary_extension_bypasses_automation",
+    "second_called_number_routes_without_implicit_menu": (
+        "scripts/run_trunk_did_lab.py",
+        "trunk_secondary_called_number_routes_directly",
     ),
 }
 

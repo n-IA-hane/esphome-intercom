@@ -101,12 +101,12 @@ QUALIFICATION_CLASSES = {
     "state-projection-ha-runtime": QualificationClass(
         "ha-runtime", "tests/test_endpoint_ha_entities.py"
     ),
-    "trunk-dtmf-live": QualificationClass(
+    "trunk-called-number-live": QualificationClass(
         "peer-live",
-        "scripts/run_dtmf_precedence_lab.py",
+        "scripts/run_trunk_did_lab.py",
         (
-            "dtmf_primary_extension_bypasses_automation",
-            "dtmf_secondary_extension_bypasses_automation",
+            "trunk_primary_called_number_routes_directly",
+            "trunk_secondary_called_number_routes_directly",
         ),
     ),
 }
@@ -206,14 +206,14 @@ USE_CASES = (
         "conditional-route-real-ha",
     ),
     _case(
-        "explicit-extension-wins",
-        "A caller-entered extension bypasses broad automation",
-        "preanswer_dtmf",
-        ("entered_extension",),
+        "called-number-without-menu",
+        "A matched called number routes immediately when routing automation is disabled",
+        "initial_invite",
+        ("called_number", "routing_automation_disabled"),
         "canonical_dialplan",
-        "route exact extension",
-        "unknown extension fails",
-        "trunk-dtmf-live",
+        "ring the called-number destination without collecting digits",
+        "unmatched called number uses the configured destination or fails",
+        "trunk-called-number-live",
     ),
     _case(
         "trunk-only-override",
