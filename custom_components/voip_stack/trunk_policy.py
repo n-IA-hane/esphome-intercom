@@ -54,9 +54,9 @@ def identify_inbound_trunk(clients, host: str, port: int, transport: str, *, flo
     """Bind an owned flow, or require one unambiguous trusted source match."""
     if flow_trunk_id:
         client = clients.get(flow_trunk_id)
-        return flow_trunk_id if client is not None and trunk_available(client) else ""
+        return flow_trunk_id if client is not None and trunk_inbound_source_available(client) else ""
     matches = [identity for identity, client in clients.items()
-               if trunk_available(client) and client.accepts_inbound_source(host, port, transport)]
+               if trunk_inbound_source_available(client) and client.accepts_inbound_source(host, port, transport)]
     if contact_line and matches:
         matches = [identity for identity in matches if getattr(clients[identity], "contact_line", "") == contact_line]
         if not matches:
@@ -64,6 +64,11 @@ def identify_inbound_trunk(clients, host: str, port: int, transport: str, *, flo
     if len(matches) > 1:
         raise ValueError("Incoming SIP source matches multiple trunks")
     return matches[0] if matches else ""
+
+
+def trunk_inbound_source_available(trunk) -> bool:
+    """Keep source authentication separate from the outbound reachability gate."""
+    return bool(getattr(trunk, "inbound_source_ready", trunk_available(trunk)))
 
 
 def trusted_networks(values):

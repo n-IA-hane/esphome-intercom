@@ -148,6 +148,8 @@ class BrowserAudioReceiver:
             and dtmf_decoder.accepts(packet.payload_type)
         ):
             report = dtmf_decoder.decode_report(data)
+            from .audio_rtcp import observe_validated_event
+            observe_validated_event(getattr(session, "audio_rtcp", None), dtmf_decoder)
             digit = report.digit if report is not None and report.first else ""
             if report is not None and report.shared_audio:
                 if report.source_changed:

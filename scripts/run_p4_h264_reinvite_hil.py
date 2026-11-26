@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -21,6 +22,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from live_voip_qualification import (  # noqa: E402
@@ -33,15 +35,10 @@ from live_voip_qualification import (  # noqa: E402
     norm,
     qualification_token,
 )
+from tools.hil_measurement import NATIVE_FAILURE_PATTERNS, native_failures  # noqa: E402
 
 
-FATAL_SERIAL_PATTERNS = (
-    "Guru Meditation",
-    "panic",
-    "watchdog",
-    "Video worker stop timeout",
-    "retaining sockets",
-)
+FATAL_SERIAL_PATTERNS = NATIVE_FAILURE_PATTERNS
 STAT_LABELS = {
     "rx": (
         "H.264 RX stats:",
@@ -72,9 +69,7 @@ def parse_serial_metrics(text: str) -> dict[str, object]:
     """Extract privacy-safe P4 presentation and media counters."""
 
     clean = ANSI.sub("", text)
-    fatals = [
-        pattern for pattern in FATAL_SERIAL_PATTERNS if pattern.lower() in clean.lower()
-    ]
+    fatals = native_failures(clean)
     rx = _stats_line(clean, STAT_LABELS["rx"])
     session = _stats_line(clean, STAT_LABELS["session"])
     metrics: dict[str, object] = {
@@ -92,7 +87,7 @@ def parse_serial_metrics(text: str) -> dict[str, object]:
     return metrics
 
 
-def parse_ffprobe(payload: dict[str, object]) -> dict[str, object]:
+def parse_ffprobe(payload: dict[str, object], codec: str = "h264") -> dict[str, object]:
     streams = payload.get("streams")
     if not isinstance(streams, list) or not streams or not isinstance(streams[0], dict):
         raise AssertionError("ffprobe did not find returned P4 video")
@@ -104,7 +99,8 @@ def parse_ffprobe(payload: dict[str, object]) -> dict[str, object]:
         "height": int(stream.get("height") or 0),
         "frames": frames,
     }
-    if result["codec"] != "h264" or min(result["width"], result["height"]) <= 0:
+    expected_codec = "mjpeg" if codec == "jpeg" else codec
+    if result["codec"] != expected_codec or min(result["width"], result["height"]) <= 0:
         raise AssertionError(f"returned P4 stream is not decodable H264: {result}")
     if frames < 3:
         raise AssertionError(f"returned P4 stream has fewer than 3 frames: {result}")
@@ -117,6 +113,7 @@ def validate_cycle(
     returned_video: dict[str, object],
     *,
     termination_owner: str,
+    codec: str = "h264",
 ) -> dict[str, object]:
     """Validate independent SIP, media, P4 presentation and hangup evidence."""
 
@@ -132,7 +129,7 @@ def validate_cycle(
         and not ACTIVE_VIDEO.search(str(peer.get("answer_sdp") or "")),
         "initial_answered": bool(statuses) and statuses[-1] == 200,
         "reinvite_answered": int(peer.get("reinvite_status") or 0) == 200,
-        "h264_sendrecv": "H264/90000"
+        ("jpeg_sendrecv" if codec == "jpeg" else "h264_sendrecv"): ("JPEG/90000" if codec == "jpeg" else "H264/90000")
         in str(peer.get("reinvite_negotiated_video") or "")
         and peer.get("reinvite_video_direction") == "sendrecv",
         "audio_before_video": bool(transitions)
@@ -152,8 +149,8 @@ def validate_cycle(
     rx = serial_metrics.get("rx") or {}
     tx = serial_metrics.get("tx") or {}
     session = serial_metrics.get("session") or {}
-    # completed_au counts accepted RX access units, while dropped_au is shared
-    # by RX reassembly and the bounded TX queue. Their ratio is not a loss
+    # completed_au reports tx_access_units_ok_, a TX success counter.
+    # dropped_au is shared by RX reassembly and the bounded TX queue. Their ratio is not a loss
     # metric. Presentation, returned-stream decode and send_fail are the
     # independent end-to-end oracles below.
     checks.update(
@@ -166,9 +163,9 @@ def validate_cycle(
             "p4_video_session": int(session.get("tx", 0)) > 0
             and int(session.get("rx", 0)) > 0
             and int(session.get("completed_au", 0)) > 0
-            and int(session.get("send_fail", 0)) == 0,
+            and type(session.get("send_fail")) is int and session["send_fail"] == 0,
             "serial_clean": not serial_metrics.get("fatal_errors"),
-            "returned_h264": returned_video.get("frames", 0) >= 3,
+            ("returned_jpeg" if codec == "jpeg" else "returned_h264"): returned_video.get("frames", 0) >= 3,
         }
     )
     failed = sorted(key for key, passed in checks.items() if not passed)
@@ -182,7 +179,7 @@ def validate_cycle(
             "initial_statuses": statuses,
             "initial_codec": peer.get("initial_codec"),
             "reinvite_status": peer.get("reinvite_status"),
-            "video_codec": "h264",
+            "video_codec": codec,
             "video_direction": peer.get("reinvite_video_direction"),
             "bye_status": peer.get("bye_response_status"),
             "remote_bye": bool(peer.get("remote_bye")),
@@ -200,7 +197,7 @@ def validate_cycle(
         | {
             "audio_before_reinvite_tx": int(transitions[-1]["audio_tx_packets"]),
             "audio_before_reinvite_rx": int(transitions[-1]["audio_rx_packets"]),
-            "returned_h264_frames": int(returned_video["frames"]),
+            ("returned_jpeg_frames" if codec == "jpeg" else "returned_h264_frames"): int(returned_video["frames"]),
         },
         "p4": {"rx": rx, "tx": tx, "session": session},
     }
@@ -371,13 +368,14 @@ async def quiet_p4(esp: EspApi) -> AsyncIterator[DeviceSettings]:
 class SerialCapture:
     """Single bounded-lifetime reader for one P4 serial port."""
 
-    def __init__(self, port: str, output: Path) -> None:
+    def __init__(self, port: str, output: Path, observer=None) -> None:
         self.port = port
         self.output = output
         self._lines: list[str] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._serial: Any = None
+        self.observer = observer
 
     def __enter__(self) -> "SerialCapture":
         import serial
@@ -409,6 +407,8 @@ class SerialCapture:
                 stream.write(raw)
                 stream.flush()
                 self._lines.append(raw.decode(errors="replace"))
+                if self.observer is not None:
+                    self.observer(raw.decode(errors="replace"))
 
     def mark(self) -> int:
         return len(self._lines)
@@ -448,7 +448,7 @@ async def _drain(
                 event.set()
 
 
-def _ffprobe(path: Path) -> dict[str, object]:
+def _ffprobe(path: Path, codec: str = "h264") -> dict[str, object]:
     executable = shutil.which("ffprobe")
     if not executable:
         raise RuntimeError("ffprobe is required for P4 returned-video validation")
@@ -470,7 +470,7 @@ def _ffprobe(path: Path) -> dict[str, object]:
         stdout=subprocess.PIPE,
         text=True,
     )
-    return parse_ffprobe(json.loads(result.stdout))
+    return parse_ffprobe(json.loads(result.stdout), codec)
 
 
 def _sha256(path: Path) -> str:
@@ -490,7 +490,7 @@ async def _run_peer_cycle(
     prefix = args.out_dir / f"cycle-{cycle}"
     paths = {
         "peer": prefix.with_name(prefix.name + "-peer.json"),
-        "video": prefix.with_name(prefix.name + "-p4-return.h264"),
+        "video": prefix.with_name(prefix.name + "-p4-return." + getattr(args, "codec", "h264")),
         "stdout": prefix.with_name(prefix.name + "-peer.stdout.log"),
         "stderr": prefix.with_name(prefix.name + "-peer.stderr.log"),
     }
@@ -508,7 +508,7 @@ async def _run_peer_cycle(
         "--audio-codec",
         "l16-16k",
         "--codec",
-        "h264",
+        getattr(args, "codec", "h264"),
         "--direction",
         "sendrecv",
         "--add-video-after",
@@ -562,11 +562,15 @@ async def _run_peer_cycle(
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
+    measured = None
+    if os.environ.get("HIL_MEASUREMENT_RECEIPT"):
+        from p4_hil_measurement import P4HilMeasurement
+        measured = P4HilMeasurement()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     report: dict[str, object] = {
         "schema_version": 1,
-        "scenario": "p4-audio-to-bidirectional-h264-reinvite",
+        "scenario": os.environ.get("HIL_SCENARIO_ID") if measured else "p4-audio-to-bidirectional-h264-reinvite",
         "status": "failed",
         "cycles": [],
     }
@@ -576,12 +580,15 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         token = qualification_token(args)
         p4_spec = EspDevice("p4", "P4 HIL", args.p4_host, args.p4_api_port)
         ha = HaRest(args.ha_url, token, insecure=args.insecure)
-        with SerialCapture(args.serial_port, serial_path) as serial_capture:
+        with SerialCapture(args.serial_port, serial_path,
+                observer=measured.serial_observation if measured else None) as serial_capture:
             await _wait_api_ready(args.p4_host, args.p4_api_port)
             async with (
-                EspApi(p4_spec) as p4,
+                EspApi(p4_spec, state_observer=measured.api_observation if measured else None) as p4,
                 HaWs(args.ha_url, token, insecure=args.insecure) as ws,
             ):
+                if measured:
+                    await measured.verify_identity(p4, args)
                 ctx = LiveContext(ha=ha, ws=ws, esp=p4, args=args)
                 async with quiet_p4(p4):
                     await p4.text("voip_extension", args.p4_extension)
@@ -589,11 +596,17 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     report["ha_endpoint"] = await _wait_ha_endpoint_ready(
                         ws, args.p4_extension, args.p4_host
                     )
+                    if measured:
+                        await measured.open(p4, ws, args)
                     try:
                         for cycle in range(1, args.cycles + 1):
                             mark = serial_capture.mark()
+                            if measured:
+                                await measured.begin("peer" if cycle % 2 else "p4")
                             peer, owner, paths = await _run_peer_cycle(args, p4, cycle)
                             await ctx.cleanup()
+                            if measured:
+                                await measured.complete(peer)
                             serial_text = await asyncio.to_thread(
                                 serial_capture.wait_cycle, mark
                             )
@@ -601,8 +614,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                             validated = validate_cycle(
                                 peer,
                                 serial_metrics,
-                                _ffprobe(paths["video"]),
+                                _ffprobe(paths["video"], getattr(args, "codec", "h264")),
                                 termination_owner=owner,
+                                codec=getattr(args, "codec", "h264"),
                             )
                             validated.update(
                                 {
@@ -622,8 +636,12 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                                 }
                             )
                             report["cycles"].append(validated)
+                        if measured:
+                            await measured.finish()
                     finally:
                         await ctx.cleanup()
+                        if measured:
+                            await measured.close()
                 report["status"] = "passed"
     except BaseException as error:
         failure = error
@@ -670,8 +688,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    args = parse_args()
     try:
-        asyncio.run(run(parse_args()))
+        asyncio.run(run(args))
     except KeyboardInterrupt:
         return 130
     except BaseException as error:

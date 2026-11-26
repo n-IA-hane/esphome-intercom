@@ -192,7 +192,7 @@ def sync_group_membership_projection(hass, entry):
         controller.schedule()
 
 
-def _membership_update_plan(hass, entry, updates, *, reconcile=True):
+def _membership_update_plan(hass, entry, updates, *, reconcile=True, legacy_policy=False):
     """Preflight the complete command before any membership is persisted."""
     from .group_config import group_records, normalize_group_data, reconcile_group_records, validate_group_namespace
     from .roster import normalize_roster_key
@@ -215,7 +215,8 @@ def _membership_update_plan(hass, entry, updates, *, reconcile=True):
                 if normalize_roster_key(record["name"]) in wanted:
                     members = list(record.get("members", ())) if endpoint_id in record.get("members", ()) else [*members, endpoint_id]
                 if members != record.get("members", []):
-                    proposals[identity] = normalize_group_data({**record, "members": members}, identity=identity)
+                    proposals[identity] = normalize_group_data({**record, "members": members}, identity=identity,
+                        legacy_policy=legacy_policy)
             for key, name in wanted.items():
                 if key in occupied:
                     continue

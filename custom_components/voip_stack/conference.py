@@ -215,7 +215,7 @@ class ConferenceRoom:
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+                audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             )
             return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="", media_contract=invite)
         except BaseException:

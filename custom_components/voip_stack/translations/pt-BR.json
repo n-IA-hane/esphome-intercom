@@ -33,7 +33,54 @@
           "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
           "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
-          "max_dialog_subscription_expires": "Maximum dialog/BLF lease, from 60 to 3600 seconds. The initial value remains 60. Longer leases reduce periodic renewals; state changes still notify immediately. A shorter phone request is honored. SIP registration expiry is separate."
+          "max_dialog_subscription_expires": "Maximum dialog/BLF lease, from 60 to 3600 seconds. The initial value remains 60. Longer leases reduce periodic renewals; state changes still notify immediately. A shorter phone request is honored. SIP registration expiry is separate.",
+          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration or external route starts."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Configurações avançadas",
+            "data": {
+              "contact_step_timeout": "Intervalo entre prioridades dos contatos SIP",
+              "media_timeout": "Reprodução de áudio e fala",
+              "dtmf_timeout": "Espera por teclas",
+              "automation_timeout": "Inatividade da automação",
+              "announcement_timeout": "Duração total do anúncio",
+              "unanswered_wait": "Espera sem atender",
+              "transcription_timeout": "Transcrição de mensagem de voz",
+              "recording_timeout": "Gravação da chamada",
+              "ivr_digit_timeout": "Espera por comando da caixa postal",
+              "ivr_interdigit_timeout": "Intervalo entre dígitos da caixa postal",
+              "ivr_prompt_timeout": "Mensagem falada do menu",
+              "voicemail_menu_setup_timeout": "Preparação do menu da caixa postal",
+              "voicemail_greeting_timeout": "Preparação e saudação da caixa postal",
+              "conference_sip_ringing_timeout": "Toque dos participantes SIP da conferência",
+              "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
+              "registrar_auth_failure_window": "Authentication observation window (seconds)",
+              "registrar_auth_block_duration": "Authentication block duration (seconds)",
+              "registrar_min_expires": "Minimum registration lifetime (seconds)",
+              "registrar_max_expires": "Maximum registration lifetime (seconds)",
+              "registrar_contact_limit": "Maximum registered Contacts per account",
+              "audio_rtcp_min_interval": "Minimum audio RTCP interval",
+              "local_redirect_max_hops": "Maximum local redirect hops"
+            },
+            "data_description": {
+              "conference_sip_ringing_timeout": "0 removes the member answer deadline; SIP protocol timers remain active.",
+              "contact_step_timeout": "Tempo para cada prioridade de registro SIP antes de tentar a próxima. O limite total de toque continua valendo.",
+              "media_timeout": "Duração máxima de uma ação de reprodução ou fala quando seu tempo limite é omitido.",
+              "dtmf_timeout": "Janela total de entrada para Aguardar entrada pelo teclado em chamadas Automation quando o tempo limite é omitido. Receber um dígito não reinicia a janela.",
+              "automation_timeout": "Tempo inicial de inatividade para novos contatos Automação e chamadas assumidas por uma automação. Os contatos existentes mantêm o valor salvo.",
+              "announcement_timeout": "Limite total de uma ação de anúncio que omite seu tempo limite, incluindo preparação e entrega.",
+              "unanswered_wait": "Tempo para manter uma chamada de Automação sem atendimento quando a ação omite sua duração.",
+              "transcription_timeout": "Duração máxima de uma ação de transcrição que omite seu tempo limite.",
+              "recording_timeout": "Duração máxima da gravação quando a ação omite seu limite.",
+              "ivr_digit_timeout": "Tempo de espera pelo próximo comando após uma mensagem da caixa postal.",
+              "ivr_interdigit_timeout": "Espera por cada dígito ao inserir um número de caixa postal, PIN ou número de mensagem; reinicia após cada dígito. Aplica-se somente aos menus da caixa postal. Aguardar entrada pelo teclado em chamadas Automation usa seu próprio tempo limite total.",
+              "ivr_prompt_timeout": "Duração máxima de cada mensagem falada do menu, incluindo geração e transmissão da fala.",
+              "voicemail_menu_setup_timeout": "Tempo máximo para atender e preparar a mídia antes de iniciar o menu da caixa postal.",
+              "voicemail_greeting_timeout": "Tempo máximo para atender, preparar a mídia e reproduzir a saudação antes de gravar uma mensagem de voz.",
+              "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected."
+            }
+          }
         }
       },
       "video": {
@@ -114,7 +161,20 @@
           "trunk_caller_id_policy": "A identidade do tronco substitui o chamador. A identidade do chamador usa o número público da conta, se configurado. O usuário da conta serve para ramais privados entre PBXs. Credenciais Digest e Contact permanecem separados. Chamadas encaminhadas de um tronco preservam o From original nos dois modos de chamador.",
           "trunk_caller_id": "Número geral usado somente na identidade do tronco. Vazio usa o usuário do tronco. Não altera autenticação nem número chamado.",
           "trunk_caller_name": "Nome geral exibido com a identidade do tronco. Vazio usa seu número de chamador.",
-          "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta."
+          "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta.",
+          "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. This destination receives calls when the called number has no phonebook match. A routing automation can override the selected destination.",
+          "automation_routing_enabled": "Allow a routing automation to override the selected called number or configured destination before ringing. For an interactive keypad menu, select an Automation contact as the incoming destination."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Configurações avançadas",
+            "data": {
+              "trunk_options_interval": "OPTIONS interval (seconds)"
+            },
+            "data_description": {
+              "trunk_options_interval": "0 disables periodic OPTIONS probes."
+            }
+          }
         }
       },
       "trunk_mode": {
@@ -401,7 +461,10 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Escolha uma política suportada e um número ou usuário SIP sem endereço nem caracteres de controle.",
       "trunk_inbound_account_invalid": "Selecione uma conta SIP local existente e habilitada.",
-      "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado."
+      "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado.",
+      "duration_invalid": "Informe uma duração dentro do intervalo indicado.",
+      "trunk_destination_invalid": "Select a current VoIP Stack destination.",
+      "advanced_policy_invalid": "Correct the advanced policy values."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -665,7 +728,20 @@
             "trunk_caller_id_policy": "A identidade do tronco substitui o chamador. A identidade do chamador usa o número público da conta, se configurado. O usuário da conta serve para ramais privados entre PBXs. Credenciais Digest e Contact permanecem separados. Chamadas encaminhadas de um tronco preservam o From original nos dois modos de chamador.",
             "trunk_caller_id": "Número geral usado somente na identidade do tronco. Vazio usa o usuário do tronco. Não altera autenticação nem número chamado.",
             "trunk_caller_name": "Nome geral exibido com a identidade do tronco. Vazio usa seu número de chamador.",
-            "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta."
+            "trunk_inbound_account": "Conta local existente e habilitada usada pelo PBX remoto para autenticar INVITEs de entrada e apresentar seus ramais chamadores. Digest é obrigatório mesmo com IP de origem conhecido. Um tronco habilitado por conta.",
+            "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. This destination receives calls when the called number has no phonebook match. A routing automation can override the selected destination.",
+            "automation_routing_enabled": "Allow a routing automation to override the selected called number or configured destination before ringing. For an interactive keypad menu, select an Automation contact as the incoming destination."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Configurações avançadas",
+              "data": {
+                "trunk_options_interval": "OPTIONS interval (seconds)"
+              },
+              "data_description": {
+                "trunk_options_interval": "0 disables periodic OPTIONS probes."
+              }
+            }
           }
         }
       },
@@ -687,7 +763,9 @@
         "trunk_did_invalid": "Invalid called-number source or prefix rules.",
         "trunk_caller_id_invalid": "Escolha uma política suportada e um número ou usuário SIP sem endereço nem caracteres de controle.",
         "trunk_inbound_account_invalid": "Selecione uma conta SIP local existente e habilitada.",
-        "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado."
+        "trunk_inbound_account_in_use": "Esta conta já está vinculada a outro tronco habilitado.",
+        "advanced_policy_invalid": "Correct the advanced policy values.",
+        "trunk_destination_invalid": "Select a current VoIP Stack destination."
       },
       "abort": {
         "reconfigure_successful": "Configuração do tronco atualizada."
@@ -1405,6 +1483,73 @@
     "esphome_account_setup_required": {
       "title": "ESPHome phone account needs native setup",
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
+    },
+    "duration_configuration_invalid": {
+      "title": "Verifique a configuração de duração da central",
+      "description": "A migração das durações não pôde ser concluída: {error}. Abra este reparo para corrigir durações salvas inválidas, mesmo com o PBX descarregado, e tente a migração novamente. Valores válidos e outras configurações são preservados. Erros estruturais de configuração são exibidos aqui, mas não podem ser editados neste reparo.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Selecione o item a corrigir",
+            "description": "Escolha o item de configuração com durações salvas inválidas. Você pode corrigi-lo aqui mesmo com o PBX descarregado. Os valores nunca são reduzidos ou substituídos automaticamente.",
+            "data": {
+              "owner": "Item de configuração"
+            }
+          },
+          "edit_durations": {
+            "title": "Corrija as durações salvas",
+            "description": "{owner}\n\n{error}\n\nInsira durações válidas em segundos. Somente os campos de duração do item selecionado serão alterados; outras configurações são preservadas. Após corrigir todos os itens inválidos, tente a migração novamente.",
+            "sections": {
+              "advanced": {
+                "name": "Configurações avançadas",
+                "data": {
+                  "contact_step_timeout": "Intervalo entre prioridades dos contatos SIP",
+                  "media_timeout": "Reprodução de áudio e fala",
+                  "dtmf_timeout": "Espera por teclas",
+                  "automation_timeout": "Inatividade da automação",
+                  "announcement_timeout": "Duração total do anúncio",
+                  "unanswered_wait": "Espera sem atender",
+                  "transcription_timeout": "Transcrição de mensagem de voz",
+                  "recording_timeout": "Gravação da chamada",
+                  "ivr_digit_timeout": "Espera por comando da caixa postal",
+                  "ivr_interdigit_timeout": "Intervalo entre dígitos da caixa postal",
+                  "ivr_prompt_timeout": "Mensagem falada do menu",
+                  "voicemail_menu_setup_timeout": "Preparação do menu da caixa postal",
+                  "voicemail_greeting_timeout": "Preparação e saudação da caixa postal",
+                  "conference_sip_ringing_timeout": "Toque dos participantes SIP da conferência",
+                  "timeout": "Duração",
+                  "return_timeout": "Toque no retorno do estacionamento",
+                  "step_timeout": "Etapa do grupo",
+                  "overall_timeout": "Toque total do grupo",
+                  "ring_timeout": "Toque do membro",
+                  "nested_step_timeout": "Etapa do grupo aninhado",
+                  "nested_overall_timeout": "Toque total do grupo aninhado",
+                  "nested_ring_timeout": "Toque do membro aninhado",
+                  "max_wait": "Espera máxima na fila",
+                  "no_agent_wait": "Espera sem agentes",
+                  "retry_delay": "Intervalo entre tentativas da fila",
+                  "wrap_up": "Pausa do agente após a chamada",
+                  "max_seconds": "Limite de gravação",
+                  "answer_timeout": "Espera por atendimento"
+                }
+              }
+            }
+          },
+          "confirm": {
+            "title": "Tente a migração novamente",
+            "description": "{error}\n\nRepita a migração normal com a configuração salva. Durações inválidas podem ser corrigidas neste reparo. Outros erros estruturais devem ser resolvidos antes de tentar novamente; este reparo não pode editá-los."
+          }
+        },
+        "error": {
+          "invalid_duration": "Uma ou mais durações são inválidas. Corrija os valores indicados acima.",
+          "configuration_changed": "A configuração mudou enquanto este reparo estava aberto. Verifique o item e os valores atuais antes de salvar novamente.",
+          "migration_retry_failed": "A migração continua bloqueada. Verifique a causa indicada antes de tentar novamente."
+        }
+      }
+    },
+    "trunk_dtmf_retired": {
+      "title": "Automatic trunk extension collection was removed",
+      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
     }
   },
   "exceptions": {
@@ -1820,6 +1965,14 @@
         "destination_range_end": {
           "name": "Last destination number in range",
           "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_device": {
+          "name": "Automation contact device",
+          "description": "Choose an existing Automation contact. Use one destination filter; actions control the same call."
+        },
+        "destination_entity": {
+          "name": "Automation contact call event",
+          "description": "Select the Automation contact call event entity instead of a destination device or name."
         }
       }
     },
@@ -3336,6 +3489,10 @@
         "device_id": {
           "name": "Telefone para execução manual",
           "description": "Selecione o telefone com a chamada da automação ao testar esta ação sem um gatilho VoIP."
+        },
+        "inter_digit_timeout": {
+          "name": "Time between digits",
+          "description": "Optional seconds to wait after each digit. A gap returns the digits collected so far with timeout status. The total wait limit still applies."
         }
       },
       "sections": {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 
 import voluptuous as vol
 
@@ -15,6 +16,7 @@ from .authorization import (
     async_require_service_control,
 )
 from .const import DOMAIN
+from .duration_policy import configured_service_timeout, validate_duration
 
 
 SIP_FAILURE_STATUS = vol.All(vol.Coerce(int), vol.Range(min=300, max=699))
@@ -31,6 +33,91 @@ FORMAT_TEXT = vol.All(cv.string, vol.Length(max=128))
 FORMAT_LIST = vol.All([FORMAT_TEXT], vol.Length(max=32))
 PORT = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
 SAMPLE_RATE = vol.All(vol.Coerce(int), vol.Range(min=8000, max=192000))
+ACTION_DURATION_FIELDS = {
+    "tts_say": ("timeout", "media_timeout"),
+    "play_media": ("timeout", "media_timeout"),
+    "wait_for_dtmf": ("timeout", "dtmf_timeout"),
+    "add_contact": ("timeout", "automation_timeout"),
+    "announce": ("timeout", "announcement_timeout"),
+    "wait_unanswered": ("duration", "unanswered_wait"),
+    "transcribe_voicemail": ("timeout", "transcription_timeout"),
+    "start_recording": ("max_seconds", "recording_timeout"),
+}
+
+
+def _duration(key):
+    """Validate a supplied action override without filling an omitted value."""
+    def validate(value):
+        try:
+            if isinstance(value, bool):
+                raise ValueError("A duration must be a number")
+            return validate_duration(float(value), key)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise vol.Invalid(str(error)) from error
+    return validate
+
+
+def _finite_duration(value):
+    """Keep booleans and nonfinite values out of per-object duration updates."""
+    try:
+        if isinstance(value, bool):
+            raise ValueError("A duration must be a number")
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("A duration must be finite")
+        return result
+    except (TypeError, ValueError, OverflowError) as error:
+        raise vol.Invalid(str(error)) from error
+
+
+def _populate_duration_prefill(hass, name, fields):
+    """Show the live stored policy as the editor prefill, including nested fields."""
+    from .store import config_entry
+
+    selected = ACTION_DURATION_FIELDS.get(name)
+    entry = config_entry(hass)
+    if selected is None or entry is None:
+        return
+    field_name, setting_name = selected
+    try:
+        duration = configured_service_timeout(entry.data, setting_name)
+    except ValueError:
+        # An invalid owner must not present the shipped initial value as current.
+        duration = None
+
+    def populate(nested):
+        for key, field in nested.items():
+            if "fields" in field:
+                populate(field["fields"])
+            if key == field_name:
+                if duration is None:
+                    field.pop("default", None)
+                else:
+                    field["default"] = duration
+
+    populate(fields)
+
+
+async def async_update_duration_service_defaults(hass: HomeAssistant) -> None:
+    """Refresh native action-editor prefills after a live PBX policy edit."""
+    if not hass.services.has_service(DOMAIN, "call"):
+        return
+    from homeassistant.const import EVENT_SERVICE_REGISTERED
+    from homeassistant.helpers.service import async_get_all_descriptions, async_set_service_schema
+
+    descriptions = (await async_get_all_descriptions(hass)).get(DOMAIN, {})
+    changed = False
+    for name in ACTION_DURATION_FIELDS:
+        description = descriptions.get(name)
+        if description is None:
+            continue
+        updated = deepcopy(description)
+        _populate_duration_prefill(hass, name, updated.get("fields", {}))
+        if updated != description:
+            async_set_service_schema(hass, DOMAIN, name, updated)
+            changed = True
+    if changed:
+        hass.bus.async_fire(EVENT_SERVICE_REGISTERED, {"domain": DOMAIN, "service": "call"})
 
 
 async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -> None:
@@ -74,6 +161,7 @@ async def async_update_phone_service_selectors(hass: HomeAssistant, directory) -
     for name, description in descriptions.items():
         updated = deepcopy(description)
         populate(updated.get("fields", {}))
+        _populate_duration_prefill(hass, name, updated.get("fields", {}))
         if updated != description:
             async_set_service_schema(hass, DOMAIN, name, updated)
             changed = True
@@ -166,7 +254,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Required("message"): vol.All(cv.string, vol.Length(min=1, max=4096)),
         vol.Optional("language"): SHORT_TEXT,
         vol.Optional("options", default=dict): dict,
-        vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+        vol.Optional("timeout"): _duration("media_timeout"),
     }, extra=vol.PREVENT_EXTRA)
 
     play_media_schema = vol.Schema({
@@ -174,19 +262,19 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Optional("call_id", default=""): SHORT_TEXT,
         vol.Optional("expected_generation"): SEQUENCE,
         vol.Required("media"): MediaSelector({"accept": ["audio/*"]}),
-        vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+        vol.Optional("timeout"): _duration("media_timeout"),
     }, extra=vol.PREVENT_EXTRA)
     unanswered_wait_schema = vol.Schema({
         **phone_selector_fields,
         vol.Optional("call_id", default=""): SHORT_TEXT,
         vol.Optional("expected_generation"): SEQUENCE,
-        vol.Optional("duration", default=60): vol.All(vol.Coerce(float), vol.Range(min=1, max=3600)),
+        vol.Optional("duration"): _duration("unanswered_wait"),
     }, extra=vol.PREVENT_EXTRA)
     dtmf_wait_schema = vol.Schema({
         **phone_selector_fields,
         vol.Optional("call_id", default=""): SHORT_TEXT,
         vol.Optional("expected_generation"): SEQUENCE,
-        vol.Optional("timeout", default=10): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=300)),
+        vol.Optional("timeout"): _duration("dtmf_timeout"),
         vol.Optional("max_digits", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=32)),
         vol.Optional("inter_digit_timeout"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=300)),
         vol.Optional("terminator", default="#"): vol.In(["", "#", "*"]),
@@ -274,7 +362,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Required("name"): SHORT_TEXT,
             vol.Optional("type", default="contact"): vol.In(["contact", "automation"]),
             vol.Optional("fallback_destination", default=""): URI_TEXT,
-            vol.Optional("timeout", default=30): vol.All(vol.Coerce(float), vol.Range(min=1, max=300)),
+            vol.Optional("timeout"): _duration("automation_timeout"),
             vol.Optional("id", default=""): SHORT_TEXT,
             vol.Optional("address", default=""): URI_TEXT,
             vol.Optional("sip_uri", default=""): URI_TEXT,
@@ -357,7 +445,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Required("device_id"): IDENTIFIER_TEXT,
         vol.Optional("enabled"): cv.boolean,
         vol.Optional("pin"): PASSWORD_TEXT,
-        vol.Optional("max_seconds"): vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
+        vol.Optional("max_seconds"): vol.All(_duration("recording_timeout"), vol.Coerce(int)),
         vol.Exclusive("greeting_media", "greeting"): MediaSelector({"accept": ["audio/*"]}),
         vol.Exclusive("clear_greeting", "greeting"): cv.boolean,
     }, extra=vol.PREVENT_EXTRA)
@@ -476,11 +564,11 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         schema=vol.Schema({vol.Required("queue"): IDENTIFIER_TEXT,
             vol.Optional("enabled"): cv.boolean,
             vol.Optional("max_waiting"): vol.All(vol.Coerce(int), vol.Range(min=1, max=64)),
-            vol.Optional("max_wait"): vol.All(vol.Coerce(float), vol.Range(min=1, max=3600)),
-            vol.Optional("ring_timeout"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=3600))),
-            vol.Optional("no_agent_wait"): vol.All(vol.Coerce(float), vol.Range(min=0, max=120)),
-            vol.Optional("retry_delay"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=120)),
-            vol.Optional("wrap_up"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
+            vol.Optional("max_wait"): vol.All(_finite_duration, vol.Range(min=1, max=3600)),
+            vol.Optional("ring_timeout"): vol.Any(None, vol.All(_finite_duration, vol.Range(min=0, max=3600))),
+            vol.Optional("no_agent_wait"): vol.All(_finite_duration, vol.Range(min=0, max=120)),
+            vol.Optional("retry_delay"): vol.All(_finite_duration, vol.Range(min=0.1, max=120)),
+            vol.Optional("wrap_up"): vol.All(_finite_duration, vol.Range(min=0, max=3600)),
             vol.Optional("fallback"): SHORT_TEXT,
             vol.Optional("hold_media"): vol.Any(URI_TEXT, MediaSelector({"accept": ["audio/*"]})),
             vol.Optional("strategy"): vol.In(["ring_all", "round_robin", "longest_idle", "ordered"]),
@@ -494,7 +582,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("language"): SHORT_TEXT, vol.Optional("options", default=dict): dict,
             vol.Optional("media"): vol.Any(URI_TEXT, dict),
             vol.Optional("answer_timeout"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
-            vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+            vol.Optional("timeout"): _duration("announcement_timeout"),
             vol.Optional("busy_policy", default="skip"): vol.In(["skip"]), vol.Optional("wait", default=True): cv.boolean}, extra=vol.PREVENT_EXTRA),
         supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "stop_announcement", handler_for("stop_announcement"),
@@ -510,7 +598,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("message_id"): IDENTIFIER_TEXT,
             vol.Required("stt_entity_id"): cv.entity_id,
             vol.Required("language"): SHORT_TEXT,
-            vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+            vol.Optional("timeout"): _duration("transcription_timeout"),
         }, extra=vol.PREVENT_EXTRA),
         supports_response=SupportsResponse.ONLY,
     )
@@ -569,7 +657,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             schema=vol.Schema({**phone_selector_fields,
                 vol.Optional("call_id", default=""): SHORT_TEXT,
                 vol.Optional("expected_generation"): SEQUENCE,
-                **({vol.Optional("max_seconds", default=3600): vol.All(vol.Coerce(float), vol.Range(min=1, max=3600))}
+                **({vol.Optional("max_seconds"): _duration("recording_timeout")}
                    if action == "start_recording" else {}),
             }, extra=vol.PREVENT_EXTRA), supports_response=SupportsResponse.OPTIONAL)
     for action in ("get_recording", "delete_recording"):

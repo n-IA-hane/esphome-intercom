@@ -13,7 +13,10 @@ def application_rtp_peer(source):
     if not isinstance(source, ApplicationCallSource):
         return invite_rtp_peer(source)
     return RtpPeer(source.remote_rtp_host, source.remote_rtp_port, source.recv_format.payload_type,
-        source.recv_format.audio_format, rtp_format=source.recv_format,
+        rtcp_host=source.remote_audio_rtcp_host, rtcp_port=source.remote_audio_rtcp_port,
+        rtcp_minimum_interval=source.audio_rtcp_min_interval,
+        audio_rtcp_allowed=source.audio_rtcp_allowed,
+        audio_format=source.recv_format.audio_format, rtp_format=source.recv_format,
         inbound_rtp_formats=source.recv_formats, outbound_rtp_formats=source.send_formats,
         match_received_codec=source.match_received_codec,
         send_payload_type=source.send_format.payload_type, send_audio_format=source.send_format.audio_format,
@@ -54,6 +57,7 @@ def adopt_relay_for_application(hass, relay, side, contract, reservation, on_com
         if reverse_video:
             video.reverse_held_sides()
         raise
+    media.rtcp = relay.audio_rtcp.pop(side, None)
     media.video_relay, relay.video_relay = video, None
     setattr(relay, f"{side}_transport", None)
     relay._on_release = None
@@ -89,6 +93,7 @@ class LocalMediaBridge:
             relay.right_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
                 lambda: _RelayProtocol(relay, "right", paused=True), sock=sock)
             sock = None
+            await relay.async_start_audio_rtcp("right", sock=reservation.take_audio_socket(relay.right_port + 1))
             result.validate()
             return result
         except BaseException:
@@ -136,6 +141,7 @@ class LocalMediaBridge:
                 lambda: _RelayProtocol(relay, "right", paused=True), sock=sock,
             )
             sock = None
+            await relay.async_start_audio_rtcp("right", sock=media.reservation.take_audio_socket(relay.right_port + 1))
             result.validate()
             return result
         except BaseException:
@@ -184,6 +190,8 @@ class LocalMediaBridge:
             self.transport.set_protocol(old_protocol)
             raise
         self.relay.left_transport = transport
+        if self.media.rtcp is not None:
+            self.relay.audio_rtcp["left"], self.media.rtcp = self.media.rtcp, None
         self.relay.right_transport.resume_reading()
         left, clock = self.relay.left, self.media.rtp_source
         left.sequence, left.timestamp, left.ssrc = clock.sequence, clock.timestamp, clock.ssrc

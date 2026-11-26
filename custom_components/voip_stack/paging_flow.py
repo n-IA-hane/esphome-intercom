@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigSubentryFlow
 from homeassistant.data_entry_flow import Required as visible_required
 from homeassistant.helpers.selector import BooleanSelector, NumberSelector, TextSelector
 
+from .duration_config import INITIAL_PAGING_TIMEOUT
 from .endpoint_device import selection_device_refs
 from .group_flow import member_rows, ordered_members_selector, selected_members
 from .paging_config import normalize_paging_group
@@ -33,7 +34,7 @@ class PagingSubentryFlowHandler(ConfigSubentryFlow):
             identities.update(dict.fromkeys(endpoint.endpoint_id for endpoint in runtime.endpoints.endpoints))
         device_refs = selection_device_refs(self.hass, entry, identities)
         errors = {}
-        values = {**previous, **(user_input or {})}
+        values = {"timeout": INITIAL_PAGING_TIMEOUT, **previous, **(user_input or {})}
         if user_input is not None:
             try:
                 selected = selected_members(self.hass, entry, user_input.get("members", member_rows(members, device_refs)),
@@ -65,6 +66,6 @@ class PagingSubentryFlowHandler(ConfigSubentryFlow):
                              else entry.data.get("default_ringing_timeout", 0),
                              visible={"field": "inherit_ringing_timeout", "value": False}): NumberSelector({
                 "min": 0, "max": 3600, "step": 0.1, "unit_of_measurement": "s", "mode": "box"}),
-            vol.Required("timeout", default=values.get("timeout", 120)): NumberSelector({
+            vol.Required("timeout", default=values["timeout"]): NumberSelector({
                 "min": 1, "max": 600, "step": 0.1, "unit_of_measurement": "s", "mode": "box"}),
         }))

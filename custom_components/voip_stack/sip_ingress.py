@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from .endpoint_session import LegPhase
-from .trunk_policy import trunk_available
+from .trunk_policy import trunk_inbound_source_available
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -64,7 +64,7 @@ def classify_trunk_invite(invite, *, enabled: bool, trunk, trunks=None):
         ) if enabled else ""
         return replace(invite, received_via_trunk=bool(identity), trunk_id=identity)
     trusted = False
-    if enabled and trunk_available(trunk):
+    if enabled and trunk_inbound_source_available(trunk):
         if invite.received_via_trunk:
             trusted = True
         else:
@@ -92,6 +92,8 @@ class SipIngressPolicy:
     registrar: SipRegistrar
 
     def classify(self, invite):
+        if "audio_rtcp_min_interval" in self.config:
+            invite = replace(invite, audio_rtcp_min_interval=float(self.config["audio_rtcp_min_interval"]))
         from .config import trunk_config, trunk_enabled
         from .runtime_data import runtime_data, sip_trunk, sip_trunks
 
@@ -123,6 +125,8 @@ class SipIngressPolicy:
         from .sip_registrar import REALM
         from .trunk_policy import authenticated_inbound_trunk
 
+        if "audio_rtcp_min_interval" in self.config:
+            invite = replace(invite, audio_rtcp_min_interval=float(self.config["audio_rtcp_min_interval"]))
         runtime = runtime_data(self.hass)
         configs = runtime.trunk_configs if runtime is not None else {}
         auth = parse_digest_challenge(request.header("Authorization"))
@@ -161,8 +165,14 @@ class SipIngressPolicy:
                 (invite.caller_uri.user if invite.caller_uri else "")).casefold())
             if not self.registrar.enabled or claimed is None or not claimed.enabled:
                 return SipRequestResult(403, "Ambiguous trunk source", to_tag=make_tag())
+        remaining = self.registrar.source_block_remaining(addr[0])
+        if remaining:
+            return SipRequestResult(403, "Forbidden", headers=(("Retry-After", str(remaining)),), to_tag=make_tag())
         account, challenge, tag = self.registrar.authorize_invite(request, addr, transport)
         if account is None:
+            remaining = self.registrar.source_block_remaining(addr[0])
+            if remaining:
+                return SipRequestResult(403, "Forbidden", headers=(("Retry-After", str(remaining)),), to_tag=tag)
             return SipRequestResult(401, "Unauthorized", headers=(("WWW-Authenticate", challenge),), to_tag=tag)
         try:
             peer_trunk = authenticated_inbound_trunk(configs, account.username)

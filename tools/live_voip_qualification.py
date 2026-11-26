@@ -303,13 +303,14 @@ class HaWs:
 
 
 class EspApi:
-    def __init__(self, spec: EspDevice, *, capture_info_logs: bool = False) -> None:
+    def __init__(self, spec: EspDevice, *, capture_info_logs: bool = False, state_observer=None) -> None:
         if APIClient is None:
             raise RuntimeError(
                 "aioesphomeapi is required to run live ESP qualification"
             )
         self.spec = spec
         self.capture_info_logs = capture_info_logs
+        self.state_observer = state_observer
         self.client = APIClient(spec.host, spec.port, spec.password)
         self.entities: dict[str, Any] = {}
         self.services: dict[str, Any] = {}
@@ -375,6 +376,8 @@ class EspApi:
         if value is None:
             value = getattr(state, "value", None)
         self.values[object_id] = value
+        if self.state_observer is not None:
+            self.state_observer(object_id, value)
         self._updates.set()
 
     async def service(self, name: str, data: dict[str, Any] | None = None) -> None:

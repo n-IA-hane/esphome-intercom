@@ -92,6 +92,18 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             recompute_account_availability(hass, endpoint.endpoint_id)
         create_runtime_task(hass, _refresh_directory(hass))
 
+    from .sip_registration_policy import RegistrarPolicy
+    from homeassistant.components import persistent_notification
+
+    def _on_source_block(address: str, duration: int) -> None:
+        # One bounded notification shows the most recent block; the registrar
+        # owns the in-memory ban and never writes a persistent ban registry.
+        persistent_notification.async_create(hass,
+            f"SIP authentication from {address} is temporarily blocked for {duration} seconds "
+            "after repeated incorrect credentials. Check the device credentials and source address.",
+            title="VoIP Stack: SIP authentication source blocked",
+            notification_id="voip_stack_sip_authentication_block")
+
     accounts = _sip_accounts(hass)
     entry = config_entry(hass)
     registrar = SipRegistrar(
@@ -100,6 +112,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         local_ip=local_ip,
         local_sip_port=int(cfg["sip_port"]),
         on_registration_change=_on_registration_change,
+        policy=RegistrarPolicy.from_mapping(cfg),
+        on_source_block=_on_source_block,
     )
     runtime = require_runtime_data(hass)
     # Call control and its HA projection share one runtime owner.  It remains

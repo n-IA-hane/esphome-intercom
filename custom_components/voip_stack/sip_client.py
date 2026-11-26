@@ -80,6 +80,8 @@ from .core.sip_transaction import (
 )
 from .peer_media_profile import legacy_pcm_compatibility
 
+from .audio_rtcp import remote_audio_rtcp_fields
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -128,6 +130,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         target_resolver: SipServerResolver | None = None,
         tls_context: ssl.SSLContext | None = None,
         call_id: str | None = None,
+        audio_rtcp_min_interval: float = 0,
     ) -> None:
         if call_id is not None and (not call_id or any(ord(char) < 33 or ord(char) == 127 for char in call_id)):
             raise ValueError("Call-ID must be a nonempty SIP header value without whitespace")
@@ -145,6 +148,8 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self.resolve_local_target: Callable[[sip.SipUri], sip.SipUri | None] | None = None
         self.local_sip_port = int(local_sip_port)
         self.local_rtp_port = int(local_rtp_port)
+        self.audio_rtcp_min_interval = float(audio_rtcp_min_interval)
+        self.audio_rtcp_socket: socket.socket | None = None
         # ``None`` means that the caller did not constrain the profile.  An
         # empty list is materially different: directional capability
         # negotiation ran and found no usable format.  Never turn that result
@@ -393,6 +398,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self.media_socket_provider = None
         self.discover_media_sockets = None
         self.media_endpoints.clear()
+        rtcp_socket, self.audio_rtcp_socket = self.audio_rtcp_socket, None
+        if rtcp_socket is not None:
+            rtcp_socket.close()
         audio_socket = self.audio_rtp_socket
         self.audio_rtp_socket = None
         if audio_socket is not None:
@@ -1329,6 +1337,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             == (updated.send_formats or (updated.send_format,))
             and previous.remote_rtp_host == updated.remote_rtp_host
             and previous.remote_rtp_port == updated.remote_rtp_port
+            and previous.remote_audio_rtcp_host == updated.remote_audio_rtcp_host
+            and previous.remote_audio_rtcp_port == updated.remote_audio_rtcp_port
+            and previous.audio_rtcp_allowed == updated.audio_rtcp_allowed
             and previous.remote_audio_direction == updated.remote_audio_direction
             and previous.remote_audio_connection_held
             == updated.remote_audio_connection_held
@@ -1471,7 +1482,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 selected.recv,
                 recv_formats=receive_formats, send_formats=send_formats,
                 dtmf_direction=dtmf_direction,
-                audio_rtcp=False,
+                audio_rtcp=self.audio_rtcp_min_interval > 0,
                 remote_sdp=remote_document,
                 video_port=(local_video_port if video is not None else 0),
                 video_format=video_answer,
@@ -1497,6 +1508,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 current,
                 remote_rtp_host=str(parsed["connection_ip"]),
                 remote_rtp_port=int(parsed["media_port"]),
+                **remote_audio_rtcp_fields(request.body),
                 send_format=selected.send,
                 recv_format=selected.recv,
                 recv_formats=receive_formats,
@@ -1832,7 +1844,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                         updated.send_format,
                                         updated.recv_format,
                                         recv_formats=updated.recv_formats, send_formats=updated.send_formats,
-                                        audio_rtcp=False,
+                                        audio_rtcp=self.audio_rtcp_min_interval > 0,
                                         dtmf_direction=updated.dtmf_direction,
                                         remote_sdp=request.body,
                                         video_port=updated.local_video_rtp_port,
@@ -1854,7 +1866,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                                     updated.send_format,
                                     updated.recv_format,
                                     recv_formats=updated.recv_formats, send_formats=updated.send_formats,
-                                    audio_rtcp=False,
+                                    audio_rtcp=self.audio_rtcp_min_interval > 0,
                                     dtmf_direction=updated.dtmf_direction,
                                     remote_sdp=request.body,
                                     video_port=updated.local_video_rtp_port,
@@ -2833,6 +2845,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 current,
                 remote_rtp_host=str(parsed["connection_ip"]),
                 remote_rtp_port=int(parsed["media_port"]),
+                **remote_audio_rtcp_fields(answer.body),
                 send_format=audio.send,
                 recv_format=audio.recv,
                 recv_formats=audio.recv_formats,

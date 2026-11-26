@@ -195,6 +195,7 @@ class RtpDtmfDecoder:
         self._receive_state = receive_state if receive_state is not None else RtpReceiveState()
         self._clock_states[self.formats[self.payload_type].sample_rate] = self._receive_state
         self._active_events = {}
+        self.last_wire_packet = None
 
     @property
     def receive_state(self):
@@ -209,6 +210,7 @@ class RtpDtmfDecoder:
 
     def decode_report(self, data: bytes, *, expected_ssrc: int | None = None) -> RtpDtmfReport | None:
         """Keep duration/progress/end while presenting one callback per press."""
+        self.last_wire_packet = None
         try:
             packet = parse_packet(data)
         except ValueError:
@@ -244,7 +246,10 @@ class RtpDtmfDecoder:
             self._receive_state = state
         if self._receive_state.ssrc is None and expected_ssrc is not None:
             self._receive_state.ssrc = expected_ssrc
-        if not self._receive_state.admit(packet, clock_rate=fmt.sample_rate):
+        admitted_packet = self._receive_state.admit(packet, clock_rate=fmt.sample_rate)
+        if self._receive_state.last_packet_valid:
+            self.last_wire_packet = packet, fmt.sample_rate, shared
+        if not admitted_packet:
             return None
         if self._receive_state.changed:
             self._seen_events = {key: value for key, value in self._seen_events.items() if key[0] != packet.ssrc}

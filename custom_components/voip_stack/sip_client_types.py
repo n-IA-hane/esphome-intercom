@@ -58,6 +58,10 @@ class SipDialog(DialogSignalingState):
     send_dtmf_payload_type: int | None = None
     send_dtmf_clock_rate: int | None = None
     send_dtmf_events: frozenset[int] | None = None
+    remote_audio_rtcp_host: str = ""
+    remote_audio_rtcp_port: int = 0
+    audio_rtcp_min_interval: float = 0
+    audio_rtcp_allowed: bool = True
     remote_audio_direction: str = "sendrecv"
     local_audio_direction: str = "sendrecv"
     remote_audio_connection_held: bool = False

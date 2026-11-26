@@ -35,6 +35,9 @@ def commit_audio_session_update(
     session.match_received_codec = getattr(negotiated, "match_received_codec", False)
     session.remote_rtp_host = negotiated.remote_rtp_host
     session.remote_rtp_port = int(negotiated.remote_rtp_port)
+    session.remote_audio_rtcp_host = getattr(negotiated, "remote_audio_rtcp_host", "")
+    session.remote_audio_rtcp_port = int(getattr(negotiated, "remote_audio_rtcp_port", 0))
+    session.audio_rtcp_allowed = negotiated.audio_rtcp_allowed
     session.local_audio_direction = negotiated.local_audio_direction
     session.remote_audio_connection_held = bool(
         negotiated.remote_audio_connection_held

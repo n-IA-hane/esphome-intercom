@@ -141,7 +141,9 @@ async def async_migrate_entry(
     if config_entry.version < 6:
         from .contact_config import contact_dicts, replace_contacts
 
-        replace_contacts(hass, config_entry, contact_dicts(config_entry))
+        from .duration_config import INITIAL_SERVICE_TIMEOUTS
+        replace_contacts(hass, config_entry, contact_dicts(config_entry),
+                         automation_timeout=INITIAL_SERVICE_TIMEOUTS["automation_timeout"])
         hass.config_entries.async_update_entry(config_entry, version=6)
     if config_entry.version == 6 and config_entry.minor_version < 2:
         # Retire only the experimental native-app phones. mobile_app itself,
@@ -243,6 +245,31 @@ async def async_migrate_entry(
     if config_entry.version == 7 and config_entry.minor_version < 6:
         from .trunk_config import migrate_trunk_menus
         migrate_trunk_menus(hass, config_entry)
+    if config_entry.version == 7 and config_entry.minor_version <= 7:
+        return async_ensure_duration_policies(hass, config_entry)
+    return True
+
+
+def async_ensure_duration_policies(hass, entry) -> bool:
+    """Verify 7.7 content even when a saved numeric version already matches."""
+    from homeassistant.helpers import issue_registry as ir
+    from .duration_config import duration_migration_plan, migrate_duration_policies
+    issue_id = "duration_configuration_invalid_" + entry.entry_id
+    try:
+        data, updates = duration_migration_plan(entry)
+        if entry.minor_version < 7 or data != entry.data or updates:
+            migrate_duration_policies(hass, entry)
+        final_data, final_updates = duration_migration_plan(entry)
+        if final_data != entry.data or final_updates:
+            raise ValueError("Duration migration did not establish its stored postconditions")
+    except (ValueError, TypeError, KeyError, OSError, RuntimeError, OverflowError) as error:
+        ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id,
+            is_fixable=True, is_persistent=True, data={"entry_id": entry.entry_id},
+            severity=ir.IssueSeverity.ERROR, translation_key="duration_configuration_invalid",
+            translation_placeholders={"error": type(error).__name__})
+        _LOGGER.error("Cannot initialize PBX duration policies: %s", type(error).__name__)
+        return False
+    ir.async_delete_issue(hass, DOMAIN, issue_id)
     return True
 
 
@@ -763,6 +790,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     """Set up VoIP Stack from a config entry (UI setup)."""
     from .core.codec_capabilities import preload_codec_capabilities
 
+    if not async_ensure_duration_policies(hass, entry):
+        raise ConfigEntryError("Correct the saved duration policy through Repairs")
     previous_runtime = _runtime_data(hass)
     previous_entry_runtime = getattr(entry, "runtime_data", None)
     if isinstance(previous_entry_runtime, VoipStackRuntime):
@@ -840,6 +869,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     # HA invokes these callbacks when setup fails too. Capture this instance
     # before any listener, task or socket can be acquired by later setup.
     _register_runtime_shutdown(hass, entry)
+    from .automation_contact_device import async_sync_automation_contact_devices
+    async_sync_automation_contact_devices(hass, entry)
     from .phonebook_coordinator import entry_phonebook
     coordinator = entry_phonebook(hass, entry.runtime_data)
     entry.async_on_unload(coordinator.close)

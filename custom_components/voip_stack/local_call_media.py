@@ -58,6 +58,10 @@ class LocalAudioContract:
     send_dtmf_formats: tuple = ()
     dtmf_direction: Any = None
     source_host: str = ""
+    remote_audio_rtcp_host: str = ""
+    remote_audio_rtcp_port: int = 0
+    audio_rtcp_min_interval: float = 0
+    audio_rtcp_allowed: bool = True
 
     @classmethod
     def from_dialog(cls, dialog):
@@ -171,6 +175,7 @@ class LocalCallMedia:
         on_complete: Callable[[str], Awaitable[None]],
         rtp_source: rtp.AudioRtpSenderState | None = None,
         rtp_socket: socket.socket | None = None,
+        rtcp_socket: socket.socket | None = None,
     ) -> None:
         self.hass = hass
         self.invite = invite
@@ -190,6 +195,9 @@ class LocalCallMedia:
 
         self.transport: asyncio.DatagramTransport | None = None
         self._rtp_socket = rtp_socket
+        self._rtcp_socket = rtcp_socket
+        self._rtcp_start_task = None
+        self.rtcp = None
         self.closed = asyncio.Event()
         self.rx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_RX_QUEUE_FRAMES)
         self.tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_TX_QUEUE_FRAMES)
@@ -239,7 +247,12 @@ class LocalCallMedia:
         }
         self._bind_receive_callback(self.decoder)
 
+    def _observe_received_packet(self, packet, fmt):
+        if self.rtcp is not None:
+            self.rtcp.observe_receive(packet, clock_rate=fmt.rtp_clock_rate)
+
     def _bind_receive_callback(self, receiver):
+        receiver.set_packet_observer(self._observe_received_packet)
         receiver.set_reorder_callback(
             lambda frames: self._receive_pcm(receiver, frames),
             lambda error: self._receive_error(receiver, error))
@@ -326,10 +339,42 @@ class LocalCallMedia:
             self.can_receive = can_receive
             self.can_send = can_send
             self.invite = updated
+            if self.rtcp is not None:
+                self.rtcp.remote_host = updated.remote_audio_rtcp_host or self.remote_rtp_host
+                self.rtcp.remote_port = updated.remote_audio_rtcp_port or self.remote_rtp_port + 1
+                self.rtcp.minimum_interval = updated.audio_rtcp_min_interval
+                self.rtcp.set_reporting_allowed(updated.audio_rtcp_allowed)
+            elif updated.audio_rtcp_allowed and updated.audio_rtcp_min_interval > 0 and self.transport is not None:
+                self._schedule_audio_rtcp_start()
             self._dtmf_sdp = None
             self._bind_receive_callback(decoder)
 
         return _commit
+
+    def _schedule_audio_rtcp_start(self) -> None:
+        if self._rtcp_start_task is None or self._rtcp_start_task.done():
+            self._rtcp_start_task = self.hass.async_create_task(self._start_audio_rtcp())
+
+    async def _start_audio_rtcp(self) -> None:
+        if self.closed.is_set() or not self.invite.audio_rtcp_allowed or self.rtcp is not None:
+            return
+        from .audio_rtcp import AudioRtcpSession
+        owner = self.rtcp = AudioRtcpSession(local_port=self.local_rtp_port + 1,
+            remote_host=self.invite.remote_audio_rtcp_host or self.remote_rtp_host,
+            remote_port=self.invite.remote_audio_rtcp_port or self.remote_rtp_port + 1,
+            local_ssrc=self.rtp_source.ssrc, clock_rate=self.encoder.fmt.rtp_clock_rate,
+            minimum_interval=self.invite.audio_rtcp_min_interval)
+        rtcp_socket, self._rtcp_socket = self._rtcp_socket, None
+        if rtcp_socket is None:
+            rtcp_socket = self.reservation.take_audio_socket(self.local_rtp_port + 1)
+        try:
+            await owner.start(sock=rtcp_socket)
+            owner.set_reporting_allowed(self.invite.audio_rtcp_allowed)
+            if self.closed.is_set():
+                raise asyncio.CancelledError
+        except BaseException:
+            await owner.close()
+            raise
 
     async def start(self) -> None:
         """Bind RTP and start the persistent pipeline/media tasks."""
@@ -359,6 +404,16 @@ class LocalCallMedia:
                 transport.close()
                 raise RuntimeError("Local call media session closed while starting")
             self.transport = transport  # type: ignore[assignment]
+            if self.invite.audio_rtcp_allowed and self.invite.audio_rtcp_min_interval > 0:
+                self._schedule_audio_rtcp_start()
+                try:
+                    await asyncio.shield(self._rtcp_start_task)
+                except BaseException:
+                    transport.close()
+                    self.transport = None
+                    if self.rtcp is not None:
+                        await self.rtcp.close()
+                    raise
             self._tx_task = self.hass.async_create_task(self._send_loop())
             self._start_application()
         _LOGGER.info(
@@ -424,6 +479,9 @@ class LocalCallMedia:
             self._dtmf_decoder = state.dtmf_decoder
             self._dtmf_sdp = self.invite.remote_sdp
             self.rtp_source = state.sender
+            self.rtcp = getattr(state, "rtcp", None)
+            if self.rtcp is not None:
+                self.rtcp.set_reporting_allowed(self.invite.audio_rtcp_allowed)
             self.remote_ssrc = state.receiver.source_ssrc
             self.remote_rtp_host, self.remote_rtp_port = state.remote_host, state.remote_port
             self._bind_receive_callback(self.decoder)
@@ -438,14 +496,19 @@ class LocalCallMedia:
             if self._cleanup_done.is_set():
                 return
             self.closed.set()
+            rtcp, self.rtcp = self.rtcp, None
+            if rtcp is not None and rtcp.close_with_media:
+                rtcp.begin_close()
             self.decoder.close()
             self.encoder.close()
             current = asyncio.current_task()
-            tasks = [self._consumer_task, self._tts_task, self._tx_task, *self._dtmf_tasks]
+            tasks = [self._consumer_task, self._tts_task, self._tx_task, self._rtcp_start_task, *self._dtmf_tasks]
             for task in tasks:
                 if task is not None and task is not current and not task.done():
                     task.cancel()
             try:
+                if rtcp is not None and rtcp.close_with_media:
+                    await rtcp.close()
                 await asyncio.gather(
                     *(
                         task
@@ -464,6 +527,9 @@ class LocalCallMedia:
                     if self.transport is not None:
                         self.transport.close()
                         self.transport = None
+                    if self._rtcp_socket is not None:
+                        self._rtcp_socket.close()
+                        self._rtcp_socket = None
                     if self._rtp_socket is not None:
                         self._rtp_socket.close()
                         self._rtp_socket = None
@@ -500,6 +566,8 @@ class LocalCallMedia:
                     self._dtmf_decoder = RtpDtmfDecoder(formats, audio_receiver=self.decoder) if formats else None
                 if self._dtmf_decoder is not None and self._dtmf_decoder.accepts(packet.payload_type):
                     report = self._dtmf_decoder.decode_report(data)
+                    from .audio_rtcp import observe_validated_event
+                    observe_validated_event(self.rtcp, self._dtmf_decoder)
                     digit = report.digit if report is not None and report.first else ""
                     if report is not None and report.shared_audio:
                         if report.source_changed:
@@ -581,6 +649,11 @@ class LocalCallMedia:
                         payload=build_telephone_event_payload(digit, duration=duration, end=end),
                         marker=marker))
                     transport.sendto(packet, (self.remote_rtp_host, self.remote_rtp_port))
+                    if self.rtcp is not None:
+                        if shared:
+                            self.rtcp.observe_send(packet, clock_rate=audio_rate)
+                        else:
+                            self.rtcp.observe_auxiliary_send(packet, clock_rate=selected.sample_rate)
                     source.sequence = rtp.next_sequence(source.sequence)
                     self.counters["rtp_tx"] += 1
                     return True
@@ -656,6 +729,9 @@ class LocalCallMedia:
                                 packet,
                                 (remote_rtp_host, remote_rtp_port),
                             )
+                            if self.rtcp is not None:
+                                self.rtcp.update_sender(self.rtp_source.ssrc, wire_format.rtp_clock_rate)
+                                self.rtcp.observe_send(packet, clock_rate=wire_format.rtp_clock_rate)
                             self.counters["rtp_tx"] += 1
                             if queued:
                                 self._last_output_deadline = loop.time() + frame_delay

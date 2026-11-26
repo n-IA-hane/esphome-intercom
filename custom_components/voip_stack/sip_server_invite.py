@@ -1069,7 +1069,11 @@ class SipIncomingInvites:
                     else "none"
                 ),
             )
+            from .audio_rtcp import remote_audio_rtcp_fields
             return SipInvite(
+                audio_rtcp_min_interval=(current.audio_rtcp_min_interval
+                    if current is not None else initial.audio_rtcp_min_interval),
+                **remote_audio_rtcp_fields(request.body),
                 source_host=initial.source_host,
                 source_port=initial.source_port,
                 request_uri=initial.request_uri,

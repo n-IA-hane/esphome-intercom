@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import subprocess
 from pathlib import Path
+from tools.hil_measurement import MeasurementError, SCENARIOS as MEASURED_HIL_SCENARIOS, validate_receipt
 from tools.rtp_pcap_evidence import sequence_statistics
 
 from .registry import EXECUTOR_JOBS, SCENARIOS
@@ -300,7 +302,7 @@ def validate_hil_measurement(
     tx/rx select the two negotiated streams by their independent wire tuples.
     """
     root = root.resolve()
-    if result.get("scenario") != MEASURED_HIL_SCENARIO:
+    if result.get("scenario") not in MEASURED_HIL_SCENARIOS:
         raise EvidenceError(f"no measured validator for HIL scenario: {result.get('scenario')}")
     try:
         actor_start, actor_end = result["started_monotonic"], result["finished_monotonic"]
@@ -323,13 +325,22 @@ def validate_hil_measurement(
             raise EvidenceError("call resource inventory changed")
         receipt = json.loads(_bound_artifact(result.get("measurement_receipt"), root))
         expected = {
-            "schema_version": 1, "plan_id": plan.get("plan_id"),
+            "plan_id": plan.get("plan_id"),
             "head": plan.get("head"), "candidate_id": candidate_id,
             "scenario": result.get("scenario"), "run_id": result.get("run_id"),
         }
         if (not candidate_id or not expected["run_id"] or not isinstance(receipt, dict)
                 or any(receipt.get(key) != value for key, value in expected.items())):
             raise EvidenceError("measured receipt identity mismatch")
+        if receipt.get("schema_version") == 2:
+            firmware = result.get("firmware_binding")
+            if not isinstance(firmware, dict) or receipt.get("expected_firmware") != firmware:
+                raise EvidenceError("measured firmware binding mismatch")
+            validate_receipt(receipt, root, actor_start=actor_start, actor_end=actor_end,
+                actor_epoch=result["started_unix"], actor_end_epoch=result["finished_unix"])
+            return
+        if receipt.get("schema_version") != 1 or result.get("scenario") != MEASURED_HIL_SCENARIO:
+            raise EvidenceError("scenario requires a contemporaneous schema 2 measured receipt")
         sessions = receipt.get("sessions")
         if not isinstance(sessions, list) or len(sessions) < (2 if require_redial else 1):
             raise EvidenceError("missing measured call or redial session")
@@ -403,7 +414,9 @@ def validate_hil_measurement(
                     or selected[0]["destination"] != selected[1]["source"]
                     or selected[0]["source"] == selected[0]["destination"]):
                 raise EvidenceError("RTP streams do not prove both directions")
-    except (KeyError, TypeError, ValueError, AttributeError) as error:
+    except MeasurementError as error:
+        raise EvidenceError(f"invalid measured HIL receipt: {error}") from error
+    except (KeyError, TypeError, ValueError, AttributeError, OSError, subprocess.SubprocessError) as error:
         raise EvidenceError("invalid measured HIL receipt") from error
 
 
@@ -420,6 +433,12 @@ def hil_artifact_paths(artifacts: list[Path], root: Path) -> list[Path]:
                 receipt = json.loads(_bound_artifact(reference, root))
                 references = [reference, *[session[key] for session in receipt["sessions"]
                     for key in ("capture", "rtp_report")]]
+                if receipt.get("schema_version") == 2:
+                    references += receipt.get("attachments", [])
+                    references += [receipt["observations"], *[
+                        session["writer_receipt"] for session in receipt["sessions"]]]
+                    references += [video["artifact"] for session in receipt["sessions"]
+                                   for video in session.get("decoded_video", [])]
                 for reference in references:
                     _bound_artifact(reference, root)
                     path = root / reference["path"]
@@ -501,7 +520,7 @@ def derive_scenario_evidence(
                 f"{job} did not prove exact scenarios for {scenario_id}: "
                 f"{', '.join(required)}"
             )
-        if job.startswith("hil-") and scenario_id != MEASURED_HIL_SCENARIO:
+        if job.startswith("hil-") and scenario_id not in MEASURED_HIL_SCENARIOS:
             raise EvidenceError(f"{job} has no measured validator for planned scenario {scenario_id}")
         if job.startswith("hil-") and not any(
             _hil_passed(payload, job, scenario_id, plan=plan,

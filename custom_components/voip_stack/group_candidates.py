@@ -93,7 +93,39 @@ async def async_prepare_group_candidates(
     group_name: str = "",
     excluded_endpoint_ids: frozenset[str] = frozenset(),
 ) -> None:
-    """Populate a bounded set using forwarding or ring-group policy."""
+    """Adapt real SIP ingress to the shared account admission implementation."""
+    await async_prepare_account_candidates(
+        result, runtime, call_id=invite.call_id, members=members, peers=peers,
+        roster_entries=roster_entries, local_name=local_name, ring_policy=ring_policy,
+        source_endpoint_id=source_endpoint_id, group_name=group_name,
+        excluded_endpoint_ids=excluded_endpoint_ids,
+        member_matches_source=lambda member: _caller_matches(invite, member, peers, source_endpoint_id),
+        outbound_context={"invite": invite},
+    )
+
+
+async def async_prepare_account_candidates(
+    result: GroupCandidates,
+    runtime: GroupCandidateRuntime,
+    *,
+    call_id: str,
+    members: list[str],
+    peers: list[Peer],
+    roster_entries: list[RosterEntry],
+    local_name: str,
+    ring_policy: RingPolicy | None = None,
+    source_endpoint_id: str = "",
+    group_name: str = "",
+    excluded_endpoint_ids: frozenset[str] = frozenset(),
+    member_matches_source: Callable[[str], bool] | None = None,
+    outbound_context: dict[str, Any] | None = None,
+) -> None:
+    """Prepare and claim bounded account adapters for calls and announcements.
+
+    SIP ingress supplies its actual invite through its preparation adapter;
+    application origins supply their owned session identity and media policy.
+    The preflight, Contact expansion, claims and attempt list have one owner.
+    """
 
     detailed_preflight = ring_policy is not None
     for member_order, member in enumerate(members):
@@ -102,9 +134,7 @@ async def async_prepare_group_candidates(
             if ring_policy is not None
             else 0
         )
-        if _caller_matches(
-            invite, member, peers, source_endpoint_id
-        ):
+        if member_matches_source is not None and member_matches_source(member):
             continue
         browser_leg = runtime.browser_leg_for_member(member, peers, roster_entries)
         if browser_leg is not None:
@@ -119,7 +149,7 @@ async def async_prepare_group_candidates(
             )
             disposition = (
                 endpoint_preflight_disposition(
-                    endpoint, call_id=invite.call_id, browser=True
+                    endpoint, call_id=call_id, browser=True
                 )
                 if detailed_preflight
                 else (
@@ -141,7 +171,7 @@ async def async_prepare_group_candidates(
                 continue
             try:
                 runtime.registry.claim_endpoint(
-                    invite.call_id,
+                    call_id,
                     browser_leg.endpoint_id,
                     role="group_candidate",
                 )
@@ -173,7 +203,7 @@ async def async_prepare_group_candidates(
             continue
         if detailed_preflight:
             disposition = endpoint_preflight_disposition(
-                logical_endpoint, call_id=invite.call_id, browser=False
+                logical_endpoint, call_id=call_id, browser=False
             )
             if disposition is not None:
                 result.preflight_failures.append(
@@ -211,7 +241,7 @@ async def async_prepare_group_candidates(
                 "roster_entries": roster_entries,
                 "local_name": local_name,
                 "local_rtp_port_index": 1,
-                "invite": invite,
+                **(outbound_context or {}),
             }
             if detailed_preflight or target is not None:
                 candidate_id = (
@@ -256,7 +286,7 @@ async def async_prepare_group_candidates(
             try:
                 if leg.endpoint_id:
                     runtime.registry.claim_endpoint(
-                        invite.call_id,
+                        call_id,
                         leg.endpoint_id,
                         role="group_candidate",
                         adopt_transport=endpoint_is_esphome(logical_endpoint),

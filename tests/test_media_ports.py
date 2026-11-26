@@ -204,7 +204,8 @@ class MediaPortPoolTest(unittest.TestCase):
             sockets = owner._audio_sockets
             owner.bind_audio_sockets()
             self.assertIs(owner._audio_sockets, sockets)
-            for sock, port in zip(sockets, owner.ports, strict=True):
+            paired_ports = tuple(value for port in owner.ports for value in (port, port + 1))
+            for sock, port in zip(sockets, paired_ports, strict=True):
                 self.assertFalse(sock.getblocking())
                 self.assertEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF), receive_budget)
                 self.assertEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 1)
@@ -237,8 +238,8 @@ class MediaPortPoolTest(unittest.TestCase):
             with patch.object(media_ports, "bind_sip_audio_socket", bind):
                 with self.assertRaises(OSError):
                     owner.bind_audio_sockets()
-            self.assertEqual(len(opened), 1)
-            self.assertLess(opened[0].fileno(), 0)
+            self.assertEqual(len(opened), 2)
+            self.assertTrue(all(sock.fileno() < 0 for sock in opened))
             self.assertTrue(owner.released)
             self.assertFalse(hass.runtime.rtp_port_pool["used"])
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:

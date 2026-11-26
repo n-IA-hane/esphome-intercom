@@ -37,6 +37,11 @@ async def test_automation_idle_deadline_uses_the_session_resource_owner(applicat
 
 @pytest.fixture
 def application(hass, monkeypatch, socket_enabled):
+    from pytest_homeassistant.common import MockConfigEntry
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    configured = MockConfigEntry(domain="voip_stack", version=7, minor_version=7,
+                                 data=initialize_duration_config({}))
+    configured.add_to_hass(hass)
     registry = SipEndpointRuntime(allow_dark_sessions=True)
     registry.activate()
     peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -77,7 +82,7 @@ def application(hass, monkeypatch, socket_enabled):
         "Welcome",
         extension="666",
         ha_bridge=True,
-        metadata={"virtual_endpoint": "automation"},
+        metadata={"virtual_endpoint": "automation", "automation_timeout": 30},
     )
     session = registry.upsert(
         invite.call_id, state="ringing", owner="automation", callee="Welcome"
@@ -110,7 +115,7 @@ def service(app, *, context=None, **data):
 @pytest.mark.parametrize("target", ["Welcome", "666"])
 def test_automation_contact_is_local_even_with_external_trunk(target):
     contact = RosterEntry(
-        "Welcome", extension="666", metadata={"virtual_endpoint": "automation"}
+        "Welcome", extension="666", metadata={"virtual_endpoint": "automation", "automation_timeout": 30}
     )
     assert (
         resolve_ha_router(target, [contact], trunk_ready=True).action
@@ -634,7 +639,7 @@ async def test_forward_to_another_automation_reuses_media_and_releases_old_contr
         transport_config={}, assist_config={}, trunk_config={},
         endpoints=EndpointRegistry(), phones=None, sip=registry,
     )
-    next_contact = RosterEntry("Next", extension="777", metadata={"virtual_endpoint": "automation"})
+    next_contact = RosterEntry("Next", extension="777", metadata={"virtual_endpoint": "automation", "automation_timeout": 30})
     requested = asyncio.Event()
     monkeypatch.setattr(module, "publish_bridge_projection", lambda *_args, **kwargs: (
         requested.set() if kwargs.get("event_type") == "automation_requested" else None
@@ -715,7 +720,7 @@ async def test_invalid_fallback_does_not_rearm_forever(application):
 
 
 async def test_named_contact_without_extension_can_be_selected():
-    contact = RosterEntry("Reception", metadata={"virtual_endpoint": "automation"})
+    contact = RosterEntry("Reception", metadata={"virtual_endpoint": "automation", "automation_timeout": 30})
     assert (
         resolve_ha_router("Reception", [contact], trunk_ready=True).action
         is RouteAction.AUTOMATION
@@ -858,10 +863,10 @@ async def test_announcement_handoff_keeps_the_same_rtp_sender_state(application)
 
 async def test_wait_unanswered_keeps_ringing_without_answer_or_media(application):
     app, registry, peer, released = application
-    app.contact.metadata['automation_timeout'] = 0.01
+    app.contact.metadata['automation_timeout'] = 1
     app.arm_deadline()
     try:
-        await app.wait_unanswered(service(app, duration=0.04))
+        await app.wait_unanswered(service(app, duration=1.1))
         assert app.session.live and app.session.state == 'ringing'
         assert not app.answered and app.media is None
         local_application.send_final_response.assert_not_called()
@@ -904,7 +909,7 @@ async def test_wait_then_forward_does_not_answer_early(application):
     app, registry, _peer, _released = application
     registry.forward_call = AsyncMock()
     try:
-        await app.wait_unanswered(service(app, duration=0.01))
+        await app.wait_unanswered(service(app, duration=1))
         await app.forward('Reception')
         registry.forward_call.assert_awaited_once_with(
             call_id=app.session.call_id, destination='Reception', on_failure='resume',

@@ -86,6 +86,7 @@ class _SoftphoneMediaSession:
     send_format: Any
     recv_format: Any
     rtp_socket: socket.socket | None = None
+    rtcp_socket: socket.socket | None = None
     rtp_reservation: Any = None
     recv_formats: tuple[Any, ...] = ()
     send_formats: tuple[Any, ...] = ()
@@ -116,6 +117,11 @@ class _SoftphoneMediaSession:
     observe_audio: Callable | None = None
     call_token: CallToken | None = None
     application_playback: Any = None
+    remote_audio_rtcp_host: str = ""
+    remote_audio_rtcp_port: int = 0
+    audio_rtcp_allowed: bool = True
+    audio_rtcp_min_interval: float = 0
+    audio_rtcp: Any = None
 
 
 def _browser_audio_message_limit(session: _SoftphoneMediaSession | None) -> int:
@@ -428,6 +434,10 @@ class VoipAudioWebSocketView(HomeAssistantView):
                         client = prepared.registry.sip_client_for(session.call_id)
                         if client is not None and getattr(client, "audio_rtp_socket", None) is session.rtp_socket:
                             client.audio_rtp_socket = None
+                    if session.rtcp_socket is not None:
+                        client = prepared.registry.sip_client_for(session.call_id)
+                        if client is not None and getattr(client, "audio_rtcp_socket", None) is session.rtcp_socket:
+                            client.audio_rtcp_socket = None
                     playback = prepared.registry.resource_for(context.call_id, "browser_playback")
                     if playback is None:
                         playback = BrowserPlayback()
@@ -566,6 +576,10 @@ def _active_softphone_media_session(
                 call_token=call_token,
                 local_rtp_port=local_rtp_port,
                 rtp_reservation=item.get("rtp_reservation"),
+                remote_audio_rtcp_host=getattr(invite, "remote_audio_rtcp_host", ""),
+                remote_audio_rtcp_port=getattr(invite, "remote_audio_rtcp_port", 0),
+                audio_rtcp_allowed=invite.audio_rtcp_allowed,
+                audio_rtcp_min_interval=getattr(invite, "audio_rtcp_min_interval", 0),
                 remote_rtp_host=invite.remote_rtp_host,
                 remote_rtp_port=int(invite.remote_rtp_port),
                 send_format=invite.send_format,
@@ -615,6 +629,12 @@ def _active_softphone_media_session(
                 call_token=call_token,
                 local_rtp_port=int(dialog.local_rtp_port),
                 rtp_socket=getattr(client, "audio_rtp_socket", None),
+                rtcp_socket=getattr(client, "audio_rtcp_socket", None) if dialog.audio_rtcp_allowed else None,
+                rtp_reservation=getattr(client, "media_reservation", None),
+                remote_audio_rtcp_host=getattr(dialog, "remote_audio_rtcp_host", ""),
+                remote_audio_rtcp_port=getattr(dialog, "remote_audio_rtcp_port", 0),
+                audio_rtcp_allowed=dialog.audio_rtcp_allowed,
+                audio_rtcp_min_interval=getattr(dialog, "audio_rtcp_min_interval", 0),
                 remote_rtp_host=dialog.remote_rtp_host,
                 remote_rtp_port=int(dialog.remote_rtp_port),
                 send_format=dialog.send_format,
@@ -834,6 +854,9 @@ async def _run_audio_session(
     except OSError as err:
         if bound_socket is not None:
             bound_socket.close()
+        if session.rtcp_socket is not None:
+            session.rtcp_socket.close()
+            session.rtcp_socket = None
         _LOGGER.warning(
             "HA softphone audio websocket rejected call_id=%s local_rtp=%s: %s",
             session.call_id,
@@ -845,6 +868,9 @@ async def _run_audio_session(
     except BaseException:
         if bound_socket is not None:
             bound_socket.close()
+        if session.rtcp_socket is not None:
+            session.rtcp_socket.close()
+            session.rtcp_socket = None
         raise
     rtp_source = session.rtp_source
     if rtp_source is None:
@@ -853,6 +879,27 @@ async def _run_audio_session(
     sequence = int(rtp_source.sequence)
     timestamp = int(rtp_source.timestamp)
     ssrc = int(rtp_source.ssrc)
+    rtcp = None
+    if owner_session is not None and session.audio_rtcp_min_interval > 0:
+        from .audio_rtcp import async_get_or_create
+
+        bound_rtcp_socket = session.rtcp_socket
+        if session.audio_rtcp_allowed:
+            session.rtcp_socket = None
+        try:
+            rtcp = await async_get_or_create(hass, owner_session,
+                session.rtp_reservation, session.local_rtp_port,
+                remote_host=session.remote_audio_rtcp_host or session.remote_rtp_host,
+                remote_port=session.remote_audio_rtcp_port or session.remote_rtp_port + 1,
+                local_ssrc=ssrc, clock_rate=session.send_format.rtp_clock_rate,
+                minimum_interval=session.audio_rtcp_min_interval,
+                rtcp_socket=bound_rtcp_socket, audio_rtcp_allowed=session.audio_rtcp_allowed)
+        except BaseException:
+            if bound_rtcp_socket is not None:
+                bound_rtcp_socket.close()
+            transport.close()
+            raise
+        session.audio_rtcp = rtcp
     closed = asyncio.Event()
     counters = {
         "ws_rx": 0,
@@ -996,7 +1043,12 @@ async def _run_audio_session(
             counters["drop_error"] += 1
             _LOGGER.debug("Deferred browser RTP audio drop call_id=%s: %s", session.call_id, error)
 
+    def observe_received_packet(packet, fmt):
+        if rtcp is not None:
+            rtcp.observe_receive(packet, clock_rate=fmt.rtp_clock_rate)
+
     def bind_reorder_callback(receiver):
+        receiver.set_packet_observer(observe_received_packet)
         receiver.set_reorder_callback(lambda frames: deferred_audio(receiver, frames),
             lambda error: deferred_audio_error(receiver, error))
 
@@ -1004,12 +1056,12 @@ async def _run_audio_session(
         from .rtp_audio_handoff import RtpAudioHandoff
 
         session.audio_state = RtpAudioHandoff(rtp_decoder, rtp_encoder, dtmf_decoder, rtp_source,
-            tx_converter, incoming.remote_host, incoming.remote_port, queue)
+            tx_converter, incoming.remote_host, incoming.remote_port, queue, rtcp=rtcp)
 
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, applied_dtmf_contract
         nonlocal rtp_decoder, rtp_encoder, browser_plan, tx_converter
-        nonlocal dtmf_decoder
+        nonlocal dtmf_decoder, rtcp
         nonlocal debug_capture
         if generation == applied_media_generation:
             return
@@ -1041,6 +1093,24 @@ async def _run_audio_session(
                 session.recv_format.audio_format.frame_ms
             )
             incoming.reset(session.remote_rtp_host, session.remote_rtp_port)
+            if rtcp is None and session.audio_rtcp_allowed and owner_session is not None:
+                from .audio_rtcp import async_get_or_create
+                client = (owner_registry.sip_client_for(session.call_id)
+                    or owner_registry.source_sip_client_for(session.call_id))
+                pending_socket = getattr(client, "audio_rtcp_socket", None)
+                rtcp = await async_get_or_create(hass, owner_session, session.rtp_reservation,
+                    session.local_rtp_port,
+                    remote_host=session.remote_audio_rtcp_host or session.remote_rtp_host,
+                    remote_port=session.remote_audio_rtcp_port or session.remote_rtp_port + 1,
+                    local_ssrc=rtp_source.ssrc, clock_rate=session.send_format.rtp_clock_rate,
+                    minimum_interval=session.audio_rtcp_min_interval, rtcp_socket=pending_socket)
+                if client is not None and client.audio_rtcp_socket is pending_socket:
+                    client.audio_rtcp_socket = None
+                session.audio_rtcp = rtcp
+            if rtcp is not None:
+                rtcp.set_reporting_allowed(session.audio_rtcp_allowed)
+                rtcp.remote_host = session.remote_audio_rtcp_host or session.remote_rtp_host
+                rtcp.remote_port = session.remote_audio_rtcp_port or session.remote_rtp_port + 1
             protocol.dropped_packets += drain_queue(queue)
             rtp_decoder.close()
             rtp_encoder.close()
@@ -1289,6 +1359,11 @@ async def _run_audio_session(
                         )
                     )
                     transport.sendto(packet, (incoming.remote_host, incoming.remote_port))
+                    if rtcp is not None:
+                        if shared_clock:
+                            rtcp.observe_send(packet, clock_rate=event_rate)
+                        else:
+                            rtcp.observe_auxiliary_send(packet, clock_rate=event_rate)
                     if shared_clock:
                         sequence = rtp.next_sequence(sequence)
                         rtp_source.sequence = sequence
@@ -1369,6 +1444,9 @@ async def _run_audio_session(
                                 )
                             )
                             transport.sendto(packet, (incoming.remote_host, incoming.remote_port))
+                            if rtcp is not None:
+                                rtcp.update_sender(ssrc, wire_format.rtp_clock_rate)
+                                rtcp.observe_send(packet, clock_rate=wire_format.rtp_clock_rate)
                             sequence = rtp.next_sequence(sequence)
                             rtp_source.sequence = sequence
                             if debug_capture is not None:

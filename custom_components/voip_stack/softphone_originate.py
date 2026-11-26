@@ -703,6 +703,7 @@ async def _async_prepare_browser_sip_call(
     ) if use_trunk else None
     # Preserve the engine's complete RTP catalog through the SIP writer.
     client = SipCallClient(
+        audio_rtcp_min_interval=float(cfg["audio_rtcp_min_interval"]),
         **({"call_id": routing_call_id} if routing_call_id else {}),
         codec_policy=codec_policy,
         local_ip=local_ip,
@@ -802,6 +803,8 @@ async def _async_prepare_browser_sip_call(
         async def commit():
             if not registry.is_generation_current(session.call_id, session.generation):
                 raise RuntimeError("provisional media belongs to a terminated browser call")
+            from .audio_rtcp import async_prepare_browser_rtcp
+            await async_prepare_browser_rtcp(hass, current, candidate, client=client)
             current.update_metadata(browser_early_media_tag=candidate.remote_tag)
             audio = require_runtime_data(hass).media.sessions_for("audio").get((session.call_id, endpoint_id))
             if audio is not None:
@@ -910,6 +913,8 @@ async def _async_run_browser_sip_call(
     registry = prepared.registry
     try:
         client.audio_rtp_socket = bind_sip_rtp_socket(local_rtp_port)
+        if client.audio_rtcp_min_interval > 0:
+            client.audio_rtcp_socket = bind_sip_rtp_socket(local_rtp_port + 1)
         result = await client.invite(
             target=uri.user,
             target_display_name=dialed_target,

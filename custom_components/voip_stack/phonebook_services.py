@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, replace
+import json
 import logging
 from typing import Any
 
@@ -17,6 +18,7 @@ from .const import (
     CONF_ASSIST_EXTENSION,
 )
 from .directory_runtime import async_refresh_directory
+from .duration_policy import resolve_service_timeout, validate_duration
 from .runtime_data import endpoint_directory
 from .roster import RosterEntry, dump_roster_json, normalize_roster_key, parse_roster_json
 from .store import manual_roster_entries, store_manual_roster_entries
@@ -190,7 +192,7 @@ def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
     extension = str(data.get("extension") or "").strip()
     number = str(data.get("number") or "").strip()
     port = int(data.get("port") or 0)
-    if data.get("type") == "automation":
+    if data.get("type") == "automation" or metadata.get("virtual_endpoint") == "automation":
         if not name:
             raise ValueError("An automation contact needs a name")
         if extension and not extension.isdigit():
@@ -199,8 +201,11 @@ def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
             raise ValueError("An automation contact has no physical address or external number")
         metadata.update(
             virtual_endpoint="automation",
-            fallback_destination=str(data.get("fallback_destination") or "").strip(),
-            automation_timeout=float(data.get("timeout", 30)),
+            fallback_destination=str(data.get("fallback_destination", metadata.get("fallback_destination")) or "").strip(),
+            automation_timeout=validate_duration(
+                data["timeout"] if "timeout" in data else metadata.get("automation_timeout"),
+                "automation_timeout",
+            ),
         )
     entry = RosterEntry(
         id=entry_id,
@@ -210,11 +215,27 @@ def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
         extension=extension,
         number=number,
         port=port,
-        ha_bridge=bool(data.get("ha_bridge", False) or data.get("type") == "automation"),
+        ha_bridge=bool(data.get("ha_bridge", False) or metadata.get("virtual_endpoint") == "automation"),
         enabled=bool(data.get("enabled", True)),
         metadata=metadata,
     )
     return entry
+
+
+def _new_contact_data(hass, data):
+    """Materialize a missing duration at the administrator input boundary."""
+    metadata = dict(data.get("metadata") or {})
+    if (
+        (data.get("type") == "automation" or metadata.get("virtual_endpoint") == "automation")
+        and "timeout" not in data
+        and "automation_timeout" not in metadata
+    ):
+        from .contact_config import materialize_contact_timeout
+
+        return materialize_contact_timeout(
+            data, resolve_service_timeout(hass, "automation_timeout")
+        )
+    return data
 
 
 def build_phonebook_service_handlers(
@@ -225,8 +246,8 @@ def build_phonebook_service_handlers(
     async def add_contact(call: ServiceCall) -> None:
         hass = call.hass
         try:
-            entry = contact_from_data(call.data)
-        except ContactProfileError as err:
+            entry = contact_from_data(_new_contact_data(hass, call.data))
+        except ValueError as err:
             raise ServiceValidationError(str(err)) from err
         entry_keys = {
             normalize_roster_key(entry.id),
@@ -273,7 +294,15 @@ def build_phonebook_service_handlers(
 
     async def set_contacts(call: ServiceCall) -> None:
         hass = call.hass
-        entries = parse_roster_json(str(call.data.get("roster_json") or "[]"))
+        try:
+            raw = json.loads(str(call.data.get("roster_json") or "[]"))
+            if isinstance(raw, dict):
+                raw = raw.get("contacts") or raw.get("entries") or []
+            if isinstance(raw, list):
+                raw = [_new_contact_data(hass, item) if isinstance(item, dict) else item for item in raw]
+            entries = parse_roster_json(raw)
+        except (ValueError, TypeError) as error:
+            raise ServiceValidationError(str(error)) from error
         _validate_contact_namespace(hass, entries)
         _store_administrator_contacts(hass, entries)
         await refresh_and_push_phonebook(hass)

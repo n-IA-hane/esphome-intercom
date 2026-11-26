@@ -7,15 +7,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class QueuePolicy:
-    """Ring-all/FIFO defaults apply without creating a separate config entry."""
+    """Queue behavior with durations supplied by its persisted configuration."""
 
+    max_wait: float
+    no_agent_wait: float
+    retry_delay: float
+    wrap_up: float
     enabled: bool = True
     max_waiting: int = 10
-    max_wait: float = 60
     ring_timeout: float | None = None
-    no_agent_wait: float = 1
-    retry_delay: float = 1
-    wrap_up: float = 0
     fallback: str = ""
     hold_media: str = ""
     strategy: str = "ring_all"
@@ -35,6 +35,9 @@ class QueuePolicy:
         values = dict(data or {})
         if set(values) - set(cls.__dataclass_fields__):
             raise ValueError("Unknown queue setting")
+        required = {"max_wait", "no_agent_wait", "retry_delay", "wrap_up"}
+        if missing := required - values.keys():
+            raise ValueError(f"Missing configured queue durations: {', '.join(sorted(missing))}")
         order = values.get("agent_order", ())
         if not isinstance(order, (list, tuple)) or len(order) > 128 or any(
                 not isinstance(item, str) or not item or len(item) > 256 for item in order):

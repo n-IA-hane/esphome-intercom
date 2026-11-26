@@ -17,7 +17,7 @@ class RingPolicy:
 
     strategy: ForkStrategy = ForkStrategy.PARALLEL
     overall_timeout: float = float("inf")
-    step_timeout: float = 15.0
+    step_timeout: float | None = None
     member_tiers: Mapping[str, int] = field(default_factory=dict)
     tier_strategies: Mapping[int, ForkStrategy] = field(default_factory=dict)
 
@@ -42,9 +42,11 @@ class RingPolicy:
                 or not 0 <= configured <= 3600):
             raise ValueError("ring overall_timeout must be 0 (unlimited) or up to 3600 seconds")
         overall_timeout = float(configured) if configured else float("inf")
-        step_timeout = float(raw.get("step_timeout") or min(15.0, overall_timeout))
-        if not math.isfinite(step_timeout) or step_timeout <= 0.0:
+        configured_step = raw.get("step_timeout")
+        if (isinstance(configured_step, bool) or not isinstance(configured_step, (int, float))
+                or not math.isfinite(configured_step) or configured_step <= 0.0):
             raise ValueError("ring step_timeout must be positive and finite")
+        step_timeout = float(configured_step)
         if inherited or timeout_override is not None:
             step_timeout = min(step_timeout, overall_timeout)
         elif step_timeout > overall_timeout:

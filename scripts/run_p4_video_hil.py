@@ -12,6 +12,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from live_voip_qualification import DEFAULT_ESPS, EspApi, norm  # noqa: E402
@@ -59,6 +60,27 @@ async def wait_state(esp: EspApi, wanted: set[str], timeout: float) -> None:
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
+    if os.environ.get("HIL_MEASUREMENT_RECEIPT"):
+        # The simple legacy actor has no native runtime, serial or capture
+        # owner. HIL uses the maintained measured actor with the JPEG codec.
+        from run_p4_h264_reinvite_hil import run as run_measured
+        required = ("HIL_HA_URL", "HIL_HA_TOKEN_FILE", "HIL_P4_SERIAL_PORT")
+        if any(not os.environ.get(key) for key in required):
+            raise RuntimeError("Measured P4 JPEG actor requires " + ", ".join(required))
+        measured_args = argparse.Namespace(**vars(args))
+        measured_args.ha_url = os.environ["HIL_HA_URL"]
+        measured_args.token = None
+        measured_args.token_file = Path(os.environ["HIL_HA_TOKEN_FILE"])
+        measured_args.auth_file = Path("/nonexistent")
+        measured_args.insecure = os.environ.get("HIL_HA_INSECURE") == "1"
+        measured_args.p4_host = args.esp_host or DEFAULT_ESPS["p4"].host
+        measured_args.p4_api_port = int(os.environ.get("HIL_P4_API_PORT", "6053"))
+        measured_args.p4_extension = args.target
+        measured_args.serial_port = os.environ["HIL_P4_SERIAL_PORT"]
+        measured_args.cycles = 2
+        measured_args.video_hold_seconds = float(os.environ.get("HIL_VIDEO_HOLD_SECONDS", "20"))
+        measured_args.out_dir = args.output.parent
+        return await run_measured(measured_args)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     peer_output = output.parent / "peer.json"

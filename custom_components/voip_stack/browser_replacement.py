@@ -6,7 +6,7 @@ from .call_projection import publish_phone_projection
 from .core.sdp import build_answer_directional, browser_video_send_supported, constrained_video_direction
 from .core.video_rtp import RtpSenderState
 from .const import CONF_VIDEO_CAMERA_SEND
-from .endpoint_session import LegKind, SessionHandoff, SipTerminationDisposition, TerminationIntent
+from .endpoint_session import CleanupStage, LegKind, SessionHandoff, SipTerminationDisposition, TerminationIntent
 from .media_ports import allocate_sip_rtp_port, reserve_sip_video_media
 from .media_reservation import release_media_reservation
 from .sip_listener import SipInviteResult
@@ -29,10 +29,13 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
     new = None
     committed = False
     descriptor = None
+    staged_rtcp = None
 
     async def rollback():
         if committed:
             return
+        if staged_rtcp is not None:
+            await staged_rtcp.close()
         release_media_reservation(descriptor)
         grant.pending_call_id = ""
         grant.release()
@@ -66,7 +69,7 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
         descriptor.update(local_rtp_port=local_port, local_video_rtp_port=video_port,
                           video_direction=video_direction)
         answer = build_answer_directional(local_ip, local_ip, local_port, invite.send_format,
-            invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+            invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             video_port=video_port,
             video_format=invite.answer_video_format if video_port else None,
             video_direction=video_direction)
@@ -80,6 +83,18 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
                 dest_endpoint_id=endpoint_id, target_endpoint_id=endpoint_id, endpoint_id=endpoint_id,
                 inbound_trunk_id=invite.trunk_id, policy_endpoint_ids=policies)
         grant.pending_call_id = new.call_id
+        if invite.audio_rtcp_allowed and invite.audio_rtcp_min_interval > 0:
+            from .audio_rtcp import AudioRtcpSession
+            from .core.rtp import AudioRtpSenderState
+            source = AudioRtpSenderState.create()
+            source.use_clock_rate(invite.send_format.rtp_clock_rate)
+            descriptor["audio_rtp_source"] = source
+            staged_rtcp = AudioRtcpSession(local_port=local_port + 1,
+                remote_host=invite.remote_audio_rtcp_host or invite.remote_rtp_host,
+                remote_port=invite.remote_audio_rtcp_port or invite.remote_rtp_port + 1,
+                local_ssrc=source.ssrc, clock_rate=invite.send_format.rtp_clock_rate,
+                minimum_interval=invite.audio_rtcp_min_interval)
+            await staged_rtcp.start(start_reports=False)
     except BaseException:
         await rollback()
         raise
@@ -97,6 +112,11 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
         nonlocal committed
         validate()
         with SessionHandoff(calls, old, new):
+            if staged_rtcp is not None:
+                async def close_rtcp(_reason):
+                    await staged_rtcp.close()
+                new.add_resource(f"audio_rtcp:{local_port}", staged_rtcp, close_rtcp,
+                    stage=CleanupStage.MEDIA)
             calls.claim_endpoint(new.call_id, grant.endpoint_id, role="source")
             calls.transfer_endpoint_claim(old.call_id, new.call_id, endpoint_id)
             # The predecessor's terminal projection must not end the browser
@@ -119,6 +139,9 @@ async def prepare_browser_replacement(hass, runtime, invite, local_ip, old, gran
             calls.transition(new.call_id, state="in_call", owner="ha_softphone",
                 media_client_id=descriptor["media_client_id"], session_device_id=endpoint.device_id)
         committed = True
+        if staged_rtcp is not None:
+            staged_rtcp.close_with_media = False
+            staged_rtcp.enable_reports()
         grant.release()
         from .core.media.bridge import plan_browser_audio
         browser_audio = plan_browser_audio(invite.send_format, invite.recv_format)

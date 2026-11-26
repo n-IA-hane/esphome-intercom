@@ -385,6 +385,7 @@ class SipInviteTransactions:
         self._pending_remote_uri = exchange.request_uri
         self._pending_invite_auth.clear()
         self._retry_after_used = False
+        self.last_redirect_contacts = ()
         self._invite_abort_event.clear()
         self._invite_transaction_active = True
         self._cancel_requested = False
@@ -432,7 +433,7 @@ class SipInviteTransactions:
                 self.supported_recv_formats,
                 include_common_codecs=self.include_common_codecs,
                 compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
-                audio_rtcp=False,
+                audio_rtcp=self.audio_rtcp_min_interval > 0,
                 send_rtp_formats=self.supported_send_rtp_formats,
                 recv_rtp_formats=self.supported_recv_rtp_formats,
                 previous_payloads=self.dialog.audio_payloads if self.dialog is not None else None,
@@ -760,6 +761,8 @@ class SipInviteTransactions:
                 self._reliable_rseq.clear()
                 continue
             if msg.status_code and msg.status_code >= 300:
+                if msg.status_code == 302:
+                    self.last_redirect_contacts = tuple(msg.header_values("Contact"))
                 self._send_invite_error_ack(msg, addr[0], addr[1])
                 try:
                     retry = await self._retry_invite_after(msg, remote_host=exchange.host, remote_sip_port=exchange.port)

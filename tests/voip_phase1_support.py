@@ -154,6 +154,11 @@ def _load_audio_ws_runtime_module():
     )
     sys.modules[browser_phone_data.__name__] = browser_phone_data
     sys.modules[browser_phone_runtime.__name__] = browser_phone_runtime
+    # This lane exercises production RTP/PCM without an HA recording service.
+    # Recording ownership and persistence are covered by the native HA tests.
+    call_recording = types.ModuleType(f"{package_name}.call_recording")
+    call_recording.bind_browser_recording = lambda *_args, **_kwargs: None
+    sys.modules[call_recording.__name__] = call_recording
 
     homeassistant = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
     if not hasattr(homeassistant, "__path__"):

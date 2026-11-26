@@ -97,6 +97,11 @@ class EndpointDialer:
                 entry,
             )
         if entry is None:
+            from .router import RouteAction
+
+            decision = self.route_resolver.route(member, entries)
+            if decision.action in {RouteAction.DIRECT, RouteAction.BRIDGE, RouteAction.FORWARD} and decision.sip_uri:
+                return parse_sip_uri(decision.sip_uri), None, None
             return None, None, None
         if entry.sip_uri:
             return parse_sip_uri(entry.sip_uri), None, entry
@@ -125,6 +130,10 @@ class EndpointDialer:
         endpoint = self.route_resolver.logical_endpoint(member, peers, entries)
         if endpoint is None and self.route_resolver.is_ha_target(member):
             endpoint = preferred_browser_phone(self.hass)
+        return self.browser_leg_for_endpoint(endpoint, member)
+
+    def browser_leg_for_endpoint(self, endpoint, member: str) -> BrowserLeg | None:
+        """Use one eligibility rule for resolved accounts and routed members."""
         from .account_runtime import account_has_ha_binding
 
         if endpoint is None or not (endpoint.kind.is_softphone or (
@@ -297,6 +306,7 @@ class EndpointDialer:
                     caller_name=local_name, source_call_id=source_call_id,
                 )
             client = SipCallClient(
+                audio_rtcp_min_interval=float(self.config["audio_rtcp_min_interval"]),
                 max_forwards=max(0, invite.max_forwards - 1) if invite is not None and invite.max_forwards is not None else 70,
                 **({"call_id": policy.call_id} if policy.call_id else {}),
                 codec_policy=codec_policy,

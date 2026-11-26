@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 import pytest
 from homeassistant.core import Context, ServiceCall
@@ -53,10 +53,11 @@ async def test_registered_account_with_saved_ha_card_receives_paging(lab, monkey
     assert bindings.has_binding("bedroom0")
     assert lab.calls.component("registrar").registered_contacts("bedroom0")
     assert lab.runtime.endpoints.require("bedroom0").supports_ha_client
-    browser = AsyncMock(side_effect=ServiceValidationError("browser path witness"))
-    owner.browser_originate = browser
+    browser = Mock(side_effect=ServiceValidationError("browser path witness"))
     if contact_removed:
         from custom_components.voip_stack.account_runtime import recompute_account_availability
+        from custom_components.voip_stack import browser_paging
+        monkeypatch.setattr(browser_paging, "stage_browser_paging", browser)
         lab.calls.component("registrar").remove_registration("bedroom0")
         lab.runtime.softphone_presence["bedroom0"] = 1
         recompute_account_availability(lab.hass)
@@ -65,7 +66,7 @@ async def test_registered_account_with_saved_ha_card_receives_paging(lab, monkey
         if contact_removed:
             assert result["state"] == "no_recipients", result
             assert result["targets"] == [{"endpoint_id": "bedroom0", "status": "skipped", "reason": "browser path witness"}]
-            browser.assert_awaited_once()
+            browser.assert_called_once()
             assert not lab.phones[0].invites
             with pytest.raises(ServiceValidationError, match="require a SIP or ESPHome destination"):
                 await lab.hass.services.async_call("voip_stack", "call", {
@@ -73,9 +74,13 @@ async def test_registered_account_with_saved_ha_card_receives_paging(lab, monkey
                 }, blocking=True, return_response=True)
             assert_call_resources_released(lab)
             return
-        browser.assert_not_awaited()
-        assert result["state"] == "completed", result
-        assert result["targets"] == [{"endpoint_id": "bedroom0", "status": "completed"}]
+        browser.assert_not_called()
+        assert result["state"] == "partial", result
+        target = result["targets"][0]
+        assert target["endpoint_id"] == "bedroom0" and target["status"] == "partial"
+        clients = {client["transport"]: client for client in target["clients"]}
+        assert clients["sip"]["status"] == "completed"
+        assert clients["ha"]["status"] == "skipped" and clients["ha"]["reason"] == "browser_offline"
         assert len(stream.calls) == 1
         assert len(lab.phones[0].invites) == 1
         assert lab.phones[0].invites[0].header("Answer-Mode") == "Auto"
@@ -93,6 +98,25 @@ async def test_registered_account_with_saved_ha_card_receives_paging(lab, monkey
     finally:
         await bindings.async_close()
         lab.runtime.ha_bindings = None
+
+
+@pytest.mark.parametrize("override,expected", [(None, 3), (2, 2)])
+async def test_announcement_duration_uses_configured_owner_or_action_override(lab, monkeypatch, override, expected):
+    owner = manager(lab, monkeypatch)
+    tts_fixture(monkeypatch, lab)
+    entry = lab.hass.config_entries.async_entries("voip_stack")[0]
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+        "service_timeouts": {**entry.data["service_timeouts"], "announcement_timeout": 3}})
+    data = {"targets": ["bedroom0"], "wait": False}
+    if override is not None:
+        data["timeout"] = override
+    result = await paging.async_announce(announce(lab, **data))
+    job = owner.jobs[result["announcement_id"]]
+    try:
+        assert job.data["timeout"] == expected
+    finally:
+        await job.stop()
+    assert not owner.jobs and not lab.calls.sessions
 
 
 async def test_two_phones_receive_one_complete_synthesis_and_release_claims(lab, monkeypatch):
@@ -124,15 +148,17 @@ async def test_two_phones_receive_one_complete_synthesis_and_release_claims(lab,
     assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
 
 
-async def test_wait_false_stop_cancels_one_producer_and_both_calls_idempotently(lab, monkeypatch):
+async def test_wait_false_stop_closes_output_consumers_and_both_calls_idempotently(lab, monkeypatch):
     owner = manager(lab, monkeypatch)
     stream = tts_fixture(monkeypatch, lab, block=True)
     pending = await paging.async_announce(announce(lab, wait=False))
     await asyncio.wait_for(stream.started.wait(), 3)
     job = owner.jobs[pending["announcement_id"]]
-    owned = {task.get_name() for task in job.session.tasks}
-    assert {"voip-page-output-bedroom0", "voip-page-output-bedroom1",
-            "paging-output-complete", "paging-next-chunk"} <= owned
+    async with asyncio.timeout(3):
+        while len(job.output_tasks) < 2:
+            await asyncio.sleep(0)
+    assert set(job.output_tasks.values()) <= set(job.session.tasks)
+    assert all(not task.done() for task in job.output_tasks.values())
     stop = ServiceCall(lab.hass, "voip_stack", "stop_announcement", {"announcement_id": pending["announcement_id"]}, context=Context())
     first = await asyncio.wait_for(paging.async_stop_announcement(stop), 4)
     second = await paging.async_stop_announcement(stop)
@@ -178,7 +204,7 @@ async def test_busy_phone_is_skipped_without_interrupting_it(lab, monkeypatch):
     lab.calls.upsert("other", state="in_call", owner="bridge")
     lab.calls.claim_endpoint("other", "bedroom0", role="callee")
     result = await asyncio.wait_for(paging.async_announce(announce(lab)), 8)
-    assert result["state"] == "completed", result
+    assert result["state"] == "partial", result
     assert result["targets"][0] == {"endpoint_id": "bedroom0", "status": "skipped", "reason": "busy"}
     assert not lab.phones[0].invites
     assert lab.calls.get_session("other").live
@@ -190,7 +216,7 @@ async def test_no_answer_is_cancelled_and_does_not_get_partial_speech(lab, monke
     stream = tts_fixture(monkeypatch, lab)
     lab.phones[1].auto_answer = False
     result = await asyncio.wait_for(paging.async_announce(announce(lab, answer_timeout=1)), 8)
-    assert result["state"] == "completed", result
+    assert result["state"] == "partial", result
     assert result["targets"][1]["status"] == "skipped"
     assert len(stream.calls) == 1
     assert any(request.method == "CANCEL" for request in lab.phones[1].requests)
@@ -218,6 +244,9 @@ async def test_answer_budget_starts_at_wire_invite_after_transport_preparation(l
 
 async def test_media_is_decoded_once_for_both_phone_outputs(lab, monkeypatch):
     from custom_components.voip_stack import announcement_media
+    from homeassistant.setup import async_setup_component
+    assert await async_setup_component(lab.hass, "ffmpeg", {"ffmpeg": {"ffmpeg_bin": "/usr/bin/ffmpeg"}})
+    assert await async_setup_component(lab.hass, "tts", {"tts": []})
     manager(lab, monkeypatch)
     calls = []
     async def decoded(hass, identity):
@@ -230,11 +259,12 @@ async def test_media_is_decoded_once_for_both_phone_outputs(lab, monkeypatch):
     assert all(target["status"] == "completed" for target in result["targets"])
 
 
-async def test_all_recipients_hangup_cancels_a_blocked_producer(lab, monkeypatch):
+async def test_all_recipients_hangup_closes_delivery_consumers(lab, monkeypatch):
     owner = manager(lab, monkeypatch)
     stream = tts_fixture(monkeypatch, lab, block=True)
     result = await paging.async_announce(announce(lab, wait=False))
     await asyncio.wait_for(stream.started.wait(), 3)
+    await asyncio.wait_for(asyncio.gather(*(phone.answered.wait() for phone in lab.phones)), 3)
     for phone in lab.phones:
         phone.remote_hangup()
     async with asyncio.timeout(3):

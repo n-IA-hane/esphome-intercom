@@ -52,6 +52,10 @@ class SipInvite:
     recv_format: sdp.RtpPcmFormat
     remote_rtp_host: str
     remote_rtp_port: int
+    remote_audio_rtcp_host: str = ""
+    remote_audio_rtcp_port: int = 0
+    audio_rtcp_min_interval: float = 0
+    audio_rtcp_allowed: bool = True
     remote_audio_direction: str = "sendrecv"
     local_audio_direction: str = "sendrecv"
     remote_audio_connection_held: bool = False
@@ -205,6 +209,8 @@ class SipInitialInvite:
     max_forwards: int | None = None
     replaces: sip_transfer.SipReplaces | None = None
     codec_policy: CodecPolicy = CodecPolicy()
+    audio_rtcp_min_interval: float = 0
+    audio_rtcp_allowed: bool = True
 
     @property
     def routing_caller(self) -> str:
@@ -564,6 +570,9 @@ def _same_audio_media(previous: SipInvite, updated: SipInvite) -> bool:
         and previous.recv_format.wire_token() == updated.recv_format.wire_token()
         and previous.remote_rtp_host == updated.remote_rtp_host
         and previous.remote_rtp_port == updated.remote_rtp_port
+        and previous.remote_audio_rtcp_host == updated.remote_audio_rtcp_host
+        and previous.remote_audio_rtcp_port == updated.remote_audio_rtcp_port
+        and previous.audio_rtcp_allowed == updated.audio_rtcp_allowed
         and previous.remote_audio_direction == updated.remote_audio_direction
     )
 

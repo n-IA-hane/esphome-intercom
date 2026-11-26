@@ -15,6 +15,7 @@ from .sdp_audio_facts import (
 )
 from .sdp_document import SdpDocument
 from .sdp_parser import (
+    audio_rtcp_allowed,
     local_direction_for_offer,
     local_direction_for_remote,
     normalize_direction,
@@ -463,6 +464,7 @@ def build_answer_directional(
     if dtmf_direction is not None:
         event_formats = dtmf_direction.recv_formats or ((dtmf_direction.recv,) if dtmf_direction.recv is not None else ())
     remote_audio = parse_sdp(remote_sdp) if remote_sdp else None
+    audio_rtcp = bool(audio_rtcp and (not remote_sdp or audio_rtcp_allowed(remote_sdp)))
     if audio_direction is None:
         audio_direction = (
             local_direction_for_offer(

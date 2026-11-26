@@ -33,7 +33,7 @@ from homeassistant.helpers.selector import (
 from .config_validation import entry_route_mappings as _entry_route_mappings
 from .codec_policy_form import codec_form_fields, normalize_codec_form
 from .core.codec_capabilities import preload_codec_capabilities
-from homeassistant.data_entry_flow import Optional as visible_optional, Required as visible_required
+from homeassistant.data_entry_flow import Optional as visible_optional, Required as visible_required, section
 from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, trusted_networks
 from .config_validation import extension_conflicts, route_namespace_conflicts, mailbox_route_aliases, mailbox_namespace_conflicts
 from .phone_config import (
@@ -111,6 +111,48 @@ def _group_route_values(*values: object) -> list[str]:
 
 
 
+def _pbx_advanced_fields(existing):
+    """Keep technical policy values in one collapsed native form section."""
+    from .duration_config import initial_service_timeouts
+    from .duration_policy import SERVICE_TIMEOUT_LIMITS
+    from .sip_registration_policy import (REGISTRAR_POLICY_FIELDS, AUDIO_RTCP_MIN_INTERVAL, AUDIO_RTCP_INTERVAL_FIELD,
+        LOCAL_REDIRECT_MAX_HOPS, LOCAL_REDIRECT_HOPS_FIELD)
+    values = initial_service_timeouts(existing.get("service_timeouts"))
+    fields = {vol.Required(key, default=values[key]): NumberSelector(NumberSelectorConfig(
+        min=limits[0], max=limits[1], step=0.1, mode="box", unit_of_measurement="s"))
+        for key, limits in SERVICE_TIMEOUT_LIMITS.items()}
+    fields.update({vol.Required(key, default=existing.get(key, field.default)): NumberSelector(NumberSelectorConfig(
+        min=field.minimum, max=field.maximum, step=1, mode="box"))
+        for key, field in REGISTRAR_POLICY_FIELDS.items()})
+    field = AUDIO_RTCP_INTERVAL_FIELD
+    fields[vol.Required(AUDIO_RTCP_MIN_INTERVAL, default=existing.get(AUDIO_RTCP_MIN_INTERVAL, field.default))] = NumberSelector(
+        NumberSelectorConfig(min=field.minimum, max=field.maximum, step=1, mode="box", unit_of_measurement="s"))
+    field = LOCAL_REDIRECT_HOPS_FIELD
+    fields[vol.Required(LOCAL_REDIRECT_MAX_HOPS, default=existing.get(LOCAL_REDIRECT_MAX_HOPS, field.default))] = NumberSelector(
+        NumberSelectorConfig(min=field.minimum, max=field.maximum, step=1, mode="box"))
+    return fields
+
+
+def _apply_pbx_advanced(user_input, existing):
+    """Materialize choices at the form boundary, never in runtime readers."""
+    from .duration_config import initial_service_timeouts
+    from .sip_registration_policy import (registrar_policy_defaults, validate_registrar_policy,
+        AUDIO_RTCP_MIN_INTERVAL, AUDIO_RTCP_INTERVAL_FIELD, LOCAL_REDIRECT_MAX_HOPS, LOCAL_REDIRECT_HOPS_FIELD)
+    advanced = user_input.pop("advanced", {})
+    if not isinstance(advanced, Mapping):
+        raise ValueError("Invalid advanced settings")
+    settings = {**initial_service_timeouts(existing.get("service_timeouts")),
+                **{key: value for key, value in advanced.items() if key in initial_service_timeouts()}}
+    user_input["service_timeouts"] = initial_service_timeouts(settings)
+    policy = {**registrar_policy_defaults(), **existing, **advanced}
+    validated = validate_registrar_policy(policy)
+    user_input.update(validated)
+    user_input[AUDIO_RTCP_MIN_INTERVAL] = AUDIO_RTCP_INTERVAL_FIELD.validate(
+        advanced.get(AUDIO_RTCP_MIN_INTERVAL, existing.get(AUDIO_RTCP_MIN_INTERVAL, AUDIO_RTCP_INTERVAL_FIELD.default)))
+    user_input[LOCAL_REDIRECT_MAX_HOPS] = LOCAL_REDIRECT_HOPS_FIELD.validate(
+        advanced.get(LOCAL_REDIRECT_MAX_HOPS, existing.get(LOCAL_REDIRECT_MAX_HOPS, LOCAL_REDIRECT_HOPS_FIELD.default)))
+
+
 def _port_selector():
     return NumberSelector(NumberSelectorConfig(min=1, max=65535, step=1, mode="box"))
 
@@ -150,8 +192,10 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
         value = existing.get(key)
         return default if value in (None, "") else value
 
+    from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD
     data.update(
         {
+            TRUNK_OPTIONS_INTERVAL: TRUNK_OPTIONS_FIELD.validate(existing.get(TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD.default)),
             **normalized_outbound_identity_config(existing),
             "trunk_inbound_account": existing.get("trunk_inbound_account", ""),
             "trunk_outbound_media_address": existing.get("trunk_outbound_media_address", ""),
@@ -213,6 +257,14 @@ class TrunkFormMixin:
         await self.hass.async_add_executor_job(preload_codec_capabilities)
         _current_entry, existing = self._current_entry_data()
         target_choices, target_default = _trunk_target_choices(self.hass, _current_entry, existing)
+        from .trunk_destination_selector import trunk_destination_projection, trunk_destination_value
+        if CONF_TRUNK_INBOUND_DEFAULT_TARGET not in existing:
+            from .runtime_data import preferred_browser_phone, runtime_data
+            preferred = preferred_browser_phone(self.hass) if runtime_data(self.hass) is not None else None
+            if preferred is not None:
+                target_default = preferred.username or preferred.extension or preferred.name
+        target_choices, target_references = trunk_destination_projection(
+            self.hass, _current_entry, target_choices, target_default)
         register = getattr(
             self, "_trunk_register", existing.get(CONF_TRUNK_REGISTER, True)
         )
@@ -231,8 +283,14 @@ class TrunkFormMixin:
                 CONF_AUTOMATION_ROUTING_ENABLED, False
             ),
         }
+        from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD
         schema = vol.Schema(
             {
+                vol.Optional("advanced"): section(vol.Schema({
+                    vol.Required(TRUNK_OPTIONS_INTERVAL, default=existing.get(TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD.default)):
+                        NumberSelector(NumberSelectorConfig(min=TRUNK_OPTIONS_FIELD.minimum,
+                            max=TRUNK_OPTIONS_FIELD.maximum, step=1, mode="box", unit_of_measurement="s")),
+                }), {"collapsed": True}),
                 **did_form_fields(existing),
                 vol.Optional("trunk_media_nat", default=existing.get("trunk_media_nat") or (
                     "manual" if existing.get("trunk_outbound_media_address") else "auto"
@@ -309,6 +367,19 @@ class TrunkFormMixin:
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input = dict(user_input)
+            advanced = user_input.pop("advanced", {})
+            try:
+                user_input[TRUNK_OPTIONS_INTERVAL] = TRUNK_OPTIONS_FIELD.validate(
+                    advanced.get(TRUNK_OPTIONS_INTERVAL, user_input.get(TRUNK_OPTIONS_INTERVAL,
+                        existing.get(TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD.default))))
+            except (ValueError, TypeError, AttributeError):
+                errors["advanced"] = "advanced_policy_invalid"
+            try:
+                user_input[CONF_TRUNK_INBOUND_DEFAULT_TARGET] = trunk_destination_value(
+                    user_input.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, existing.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "")),
+                    target_references)
+            except ValueError:
+                errors[CONF_TRUNK_INBOUND_DEFAULT_TARGET] = "trunk_destination_invalid"
             errors.update(validate_did_form(user_input, existing))
             errors.update(validate_trunk_identity_form(
                 user_input, existing, _current_entry, trunk_id=getattr(self, "_identity", ""),
@@ -405,7 +476,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
     VERSION = 7
-    MINOR_VERSION = 6
+    MINOR_VERSION = 7
     _base_input: dict | None = None
 
     @classmethod
@@ -452,6 +523,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 data[feature] = settings
         if current_entry is None or current_entry.version >= 6:
             data.pop(CONF_PHONEBOOK_CONTACTS, None)
+        from .duration_config import initialize_duration_config
+        data = initialize_duration_config(data)
         if current_entry is not None:
             # Phone permissions are managed by their action, not this wizard.
             # Read the current entry so an action run while the form was open
@@ -469,7 +542,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                     if registrar_choice is not None and CONF_REGISTRAR_ENABLED in current_entry.options else {})},
                 reason="reconfigure_successful",
             )
-        return self.async_create_entry(title="VoIP Stack", data=data)
+        from .duration_config import initialize_duration_config
+        return self.async_create_entry(title="VoIP Stack", data=initialize_duration_config(data))
 
     async def async_step_reconfigure(self, user_input=None):
         """Reconfigure the existing VoIP Stack entry from HA's native menu."""
@@ -694,11 +768,17 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, default=defaults[CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES]): NumberSelector(
                     NumberSelectorConfig(min=60, max=3600, step=1, mode="box", unit_of_measurement="s")),
                 **codec_form_fields(existing),
+                vol.Optional("advanced"): section(vol.Schema(_pbx_advanced_fields(existing)), {"collapsed": True}),
             }
         )
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            user_input = dict(user_input)
+            try:
+                _apply_pbx_advanced(user_input, existing)
+            except (ValueError, TypeError, OverflowError):
+                errors["advanced"] = "advanced_policy_invalid"
             from .ringing_policy import validate_ringing_timeout
             try:
                 user_input["default_ringing_timeout"] = validate_ringing_timeout(
@@ -1222,6 +1302,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         voicemail = dict(current.get("voicemail", {}))
         if "voicemail_enabled" in user_input:
             voicemail["enabled"] = bool(user_input["voicemail_enabled"])
+        if voicemail:
+            from .mailbox_config import initial_mailbox_settings
+            voicemail = initial_mailbox_settings(voicemail)
         name = str(values.get(CONF_PHONE_NAME) or "").strip()
         extension = str(values.get(CONF_PHONE_EXTENSION) or "").strip()
         username = ""

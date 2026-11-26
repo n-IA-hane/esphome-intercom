@@ -824,7 +824,7 @@ def account_identity_migration_plan(hass, entry, *, account_updates=None, stored
             legacy_memberships[username] = fields
     if data.get(GROUP_MEMBERSHIP_VERSION) == 1 and legacy_memberships:
         prospective = SimpleNamespace(data=data, options=options, subentries=final_rows, runtime_data=None)
-        group_creations, group_updates = _membership_update_plan(hass, prospective, legacy_memberships, reconcile=False)
+        group_creations, group_updates = _membership_update_plan(hass, prospective, legacy_memberships, reconcile=False, legacy_policy=True)
         for group in group_creations:
             row = ConfigSubentry(subentry_type='group', title=group['name'], unique_id='group:' + group['group_id'], data=group)
             final_rows[row.subentry_id] = row

@@ -18,6 +18,7 @@ class RtpAudioHandoff:
     ready_tx: tuple = ()
     transferred: bool = False
     transport: object = None
+    rtcp: object = None
 
     def retarget_receiver(self, output_pcm):
         """Move queued decoded frames before the receiver's partial native frame."""

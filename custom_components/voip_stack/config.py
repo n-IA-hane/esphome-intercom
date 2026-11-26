@@ -54,7 +54,14 @@ def entry_assist_config(entry: ConfigEntry | None = None) -> dict:
 
 def entry_transport_config(entry: ConfigEntry | None = None) -> dict:
     data = entry.data if entry is not None else {}
+    from .sip_registration_policy import (validate_registrar_policy, AUDIO_RTCP_MIN_INTERVAL, AUDIO_RTCP_INTERVAL_FIELD,
+        LOCAL_REDIRECT_MAX_HOPS, LOCAL_REDIRECT_HOPS_FIELD)
+    policy = validate_registrar_policy(data) if entry is not None else {}
+    if entry is not None:
+        policy[AUDIO_RTCP_MIN_INTERVAL] = AUDIO_RTCP_INTERVAL_FIELD.validate(data[AUDIO_RTCP_MIN_INTERVAL])
+        policy[LOCAL_REDIRECT_MAX_HOPS] = LOCAL_REDIRECT_HOPS_FIELD.validate(data[LOCAL_REDIRECT_MAX_HOPS])
     return {
+        **policy,
         EXTERNAL_CALL_BLOCKED_ENDPOINTS: tuple(data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())),
         CONF_REGISTRAR_ENABLED: bool(data.get(CONF_REGISTRAR_ENABLED, False)),
         "default_ringing_timeout": data.get("default_ringing_timeout"),
@@ -82,7 +89,11 @@ def normalized_trunk_config(data) -> dict:
     codecs = {key: list(normalize_codec_rows(data[key], supported))
               for key, supported in (("trunk_audio_codecs", AUDIO_CODECS), ("trunk_video_codecs", VIDEO_CODECS))
               if data.get(key) is not None}
+    from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD
+    options = ({TRUNK_OPTIONS_INTERVAL: TRUNK_OPTIONS_FIELD.validate(data[TRUNK_OPTIONS_INTERVAL])}
+               if TRUNK_OPTIONS_INTERVAL in data else {})
     return {
+        **options,
         **normalized_did_config(data),
         **normalized_outbound_identity_config(data),
         "trunk_inbound_account": identity_text(data.get("trunk_inbound_account", ""), "inbound account"),

@@ -400,7 +400,7 @@ async def async_commit_outbound_bridge(
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+                audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                 video_port=(
                     relay.video_relay.left_port
                     if relay.video_relay is not None

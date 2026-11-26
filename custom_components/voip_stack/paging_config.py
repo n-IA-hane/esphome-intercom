@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from .duration_policy import validate_duration
 from .roster import RosterEntry
 from .ringing_policy import validate_ringing_timeout
 
@@ -19,9 +20,7 @@ def normalize_paging_group(data, *, identity=""):
     if len(members) > MAX_PAGING_TARGETS:
         raise ValueError("Select at most sixteen paging phones")
     answer_timeout = validate_ringing_timeout(data.get("answer_timeout"), inherit=True)
-    timeout = float(data.get("timeout", 120))
-    if not 1 <= timeout <= 600:
-        raise ValueError("Paging timeouts exceed the supported limits")
+    timeout = validate_duration(data.get("timeout"), "announcement_timeout")
     return {"paging_group_id": str(identity or data.get("paging_group_id") or uuid4().hex),
             "name": name, "extension": extension, "members": list(members),
             "answer_timeout": answer_timeout, "timeout": timeout,

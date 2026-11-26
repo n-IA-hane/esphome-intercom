@@ -35,6 +35,52 @@
           "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
           "max_dialog_subscription_expires": "Maximum dialog/BLF lease, from 60 to 3600 seconds. The initial value remains 60. Longer leases reduce periodic renewals; state changes still notify immediately. A shorter phone request is honored. SIP registration expiry is separate."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced settings",
+            "data": {
+              "contact_step_timeout": "SIP Contact priority step",
+              "media_timeout": "Audio playback and speech",
+              "dtmf_timeout": "Wait for keypad input",
+              "automation_timeout": "Automation inactivity",
+              "announcement_timeout": "Whole announcement",
+              "unanswered_wait": "Wait without answering",
+              "transcription_timeout": "Voicemail transcription",
+              "recording_timeout": "Call recording",
+              "ivr_digit_timeout": "Voicemail command wait",
+              "ivr_interdigit_timeout": "Voicemail digit interval",
+              "ivr_prompt_timeout": "Voicemail spoken prompt",
+              "voicemail_menu_setup_timeout": "Voicemail menu preparation",
+              "voicemail_greeting_timeout": "Voicemail preparation and greeting",
+              "conference_sip_ringing_timeout": "Conference SIP member ringing",
+              "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
+              "registrar_auth_failure_window": "Authentication observation window (seconds)",
+              "registrar_auth_block_duration": "Authentication block duration (seconds)",
+              "registrar_min_expires": "Minimum registration lifetime (seconds)",
+              "registrar_max_expires": "Maximum registration lifetime (seconds)",
+              "registrar_contact_limit": "Maximum registered Contacts per account",
+              "audio_rtcp_min_interval": "Minimum audio RTCP interval",
+              "local_redirect_max_hops": "Maximum local redirect hops"
+            },
+            "data_description": {
+              "contact_step_timeout": "Time given to each SIP registration priority before trying the next. The overall ringing limit still applies.",
+              "media_timeout": "Maximum time for one playback or speech action when its timeout is omitted.",
+              "dtmf_timeout": "Total input window for Automation Wait for keypad input when its timeout is omitted. Receiving a digit does not restart the window.",
+              "automation_timeout": "Initial inactivity time for new Automation contacts and calls adopted by an automation. Existing contacts retain their saved value.",
+              "announcement_timeout": "Whole-job limit for an announcement action that omits its timeout, including preparation and delivery.",
+              "unanswered_wait": "Time to keep an Automation call unanswered when the action omits its duration.",
+              "transcription_timeout": "Maximum time for a transcription action that omits its timeout.",
+              "recording_timeout": "Maximum recording duration when the action omits its limit.",
+              "ivr_digit_timeout": "Time to wait for the next command after a mailbox prompt.",
+              "ivr_interdigit_timeout": "Wait for each digit while entering a mailbox number, PIN or message number; restarts after each digit. Applies only to voicemail menus. Automation Wait for keypad input uses its own total timeout.",
+              "ivr_prompt_timeout": "Maximum time for each spoken menu prompt, including speech generation and transmission.",
+              "voicemail_menu_setup_timeout": "Maximum time to answer and prepare media before the mailbox menu starts.",
+              "voicemail_greeting_timeout": "Maximum time to answer, prepare media and play the greeting before recording a voicemail message.",
+              "conference_sip_ringing_timeout": "0 removes the member answer deadline; SIP protocol timers remain active.",
+              "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected."
+            }
+          }
         }
       },
       "video": {
@@ -118,6 +164,17 @@
           "trunk_caller_id": "Generic number used only when the trunk identity is selected. Empty uses the trunk username. Does not change authentication or the called number.",
           "trunk_caller_name": "Generic display name used with the trunk identity. Empty uses its caller number.",
           "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced settings",
+            "data": {
+              "trunk_options_interval": "OPTIONS interval (seconds)"
+            },
+            "data_description": {
+              "trunk_options_interval": "0 disables periodic OPTIONS probes."
+            }
+          }
         }
       },
       "trunk_mode": {
@@ -404,7 +461,10 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Choose a supported caller policy and a number or SIP username without an address or control characters.",
       "trunk_inbound_account_invalid": "Select an existing enabled local SIP account.",
-      "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk."
+      "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk.",
+      "duration_invalid": "Enter a duration within the displayed range.",
+      "trunk_destination_invalid": "Select a current VoIP Stack destination.",
+      "advanced_policy_invalid": "Correct the advanced policy values."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",
@@ -671,6 +731,17 @@
             "trunk_caller_id": "Generic number used only when the trunk identity is selected. Empty uses the trunk username. Does not change authentication or the called number.",
             "trunk_caller_name": "Generic display name used with the trunk identity. Empty uses its caller number.",
             "trunk_inbound_account": "Optional existing enabled local account used by a remote PBX to authenticate incoming INVITEs. Its credentials authorize that peer to present its calling extensions. A bound peer must prove Digest; source IP trust does not bypass it. One enabled trunk per account."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Advanced settings",
+              "data": {
+                "trunk_options_interval": "OPTIONS interval (seconds)"
+              },
+              "data_description": {
+                "trunk_options_interval": "0 disables periodic OPTIONS probes."
+              }
+            }
           }
         }
       },
@@ -692,7 +763,9 @@
         "trunk_did_invalid": "Invalid called-number source or prefix rules.",
         "trunk_caller_id_invalid": "Choose a supported caller policy and a number or SIP username without an address or control characters.",
         "trunk_inbound_account_invalid": "Select an existing enabled local SIP account.",
-        "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk."
+        "trunk_inbound_account_in_use": "This account is already bound to another enabled trunk.",
+        "advanced_policy_invalid": "Correct the advanced policy values.",
+        "trunk_destination_invalid": "Select a current VoIP Stack destination."
       },
       "abort": {
         "reconfigure_successful": "Trunk configuration updated."
@@ -1414,6 +1487,69 @@
     "trunk_dtmf_retired": {
       "title": "Automatic trunk extension collection was removed",
       "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
+    },
+    "duration_configuration_invalid": {
+      "title": "PBX duration configuration needs attention",
+      "description": "The duration migration could not complete: {error}. Open this repair to correct invalid saved durations, even while the PBX is not loaded, then retry the migration. Valid values and unrelated settings are preserved. Structural configuration errors are reported here but cannot be edited in this repair.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Select the item to repair",
+            "description": "Choose the configuration item with invalid saved durations. You can correct it here while the PBX is not loaded. Values are never silently shortened or replaced.",
+            "data": {
+              "owner": "Configuration item"
+            }
+          },
+          "edit_durations": {
+            "title": "Correct saved durations",
+            "description": "{owner}\n\n{error}\n\nEnter valid durations in seconds. Only the selected item's duration fields are changed; other settings are preserved. After all invalid items are corrected, retry the migration.",
+            "sections": {
+              "advanced": {
+                "name": "Advanced settings",
+                "data": {
+                  "contact_step_timeout": "SIP Contact priority step",
+                  "media_timeout": "Audio playback and speech",
+                  "dtmf_timeout": "Wait for keypad input",
+                  "automation_timeout": "Automation inactivity",
+                  "announcement_timeout": "Whole announcement",
+                  "unanswered_wait": "Wait without answering",
+                  "transcription_timeout": "Voicemail transcription",
+                  "recording_timeout": "Call recording",
+                  "ivr_digit_timeout": "Voicemail command wait",
+                  "ivr_interdigit_timeout": "Voicemail digit interval",
+                  "ivr_prompt_timeout": "Voicemail spoken prompt",
+                  "voicemail_menu_setup_timeout": "Voicemail menu preparation",
+                  "voicemail_greeting_timeout": "Voicemail preparation and greeting",
+                  "conference_sip_ringing_timeout": "Conference SIP member ringing",
+                  "timeout": "Duration",
+                  "return_timeout": "Parking return ringing",
+                  "step_timeout": "Group step",
+                  "overall_timeout": "Whole group ringing",
+                  "ring_timeout": "Member ringing",
+                  "nested_step_timeout": "Nested group step",
+                  "nested_overall_timeout": "Nested whole group ringing",
+                  "nested_ring_timeout": "Nested member ringing",
+                  "max_wait": "Maximum queue wait",
+                  "no_agent_wait": "Wait without agents",
+                  "retry_delay": "Queue retry delay",
+                  "wrap_up": "Agent wrap-up",
+                  "max_seconds": "Recording limit",
+                  "answer_timeout": "Answer wait"
+                }
+              }
+            }
+          },
+          "confirm": {
+            "title": "Retry the migration",
+            "description": "{error}\n\nRetry the normal migration with the saved configuration. Invalid durations can be corrected in this repair. Other structural errors must be resolved before retrying; this repair cannot edit them."
+          }
+        },
+        "error": {
+          "invalid_duration": "One or more durations are invalid. Correct the values indicated above.",
+          "configuration_changed": "The configuration changed while this repair was open. Review the current item and values before saving again.",
+          "migration_retry_failed": "The migration remains blocked. Review the reported cause before retrying."
+        }
+      }
     }
   },
   "exceptions": {
@@ -1829,6 +1965,14 @@
         "destination_range_end": {
           "name": "Last destination number in range",
           "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_device": {
+          "name": "Automation contact device",
+          "description": "Choose an existing Automation contact. Use one destination filter; actions control the same call."
+        },
+        "destination_entity": {
+          "name": "Automation contact call event",
+          "description": "Select the Automation contact call event entity instead of a destination device or name."
         }
       }
     },
@@ -3345,6 +3489,10 @@
         "device_id": {
           "name": "Phone for manual execution",
           "description": "Select the phone with the automation call when testing this action without a VoIP trigger."
+        },
+        "inter_digit_timeout": {
+          "name": "Time between digits",
+          "description": "Optional seconds to wait after each digit. A gap returns the digits collected so far with timeout status. The total wait limit still applies."
         }
       },
       "sections": {

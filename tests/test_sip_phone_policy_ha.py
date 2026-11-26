@@ -884,7 +884,9 @@ async def test_noanswer_policy_tracks_destination_leg_of_answered_caller(
             "parking": {
                 "enabled": True,
                 "timeout": 1,
-                "return_timeout": 10,
+                # Inherit the destination account's one-second budget.
+                # An explicit parking return duration overrides that account.
+                "return_timeout": None,
                 "return_destination": "transfer_b",
             },
         },

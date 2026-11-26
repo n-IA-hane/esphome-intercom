@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .dial_fork import (
@@ -52,6 +52,60 @@ def account_offer_outcome(results: list[str], *, pending: bool) -> str:
     return terminal_reason(outcome.disposition, "transport_unreachable")
 
 
+def build_offer_candidates(
+    *,
+    attempts: list[OutboundLeg],
+    browser_legs: list[BrowserLeg],
+    preflight_failures: list[PreflightFailure],
+    dial_sip: Callable[[OutboundLeg], Awaitable[DialOutcome]],
+    close_sip: Callable[[OutboundLeg, LegCloseMode], Awaitable[None]],
+    browser_candidate: Callable[[BrowserLeg], DialCandidate | None] | None = None,
+    before_close_sip: Callable[[OutboundLeg, LegCloseMode], None] | None = None,
+) -> tuple[list[DialCandidate], dict[str, ForkPayload]]:
+    """Adapt admitted account branches once; callers select first or all answers.
+
+    Transport callbacks own signaling and media preparation. Source routing and
+    pickup controls are added only by the ordinary-call adapter, never paging.
+    """
+    candidates: list[DialCandidate] = []
+    payloads: dict[str, ForkPayload] = {}
+    for candidate_id, endpoint_id, disposition, tier, order in preflight_failures:
+        async def dial_preflight(result=disposition):
+            return DialOutcome(result)
+
+        async def close_preflight(_mode):
+            return None
+
+        candidates.append(DialCandidate(candidate_id, dial_preflight, close_preflight,
+            tier=tier, order=order, endpoint_id=endpoint_id))
+
+    for attempt in attempts:
+        candidate_id = attempt.candidate_id or f"sip:{attempt.client.dialog_ids.call_id}"
+        payloads[candidate_id] = attempt
+
+        async def dial(outbound=attempt):
+            return await dial_sip(outbound)
+
+        async def close(mode, outbound=attempt):
+            await close_sip(outbound, mode)
+
+        def prepare_close(mode, outbound=attempt):
+            if before_close_sip is not None:
+                before_close_sip(outbound, mode)
+
+        candidates.append(DialCandidate(candidate_id, dial, close,
+            tier=attempt.tier, order=attempt.order, endpoint_id=attempt.endpoint_id,
+            before_close=prepare_close if before_close_sip is not None else None))
+
+    if browser_candidate is not None:
+        for leg in browser_legs:
+            candidate = browser_candidate(leg)
+            if candidate is not None:
+                candidates.append(candidate)
+                payloads[candidate.candidate_id] = leg
+    return candidates, payloads
+
+
 def build_ring_group_fork(
     *,
     sip_port: int,
@@ -62,6 +116,7 @@ def build_ring_group_fork(
     on_ringing: Callable[[], None] | None = None,
     on_leg_state: Callable[[OutboundLeg, str], None] | None = None,
     ring_timeout: float | None = None,
+    follow_redirect: Callable[..., Awaitable[DialOutcome]] | None = None,
 ) -> tuple[
     list[DialCandidate],
     dict[str, ForkPayload],
@@ -118,100 +173,75 @@ def build_ring_group_fork(
             "browser": True,
         }
 
-    fork_candidates: list[DialCandidate] = []
-    for candidate_id, endpoint_id, disposition, tier, order in preflight_failures:
-
-        async def _dial_preflight(
-            result: DialDisposition = disposition,
-        ) -> DialOutcome:
-            return DialOutcome(result)
-
-        async def _close_preflight(_mode: LegCloseMode) -> None:
-            return None
-
-        fork_candidates.append(
-            DialCandidate(
-                candidate_id,
-                _dial_preflight,
-                _close_preflight,
-                tier=tier,
-                order=order,
-                endpoint_id=endpoint_id,
-            )
+    async def _dial_sip(
+        outbound: OutboundLeg,
+    ) -> DialOutcome:
+        nonlocal ringing_published
+        if outbound.redirect_pending and follow_redirect is not None:
+            outbound.redirect_pending = False
+            redirected = await follow_redirect(outbound, _dial_sip)
+            if redirected is not None:
+                return redirected
+            return _outcome("sip_302", sip_status=302)
+        client = outbound.client
+        uri = outbound.uri
+        if on_leg_state is not None:
+            on_leg_state(outbound, "calling")
+        result = await client.invite(
+            target=uri.user or outbound.member,
+            target_display_name=outbound.member,
+            remote_host=uri.host,
+            remote_sip_port=sip_default_port(uri),
+            request_uri=str(uri),
+            timeout=8.0 if ring_timeout is None else min(8.0, ring_timeout),
         )
-
-    for attempt in attempts:
-        candidate_id = attempt.candidate_id or (
-            f"sip:{attempt.client.dialog_ids.call_id}"
-        )
-        candidate_payloads[candidate_id] = attempt
-
-        async def _dial_sip(
-            outbound: OutboundLeg = attempt,
-        ) -> DialOutcome:
-            nonlocal ringing_published
-            client = outbound.client
-            uri = outbound.uri
+        if result == "ringing":
             if on_leg_state is not None:
-                on_leg_state(outbound, "calling")
-            result = await client.invite(
-                target=uri.user or outbound.member,
-                target_display_name=outbound.member,
-                remote_host=uri.host,
-                remote_sip_port=sip_default_port(uri),
-                request_uri=str(uri),
-                timeout=8.0 if ring_timeout is None else min(8.0, ring_timeout),
+                on_leg_state(outbound, "remote_ringing")
+            if on_ringing is not None and not ringing_published:
+                ringing_published = True
+                on_ringing()
+            result = await client.wait_for_final(
+                timeout=ring_timeout
             )
-            if result == "ringing":
-                if on_leg_state is not None:
-                    on_leg_state(outbound, "remote_ringing")
-                if on_ringing is not None and not ringing_published:
-                    ringing_published = True
-                    on_ringing()
-                result = await client.wait_for_final(
-                    timeout=ring_timeout
-                )
-            if result == "in_call" and client.dialog is None:
-                return DialOutcome(
-                    DialDisposition.PROTOCOL_ERROR,
-                    500,
-                    "protocol_error",
-                )
+        if result == "in_call" and client.dialog is None:
+            return DialOutcome(
+                DialDisposition.PROTOCOL_ERROR,
+                500,
+                "protocol_error",
+            )
+        if on_leg_state is not None:
+            on_leg_state(outbound, result)
+        if client.last_sip_status_code == 302 and follow_redirect is not None:
+            redirected = await follow_redirect(outbound, _dial_sip)
+            if redirected is not None:
+                return redirected
+        return _outcome(result, sip_status=client.last_sip_status_code,
+                        response_reason=getattr(client, "last_sip_reason", ""))
+
+    async def _close_sip(
+        outbound: OutboundLeg,
+        mode: LegCloseMode,
+    ) -> None:
+        if mode is LegCloseMode.ANSWERED_ELSEWHERE:
+            outbound.client.cancel_reason = "answered_elsewhere"
+        try:
+            await async_close_outbound_leg(
+                outbound, bye_or_cancel=mode in {LegCloseMode.CANCEL_OR_BYE, LegCloseMode.BYE,
+                                               LegCloseMode.ANSWERED_ELSEWHERE},
+            )
+        finally:
             if on_leg_state is not None:
-                on_leg_state(outbound, result)
-            return _outcome(result, sip_status=client.last_sip_status_code,
-                            response_reason=getattr(client, "last_sip_reason", ""))
+                on_leg_state(outbound, "closed")
 
-        async def _close_sip(
-            mode: LegCloseMode,
-            outbound: OutboundLeg = attempt,
-        ) -> None:
-            if mode is LegCloseMode.ANSWERED_ELSEWHERE:
-                outbound.client.cancel_reason = "answered_elsewhere"
-            try:
-                await async_close_outbound_leg(
-                    outbound, bye_or_cancel=mode in {LegCloseMode.CANCEL_OR_BYE, LegCloseMode.BYE,
-                                                   LegCloseMode.ANSWERED_ELSEWHERE},
-                )
-            finally:
-                if on_leg_state is not None:
-                    on_leg_state(outbound, "closed")
+    def _prepare_close(outbound: OutboundLeg, mode: LegCloseMode) -> None:
+        if mode is LegCloseMode.ANSWERED_ELSEWHERE:
+            outbound.client.cancel_reason = "answered_elsewhere"
 
-        def _prepare_close(mode: LegCloseMode, outbound: OutboundLeg = attempt) -> None:
-            if mode is LegCloseMode.ANSWERED_ELSEWHERE:
-                outbound.client.cancel_reason = "answered_elsewhere"
-
-        fork_candidates.append(
-            DialCandidate(
-                candidate_id,
-                _dial_sip,
-                _close_sip,
-                tier=attempt.tier,
-                order=attempt.order,
-                endpoint_id=attempt.endpoint_id,
-                before_close=_prepare_close,
-            )
-        )
+    fork_candidates, candidate_payloads = build_offer_candidates(
+        attempts=attempts, browser_legs=browser_legs, preflight_failures=preflight_failures,
+        dial_sip=_dial_sip, close_sip=_close_sip, before_close_sip=_prepare_close,
+    )
 
     control_tier = min(
         (candidate.tier for candidate in fork_candidates),

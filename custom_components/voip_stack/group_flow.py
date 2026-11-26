@@ -8,7 +8,9 @@ from homeassistant.helpers.selector import (
 )
 
 from .endpoint_device import selection_device_picker, selection_device_refs
-from .group_config import group_members, normalize_group_data, validate_group_namespace
+from .group_config import (
+    INITIAL_RING_STEP_TIMEOUT, group_members, normalize_group_data, validate_group_namespace,
+)
 from .phone_queue_membership import iter_phone_memberships
 
 
@@ -172,7 +174,7 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
         if self._kind == "ring":
             fields[vol.Required("strategy", default=values.get("strategy", "parallel"))] = SelectSelector({
                 "options": ["parallel", "sequential"], "translation_key": "ring_strategy"})
-            for key, default, maximum in (("step_timeout", 15, 3600),):
+            for key, default, maximum in (("step_timeout", INITIAL_RING_STEP_TIMEOUT, 3600),):
                 fields[vol.Required(key, default=values.get(key, default))] = NumberSelector({
                     "min": 0.1, "max": maximum, "step": 0.1, "unit_of_measurement": "s", "mode": "box"})
             fields[vol.Optional("fallback", default=values.get("fallback", ""))] = SelectSelector({

@@ -192,7 +192,7 @@ class LocalCallApplication:
                 self.invite.send_format,
                 self.invite.recv_format,
                 recv_formats=self.invite.recv_formats, send_formats=self.invite.send_formats,
-                remote_sdp=self.invite.remote_sdp, dtmf_direction=getattr(self.invite, "dtmf_direction", None),
+                audio_rtcp=self.invite.audio_rtcp_min_interval > 0, remote_sdp=self.invite.remote_sdp, dtmf_direction=getattr(self.invite, "dtmf_direction", None),
             )
             result = await async_commit_runtime_answer(
                 registry,

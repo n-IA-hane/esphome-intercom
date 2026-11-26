@@ -42,6 +42,7 @@ from .core.sdp import RtpDtmfFormat, RtpPcmFormat, audio_format_to_rtp
 from .session_cleanup import async_wait_for_cleanup
 from .core.rtp_payload import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
+from .audio_rtcp import AudioRtcpSession
 
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 8
@@ -185,6 +186,10 @@ class RtpPeer:
     outbound_rtp_formats: tuple[RtpPcmFormat, ...] = ()
     match_received_codec: bool = False
     clock_rate: int = 0
+    rtcp_host: str = ""
+    rtcp_port: int = 0
+    rtcp_minimum_interval: float = 0
+    audio_rtcp_allowed: bool = True
 
     def __post_init__(self) -> None:
         if not self.advertised_host:
@@ -371,6 +376,11 @@ class SipRtpRelay:
                 if destination_release is not None:
                     destination_release(destination_ports)
         result._on_release = merged_release if merge_reservations is not None else release
+        for previous, old_side, next_side in ((source, source_side, "left"), (destination, destination_side, "right")):
+            rtcp_owner = previous.audio_rtcp.pop(old_side, None)
+            if rtcp_owner is not None:
+                result.audio_rtcp[next_side] = rtcp_owner
+                rtcp_owner.set_reporting_allowed(getattr(result, next_side).audio_rtcp_allowed)
         source._on_release = destination._on_release = None
         setattr(source, f"{source_side}_transport", None)
         setattr(destination, f"{destination_side}_transport", None)
@@ -407,6 +417,9 @@ class SipRtpRelay:
         self.left_transport: asyncio.DatagramTransport | None = None
         self.right_transport: asyncio.DatagramTransport | None = None
         self._audio_sockets: tuple[socket.socket, ...] | None = None
+        self.audio_rtcp: dict[str, AudioRtcpSession] = {}
+        self._audio_rtcp_start_tasks = set()
+        self._pending_audio_rtcp_socket = None
         self._on_release = on_release
         self.on_dtmf = on_dtmf
         self.on_dtmf_fallback = on_dtmf_fallback
@@ -511,7 +524,7 @@ class SipRtpRelay:
             previous = getattr(self, left)
             setattr(self, left, getattr(self, right))
             setattr(self, right, previous)
-        for mapping in (self._receive_states, self._dtmf_decoders, self._dtmf_locks,
+        for mapping in (self.audio_rtcp, self._receive_states, self._dtmf_decoders, self._dtmf_locks,
                         self._cn_generations, self._capture_buffers, self._capture_paths,
                         self._capture_formats, self._capture_frames, self._capture_snapshot):
             has_left, has_right = "left" in mapping, "right" in mapping
@@ -718,6 +731,9 @@ class SipRtpRelay:
         """Prepare all PCM conversion before acquiring the retained live source."""
         if side not in {"left", "right"} or self._stop_requested:
             raise RuntimeError("The RTP source cannot be adopted by this relay")
+        retained_rtcp = getattr(state, "rtcp", None)
+        if retained_rtcp is not None and (current_rtcp := self.audio_rtcp.get(side)) is not None and current_rtcp is not retained_rtcp:
+            raise RuntimeError("The retained RTP leg has a different RTCP owner")
         opposite = "right" if side == "left" else "left"
         peer = getattr(self, side)
         other_receiver = getattr(self, f"{opposite}_decoder")
@@ -756,6 +772,9 @@ class SipRtpRelay:
                 state.sender.timestamp, state.sender.ssrc)
             peer.clock_rate = state.sender.clock_rate or state.encoder.fmt.rtp_clock_rate
             peer.host, peer.port, peer.rx_ssrc = state.remote_host, state.remote_port, state.receiver.source_ssrc
+            if retained_rtcp is not None:
+                self.audio_rtcp[side] = retained_rtcp
+                retained_rtcp.set_reporting_allowed(peer.audio_rtcp_allowed)
             self._bind_receive_callbacks()
             for frame in ready_tx:
                 fmt = state.encoder.fmt
@@ -843,6 +862,15 @@ class SipRtpRelay:
             peer.dtmf_sequence = current.dtmf_sequence
             peer.dtmf_timestamp = current.dtmf_timestamp
             peer.dtmf_ssrc = current.dtmf_ssrc
+            if (rtcp_owner := self.audio_rtcp.get(side)) is not None:
+                rtcp_owner.remote_host = peer.rtcp_host or peer.host
+                rtcp_owner.remote_port = peer.rtcp_port or peer.port + 1
+                rtcp_owner.minimum_interval = peer.rtcp_minimum_interval
+                rtcp_owner.set_reporting_allowed(peer.audio_rtcp_allowed)
+            elif peer.audio_rtcp_allowed and self.left_transport is not None and self.right_transport is not None:
+                task = asyncio.create_task(self.async_start_audio_rtcp(side), name="voip-relay-enable-rtcp")
+                self._audio_rtcp_start_tasks.add(task)
+                task.add_done_callback(self._audio_rtcp_start_tasks.discard)
             if prepared_contract == self._media_codec_contract(self.left, self.right):
                 receiver = getattr(self, f"{side}_decoder")
                 if receiver is not None:
@@ -969,9 +997,9 @@ class SipRtpRelay:
         if any(sock.fileno() < 0 for sock in combined):
             raise ValueError("RTP sockets do not match the relay reservation")
         ports = [int(sock.getsockname()[1]) for sock in combined]
-        if (not sockets or len(combined) > 2 or len(set(ports)) != len(ports)
+        if (not sockets or len(combined) > 4 or len(set(ports)) != len(ports)
                 or len({sock.fileno() for sock in combined}) != len(combined)
-                or any(sock.fileno() < 0 or port not in (self.left_port, self.right_port)
+                or any(sock.fileno() < 0 or port not in (self.left_port, self.left_port + 1, self.right_port, self.right_port + 1)
                        or sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_DGRAM
                        for sock, port in zip(combined, ports, strict=True))):
             raise ValueError("RTP sockets do not match the relay reservation")
@@ -1001,6 +1029,7 @@ class SipRtpRelay:
         loop = asyncio.get_running_loop()
         left_sock: socket.socket | None = None
         right_sock: socket.socket | None = None
+        by_port = {}
         try:
             sockets, self._audio_sockets = self._audio_sockets or (), None
             by_port = {int(sock.getsockname()[1]): sock for sock in sockets}
@@ -1028,6 +1057,9 @@ class SipRtpRelay:
                 raise asyncio.CancelledError
             self.right_transport = right_transport
             right_sock = None
+            for side in ("left", "right"):
+                await self.async_start_audio_rtcp(side,
+                    sock=by_port.get(getattr(self, f"{side}_port") + 1))
             # Both destinations exist before either queued RTP packet is read.
             self.left_transport.resume_reading()
             self.right_transport.resume_reading()
@@ -1036,7 +1068,14 @@ class SipRtpRelay:
             if self._stop_requested:
                 raise asyncio.CancelledError
         except BaseException:
+            owners, self.audio_rtcp = self.audio_rtcp, {}
+            rtcp_tasks = [task for owner in owners.values() if owner.close_with_media and (task := owner.begin_close()) is not None]
             self._close_audio_resources()
+            for port, unused_socket in by_port.items():
+                if port in (self.left_port + 1, self.right_port + 1):
+                    unused_socket.close()
+            if rtcp_tasks:
+                await asyncio.gather(*rtcp_tasks, return_exceptions=True)
             if left_sock is not None:
                 left_sock.close()
             if right_sock is not None:
@@ -1062,6 +1101,32 @@ class SipRtpRelay:
             self.right.audio_format.wire_token(),
             self.left.outbound_audio_format.wire_token(),
         )
+
+    async def async_start_audio_rtcp(self, side: str, *, sock=None) -> None:
+        """Bind the paired control port with this exact retained or new RTP leg."""
+        if self._stop_requested:
+            if sock is not None:
+                sock.close()
+            return
+        if side not in {"left", "right"}:
+            raise ValueError("Invalid RTP leg")
+        if side in self.audio_rtcp:
+            if sock is not None:
+                sock.close()
+            return
+        peer = getattr(self, side)
+        if not peer.audio_rtcp_allowed or peer.rtcp_minimum_interval <= 0 or peer.port <= 0:
+            if sock is not None:
+                sock.close()
+            return
+        owner = AudioRtcpSession(local_port=getattr(self, f"{side}_port") + 1,
+            remote_host=peer.rtcp_host or peer.host,
+            remote_port=peer.rtcp_port or peer.port + 1,
+            local_ssrc=peer.ssrc, clock_rate=peer.outbound_rtp_format.rtp_clock_rate,
+            minimum_interval=peer.rtcp_minimum_interval)
+        self.audio_rtcp[side] = owner
+        await owner.start(sock=sock)
+        owner.set_reporting_allowed(getattr(self, side).audio_rtcp_allowed)
 
     @staticmethod
     def _rtp_socket(port: int) -> socket.socket:
@@ -1091,6 +1156,11 @@ class SipRtpRelay:
         await async_wait_for_cleanup(task)
 
     async def _stop_impl(self) -> None:
+        enabling = tuple(self._audio_rtcp_start_tasks)
+        for task in enabling:
+            task.cancel()
+        if enabling:
+            await asyncio.gather(*enabling, return_exceptions=True)
         on_end = getattr(self, "_recording_error", None)
         self._recording_error = None
         if on_end is not None:
@@ -1117,6 +1187,11 @@ class SipRtpRelay:
         dtmf_tasks = tuple(self._dtmf_tasks)
         for task in dtmf_tasks:
             task.cancel()
+        pending_rtcp, self._pending_audio_rtcp_socket = self._pending_audio_rtcp_socket, None
+        if pending_rtcp is not None:
+            pending_rtcp.close()
+        owners, self.audio_rtcp = self.audio_rtcp, {}
+        rtcp_tasks = [task for owner in owners.values() if owner.close_with_media and (task := owner.begin_close()) is not None]
         self._close_audio_resources()
         for side in ("left", "right"):
             for suffix in ("decoder", "encoder"):
@@ -1129,6 +1204,8 @@ class SipRtpRelay:
         # cleanup. Release it before the first await so a slow filesystem or a
         # broken video relay cannot starve subsequent calls.
         self._release_ports()
+        if rtcp_tasks:
+            await asyncio.gather(*rtcp_tasks, return_exceptions=True)
         if dtmf_tasks:
             await asyncio.gather(
                 *dtmf_tasks,
@@ -1209,6 +1286,13 @@ class SipRtpRelay:
             self.dropped += 1
             _LOGGER.debug("RTP relay send drop: %s", err)
             return False
+        if (rtcp_owner := self.audio_rtcp.get(destination_side)) is not None:
+            sent = rtp.parse_packet(packet)
+            if sent.ssrc == destination.dtmf_ssrc and sent.ssrc != destination.ssrc:
+                rtcp_owner.observe_auxiliary_send(sent, clock_rate=destination.outbound_dtmf_clock_rate)
+            else:
+                rtcp_owner.update_sender(destination.ssrc, destination.outbound_rtp_format.rtp_clock_rate)
+                rtcp_owner.observe_send(sent, clock_rate=destination.outbound_rtp_format.rtp_clock_rate)
         if destination_side == "left":
             self.left_tx_packets += 1
             self.left_tx_bytes += len(packet)
@@ -1558,6 +1642,9 @@ class SipRtpRelay:
         dtmf_decoder = self._dtmf_decoders[side]
         report = (dtmf_decoder.decode_report(data)
             if dtmf_decoder is not None else None)
+        if dtmf_decoder is not None:
+            from .audio_rtcp import observe_validated_event
+            observe_validated_event(self.audio_rtcp.get(side), dtmf_decoder)
         if report is not None:
             if report.shared_audio:
                 audio_receiver = self.left_decoder if side == "left" else self.right_decoder
@@ -1592,7 +1679,10 @@ class SipRtpRelay:
             receive_state = self._receive_states[side]
             if receive_state.ssrc is None and source.rx_ssrc is not None:
                 receive_state.ssrc = source.rx_ssrc
-            if not receive_state.admit(packet, clock_rate=received_format.rtp_clock_rate):
+            admitted_packet = receive_state.admit(packet, clock_rate=received_format.rtp_clock_rate)
+            if receive_state.last_packet_valid and (rtcp_owner := self.audio_rtcp.get(side)) is not None:
+                rtcp_owner.observe_receive(packet, clock_rate=received_format.rtp_clock_rate, source=addr)
+            if not admitted_packet:
                 self.dropped += 1
                 return
             # RX measures admitted wire audio, including a short packet held

@@ -402,6 +402,7 @@ ha_tests=(
   tests/test_shared_account_direct_video_ha.py
   tests/test_call_recording_participant_ha.py
   tests/test_account_paging_ha.py
+  tests/test_account_paging_broadcast_ha.py
   tests/test_application_preparation_ha.py
   tests/test_audit_paging_admission_ha.py
   tests/test_audit_queue_transfer_budget_ha.py
@@ -409,6 +410,8 @@ ha_tests=(
   tests/test_browser_early_media_ha.py
   tests/test_browser_paging_admission_ha.py
   tests/test_peer_trunk_ingress_ha.py
+  tests/test_trunk_automation_ingress_ha.py
+  tests/test_bridge_failure_status_ha.py
   tests/test_pickup_paging_ringing_ha.py
   tests/test_projection_work_ha.py
   tests/test_ringing_budget_wire_ha.py
@@ -424,6 +427,19 @@ ha_tests=(
   tests/test_trunk_route_outcomes_ha.py
   tests/test_trunk_route_resolution_ha.py
   tests/test_two_ha_peer_calls_ha.py
+  tests/test_audio_rtcp_lifetime_ha.py
+  tests/test_automation_contact_device_ha.py
+  tests/test_automation_contact_trigger_ha.py
+  tests/test_contact_paging_parking_durations_ha.py
+  tests/test_duration_migration_ha.py
+  tests/test_duration_migration_repair_ha.py
+  tests/test_duration_public_configuration_ha.py
+  tests/test_duration_semantic_bridge_ha.py
+  tests/test_sip_admission_hardening_ha.py
+  tests/test_trunk_destination_projection_ha.py
+  tests/test_local_redirect_ha.py
+  tests/test_audio_rtcp_duplicate_wire_ha.py
+  tests/test_audio_rtcp_negotiated_disabled_ha.py
 )
 ha_ignores=()
 for test_path in "${ha_tests[@]}"; do

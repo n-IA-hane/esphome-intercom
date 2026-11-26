@@ -153,9 +153,13 @@ class QueueCall(LocalCallApplication):
                     return
                 members = self.manager.claim_turn(self.ticket)
                 if members:
+                    from .duration_policy import resolve_service_timeout
+
                     endpoints = [self.manager.endpoints.get(identity) for identity in members]
                     entry = RosterEntry(id=f"queue-attempt:{definition.queue_id}", name=definition.name,
-                        ha_bridge=True, metadata={"group_type": "ring", "members": [endpoint.username for endpoint in endpoints if endpoint]})
+                        ha_bridge=True, metadata={"group_type": "ring",
+                            "members": [endpoint.username for endpoint in endpoints if endpoint],
+                            "ring_policy": {"step_timeout": resolve_service_timeout(self.hass, "contact_step_timeout")}})
                     decision = RouteDecision(RouteAction.GROUP, target=definition.name, entry=entry)
                     from .ringing_policy import resolve_ringing_timeout, cap_ringing_timeout
                     from .runtime_data import require_runtime_data

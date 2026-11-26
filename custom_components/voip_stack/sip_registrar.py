@@ -11,6 +11,7 @@ import math
 from secrets import token_hex, token_urlsafe
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
@@ -18,6 +19,7 @@ from .core import sip
 from .core.codec_capabilities import supports_dahua_pcm
 from .core.sip_auth import parse_digest_challenge, verify_digest_authorization
 from .roster import RosterEntry
+from .sip_registration_policy import RegistrarPolicy
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +48,13 @@ REALM = "voip_stack"
 NONCE_TTL = 600.0
 MAX_ACTIVE_NONCES = 256
 MAX_NONCE_USE_RECORDS = 2048
+MAX_AUTH_FAILURE_SOURCES = 256
+
+
+@dataclass(slots=True)
+class _SourceAuthenticationFailures:
+    failures: dict[bytes, float] = field(default_factory=dict)
+    blocked_until: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +365,12 @@ class SipRegistrar:
         local_ip: str,
         local_sip_port: int,
         on_registration_change: Callable[[str, bool], None] | None = None,
+        policy: RegistrarPolicy | None = None,
+        on_source_block: Callable[[str, int], None] | None = None,
     ) -> None:
+        self.policy = policy if policy is not None else RegistrarPolicy()
+        self.on_source_block = on_source_block
+        self.authentication_failures: OrderedDict[str, _SourceAuthenticationFailures] = OrderedDict()
         self.enabled = bool(enabled)
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
@@ -376,6 +390,65 @@ class SipRegistrar:
         self.last_sip_reason = ""
         self.on_registration_change = on_registration_change
         self._gruu_tokens = None
+
+    def configure_policy(self, policy: RegistrarPolicy) -> None:
+        """Apply configured admission policy without revoking existing Contacts."""
+        if policy != self.policy:
+            self.authentication_failures.clear()
+            self.policy = policy
+
+    def _prune_authentication_failures(self) -> None:
+        now = time.monotonic()
+        cutoff = now - self.policy.auth_failure_window
+        for source, state in tuple(self.authentication_failures.items()):
+            state.failures = {key: when for key, when in state.failures.items() if when > cutoff}
+            if state.blocked_until <= now and not state.failures:
+                self.authentication_failures.pop(source, None)
+
+    def source_block_remaining(self, source: str) -> int:
+        """Return the in-memory source block lifetime without allocating state."""
+        if not self.policy.auth_block_enabled:
+            return 0
+        self._prune_authentication_failures()
+        state = self.authentication_failures.get(str(source))
+        return max(0, math.ceil(state.blocked_until - time.monotonic())) if state else 0
+
+    def _failed_authentication(self, request: sip.SipMessage, addr: tuple[str, int],
+                               transport: str, status: _AuthorizationStatus) -> int:
+        # A normal first challenge or an expired/replayed nonce is not a bad
+        # password. Hash the complete transaction and credentials so an exact
+        # retransmission counts once, while changed password guesses still count.
+        if (not self.policy.auth_block_enabled or status is not _AuthorizationStatus.INVALID
+                or not request.header_values("Authorization")):
+            return 0
+        self._prune_authentication_failures()
+        source = str(addr[0])
+        state = self.authentication_failures.get(source)
+        if state is None:
+            while len(self.authentication_failures) >= MAX_AUTH_FAILURE_SOURCES:
+                # Retain active blocks before counters when the fixed budget is full.
+                oldest = next((key for key, value in self.authentication_failures.items()
+                    if value.blocked_until <= time.monotonic()), next(iter(self.authentication_failures)))
+                self.authentication_failures.pop(oldest)
+            state = _SourceAuthenticationFailures()
+            self.authentication_failures[source] = state
+        fingerprint = hashlib.sha256(repr((self._register_fingerprint(request, addr, transport),
+            request.header_values("Authorization"))).encode()).digest()
+        if fingerprint not in state.failures:
+            state.failures[fingerprint] = time.monotonic()
+            self.authentication_failures.move_to_end(source)
+        if len(state.failures) < self.policy.auth_failure_threshold:
+            return 0
+        state.failures.clear()
+        state.blocked_until = time.monotonic() + self.policy.auth_block_duration
+        _LOGGER.warning("SIP authentication temporarily blocked source=%s duration=%ss",
+            source, self.policy.auth_block_duration)
+        if self.on_source_block is not None:
+            try:
+                self.on_source_block(source, self.policy.auth_block_duration)
+            except Exception:
+                _LOGGER.exception("SIP authentication block observer failed")
+        return self.policy.auth_block_duration
 
     def _notify_registration_change(self, username: str, registered: bool) -> None:
         if self.on_registration_change is None:
@@ -755,6 +828,8 @@ class SipRegistrar:
     def authorize_invite(self, request: sip.SipMessage, addr: tuple[str, int],
                          transport: str) -> tuple[SipAccount | None, str, str]:
         """Authenticate an initial INVITE independently of REGISTER bindings."""
+        if self.source_block_remaining(addr[0]):
+            return None, "", sip.make_tag()
         header = request.header("Authorization")
         params = parse_digest_challenge(header)
         account = self.accounts.get(params.get("username", "").casefold())
@@ -764,6 +839,7 @@ class SipRegistrar:
             status = self._check_authorization(request, account, addr, transport)
             if status is _AuthorizationStatus.VALID:
                 return account, "", ""
+        self._failed_authentication(request, addr, transport, status)
         source = f"{transport.upper()}:{addr[0]}"
         stale = status is _AuthorizationStatus.STALE
         nonce, challenge = self._challenge(
@@ -798,6 +874,9 @@ class SipRegistrar:
         self.last_sip_event = "REGISTER"
         if not self.enabled:
             return self._result(405, "Method Not Allowed")
+        remaining = self.source_block_remaining(addr[0])
+        if remaining:
+            return self._result(403, "Forbidden", (("Retry-After", str(remaining)),))
         try:
             sip.parse_sip_uri(request.uri)
             username = _extract_register_username(request)
@@ -806,7 +885,9 @@ class SipRegistrar:
         account = self.accounts.get(username.casefold())
         source_key = f"{str(transport or '').upper()}:{addr[0]}"
         authorization_status = (
-            _AuthorizationStatus.INVALID
+            (_AuthorizationStatus.STALE if (nonce := parse_digest_challenge(
+                request.header("Authorization")).get("nonce")) and not self._valid_nonce(nonce)
+                else _AuthorizationStatus.INVALID)
             if account is None or not account.enabled
             else self._check_authorization(request, account, addr, transport)
         )
@@ -815,6 +896,9 @@ class SipRegistrar:
             or not account.enabled
             or authorization_status is not _AuthorizationStatus.VALID
         ):
+            remaining = self._failed_authentication(request, addr, transport, authorization_status)
+            if remaining:
+                return self._result(403, "Forbidden", (("Retry-After", str(remaining)),))
             stale = authorization_status is _AuthorizationStatus.STALE
             _nonce, challenge = self._challenge(
                 source_key,
@@ -862,6 +946,10 @@ class SipRegistrar:
         prepared: list[_PreparedContact] = []
         seen_contacts: set[str] = set()
         for advertised_contact_uri, expires, raw_contact in contacts:
+            if 0 < expires < self.policy.min_expires:
+                return self._result(423, "Interval Too Brief",
+                    (("Min-Expires", str(self.policy.min_expires)),))
+            expires = min(expires, self.policy.max_expires)
             if advertised_contact_uri == "*":
                 prepared.append(_PreparedContact("*", 0, "", 1.0))
                 continue
@@ -930,6 +1018,15 @@ class SipRegistrar:
                     "OK",
                     self._contact_response_headers(account.username),
                 )
+
+        if not wildcard:
+            added = removed = 0
+            for contact in prepared:
+                exists = any(_registration_matches_contact(binding, contact) for binding in current_bindings)
+                added += int(contact.expires > 0 and not exists)
+                removed += int(contact.expires <= 0 and exists)
+            if added and len(current_bindings) + added - removed > self.policy.contact_limit:
+                return self._result(403, "Too Many Contacts")
 
         was_registered = bool(current_bindings)
         next_registrations = dict(self.registrations)

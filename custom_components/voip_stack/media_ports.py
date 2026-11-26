@@ -67,11 +67,12 @@ class RtpPortReservation:
         temporary = reservation if reservation is not None else cls.allocate(hass)
         keep = temporary.ports[0] if retained_port is None else int(retained_port)
         retained_socket = temporary.take_audio_socket(keep)
+        retained_rtcp = temporary.take_audio_socket(keep + 1)
         used = require_runtime_data(hass).rtp_port_pool["used"]
         used.add(source_port)
         used.difference_update(set(temporary.ports) - {keep})
         temporary.detach()
-        return cls(hass, (source_port, keep), _audio_sockets=(retained_socket,) if retained_socket else None)
+        return cls(hass, (source_port, keep), _audio_sockets=tuple(sock for sock in (retained_socket, retained_rtcp) if sock is not None) or None)
 
     def detach(self) -> tuple[int, int]:
         self._close_audio_sockets()
@@ -92,12 +93,13 @@ class RtpPortReservation:
         requested = self.ports if ports is None else ports
         if not set(requested) <= set(self.ports):
             raise ValueError("RTP socket is outside the reservation")
+        required = tuple(value for port in requested for value in (port, port + 1))
         if self._audio_sockets is not None and all(
-                any(sock.getsockname()[1] == port for sock in self._audio_sockets) for port in requested):
+                any(sock.getsockname()[1] == port for sock in self._audio_sockets) for port in required):
             return
         sockets = list(self._audio_sockets or ())
         try:
-            for port in requested:
+            for port in required:
                 if any(sock.getsockname()[1] == port for sock in sockets):
                     continue
                 sock = bind_sip_audio_socket(port)
@@ -124,7 +126,8 @@ class RtpPortReservation:
     def transfer_audio_sockets(self, relay, *, ports: tuple[int, ...] | None = None) -> None:
         """Move matching sockets only after synchronous relay validation."""
         sockets = self._audio_sockets if ports is None else tuple(
-            sock for sock in self._audio_sockets or () if sock.getsockname()[1] in ports)
+            sock for sock in self._audio_sockets or () if sock.getsockname()[1] in
+            {value for port in ports for value in (port, port + 1)})
         if not sockets:
             return
         relay.adopt_audio_sockets(sockets)
@@ -179,16 +182,19 @@ def take_delayed_offer_ports(
 
 
 def rtp_port_available(port: int) -> bool:
-    if not 1 <= int(port) <= 65535:
+    if not 1 <= int(port) < 65535:
         return False
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rtcp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("0.0.0.0", int(port)))
+        rtcp_socket.bind(("0.0.0.0", int(port) + 1))
         return True
     except (OSError, OverflowError):
         return False
     finally:
         sock.close()
+        rtcp_socket.close()
 
 
 def bind_sip_audio_socket(port: int) -> socket.socket:

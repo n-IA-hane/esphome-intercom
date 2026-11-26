@@ -144,21 +144,60 @@ class BrowserPagingApplication(AutomationCall):
 
     async def close(self, reason):
         await super(BrowserPagingApplication, self).close(reason)
-        await self.media.stop(reason)
-        await self.playback.close(reason)
+        await close_browser_paging(self, reason)
         self.accepted.set()
 
 
-class OutgoingBrowserPagingApplication(BrowserPagingApplication):
-    """Stage the browser adapter inside an outgoing application's one session."""
+def stage_browser_paging(application):
+    """Stage the existing receive-only adapter under its account session."""
+    application.require_current()
+    hass, session = application.hass, application.session
+    registry = call_registry(hass)
+    identity, playback, media = application.endpoint_id, application.playback, application.media
+    session.update_metadata(application="browser_paging")
+    registry.own_resource(session.call_id, f"browser_paging:{session.call_id}", application, lambda _reason: None,
+        generation=session.generation)
+    registry.own_resource(session.call_id, f"browser_playback:{session.call_id}", playback, playback.close,
+        stage=CleanupStage.MEDIA, generation=session.generation)
+    registry.attach_media(session.call_id, {"endpoint_id": identity, "application_playback": media})
+    registry.observe_leg(session.call_id, f"browser:{identity}", role="ha_softphone",
+        endpoint_id=identity, state="ringing", generation=session.generation)
+    publish_phone_projection(hass, session, identity, direction="incoming", peer_name=session.caller,
+        audio_direction="recvonly", answer_mode="auto", announcement_id=session.metadata["announcement_id"], event_type="ringing")
 
-    async def close(self, reason):
-        await AutomationCall.close(self, reason)
-        # A SIP winner's relay remains owned by the existing relay resource.
-        if isinstance(self.media, BrowserPagingMedia):
-            await self.media.stop(reason)
-        await self.playback.close(reason)
-        self.accepted.set()
+
+async def wait_browser_paging_ready(application, timeout):
+    """Answer and authenticated playback readiness admit the same adapter."""
+    async with asyncio.timeout(timeout):
+        await application.media._while_open(application.accepted.wait())
+        await application.media._while_open(application.playback.wait_ready())
+    application.require_current()
+
+
+async def close_browser_paging(application, reason):
+    """Close only this HA output; other accepted account adapters survive."""
+    from .browser_playback import BROWSER_MEDIA_START_TIMEOUT
+    from .websocket_owner import async_revoke_media_owners
+
+    hass, session = application.hass, application.session
+    runtime, registry = require_runtime_data(hass), call_registry(hass)
+    identity = application.endpoint_id
+    owner_key = f"{identity}|{session.call_id}"
+    owner = runtime.media.owners_for("audio").get(owner_key)
+    if owner is not None:
+        unreleased = await async_revoke_media_owners({owner_key: owner}, runtime.media.owner_lock_for("audio"),
+            timeout=BROWSER_MEDIA_START_TIMEOUT)
+        if unreleased:
+            raise ConnectionError("The browser media owner did not release")
+    await application.media.stop(reason)
+    await application.playback.close(reason)
+    if session.live:
+        descriptor = registry.resource_for(session.call_id, "softphone_media")
+        if isinstance(descriptor, dict) and descriptor.get("application_playback") is application.media:
+            registry.take_media(session.call_id)
+        registry.release_resource(session.call_id, f"browser_paging:{session.call_id}", value=application)
+        registry.release_resource(session.call_id, f"browser_playback:{session.call_id}", value=application.playback)
+        session.update_metadata(application="paging")
 
 
 async def async_originate_browser_paging(job, endpoint):
@@ -190,22 +229,10 @@ async def async_originate_browser_paging(job, endpoint):
             playback=playback, endpoint_id=current.endpoint_id)
         registry.own_resource(session.call_id, f"automation:{session.call_id}", application, application.close,
                               stage=CleanupStage.MEDIA, generation=session.generation)
-        registry.own_resource(session.call_id, f"browser_paging:{session.call_id}", application, lambda _: None,
-                              generation=session.generation)
-        registry.own_resource(session.call_id, f"browser_playback:{session.call_id}", playback, playback.close,
-                              stage=CleanupStage.MEDIA, generation=session.generation)
-        registry.attach_media(session.call_id, {"endpoint_id": current.endpoint_id, "application_playback": media})
-        registry.observe_leg(session.call_id, f"browser:{current.endpoint_id}", role="ha_softphone",
-                             endpoint_id=current.endpoint_id, state="ringing", generation=session.generation)
-        publish_phone_projection(hass, session, current.endpoint_id, direction="incoming",
-                                 peer_name="Announcement", audio_direction="recvonly", answer_mode="auto",
-                                 announcement_id=job.identity, event_type="ringing")
+        stage_browser_paging(application)
         timeout = resolve_ringing_timeout(runtime.transport_config, account=current,
             override=job.data.get("answer_timeout"))
-        async with asyncio.timeout(timeout):
-            await media._while_open(application.accepted.wait())
-            await media._while_open(playback.wait_ready())
-        application.require_current()
+        await wait_browser_paging_ready(application, timeout)
         return {"call_id": session.call_id, "generation": session.generation}
     except BaseException as error:
         await async_wait_for_cleanup(asyncio.create_task(

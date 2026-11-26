@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigSubentryFlow
 from homeassistant.helpers.selector import SelectSelector, TextSelector, NumberSelector
 
 from .contact_config import contact_dicts
+from .duration_policy import configured_service_timeout
 from .phonebook_services import ContactProfileError, contact_from_data, _validate_contact_namespace
 from .roster import parse_roster_json
 
@@ -48,7 +49,11 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
         from .group_flow import destination_options
         previous = dict(self._current.data) if self._current is not None else {}
         values = {**previous, **previous.get("metadata", {})}
-        values["timeout"] = values.get("automation_timeout", 30)
+        if self._kind == "automation":
+            values["timeout"] = (
+                values["automation_timeout"] if "automation_timeout" in values
+                else configured_service_timeout(self._get_entry().data, "automation_timeout")
+            )
         errors = {}
         if user_input is not None:
             values.update(user_input)
@@ -100,7 +105,7 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
                     ): SelectSelector({"options": destination_options(self.hass, self._get_entry()),
                                        "custom_value": True, "mode": "dropdown"}),
                     vol.Required(
-                        "timeout", default=values.get("timeout", 30)
+                        "timeout", default=values["timeout"]
                     ): NumberSelector(
                         {
                             "min": 1,

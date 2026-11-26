@@ -6,13 +6,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from .voip_phase1_support import sip_trunk, asyncio
+from .voip_phase1_support import _load_intercom_module
 
 
 def config(**kwargs):
     return sip_trunk.SipTrunkConfig(
         enabled=True, transport=kwargs.get("transport", "udp"), server="127.0.0.1", port=15062,
         domain="", username="", auth_username="", password="", expires=300,
-        register=False, allowed_ips=kwargs.get("allowed_ips", ("127.0.0.2", "2001:db8:1::/64")),
+        register=False, options_interval=0, allowed_ips=kwargs.get("allowed_ips", ("127.0.0.2", "2001:db8:1::/64")),
     )
 
 
@@ -60,3 +61,28 @@ def test_registered_trunk_still_requires_registration_before_trusting_sources():
 def test_static_trunk_does_not_advertise_an_unavailable_tls_listener():
     with pytest.raises(ValueError, match="Static trunks require UDP or TCP"):
         sip_trunk.SipTrunkClient(config=config(transport="tls"), local_ip="127.0.0.1", local_sip_port=15060)
+
+
+@pytest.mark.parametrize("transport", ["udp", "tcp"])
+def test_static_inbound_acl_does_not_depend_on_outbound_options_success(transport):
+    policy = _load_intercom_module("trunk_policy")
+    trunk = sip_trunk.SipTrunkClient(config=replace(config(transport=transport), options_interval=30),
+        local_ip="127.0.0.1", local_sip_port=15060)
+    assert not trunk.ready
+    assert trunk.accepts_inbound_source("127.0.0.2", 45000, transport)
+    assert policy.identify_inbound_trunk({"peer": trunk}, "127.0.0.2", 45000, transport) == "peer"
+    assert policy.identify_inbound_trunk({"peer": trunk}, "127.0.0.3", 45000, transport) == ""
+    asyncio.run(trunk.stop())
+    assert policy.identify_inbound_trunk({"peer": trunk}, "127.0.0.2", 45000, transport) == ""
+
+
+def test_static_digest_peer_cannot_bypass_its_account_on_an_owned_options_flow():
+    policy = _load_intercom_module("trunk_policy")
+    trunk = sip_trunk.SipTrunkClient(config=replace(config(transport="tcp"),
+        inbound_account="remote-pbx", allowed_ips=(), options_interval=30),
+        local_ip="127.0.0.1", local_sip_port=15060)
+    trunk._static_qualified = True
+    assert trunk.ready
+    assert not trunk.accepts_inbound_source("127.0.0.2", 45000, "tcp")
+    assert policy.identify_inbound_trunk({"peer": trunk}, "127.0.0.2", 45000, "tcp", flow_trunk_id="peer") == ""
+    asyncio.run(trunk.stop())

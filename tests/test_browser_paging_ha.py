@@ -211,15 +211,6 @@ async def test_mixed_browser_and_sip_page_waits_for_playback_then_synthesizes_on
     from .test_paging_ha import manager
 
     lab, phone, _job = browser_lab
-    errors = []
-    original_broadcast = paging.PagingJob._broadcast
-    async def observe_broadcast(job):
-        try:
-            return await original_broadcast(job)
-        except Exception as error:
-            errors.append(repr(error))
-            raise
-    monkeypatch.setattr(paging.PagingJob, "_broadcast", observe_broadcast)
     owner = manager(lab, monkeypatch)
     owner.browser_originate = async_originate_browser_paging
     stream = tts_fixture(monkeypatch, lab)
@@ -240,14 +231,17 @@ async def test_mixed_browser_and_sip_page_waits_for_playback_then_synthesizes_on
         worker = asyncio.create_task(audio_ws_view._run_audio_session(lab.hass, browser, media_session,
                                     endpoint_id=phone.endpoint_id, playback=application.playback))
         await asyncio.wait_for(lab.phones[0].answered.wait(), 3)
-        assert not stream.calls and not browser.frames
+        # A ready SIP output starts immediately while this HA output still
+        # waits for authenticated playback readiness. Its later reader replays.
+        await asyncio.wait_for(stream.started.wait(), 3)
+        assert len(stream.calls) == 1 and not browser.frames
         browser.ready()
         async with asyncio.timeout(5):
             while result["announcement_id"] in owner.jobs:
                 await asyncio.sleep(.001)
         await asyncio.wait_for(worker, 2)
         report = owner.completed[result["announcement_id"]]
-        assert report["state"] == "completed", (report, errors)
+        assert report["state"] == "completed", report
         assert len(stream.calls) == 1
         assert all(target["status"] == "completed" for target in report["targets"])
         assert b"".join(browser.frames) == stream.pcm

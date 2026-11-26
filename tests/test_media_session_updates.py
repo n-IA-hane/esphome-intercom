@@ -30,6 +30,7 @@ def test_audio_update_commits_full_contract_before_waking_owner() -> None:
         recv_format="receive",
         remote_rtp_host="192.0.2.10",
         remote_rtp_port="41000",
+        audio_rtcp_allowed=False,
         local_audio_direction="recvonly",
         remote_audio_connection_held=True,
         send_dtmf_payload_type=126,
@@ -50,6 +51,7 @@ def test_audio_update_commits_full_contract_before_waking_owner() -> None:
         "192.0.2.10",
         41000,
     )
+    assert session.audio_rtcp_allowed is False
     assert session.local_audio_direction == "recvonly"
     assert session.remote_audio_connection_held is True
     assert session.dtmf_payload_type == 101

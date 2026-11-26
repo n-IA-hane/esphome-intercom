@@ -1244,7 +1244,30 @@ normal no-answer forward.
 An automation contact is a named telephone service, not a physical phone.
 In the integration, choose **Add contact**, select **Automation**, enter its
 name and optionally a numeric extension. Leave the extension empty to dial
-by its phonebook name. This creates no phone device or entities.
+by its phonebook name. It has a native HA **Automation contact** service device
+and call event entity, so an incoming trunk destination can select it directly.
+It does not create a SIP account, registration or physical phone endpoint.
+The contact ID owns this identity; changing its display name preserves the
+device and event identity.
+
+For an IVR, choose the ordinary **VoIP Stack: Call received** trigger. Select
+**Automation contact device** or **Automation contact call event**, then add
+Speak to the caller, Wait for keypad input and Forward call actions. These
+native VoIP triggers bind the actual call token automatically, so the actions
+need no manual Call ID. Use only one destination selection: device, entity or
+the existing manual destination/account filters.
+
+```yaml
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination_entity: event.welcome_call
+```
+
+Choose the actual event entity in your automation editor. A generic HA event
+entity trigger is useful for observing the contact, but does not bind the VoIP
+call context required by those IVR actions. Disabled, deleted or stale device
+and entity selections are rejected rather than routed to another destination.
 
 Choose a fallback destination for calls that no automation handles. The examples
 below assume your Assist extension is `1666`; use the extension configured in

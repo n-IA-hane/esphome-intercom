@@ -29,6 +29,8 @@ class OutboundLeg:
     video_failure_reason: str = ""
     trunk_id: str = ""
     pickup: bool = False
+    redirect_path: tuple[str, ...] = ()
+    redirect_pending: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -313,7 +313,7 @@ async def async_answer_browser_call(
                 invite.send_format,
                 invite.recv_format,
                 recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+                audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                 video_port=local_video_rtp_port,
                 video_format=(
                     invite.answer_video_format
@@ -356,7 +356,7 @@ async def async_answer_browser_call(
             invite.send_format,
             invite.recv_format,
             recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-            remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+            audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
             video_port=local_video_rtp_port,
             video_format=(
                 invite.answer_video_format if endpoint_video_enabled else None
@@ -366,7 +366,8 @@ async def async_answer_browser_call(
 
     resolved_callee = str((session.callee if session is not None else "") or local_name)
     softphone_media = {
-        "audio_rtp_source": (preanswered or {}).get("audio_rtp_source"),
+        "audio_rtp_source": ((preanswered or {}).get("audio_rtp_source")
+            or (parked_media.rtp_source if parked_media is not None else None)),
         "invite": invite,
         "local_rtp_port": local_rtp_port,
         "local_video_rtp_port": local_video_rtp_port,
@@ -409,6 +410,44 @@ async def async_answer_browser_call(
         softphone_media,
         _release_answer_media,
     )
+
+    rtcp_owner = None
+    borrowed_rtcp = False
+    rtcp_owned = [True]
+    if invite.audio_rtcp_min_interval > 0:
+        from .audio_rtcp import AudioRtcpSession
+        from .core import rtp
+        from .endpoint_session import CleanupStage
+
+        resource_name = f"audio_rtcp:{local_rtp_port}"
+        existing_rtcp = next((resource.value for resource in authoritative_session.resources
+            if resource.name == resource_name), None)
+        rtcp_owner = existing_rtcp or (parked_media.rtcp if parked_media is not None else None)
+        borrowed_rtcp = rtcp_owner is not None and existing_rtcp is None
+        rtcp_owned[0] = not borrowed_rtcp
+        source = softphone_media["audio_rtp_source"]
+        if source is None:
+            source = rtp.AudioRtpSenderState.create(ssrc=rtcp_owner.local_ssrc if rtcp_owner else 0)
+            softphone_media["audio_rtp_source"] = source
+        source.use_clock_rate(invite.send_format.rtp_clock_rate)
+        if rtcp_owner is None and invite.audio_rtcp_allowed:
+            rtcp_owner = AudioRtcpSession(local_port=local_rtp_port + 1,
+                remote_host=invite.remote_audio_rtcp_host or invite.remote_rtp_host,
+                remote_port=invite.remote_audio_rtcp_port or invite.remote_rtp_port + 1,
+                local_ssrc=source.ssrc, clock_rate=invite.send_format.rtp_clock_rate,
+                minimum_interval=invite.audio_rtcp_min_interval)
+            try:
+                rtcp_socket = media_reservation.take_audio_socket(local_rtp_port + 1) if media_reservation else None
+                await rtcp_owner.start(sock=rtcp_socket, start_reports=False)
+            except BaseException:
+                await rtcp_owner.close()
+                await transaction.rollback("audio_rtcp_start_failed")
+                raise
+        if existing_rtcp is None and rtcp_owner is not None:
+            async def release_rtcp(_reason):
+                if rtcp_owned[0]:
+                    await rtcp_owner.close()
+            transaction.add_resource(resource_name, rtcp_owner, release_rtcp, stage=CleanupStage.MEDIA)
 
     def _claim_answer() -> bool:
         if pending.get(call_id) is not invite:
@@ -463,6 +502,17 @@ async def async_answer_browser_call(
             "sip_answer_failed",
             call_id=call_id,
         )
+
+    if rtcp_owner is not None:
+        if borrowed_rtcp:
+            parked_media.rtcp = None
+            rtcp_owned[0] = True
+        rtcp_owner.remote_host = invite.remote_audio_rtcp_host or invite.remote_rtp_host
+        rtcp_owner.remote_port = invite.remote_audio_rtcp_port or invite.remote_rtp_port + 1
+        rtcp_owner.minimum_interval = invite.audio_rtcp_min_interval
+        rtcp_owner.update_sender(softphone_media["audio_rtp_source"].ssrc, invite.send_format.rtp_clock_rate)
+        rtcp_owner.close_with_media = False
+        rtcp_owner.set_reporting_allowed(invite.audio_rtcp_allowed)
 
     if prepared_video is not None:
         registry.take_media(call_id, provisional=True)

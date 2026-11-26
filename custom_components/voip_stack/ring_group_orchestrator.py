@@ -107,6 +107,7 @@ async def run_ring_group_call(
     request_video: bool = False,
     enable_caller_video_send: bool = False,
     ringing_timeout: float | None = None,
+    redirected_leg: OutboundLeg | None = None,
 ) -> None:
     hass = runtime.hass
     local_ip = runtime.local_ip
@@ -155,6 +156,8 @@ async def run_ring_group_call(
         )
         return
     candidates = GroupCandidates()
+    if redirected_leg is not None:
+        candidates.attempts.append(redirected_leg)
     attempts = candidates.attempts
     browser_legs = candidates.browser_legs
     preflight_failures = candidates.preflight_failures
@@ -228,12 +231,13 @@ async def run_ring_group_call(
         *,
         action: str = "terminate",
         sip_status: int = 0,
+        sip_reason: str = "",
         settle: bool = True,
     ) -> None:
         abort_context.settle = _settle_browser_candidates if settle else None
         await async_abort_route(
             abort_context,
-            RouteAbortIntent(reason, action, sip_status),
+            RouteAbortIntent(reason, action, sip_status, sip_reason),
         )
 
     try:
@@ -248,7 +252,7 @@ async def run_ring_group_call(
             ),
             invite=invite,
             group_name=entry.display_name,
-            members=members,
+            members=[] if redirected_leg is not None else members,
             peers=peers,
             roster_entries=roster_entries,
             ring_policy=ring_policy,
@@ -343,6 +347,21 @@ async def run_ring_group_call(
         return
 
     leg_state = group_leg_observer(hass, registry, session)
+    from .local_redirect import LocalAccountRedirect
+
+    redirect = LocalAccountRedirect(
+        hass=hass, config=runtime.config, local_ip=local_ip, session=session,
+        registry=registry, endpoint_registry=endpoint_registry,
+        preparation=GroupCandidateRuntime(registry, endpoint_registry,
+            _browser_leg_for_member, _prepare_outbound_leg, _logical_endpoint_for_member),
+        invite=invite, peers=peers, entries=roster_entries,
+        source_endpoint_id=source_endpoint_id, route_future=route_future, browser_legs=browser_legs,
+        publish_browser=lambda legs: _publish_browser_candidates_ringing(
+            hass, registry, legs, invite=invite, callee=entry.display_name,
+            route_kind=route_kind, origin_endpoint_id=origin_endpoint_id if ha_origin else "",
+            source_endpoint_id=source_endpoint_id, origin_media_client_id=origin_media_client_id),
+        on_leg_state=leg_state, overall_timeout=ring_policy.overall_timeout,
+    )
 
     (
         fork_candidates,
@@ -355,6 +374,7 @@ async def run_ring_group_call(
         browser_legs=browser_legs,
         preflight_failures=preflight_failures,
         on_leg_state=leg_state,
+        follow_redirect=redirect.follow,
     )
 
     async def _abort_stale_ring_group() -> bool:
@@ -468,6 +488,10 @@ async def run_ring_group_call(
             status_code, sip_reason, terminal_reason, public_state = (
                 _sip_failure_response(final_result)
             )
+            if (redirected_leg is not None and 400 <= fork_result.outcome.status <= 699
+                    and fork_result.outcome.status not in {401, 407}):
+                status_code = fork_result.outcome.status
+                sip_reason = fork_result.outcome.response_reason or sip_reason
             _publish_ring_group_origin_state(
                 hass,
                 enabled=ha_origin,
@@ -484,6 +508,7 @@ async def run_ring_group_call(
             await _rollback_route(
                 terminal_reason,
                 sip_status=status_code,
+                sip_reason=sip_reason,
                 settle=False,
             )
             return
@@ -593,7 +618,7 @@ async def run_ring_group_call(
                     invite.send_format,
                     invite.recv_format,
                     recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                    remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+                    audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
                     video_port=local_video_rtp_port,
                     video_format=invite.answer_video_format if accept_video else None,
                     video_direction=video_direction,

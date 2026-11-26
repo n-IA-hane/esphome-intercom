@@ -20,9 +20,19 @@ pytestmark = pytest.mark.ha
 
 @pytest.mark.parametrize('trunks', [True], indirect=True)
 async def test_registered_phone_trunk_auth_growth_remote_tcp_bye(trunks, registered_phones, monkeypatch):
+    import pytest_socket
+
+    # HA's socket fixture permits only 127.0.0.1 unless the test explicitly
+    # authorizes its independent provider's loopback address as well.
+    pytest_socket.socket_allow_hosts(['127.0.0.1', '127.0.0.2'])
     runtime = trunks
     provider = runtime.phones[1]
     port = provider.transport.get_extra_info('sockname')[1]
+    # Registered-trunk trust is address-scoped. A distinct provider address
+    # keeps the independent registered phone out of that trust domain.
+    provider.transport.close()
+    await asyncio.get_running_loop().create_datagram_endpoint(lambda: provider,
+        local_addr=('127.0.0.2', port))
     audio_port = provider.rtp_socket.getsockname()[1]
     challenges, invites = [], []
     original = provider.datagram_received
@@ -44,12 +54,12 @@ async def test_registered_phone_trunk_auth_growth_remote_tcp_bye(trunks, registe
             dtmf_direction=invite.dtmf_direction, remote_sdp=invite.remote_sdp)
         return SipInviteResult(200, 'OK', answer_sdp=answer)
 
-    server = SipEndpointManager(host='127.0.0.1', port=port, local_ip='127.0.0.1',
+    server = SipEndpointManager(host='127.0.0.2', port=port, local_ip='127.0.0.2',
         local_rtp_port=audio_port, supported_formats=[AudioFormat(16000, 's16le', 1, 20)],
         on_invite=accept, udp_enabled=False, tcp_enabled=True)
     assert await server.start()
     runtime.runtime.trunk_configs = {'work': normalized_trunk_config({'trunk_enabled': True,
-        'trunk_register': True, 'trunk_server': '127.0.0.1', 'trunk_port': port,
+        'trunk_register': True, 'trunk_server': '127.0.0.2', 'trunk_port': port,
         'trunk_username': 'work', 'trunk_password': 'test-only'})}
     runtime.runtime.trunk_config = runtime.runtime.trunk_configs['work']
     runtime.runtime.default_trunk_id = 'work'

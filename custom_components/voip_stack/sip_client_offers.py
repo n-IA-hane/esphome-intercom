@@ -534,6 +534,7 @@ class SipLocalOffers:
                 return False
             seed_format = self.supported_send_formats[0]
             seed = self.early_dialogs.get(remote_tag) or SipDialog(
+                audio_rtcp_min_interval=self.audio_rtcp_min_interval,
                 target=target,
                 remote_host=remote_host,
                 remote_sip_port=int(remote_sip_port),
@@ -705,7 +706,10 @@ class SipLocalOffers:
                 and self._dialog_termination_task.done()
             ):
                 self._dialog_termination_task = None
+        from .audio_rtcp import remote_audio_rtcp_fields
         candidate = SipDialog(
+            audio_rtcp_min_interval=self.audio_rtcp_min_interval,
+            **remote_audio_rtcp_fields(msg.body),
             target=target,
             peer_supports_update=any("UPDATE" in {token.strip().upper() for token in value.split(",")}
                                      for value in msg.header_values("Allow")),

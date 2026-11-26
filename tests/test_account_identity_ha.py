@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import pytest
+from custom_components.voip_stack.config_flow import VoipStackConfigFlow
 from homeassistant.config_entries import ConfigSubentry
 from pytest_homeassistant.common import MockConfigEntry
 
@@ -93,7 +94,7 @@ async def test_v7_1_identity_migration_keeps_legacy_identity_credentials_and_nat
         hass.config_entries.async_add_subentry(entry, sub)
     native_ids = (first.subentry_id, second.subentry_id)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
     assert (first.subentry_id, second.subentry_id) == native_ids
     assert phone_endpoint_id(first) == "first" and phone_endpoint_id(second) == "second"
     assert second.unique_id == "phone:second"

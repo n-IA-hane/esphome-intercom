@@ -14,6 +14,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
 from homeassistant.helpers import entity_registry as er
 import pytest
+from custom_components.voip_stack.config_flow import VoipStackConfigFlow
 from pytest_homeassistant.common import MockConfigEntry
 
 from .support.ha_frontend import prepare_frontend_dependency
@@ -803,7 +804,7 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.version == 7 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
 
@@ -1074,7 +1075,7 @@ async def test_retired_native_phones_migrate_without_removing_supported_phones(h
     )
 
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
     assert dict(entry.data) == {'sip_port': 5060, 'sip_registrar_enabled': True}
     assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
     assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .conference import MAX_CONFERENCE_LEGS, conference_manager
+from .duration_policy import resolve_service_timeout
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import CleanupStage, TerminationInitiator
@@ -39,7 +40,6 @@ if TYPE_CHECKING:
     from .roster import RosterEntry
 
 _LOGGER = logging.getLogger(__name__)
-RING_GROUP_TIMEOUT_S = 30.0
 
 
 @dataclass(slots=True)
@@ -88,6 +88,8 @@ async def async_ring_conference_members(
     if (owner_session is None or not owner_session.live or room is None
             or room._closed or owner_call_id not in room.legs):
         return
+    ringing_timeout = resolve_service_timeout(hass, "conference_sip_ringing_timeout")
+    final_timeout = None if ringing_timeout == 0 else ringing_timeout
     available_legs = max(
         0,
         MAX_CONFERENCE_LEGS
@@ -250,7 +252,7 @@ async def async_ring_conference_members(
                 )
                 if result == "ringing":
                     result = await client.wait_for_final(
-                        timeout=RING_GROUP_TIMEOUT_S
+                        timeout=final_timeout
                     )
                 if (result != "in_call" or client.dialog is None or not owner_session.live
                         or manager.rooms.get(room.name) is not room or room._closed):

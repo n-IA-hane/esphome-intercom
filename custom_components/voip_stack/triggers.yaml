@@ -71,6 +71,18 @@ call_received:
     called_number:
       selector:
         text: {}
+    destination_device:
+      selector:
+        device:
+          filter:
+          - integration: voip_stack
+            model: Automation contact
+    destination_entity:
+      selector:
+        entity:
+          filter:
+          - integration: voip_stack
+            domain: event
 route_requested:
   fields:
     caller_account: *id002

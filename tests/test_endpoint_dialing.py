@@ -167,7 +167,7 @@ def _dialer(
     dialer = endpoint_dialing.EndpointDialer(
         hass=SimpleNamespace(),
         local_ip="127.0.0.1",
-        config={"sip_port": 5060, "sip_video": False},
+        config={"sip_port": 5060, "sip_video": False, "audio_rtcp_min_interval": 5},
         route_resolver=SimpleNamespace(
             is_local_listener_uri=lambda _uri: False,
             logical_endpoint=lambda *_args: None,
@@ -205,7 +205,8 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
         local_name="Caller",
         local_rtp_port_index=1,
         uri_override="sip:100@example.test;transport=tcp",
-        invite=SimpleNamespace(routing_caller="source", video_format=None, max_forwards=None,
+        invite=SimpleNamespace(caller="Caller", routing_caller="source", received_via_trunk=False,
+            video_format=None, max_forwards=None,
             send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
             recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20)),
         port_reservation=reservation,
@@ -241,7 +242,8 @@ def test_audio_only_trunk_does_not_reserve_video_for_incoming_video(monkeypatch)
     leg = dialer.prepare_outbound_leg(
         member="100", peers=[], roster_entries=[], local_name="Caller",
         local_rtp_port_index=1, uri_override="sip:100@example.test",
-        invite=SimpleNamespace(routing_caller="source", video_format=object(), max_forwards=None,
+        invite=SimpleNamespace(caller="Caller", routing_caller="source", received_via_trunk=False,
+            video_format=object(), max_forwards=None,
             send_format=RtpPcmFormat(96, "L16", 16000, 1, 20),
             recv_format=RtpPcmFormat(96, "L16", 16000, 1, 20)),
         port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock(), bind_audio_sockets=Mock()),
@@ -398,11 +400,15 @@ def test_restricted_group_member_is_rejected_before_allocating_media(monkeypatch
     reused.assert_not_called()
 
 
-async def test_conference_retains_initiator_access_for_outbound_members(monkeypatch):
+async def test_conference_retains_initiator_access_for_outbound_members(monkeypatch, hass):
     from custom_components.voip_stack import conference_ringing, runtime_data
+    from custom_components.voip_stack.duration_config import initialize_duration_config
     from custom_components.voip_stack.roster import RosterEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     dialer, created, _reused = _dialer(monkeypatch)
+    MockConfigEntry(domain="voip_stack", data=initialize_duration_config({})).add_to_hass(hass)
+    dialer.hass = hass
     dialer.config["external_call_blocked_endpoints"] = ["sip:restricted"]
     session = SimpleNamespace(live=True, metadata={"source_endpoint_id": "sip:restricted"})
     registry = SimpleNamespace(

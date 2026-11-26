@@ -142,6 +142,10 @@ async def test_no_answer_voicemail_uses_an_enabled_mailbox(hass, phones, destina
     assert policy.no_answer.target == ("bedroom" if destination else "kitchen")
     assert policy.ringing_timeout == 30
     await settings(hass, ringing_timeout=0)
+    policy = phones.registry.require("kitchen").policy
+    assert policy.ringing_timeout == 0
+    assert policy.no_answer.target == ("bedroom" if destination else "kitchen")
+    await settings(hass, no_answer_action="none")
     assert phones.registry.require("kitchen").policy.no_answer is None
 
 
@@ -237,17 +241,23 @@ async def test_read_only_user_cannot_change_phone_routing(hass, phones, hass_rea
     phones.push.assert_not_awaited()
 
 
-async def test_no_answer_requires_explicit_outcome_and_can_be_disabled(hass, phones):
-    with pytest.raises(ServiceValidationError, match="set together"):
-        await settings(hass, ringing_timeout=25)
-    assert phones.registry.require("kitchen").policy.ringing_timeout is None
+async def test_no_answer_limit_and_outcome_are_independent_and_explicitly_clearable(hass, phones):
+    await settings(hass, ringing_timeout=25)
+    assert phones.registry.require("kitchen").policy.ringing_timeout == 25
+    assert phones.registry.require("kitchen").policy.no_answer is None
     await settings(hass, ringing_timeout=25, no_answer_action="forward", no_answer_to="Bedroom")
     policy = phones.registry.require("kitchen").policy
     assert policy.ringing_timeout == 25
     assert policy.no_answer.target == "bedroom"
     await settings(hass, ringing_timeout=0)
     policy = phones.registry.require("kitchen").policy
-    assert policy.ringing_timeout is None
+    assert policy.ringing_timeout == 0
+    assert policy.no_answer.target == "bedroom"
+    stored = phone_config.phone_subentry_by_endpoint_id(phones.entry, "kitchen")
+    assert phone_config.endpoint_from_subentry(phones.entry, stored).policy == policy
+    await settings(hass, no_answer_action="none")
+    policy = phones.registry.require("kitchen").policy
+    assert policy.ringing_timeout == 0
     assert policy.no_answer is None
 
 

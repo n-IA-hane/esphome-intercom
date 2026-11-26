@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from custom_components.voip_stack.config_flow import VoipStackConfigFlow
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant.common import MockConfigEntry
@@ -67,7 +68,7 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     hass.config_entries.async_update_entry(entry, data={**entry.data, "preferred_phone_device_id": device.id})
     options_before, parent_before = dict(entry.options), dict(entry.data)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
     for original, sub in [(before, legacy), ({**before, "endpoint_id": "browser:opaque", "name": "Test", "extension": "222",
             "username": "existing-browser-user", "password": "fixture-existing-browser-password"}, opaque)]:
         assert sub.data["kind"] == "sip_account"
@@ -85,7 +86,8 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     assert phone_subentry_data(existing) == {**sip_before, 'endpoint_id': sip_before['username'], 'username_source': 'user'}
     assert all("endpoint_id" not in sub.data for sub in (legacy, opaque, existing))
     from custom_components.voip_stack.const import CONF_REGISTRAR_ENABLED, HA_SOFTPHONE_DEVICE_ID
-    assert dict(entry.data) == {**parent_before, CONF_REGISTRAR_ENABLED: True, 'legacy_phone_references': {
+    assert dict(entry.data) == {**parent_before, CONF_REGISTRAR_ENABLED: True,
+        "default_ringing_timeout": 120, "max_dialog_subscription_expires": 60, 'legacy_phone_references': {
         'default': 'Casa', HA_SOFTPHONE_DEVICE_ID: 'Casa', 'browser:opaque': 'existing-browser-user', 'sip:480': 'ha_phone_default'}}
     assert dict(entry.options) == options_before
     assert devices.async_get(device.id).identifiers == {('voip_stack', 'phone_endpoint:Casa')}
@@ -330,7 +332,7 @@ async def test_interrupted_v7_registry_writes_retry_without_namespace_or_credent
     first_saved = deepcopy(dict(first.data))
     monkeypatch.setattr(hass.config_entries, "async_update_subentry", original)
     assert await async_migrate_entry(hass, entry)
-    assert entry.version == 7 and entry.minor_version == 4
+    assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
     assert dict(first.data) == {**{key: value for key, value in first_saved.items() if key != 'endpoint_id'}, 'username_source': 'user'}
     assert second.data["kind"] == "sip_account" and second.data["send_video"]
     assert second.data["future_unknown"] == {"keep": 2}

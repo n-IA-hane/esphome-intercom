@@ -55,7 +55,7 @@ async def test_inbound_bridge_constructs_client_with_trunk_transport(
     decision = SimpleNamespace(target="12345", entry=None, sip_uri="")
     with pytest.raises(ClientObserved):
         await bridge.route_sip_bridge(
-            runtime=runtime, invite=invite, decision=decision, peers=[],
+            runtime=runtime, invite=invite, decision=decision, peers=[], roster_entries=[],
             trunk_config={"trunk_server": "192.0.2.30", "trunk_port": 5060,
                           "trunk_transport": trunk_transport, "trunk_username": "account"},
             bridge_to_trunk=True, source_endpoint=None, target_endpoint=None,

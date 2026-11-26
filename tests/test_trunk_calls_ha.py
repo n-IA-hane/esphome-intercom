@@ -82,6 +82,7 @@ async def trunks(lab, monkeypatch, request):
             "trunk_enabled": True, "trunk_register": True, "trunk_server": "127.0.0.1",
             "trunk_port": phone.transport.get_extra_info("sockname")[1],
             "trunk_username": identity, "trunk_password": "test-only",
+            "trunk_options_interval": 30,
         })
     lab.runtime.trunk_configs = configs
     lab.runtime.default_trunk_id = "home"

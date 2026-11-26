@@ -33,7 +33,54 @@
           "audio_codecs": "Trascina le righe in ordine di preferenza. Disattiva una riga per escludere il codec mantenendone la posizione. Mantieni almeno un codec audio attivo. La chiamata richiede un codec supportato da entrambi gli interlocutori.",
           "video_codecs": "Trascina le righe in ordine di preferenza e attiva i codec consentiti. Svuota la lista o disattiva tutte le righe per chiamate solo audio. Il video richiede interlocutori compatibili e un percorso video abilitato.",
           "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
-          "max_dialog_subscription_expires": "Maximum dialog/BLF lease, from 60 to 3600 seconds. The initial value remains 60. Longer leases reduce periodic renewals; state changes still notify immediately. A shorter phone request is honored. SIP registration expiry is separate."
+          "max_dialog_subscription_expires": "Maximum dialog/BLF lease, from 60 to 3600 seconds. The initial value remains 60. Longer leases reduce periodic renewals; state changes still notify immediately. A shorter phone request is honored. SIP registration expiry is separate.",
+          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration or external route starts."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Impostazioni avanzate",
+            "data": {
+              "contact_step_timeout": "Passo tra priorità dei contatti SIP",
+              "media_timeout": "Riproduzione audio e sintesi vocale",
+              "dtmf_timeout": "Attesa dei tasti",
+              "automation_timeout": "Inattività Automazione",
+              "announcement_timeout": "Durata totale annuncio",
+              "unanswered_wait": "Attesa senza risposta",
+              "transcription_timeout": "Trascrizione segreteria",
+              "recording_timeout": "Registrazione chiamata",
+              "ivr_digit_timeout": "Attesa comando segreteria",
+              "ivr_interdigit_timeout": "Intervallo tra cifre segreteria",
+              "ivr_prompt_timeout": "Messaggio vocale del menu",
+              "voicemail_menu_setup_timeout": "Preparazione menu segreteria",
+              "voicemail_greeting_timeout": "Preparazione e saluto segreteria",
+              "conference_sip_ringing_timeout": "Squillo dei membri SIP della conferenza",
+              "registrar_auth_failure_threshold": "Autenticazioni fallite prima del blocco",
+              "registrar_auth_failure_window": "Finestra delle autenticazioni fallite (secondi)",
+              "registrar_auth_block_duration": "Durata del blocco autenticazione (secondi)",
+              "registrar_min_expires": "Durata minima registrazione (secondi)",
+              "registrar_max_expires": "Durata massima registrazione (secondi)",
+              "registrar_contact_limit": "Contact registrati massimi per account",
+              "audio_rtcp_min_interval": "Intervallo minimo RTCP audio",
+              "local_redirect_max_hops": "Numero massimo di inoltri locali"
+            },
+            "data_description": {
+              "contact_step_timeout": "Tempo concesso a una priorità di registrazione SIP prima di passare alla successiva. Il limite complessivo di squillo resta valido.",
+              "media_timeout": "Tempo massimo per una riproduzione o sintesi vocale quando l'azione non indica una durata.",
+              "dtmf_timeout": "Finestra totale di raccolta per Attendi input da tastiera nelle chiamate Automation, quando il timeout viene omesso. La ricezione di una cifra non riavvia la finestra.",
+              "automation_timeout": "Tempo iniziale di inattività dei nuovi contatti Automazione e delle chiamate prese in gestione da un'automazione. I contatti esistenti mantengono il valore salvato.",
+              "announcement_timeout": "Limite totale di un annuncio senza durata esplicita, inclusi preparazione e trasmissione.",
+              "unanswered_wait": "Attesa senza rispondere alla chiamata Automazione quando l'azione non indica una durata.",
+              "transcription_timeout": "Tempo massimo di una trascrizione quando l'azione non indica una durata.",
+              "recording_timeout": "Durata massima della registrazione quando l'azione omette il limite.",
+              "ivr_digit_timeout": "Attesa del comando successivo dopo un messaggio del menu.",
+              "ivr_interdigit_timeout": "Attesa di ogni cifra durante l'inserimento di una casella, un PIN o un numero di messaggio; riparte dopo ogni cifra. Vale solo per i menu della segreteria. Attendi input da tastiera nelle chiamate Automation usa il proprio timeout totale.",
+              "ivr_prompt_timeout": "Tempo massimo per ogni messaggio del menu, inclusi sintesi vocale e trasmissione.",
+              "voicemail_menu_setup_timeout": "Tempo massimo per rispondere e preparare l'audio prima di avviare il menu.",
+              "voicemail_greeting_timeout": "Tempo massimo per rispondere, preparare l'audio e riprodurre il saluto prima di registrare un messaggio.",
+              "conference_sip_ringing_timeout": "0 elimina il limite di risposta dei membri SIP; i timer del protocollo restano attivi.",
+              "local_redirect_max_hops": "Limite degli inoltri verso account locali verificati. Gli inoltri remoti dei trunk restano rifiutati."
+            }
+          }
         }
       },
       "video": {
@@ -114,7 +161,20 @@
           "trunk_caller_id_policy": "L'identità del trunk riscrive il chiamante. L'identità del chiamante usa il numero pubblico dell'account, se configurato. Lo username dell'account serve per gli interni tra centralini. Credenziali Digest e Contact restano separati. Nei due modi chiamante, le chiamate inoltrate da un trunk conservano il From originale.",
           "trunk_caller_id": "Numero generico usato solo quando è selezionata l'identità del trunk. Vuoto usa lo username del trunk. Non modifica autenticazione o numero chiamato.",
           "trunk_caller_name": "Nome generico usato con l'identità del trunk. Vuoto usa il relativo numero chiamante.",
-          "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account."
+          "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account.",
+          "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. This destination receives calls when the called number has no phonebook match. A routing automation can override the selected destination.",
+          "automation_routing_enabled": "Allow a routing automation to override the selected called number or configured destination before ringing. For an interactive keypad menu, select an Automation contact as the incoming destination."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Impostazioni avanzate",
+            "data": {
+              "trunk_options_interval": "Intervallo OPTIONS (secondi)"
+            },
+            "data_description": {
+              "trunk_options_interval": "0 disabilita le richieste OPTIONS periodiche."
+            }
+          }
         }
       },
       "trunk_mode": {
@@ -401,7 +461,10 @@
       "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease.",
       "trunk_caller_id_invalid": "Scegli una policy supportata e un numero o username SIP senza indirizzo né caratteri di controllo.",
       "trunk_inbound_account_invalid": "Seleziona un account SIP locale esistente e abilitato.",
-      "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato."
+      "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato.",
+      "duration_invalid": "Inserisci una durata nell'intervallo indicato.",
+      "trunk_destination_invalid": "Seleziona una destinazione VoIP Stack esistente.",
+      "advanced_policy_invalid": "Correggi i valori delle impostazioni avanzate."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -665,7 +728,20 @@
             "trunk_caller_id_policy": "L'identità del trunk riscrive il chiamante. L'identità del chiamante usa il numero pubblico dell'account, se configurato. Lo username dell'account serve per gli interni tra centralini. Credenziali Digest e Contact restano separati. Nei due modi chiamante, le chiamate inoltrate da un trunk conservano il From originale.",
             "trunk_caller_id": "Numero generico usato solo quando è selezionata l'identità del trunk. Vuoto usa lo username del trunk. Non modifica autenticazione o numero chiamato.",
             "trunk_caller_name": "Nome generico usato con l'identità del trunk. Vuoto usa il relativo numero chiamante.",
-            "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account."
+            "trunk_inbound_account": "Account locale esistente e abilitato con cui il PBX remoto autentica gli INVITE in ingresso. Autorizza quel peer a presentare i propri interni chiamanti. Il peer deve provare Digest anche se il suo IP è noto. Un solo trunk abilitato per account.",
+            "trunk_inbound_default_target": "Select the receiving phone by name, or enter a group, extension or Automation contact. This destination receives calls when the called number has no phonebook match. A routing automation can override the selected destination.",
+            "automation_routing_enabled": "Allow a routing automation to override the selected called number or configured destination before ringing. For an interactive keypad menu, select an Automation contact as the incoming destination."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Impostazioni avanzate",
+              "data": {
+                "trunk_options_interval": "Intervallo OPTIONS (secondi)"
+              },
+              "data_description": {
+                "trunk_options_interval": "0 disabilita le richieste OPTIONS periodiche."
+              }
+            }
           }
         }
       },
@@ -687,7 +763,9 @@
         "trunk_did_invalid": "Sorgente o regole del numero chiamato non valide.",
         "trunk_caller_id_invalid": "Scegli una policy supportata e un numero o username SIP senza indirizzo né caratteri di controllo.",
         "trunk_inbound_account_invalid": "Seleziona un account SIP locale esistente e abilitato.",
-        "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato."
+        "trunk_inbound_account_in_use": "Questo account è già associato a un altro trunk abilitato.",
+        "advanced_policy_invalid": "Correggi i valori delle impostazioni avanzate.",
+        "trunk_destination_invalid": "Seleziona una destinazione VoIP Stack esistente."
       },
       "abort": {
         "reconfigure_successful": "Configurazione del trunk aggiornata."
@@ -1405,6 +1483,73 @@
     "esphome_account_setup_required": {
       "title": "ESPHome phone account needs native setup",
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
+    },
+    "duration_configuration_invalid": {
+      "title": "Controlla la configurazione delle durate",
+      "description": "La migrazione delle durate non è stata completata: {error}. Apri questa riparazione per correggere le durate salvate non valide anche se il centralino non è caricato, poi riprova la migrazione. I valori validi e le altre impostazioni vengono conservati. Gli errori nella struttura della configurazione vengono segnalati qui ma non sono modificabili da questa riparazione.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Scegli l'elemento da correggere",
+            "description": "Scegli l'elemento di configurazione con durate salvate non valide. Puoi correggerlo qui anche se il centralino non è caricato. I valori non vengono mai ridotti o sostituiti automaticamente.",
+            "data": {
+              "owner": "Elemento di configurazione"
+            }
+          },
+          "edit_durations": {
+            "title": "Correggi le durate salvate",
+            "description": "{owner}\n\n{error}\n\nInserisci durate valide in secondi. Vengono modificati solo i campi delle durate dell'elemento selezionato; le altre impostazioni vengono conservate. Dopo aver corretto tutti gli elementi non validi, riprova la migrazione.",
+            "sections": {
+              "advanced": {
+                "name": "Impostazioni avanzate",
+                "data": {
+                  "contact_step_timeout": "Passo tra priorità dei contatti SIP",
+                  "media_timeout": "Riproduzione audio e sintesi vocale",
+                  "dtmf_timeout": "Attesa dei tasti",
+                  "automation_timeout": "Inattività Automazione",
+                  "announcement_timeout": "Durata totale annuncio",
+                  "unanswered_wait": "Attesa senza risposta",
+                  "transcription_timeout": "Trascrizione segreteria",
+                  "recording_timeout": "Registrazione chiamata",
+                  "ivr_digit_timeout": "Attesa comando segreteria",
+                  "ivr_interdigit_timeout": "Intervallo tra cifre segreteria",
+                  "ivr_prompt_timeout": "Messaggio vocale del menu",
+                  "voicemail_menu_setup_timeout": "Preparazione menu segreteria",
+                  "voicemail_greeting_timeout": "Preparazione e saluto segreteria",
+                  "conference_sip_ringing_timeout": "Squillo dei membri SIP della conferenza",
+                  "timeout": "Durata",
+                  "return_timeout": "Squillo al rientro dal parcheggio",
+                  "step_timeout": "Passo del gruppo",
+                  "overall_timeout": "Squillo complessivo del gruppo",
+                  "ring_timeout": "Squillo del membro",
+                  "nested_step_timeout": "Passo del gruppo annidato",
+                  "nested_overall_timeout": "Squillo complessivo del gruppo annidato",
+                  "nested_ring_timeout": "Squillo del membro annidato",
+                  "max_wait": "Attesa massima in coda",
+                  "no_agent_wait": "Attesa senza operatori",
+                  "retry_delay": "Intervallo tra tentativi della coda",
+                  "wrap_up": "Pausa dell'operatore dopo la chiamata",
+                  "max_seconds": "Limite di registrazione",
+                  "answer_timeout": "Attesa della risposta"
+                }
+              }
+            }
+          },
+          "confirm": {
+            "title": "Riprova la migrazione",
+            "description": "{error}\n\nRiprova la migrazione ordinaria con la configurazione salvata. Le durate non valide possono essere corrette in questa riparazione. Gli altri errori di struttura devono essere risolti prima di riprovare; questa riparazione non può modificarli."
+          }
+        },
+        "error": {
+          "invalid_duration": "Una o più durate non sono valide. Correggi i valori indicati sopra.",
+          "configuration_changed": "La configurazione è cambiata mentre la riparazione era aperta. Controlla l'elemento e i valori attuali prima di salvare di nuovo.",
+          "migration_retry_failed": "La migrazione è ancora bloccata. Controlla la causa indicata prima di riprovare."
+        }
+      }
+    },
+    "trunk_dtmf_retired": {
+      "title": "Automatic trunk extension collection was removed",
+      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
     }
   },
   "exceptions": {
@@ -1820,6 +1965,14 @@
         "destination_range_end": {
           "name": "Last destination number in range",
           "description": "Inclusive upper bound for a numeric range. Enter the first value in the number or extension field."
+        },
+        "destination_device": {
+          "name": "Dispositivo contatto Automazione",
+          "description": "Seleziona un contatto Automazione esistente. Usa un solo filtro destinazione; le azioni operano sulla stessa chiamata."
+        },
+        "destination_entity": {
+          "name": "Evento chiamate del contatto Automazione",
+          "description": "Seleziona l'entità evento del contatto Automazione, in alternativa al dispositivo o al nome destinazione."
         }
       }
     },
@@ -3336,6 +3489,10 @@
         "device_id": {
           "name": "Telefono per esecuzione manuale",
           "description": "Seleziona il telefono con la chiamata dell'automazione quando provi questa azione senza un trigger VoIP."
+        },
+        "inter_digit_timeout": {
+          "name": "Time between digits",
+          "description": "Optional seconds to wait after each digit. A gap returns the digits collected so far with timeout status. The total wait limit still applies."
         }
       },
       "sections": {

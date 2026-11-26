@@ -11,6 +11,7 @@ from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .core.media_archive import ArchiveError, MediaArchive
+from .mailbox_config import initial_mailbox_settings
 from .phone_config import phone_subentry_by_endpoint_id, update_phone_subentry
 from .runtime_data import require_runtime_data
 from .service_endpoints import async_require_phone_service_control, resolve_service_phone
@@ -111,10 +112,17 @@ async def async_set_voicemail_settings(call: ServiceCall) -> None:
     if call.data.get("enabled") is False:
         await async_remove_mailbox(call.hass, endpoint.endpoint_id)
         return
-    settings = mailbox_settings(call.hass, endpoint.endpoint_id)
+    record = phone_subentry_by_endpoint_id(entry, endpoint.endpoint_id)
+    if record is None:
+        raise ServiceValidationError("Phone configuration is unavailable")
+    settings = dict(record.data.get("voicemail", {}))
     for key in ("enabled", "max_seconds"):
         if key in call.data:
             settings[key] = call.data[key]
+    try:
+        settings = initial_mailbox_settings(settings)
+    except ValueError as error:
+        raise ServiceValidationError(str(error)) from error
     if call.data.get("clear_greeting"):
         settings["greeting_media"] = ""
     elif "greeting_media" in call.data:

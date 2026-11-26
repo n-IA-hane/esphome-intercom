@@ -34,9 +34,12 @@ async def test_menu_readiness_budget_and_call_cleanup(lab, monkeypatch, scenario
     authorize = AsyncMock(return_value=False)
     monkeypatch.setattr(voicemail_menu.VoicemailMenu, "answer", answer)
     monkeypatch.setattr(voicemail_menu.VoicemailMenu, "_authorize", authorize)
-    # Exercise real asyncio expiry without a thirty-second wait on failures.
+    # Exercise the persisted public minimum instead of bypassing validation.
     if scenario != "ready_after_six_seconds":
-        monkeypatch.setattr(voicemail_menu, "VOICEMAIL_MENU_SETUP_TIMEOUT", .03, raising=False)
+        from custom_components.voip_stack.store import config_entry
+        entry = config_entry(lab.hass)
+        lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "service_timeouts": {
+            **entry.data["service_timeouts"], "voicemail_menu_setup_timeout": 1}})
     requests = []
     original = lab.calls.request_termination
 
@@ -55,7 +58,7 @@ async def test_menu_readiness_budget_and_call_cleanup(lab, monkeypatch, scenario
         elif scenario == "hangup":
             await lab.calls.terminate_call_wait(session.call_id, reason="remote_hangup")
         if scenario != "hangup":
-            await asyncio.wait_for(asyncio.shield(task), .5)
+            await asyncio.wait_for(asyncio.shield(task), 2)
         else:
             await asyncio.gather(task, return_exceptions=True)
         await lab.hass.async_block_till_done()

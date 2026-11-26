@@ -76,12 +76,17 @@ class RtpAudioReceiver:
         self._timestamp_rate = 0
         self.last_gap_ms = 0.0
         self.last_packet_accepted = False
+        self._packet_observer = None
         self.last_source_changed = False
         self._reorder_deadline = None
         self._reorder_timer = None
         self._reorder_epoch = 0
         self._on_reorder_ready = None
         self._on_reorder_error = None
+
+    def set_packet_observer(self, observer):
+        """Observe validated wire arrivals without changing PCM admission."""
+        self._packet_observer = observer
 
     @property
     def receive_state(self):
@@ -225,7 +230,14 @@ class RtpAudioReceiver:
         rtp.validate_audio_payload_size(packet.payload, fmt)
         self.last_gap_ms = 0.0
         if not admitted:
-            if not self._receive_state.admit(packet, clock_rate=fmt.rtp_clock_rate):
+            admitted_packet = self._receive_state.admit(packet, clock_rate=fmt.rtp_clock_rate)
+            if self._receive_state.last_packet_valid and self._packet_observer is not None:
+                try:
+                    self._packet_observer(packet, fmt)
+                except Exception:
+                    self._packet_observer = None
+                    _LOGGER.debug("Optional RTP packet observer failed", exc_info=True)
+            if not admitted_packet:
                 return []
             if self._receive_state.changed:
                 self.reset_source()

@@ -212,6 +212,21 @@ def _matches_value(actual, wanted, mode, upper=""):
 
 def matches_call(payload: dict, options: dict, *, hass=None) -> bool:
     """Match the event snapshot rather than mutable Event Entity attributes."""
+    if any(options.get(key) for key in ("destination_device", "destination_entity")):
+        if hass is None:
+            return False
+        from .automation_contact_device import (
+            automation_contact_matches_destination,
+            resolve_automation_contact_selection,
+        )
+        try:
+            contact = resolve_automation_contact_selection(hass, options)
+        except ValueError:
+            return False
+        if not automation_contact_matches_destination(hass, contact, payload):
+            return False
+        options = {key: value for key, value in options.items()
+                   if key not in {"destination_device", "destination_entity", "destination_match"}}
     aliases = {
         "caller": ("caller", "caller_number", "caller_extension", "source_account_username", "caller_account_username"),
         "destination": ("callee", "destination", "called_extension", "called_number", "dest_account_username", "destination_account_username", "target_account_username"),

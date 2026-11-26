@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import voluptuous as vol
 
+from .module_loader import load_voip_stack_module
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "custom_components" / "voip_stack" / "services.py"
@@ -27,6 +29,10 @@ def _boolean(value: object) -> bool:
 def load_service_schemas() -> dict[str, vol.Schema]:
     """Register services against a minimal HA facade and return their schemas."""
 
+    # Load the actual pure configuration boundary and let services retain its
+    # normal relative imports. The facade supplies HA registration, not policy.
+    duration_config = load_voip_stack_module("duration_config")
+    configured_entry = SimpleNamespace(data=duration_config.initialize_duration_config({}))
     source = SERVICES.read_text()
     source = source.replace(
         "from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse\n",
@@ -63,6 +69,7 @@ def load_service_schemas() -> dict[str, vol.Schema]:
     # non-HA service/field contract tests independent from HA dependencies.
     namespace = {
         "__name__": "voip_stack_services_schema_test",
+        "__package__": duration_config.__package__,
         "SimpleNamespace": SimpleNamespace,
         "MediaSelector": lambda _config: vol.Schema({
             vol.Required("media_content_id"): str,
@@ -93,7 +100,10 @@ def load_service_schemas() -> dict[str, vol.Schema]:
             if schema is not None:
                 schemas[service] = schema
 
-    hass = SimpleNamespace(services=ServiceRegistry())
+    hass = SimpleNamespace(
+        services=ServiceRegistry(),
+        config_entries=SimpleNamespace(async_entries=lambda _domain: [configured_entry]),
+    )
     asyncio.run(namespace["async_register_services"](hass, {}))
     return schemas
 

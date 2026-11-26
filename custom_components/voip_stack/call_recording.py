@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from homeassistant.exceptions import ServiceValidationError
 
 from .call_scope import call_belongs_to_endpoint, call_endpoint_id
+from .duration_policy import resolve_service_timeout
 from .endpoint_session import CleanupStage
 from .mailbox import get_archive, message_audio_reference
 from .runtime_data import require_runtime_data
@@ -183,9 +184,7 @@ async def async_start_recording(call):
 
 
 async def _start_recording(call, runtime, session, endpoint):
-    maximum = float(call.data.get("max_seconds", 3600))
-    if not 1 <= maximum <= 3600:
-        raise ServiceValidationError("Recording duration must be between 1 and 3600 seconds")
+    maximum = resolve_service_timeout(call.hass, "recording_timeout", call.data.get("max_seconds"))
     if session.state != "in_call" or session.owner not in {"bridge", "ha_softphone", "local_bridge"}:
         raise ServiceValidationError("Select an established conversation to record")
     if runtime.sip.resource_for(session.call_id, "recording") is not None:

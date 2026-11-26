@@ -10,19 +10,21 @@ class AccountCallPlan:
     """One logical account; its policy owns the business answer deadline."""
 
     endpoint_id: str
+    step_timeout: float
     route_kind: str = "direct"
 
     @property
     def ring_policy(self) -> RingPolicy:
         # SIP transaction timers remain in SipCallClient. A transport fork must
         # not substitute the ring group's deadline for the account's policy.
-        return RingPolicy(overall_timeout=float("inf"), step_timeout=15.0)
+        return RingPolicy(overall_timeout=float("inf"), step_timeout=self.step_timeout)
 
 
 def account_call_plan(entry):
     """Recover the operation-local account plan without creating a group."""
-    identity = str((entry.metadata if entry else {}).get("account_fork") or "")
-    return AccountCallPlan(identity) if identity else None
+    metadata = entry.metadata if entry else {}
+    identity = str(metadata.get("account_fork") or "")
+    return AccountCallPlan(identity, metadata["account_step_timeout"]) if identity else None
 
 def account_has_ha_binding(hass, endpoint_id):
     """Load the HA adapter only for a managed account's candidate path."""
@@ -58,11 +60,15 @@ def account_fork_entry(hass, endpoint, entry, *, all_transports=False):
     if (not contacts and not (all_transports and browser)) or (
             len(contacts) == 1 and not browser and not all_transports):
         return None
+    from .duration_policy import resolve_service_timeout
+
+    step_timeout = resolve_service_timeout(hass, "contact_step_timeout")
     return replace(entry, metadata={
         **entry.metadata,
         "members": [entry.id],
         "group_type": "ring",
         "account_fork": endpoint.endpoint_id,
+        "account_step_timeout": step_timeout,
         "route_kind": "direct",
     })
 

@@ -20,6 +20,8 @@ def borrow_pending_media(client, reservation, video_relay=None) -> None:
     def sockets():
         reservation.bind_audio_sockets(ports=(client.local_rtp_port,))
         result = {"audio": reservation.audio_socket(client.local_rtp_port)}
+        if client.audio_rtcp_min_interval > 0:
+            result["audio_rtcp"] = reservation.audio_socket(client.local_rtp_port + 1)
         if video_relay is not None:
             result.update(video_relay.pending_media_sockets("right"))
         return result
@@ -69,6 +71,14 @@ async def prepare_trunk_media(client, config, remote_host: str, get_servers) -> 
         else:
             client.audio_rtp_socket = bind_sip_audio_socket(client.local_rtp_port)
     sockets.setdefault("audio", client.audio_rtp_socket)
+    if client.audio_rtcp_min_interval > 0 and "audio_rtcp" not in sockets:
+        if client.audio_rtcp_socket is None:
+            reservation = client.media_reservation
+            client.audio_rtcp_socket = (reservation.take_audio_socket(client.local_rtp_port + 1)
+                if reservation is not None else None)
+            if client.audio_rtcp_socket is None:
+                client.audio_rtcp_socket = bind_sip_audio_socket(client.local_rtp_port + 1)
+        sockets["audio_rtcp"] = client.audio_rtcp_socket
     if "video" not in sockets and client.local_video_rtp_port and client.video_formats:
         if client.video_rtp_socket is None:
             client.video_rtp_socket, client.video_rtcp_socket = bind_sip_video_sockets(client.local_video_rtp_port)

@@ -9,7 +9,7 @@ from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import async_require_service_admin
-from .automation_call import AutomationCall
+from .automation_call import AutomationCall, application_idle_duration
 from .automation_context import current_execution
 from .call_projection import publish_bridge_projection
 from .core.sip import sip_default_port
@@ -105,7 +105,7 @@ async def _bind_outgoing_application_media(hass, registry, session, application,
     application.answered = True
 
 
-async def _dial_attempt(hass, registry, session, attempt, destination, timeout, *, answer_mode="", audio_direction="sendrecv"):
+async def _dial_attempt(hass, registry, session, attempt, destination, timeout, *, answer_mode="", audio_direction="sendrecv", transition_call=True):
     """Arbitrate an outgoing leg and route decisions with the existing fork."""
     client = attempt.client
     decision = hass.loop.create_future()
@@ -127,10 +127,14 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
                    if answer_mode or audio_direction != "sendrecv" else {}),
             )
             if result in {"ringing", "calling", "remote_ringing"}:
-                registry.transition(session.call_id, state=CallState.REMOTE_RINGING.value,
-                                    expected_generation=session.generation)
-                publish_bridge_projection(hass, session, event_type="remote_ringing",
-                                          direction="outgoing", route_kind="automation")
+                if transition_call:
+                    registry.transition(session.call_id, state=CallState.REMOTE_RINGING.value,
+                                        expected_generation=session.generation)
+                    publish_bridge_projection(hass, session, event_type="remote_ringing",
+                                              direction="outgoing", route_kind="automation")
+                else:
+                    registry.observe_leg(session.call_id, client.dialog_ids.call_id, role="callee",
+                        state="remote_ringing", generation=session.generation)
                 if answer_mode:
                     remaining = (None if timeout is None else
                         max(0.0, client.invite_sent_at + timeout - hass.loop.time()))
@@ -206,6 +210,7 @@ async def _async_originate_application_call(
     source = source or roster_entry_for_target(str(call.data['source_automation']), entries)
     if source is None or not source.enabled or (not supplied_source and source.metadata.get('virtual_endpoint') != 'automation'):
         raise ServiceValidationError("Select an enabled Automation contact as the calling identity")
+    application_idle_duration(source)
     destination = str(call.data['destination']).strip()
     from .inbound_routing.targets import resolve_phone_target
     from .router import RouteAction, RouteReason
@@ -326,24 +331,6 @@ async def _async_originate_application_call(
         if candidate is None:
             raise ServiceValidationError("The destination cannot receive an outgoing automation call")
         return candidate
-
-    if answer_mode:
-        from .account_dialing import account_call_plan, account_dial_decision
-        account_decision = account_dial_decision(hass, resolved.decision, all_transports=True)
-        plan = account_call_plan(account_decision.entry)
-        browser_leg = dialer.browser_leg_for_member(destination, peers, entries)
-        if plan is not None and (browser_leg is not None or
-                len(account_decision.entry.metadata.get("sip_contacts") or ()) > 1):
-            from .account_paging import async_originate_account_paging
-            return await async_originate_account_paging(call, source=source,
-                endpoint=runtime.endpoints.require(plan.endpoint_id), decision=account_decision,
-                entries=entries, prepare=prepare, local_ip=local_ip,
-                answer_mode=answer_mode, audio_direction=audio_direction,
-                dial_attempt=_dial_attempt, bind_media=_bind_outgoing_application_media,
-                preferred_call_id=routing_call_id, allow_browser=browser_leg is not None,
-                policy_endpoint_ids=resolved.forwarded_endpoint_ids,
-                ringing_timeout=(initial_route.ringing_timeout
-                    if initial_route.ringing_timeout is not None else call.data.get("answer_timeout")))
 
     try:
         attempt = prepare(destination, initial=True)

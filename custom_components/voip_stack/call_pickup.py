@@ -346,6 +346,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 relay.right_transport, _ = await hass.loop.create_datagram_endpoint(
                     lambda: _RelayProtocol(relay, "right", paused=True), sock=sock
                 )
+                await relay.async_start_audio_rtcp("right", sock=reservation.take_audio_socket(relay.right_port + 1))
             except BaseException:
                 sock.close()
                 raise
@@ -369,7 +370,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
             incoming.send_format,
             incoming.recv_format,
             recv_formats=incoming.recv_formats, send_formats=incoming.send_formats,
-            remote_sdp=incoming.remote_sdp, dtmf_direction=getattr(incoming, "dtmf_direction", None),
+            audio_rtcp=incoming.audio_rtcp_min_interval > 0, remote_sdp=incoming.remote_sdp, dtmf_direction=getattr(incoming, "dtmf_direction", None),
             video_port=relay.video_relay.right_port if picker_video_answer is not None else 0,
             video_format=picker_video_answer.video_format if picker_video_answer is not None else None,
             video_direction=picker_video_answer.direction if picker_video_answer is not None else None,
@@ -476,6 +477,8 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 audio_source.timestamp,
                 audio_source.ssrc,
             )
+        await relay.async_start_audio_rtcp("left", sock=(current_source.take_audio_socket(relay.left_port + 1)
+            if current_source is not None else None))
         if source_ports is not None:
             merged = RtpPortReservation.merge(
                 hass,
@@ -503,7 +506,7 @@ async def prepare_sip_pickup(hass, incoming, target, local_ip, *, call_id="", ge
                 source.send_format,
                 source.recv_format,
                 recv_formats=source.recv_formats, send_formats=source.send_formats,
-                remote_sdp=source.remote_sdp, dtmf_direction=getattr(source, "dtmf_direction", None),
+                audio_rtcp=source.audio_rtcp_min_interval > 0, remote_sdp=source.remote_sdp, dtmf_direction=getattr(source, "dtmf_direction", None),
                 video_port=relay.video_relay.left_port if source_video_answer is not None else 0,
                 video_format=source_video_answer.video_format if source_video_answer is not None else None,
                 video_direction=source_video_answer.direction if source_video_answer is not None else None,

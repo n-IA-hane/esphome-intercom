@@ -447,9 +447,9 @@ def test_hil_script_result_preserves_inputs_through_final_verification(tmp_path:
     "p4-audio-to-bidirectional-video-reinvite",
     "p4-full-landscape-jpeg-call-lifecycle",
 ])
-def test_other_hil_properties_require_their_own_measured_validator(scenario: str) -> None:
+def test_new_hil_properties_require_their_own_measured_receipt(scenario: str) -> None:
     job = "hil-p4" if scenario.startswith("p4-") else "hil-s3"
-    with pytest.raises(EvidenceError, match="no measured validator"):
+    with pytest.raises(EvidenceError, match="did not prove planned scenario"):
         derive_scenario_evidence(job,
             {"plan_id": "plan", "head": "head", "scenarios": [{"id": scenario}]},
             [], candidate_id="candidate")

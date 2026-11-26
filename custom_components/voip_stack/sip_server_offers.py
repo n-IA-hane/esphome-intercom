@@ -9,6 +9,7 @@ from .core.audio_capabilities import HA_AUDIO_CAPABILITIES
 from .core import sdp, sip
 from .core.sip_dialog import apply_remote_offer_media, notify_media_commit
 from .core.sip_transaction import SessionTimerDriver
+from .audio_rtcp import remote_audio_rtcp_fields
 from .inbound_identity import identity_fields
 import logging
 
@@ -165,6 +166,7 @@ class SipServerOffers:
                 dtmf_direction=audio.dtmf_direction,
                 remote_rtp_host=str(parsed["connection_ip"]),
                 remote_rtp_port=int(parsed["media_port"]),
+                **remote_audio_rtcp_fields(response.body),
                 remote_audio_direction=str(parsed["direction"]),
                 local_audio_direction=sdp.local_direction_for_offer(
                     str(parsed["direction"]),
@@ -286,6 +288,7 @@ class SipServerOffers:
                 outbound_trunk_id=initial.outbound_trunk_id,
                 identified_source_endpoint_id=initial.identified_source_endpoint_id,
                 authenticated_username=initial.authenticated_username,
+                audio_rtcp_min_interval=initial.audio_rtcp_min_interval,
                 **identity_fields(initial),
                 peer_profile=initial.peer_profile,
                 caller_route=initial.caller_route,

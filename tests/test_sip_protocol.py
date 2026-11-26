@@ -154,6 +154,7 @@ class SipProtocolBugFixTest(unittest.TestCase):
         trunk = types.SimpleNamespace(
             open_outbound_dialog=lambda call_id: (lambda raw: True, object()),
             close_outbound_dialog=closed.append,
+            active_registrar_target=("127.0.0.1", 5060),
             _udp_local_port=35000,
         )
         client = types.SimpleNamespace(
@@ -163,6 +164,7 @@ class SipProtocolBugFixTest(unittest.TestCase):
         )
         self.assertTrue(module.reuse_registered_trunk_flow(trunk, client))
         self.assertEqual(client.local_sip_port, 35000)
+        self.assertEqual(client.initial_next_hop, trunk.active_registrar_target)
         client.dialog_ids.call_id = "new-call"
         attached["close"]()
         self.assertEqual(closed, ["original"])

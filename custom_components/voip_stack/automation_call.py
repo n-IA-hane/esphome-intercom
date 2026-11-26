@@ -13,12 +13,19 @@ from .authorization import async_require_service_admin
 from .automation_context import current_execution
 from .call_projection import publish_bridge_projection
 from .call_deadlines import CallDeadline
+from .duration_policy import resolve_service_timeout, validate_duration
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import TerminationIntent
 from .fsm import CallState
 from .runtime_data import call_runtime_artifacts
 
 from .local_application import LocalCallApplication, attach_local_application
+
+
+def application_idle_duration(contact) -> float:
+    """Validate the configured duration for the actual application owner."""
+    policy = "announcement_timeout" if contact.metadata.get("virtual_endpoint") == "paging" else "automation_timeout"
+    return validate_duration(contact.metadata.get("automation_timeout"), policy)
 
 
 @dataclass(slots=True)
@@ -54,7 +61,7 @@ class AutomationCall(LocalCallApplication):
         if execution is not None and execution.active and self.controller == execution.controller:
             # The native HA execution owns its waits until completion or cancellation.
             return
-        delay = float(self.contact.metadata.get("automation_timeout", 30))
+        delay = application_idle_duration(self.contact)
         self.deadline = CallDeadline(
             call_registry(self.hass), self.session, f"deadline:automation:{self.session.call_id}",
             lambda: self.session.create_task(self.expire(), name="automation-timeout"),
@@ -143,7 +150,7 @@ class AutomationCall(LocalCallApplication):
                 await self.media.tx_queue.join()
             self.require_current()
 
-        await self.run_operation(call, play, timeout=float(call.data.get("timeout", 120)))
+        await self.run_operation(call, play, timeout=resolve_service_timeout(self.hass, "media_timeout", call.data.get("timeout")))
 
     async def say(self, call: ServiceCall) -> None:
         await self._play_announcement(call, lambda: self.speech_stream(
@@ -163,7 +170,7 @@ class AutomationCall(LocalCallApplication):
 
         async def wait() -> None:
             self.require_current()
-            await asyncio.sleep(float(call.data.get("duration", 60)))
+            await asyncio.sleep(resolve_service_timeout(self.hass, "unanswered_wait", call.data.get("duration")))
             self.require_current()
 
         await self.run_operation(call, wait, timeout=None)
@@ -215,7 +222,7 @@ class AutomationCall(LocalCallApplication):
 
             remove = self.hass.bus.async_listen(SIP_DTMF_EVENT, receive)
             try:
-                async with asyncio.timeout(float(call.data.get("timeout", 10))):
+                async with asyncio.timeout(resolve_service_timeout(self.hass, "dtmf_timeout", call.data.get("timeout"))):
                     return await completed
             except TimeoutError:
                 return {"status": "timeout", "digits": collected}
@@ -299,6 +306,10 @@ def automation_call(hass, call_id: str) -> AutomationCall | None:
 
 def attach_automation_application(hass, session, invite, contact, local_ip, *, controller="", local_source=None, previous=None) -> AutomationCall:
     """Attach Automation control to the shared local application media owner."""
+    try:
+        application_idle_duration(contact)
+    except ValueError as error:
+        raise ServiceValidationError(str(error)) from error
     return attach_local_application(AutomationCall, hass, session, invite, contact, local_ip,
                                     controller=controller, local_source=local_source, previous=previous)
 
@@ -374,7 +385,8 @@ async def take_over_ringing_phone(call: ServiceCall, call_id: str) -> Automation
         raise ServiceValidationError("The triggering caller has no media source available")
     revision = session.revision
     endpoint_id = str(session.metadata.get("endpoint_id") or "")
-    contact = RosterEntry(session.callee or invite.target, metadata={"virtual_endpoint": "automation"})
+    contact = RosterEntry(session.callee or invite.target, metadata={"virtual_endpoint": "automation",
+        "automation_timeout": resolve_service_timeout(call.hass, "automation_timeout")})
     claimed = registry.transition(
         call_id, owner="automation", state=CallState.RINGING.value, route_kind="automation",
         expected_owner=session.owner, expected_revision=revision,

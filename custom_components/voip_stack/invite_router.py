@@ -405,6 +405,7 @@ async def route_invite(
             invite=invite,
             decision=decision,
             peers=peers,
+            roster_entries=roster_entries,
             trunk_config=trunk_cfg,
             bridge_to_trunk=bridge_to_trunk,
             source_endpoint=source_endpoint,

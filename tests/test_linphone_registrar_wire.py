@@ -29,7 +29,7 @@ def _response(raw: bytes) -> tuple[int, dict[str, str]]:
     return int(lines[0].split()[1]), headers
 
 
-def _digest(challenge: str, uri: str, username: str, password: str) -> str:
+def _digest(challenge: str, uri: str, username: str, password: str, *, nonce_count: int = 1) -> str:
     # The peer deliberately does not use the component's Digest implementation.
     params = {key.lower(): quoted or token for key, quoted, token in
               re.findall(r'(\w+)=(?:"([^"]*)"|([^,\s]+))', challenge)}
@@ -39,12 +39,13 @@ def _digest(challenge: str, uri: str, username: str, password: str) -> str:
         return hashlib.md5(value.encode()).hexdigest()
 
     ha1, ha2 = md5(f'{username}:{realm}:{password}'), md5(f'REGISTER:{uri}')
-    value = md5(f'{ha1}:{nonce}:00000001:independent:auth:{ha2}')
+    count = f'{nonce_count:08x}'
+    value = md5(f'{ha1}:{nonce}:{count}:independent:auth:{ha2}')
     assert 'auth' in params.get('qop', 'auth').split(',')
     escaped = username.replace('\\', '\\\\').replace('"', '\\"')
     return (f'Digest username="{escaped}", realm="{realm}", nonce="{nonce}", '
             f'uri="{uri}", response="{value}", algorithm=MD5, '
-            'qop=auth, nc=00000001, cnonce="independent"')
+            f'qop=auth, nc={count}, cnonce="independent"')
 
 
 @pytest.mark.parametrize('transport', ['UDP', 'TCP'])

@@ -99,10 +99,10 @@ class QueueTicket:
     generation: int
     enqueued: float
     deadline: float
+    policy: QueuePolicy
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     reserved: tuple[str, ...] = ()
     closed: bool = False
-    policy: QueuePolicy = field(default_factory=QueuePolicy)
     entry_id: str = field(default_factory=lambda: uuid4().hex)
     admitted: bool = True
     tried: set[str] = field(default_factory=set)
@@ -163,19 +163,24 @@ class QueueManager:
         if records is None:
             wanted = {key: QueueDefinition(key, name, tuple(members), name if name.isdigit() else "")
                       for key, (name, members) in grouped.items()}
+            if missing := wanted.keys() - self.policies.keys():
+                raise ValueError(f"Queue policies must be configured before reconciliation: {', '.join(sorted(missing))}")
+            wanted_policies = {key: self.policies[key] for key in wanted}
         else:
             wanted = {identity: QueueDefinition(identity, record["name"],
                 tuple(grouped.get(normalize_roster_key(record["name"]), ("", []))[1]), record.get("extension", ""))
                 for identity, record in records.items()}
-            for identity, record in records.items():
-                self.policies[identity] = QueuePolicy.from_data({**record.get("policy", {}), "enabled": record.get("enabled", True)})
-        if wanted == self.definitions and self.policies == previous_policies:
+            wanted_policies = {
+                identity: QueuePolicy.from_data({**record.get("policy", {}), "enabled": record.get("enabled", True)})
+                for identity, record in records.items()
+            }
+        if wanted == self.definitions and wanted_policies == previous_policies:
             return
         for key in self.definitions.keys() - wanted.keys():
             self.policies.pop(key, None)
             self.agent_states.pop(key, None)
         self.definitions = wanted
-        self.policies = {key: self.policies.get(key, QueuePolicy()) for key in wanted}
+        self.policies = wanted_policies
         self.agent_states = {
             key: {member: self.agent_states.get(key, {}).get(member, "available")
                   for member in definition.members}
@@ -560,7 +565,10 @@ class QueueManager:
 
     def start_wrap_up(self, queue_id, endpoint_id, *, duration=None, notify=True):
         if duration is None:
-            duration = self.policies.get(queue_id, QueuePolicy()).wrap_up
+            policy = self.policies.get(queue_id)
+            if policy is None:
+                return
+            duration = policy.wrap_up
         if duration > 0 and not self.closed:
             self.wrap_until[endpoint_id] = max(self.wrap_until.get(endpoint_id, 0), self.clock() + duration)
             self._schedule_wrap_expiry()
@@ -710,7 +718,9 @@ async def async_setup_queues(hass, entry):
         if (item.data["kind"] == "queue" and identity not in previous_ids
                 and legacy in policies):
             try:
-                policy = QueuePolicy.from_data(policies[legacy])
+                from .queue_config import initial_queue_policy
+
+                policy = QueuePolicy.from_data(initial_queue_policy(policies[legacy]))
             except (ValueError, TypeError):
                 continue
             saved_policy = asdict(policy)

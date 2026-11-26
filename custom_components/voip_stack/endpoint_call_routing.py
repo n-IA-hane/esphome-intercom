@@ -122,6 +122,7 @@ class EndpointCallRouting:
                 list(HA_SIP_PCM_RX_FORMATS),
                 include_common_codecs=True,
                 codec_policy=initial.codec_policy,
+                audio_rtcp=initial.audio_rtcp_min_interval > 0,
                 local_capabilities=HA_AUDIO_CAPABILITIES,
             )
         except sip_sdp.SdpError:

@@ -327,6 +327,7 @@ def _run_scenario(
 ) -> dict[str, object]:
     pre = _wait_quiescent(snapshot_command, environment, snapshot_timeout)
     started = monotonic()
+    started_unix = time.time()
     peak: dict[str, object] = {}
     sample_count = 0
     timed_out = False
@@ -337,6 +338,7 @@ def _run_scenario(
         "HIL_EVIDENCE_ROOT": str(artifact_root), "HIL_RUN_ID": run_id,
         "HIL_PLAN_ID": str(plan.get("plan_id") or ""),
         "HIL_ACTOR_STARTED_MONOTONIC": str(started),
+        "HIL_ACTOR_STARTED_UNIX": str(started_unix),
         "HIL_HEAD": str(plan.get("head") or ""),
         "HIL_CANDIDATE_ID": candidate_id, "HIL_SCENARIO_ID": scenario_id}
     with (
@@ -373,6 +375,7 @@ def _run_scenario(
         stderr = stderr_file.read()
     post = _wait_quiescent(snapshot_command, environment, snapshot_timeout)
     finished = monotonic()
+    finished_unix = time.time()
     result = {
         "scenario": scenario_id,
         "run_id": run_id,
@@ -381,6 +384,10 @@ def _run_scenario(
         "timed_out": timed_out,
         "started_monotonic": started,
         "finished_monotonic": finished,
+        "started_unix": started_unix,
+        "finished_unix": finished_unix,
+        "firmware_binding": {key: environment.get("HIL_" + key.upper(), "") for key in
+            ("firmware_sha256", "firmware_profile", "source_lock_sha256")},
         "duration_seconds": round(finished - started, 3),
         "snapshots": {"pre": pre, "peak": peak, "post": post},
         "snapshot_samples": sample_count,
@@ -512,6 +519,9 @@ def run_hil(
                     timeout=firmware_timeout,
                 )
                 firmwares.append(firmware)
+                child_environment.update(HIL_FIRMWARE_SHA256=firmware["sha256"],
+                    HIL_FIRMWARE_PROFILE=firmware["profile"],
+                    HIL_SOURCE_LOCK_SHA256=firmware["source_lock_sha256"])
                 doctor = subprocess.run(
                     _command(device.get("doctor"), child_environment),
                     cwd=ROOT,

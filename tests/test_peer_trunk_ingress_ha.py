@@ -29,7 +29,7 @@ def bind_peer(lab, *, enabled=True):
     # and validation are covered by the native trunk-flow tests.
     lab.runtime.trunk_configs["remote"] = {
         **normalized_trunk_config({"trunk_enabled": enabled, "trunk_server": "127.0.0.7",
-                                   "trunk_inbound_default_target": ""}),
+                                   "trunk_inbound_default_target": "", "trunk_options_interval": 0}),
         "trunk_inbound_account": "remote_pbx",
     }
 

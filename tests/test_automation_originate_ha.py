@@ -228,7 +228,9 @@ async def lab(hass, monkeypatch, socket_enabled):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(("127.0.0.1", 0))
         base_rtp_port = probe.getsockname()[1]
-    entry = MockConfigEntry(domain="voip_stack", data={'initial_phone_created': True, 'sip_registrar_enabled': True})
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    entry = MockConfigEntry(domain="voip_stack", data=initialize_duration_config(
+        {'initial_phone_created': True, 'sip_registrar_enabled': True}))
     entry.add_to_hass(hass)
     from homeassistant.config_entries import ConfigSubentry
     for name in ('bedroom0', 'bedroom1'):
@@ -256,8 +258,10 @@ async def lab(hass, monkeypatch, socket_enabled):
         break
     else:
         raise RuntimeError("No free UDP/TCP SIP laboratory port")
+    from custom_components.voip_stack.config import entry_transport_config
     runtime = VoipStackRuntime(
-        transport_config={"sip_port": sip_port, "rtp_port": base_rtp_port, "advertise_host": "127.0.0.1", 'sip_registrar_enabled': True},
+        transport_config={**entry_transport_config(entry), "sip_port": sip_port, "rtp_port": base_rtp_port,
+            "advertise_host": "127.0.0.1", 'sip_registrar_enabled': True},
         assist_config={}, trunk_config={}, endpoints=endpoints,
         phones=PhoneAdapterRegistry(hass, endpoints), sip=calls, directory=PhoneDirectory(roster),
     )
@@ -285,6 +289,7 @@ async def lab(hass, monkeypatch, socket_enabled):
         "get_recording": async_get_recording,
         "delete_recording": async_delete_recording,
         "tts_say": automation_call.async_tts_say,
+        "wait_for_dtmf": automation_call.async_wait_for_dtmf,
         "play_media": automation_call.async_play_media,
         "hangup": voip_stack._handle_sip_hangup_service,
         "send_to_voicemail": voicemail.async_send_to_voicemail,
@@ -347,6 +352,9 @@ def tts_fixture(monkeypatch, lab, *, block=False):
     class Stream:
         def async_set_message(self, message):
             assert message == "Wake up"
+
+        def delete(self):
+            """Public ResultStream token removal; native cache tests cover it."""
 
         async def async_stream_result(self):
             started.set()

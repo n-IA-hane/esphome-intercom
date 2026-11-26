@@ -264,9 +264,11 @@ class RtpReceiveState:
         self._restart: int | None = None
         self.window = window
         self.changed = False
+        self.last_packet_valid = False
 
     def admit(self, packet: RtpPacket, *, clock_rate: int | None = None) -> bool:
         self.changed = False
+        self.last_packet_valid = False
         if self.ssrc is None:
             self.ssrc = packet.ssrc
         elif packet.ssrc != self.ssrc:
@@ -308,6 +310,9 @@ class RtpReceiveState:
             self._source_floor = None
         if self._source_floor is not None and extended <= self._source_floor:
             return False
+        # Source/header-valid arrivals include media duplicates and late packets.
+        # They remain distinct from delivery admission for RFC 3550 accounting.
+        self.last_packet_valid = True
         if extended in self._seen or (self.highest is not None and extended <= self.highest - self.window):
             return False
         if self.highest is None or extended >= self.highest:

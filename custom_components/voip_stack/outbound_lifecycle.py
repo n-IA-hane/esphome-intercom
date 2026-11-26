@@ -201,6 +201,16 @@ async def async_track_outbound_sip_client(
             # response must never resurrect a detached call in the HA store.
             return
         if public_final == CallState.IN_CALL.value and client.dialog is not None:
+            from .audio_rtcp import async_prepare_browser_rtcp
+            current_session = registry.get_session(client.dialog_ids.call_id)
+            if current_session is None or not current_session.live:
+                return
+            try:
+                await async_prepare_browser_rtcp(hass, current_session, client.dialog, client=client)
+            except (OSError, RuntimeError):
+                await terminator.terminate(client.dialog_ids.call_id,
+                    TerminationIntent.bye("audio_rtcp_start_failed"))
+                return
             from .runtime_data import require_runtime_data
             from .media_session_updates import commit_audio_session_update
             audio = require_runtime_data(hass).media.sessions_for("audio").get(

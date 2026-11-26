@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 import logging
+import math
 
 from .endpoint_session import CallToken, EndpointCallSession
 from .session_cleanup import async_wait_for_cleanup
@@ -238,7 +239,7 @@ class DialForkController:
         strategy: ForkStrategy = ForkStrategy.PARALLEL,
         tier_strategies: Mapping[int, ForkStrategy | str] | None = None,
         overall_timeout: float = float("inf"),
-        step_timeout: float = 15.0,
+        step_timeout: float | None = None,
     ) -> None:
         self.session = session
         self.token: CallToken = session.token
@@ -249,7 +250,7 @@ class DialForkController:
             self.candidates
         ):
             raise ValueError("dial candidate IDs must be unique")
-        if float(overall_timeout) <= 0 or float(step_timeout) <= 0:
+        if isinstance(overall_timeout, bool) or math.isnan(float(overall_timeout)) or float(overall_timeout) <= 0:
             raise ValueError("fork timeouts must be positive")
         self.strategy = ForkStrategy(strategy)
         self.tier_strategies = {
@@ -257,7 +258,18 @@ class DialForkController:
             for tier, tier_strategy in (tier_strategies or {}).items()
         }
         self.overall_timeout = float(overall_timeout)
-        self.step_timeout = float(step_timeout)
+        tiers = {candidate.tier for candidate in self.candidates if not candidate.control}
+        needs_step = (self.strategy is ForkStrategy.SEQUENTIAL or len(tiers) > 1
+                      or any(self.tier_strategies.get(tier) is ForkStrategy.SEQUENTIAL for tier in tiers))
+        if step_timeout is None:
+            if needs_step:
+                raise ValueError("sequential and tiered forks require an explicit step_timeout")
+            self.step_timeout = None
+        elif (isinstance(step_timeout, bool) or not isinstance(step_timeout, (int, float))
+              or not math.isfinite(step_timeout) or step_timeout <= 0):
+            raise ValueError("fork step_timeout must be positive and finite")
+        else:
+            self.step_timeout = float(step_timeout)
 
     async def _close_candidates(
         self,
@@ -471,6 +483,7 @@ class DialForkController:
         candidates: tuple[DialCandidate, ...],
         deadline: float,
     ) -> tuple[DialCandidate | None, DialOutcome | None, list[DialOutcome]]:
+        assert self.step_timeout is not None
         loop = asyncio.get_running_loop()
         failures: list[DialOutcome] = []
         for candidate in candidates:
@@ -533,8 +546,10 @@ class DialForkController:
                 attempted.extend(candidate.candidate_id for candidate in tier_candidates)
                 strategy = self.tier_strategies.get(tier, self.strategy)
                 if strategy is ForkStrategy.PARALLEL:
-                    tier_deadline = (min(deadline, loop.time() + self.step_timeout)
-                                     if tier_index + 1 < len(tiers) else deadline)
+                    tier_deadline = deadline
+                    if tier_index + 1 < len(tiers):
+                        assert self.step_timeout is not None
+                        tier_deadline = min(deadline, loop.time() + self.step_timeout)
                     winner, control, tier_failures = await self._dial_parallel_tier(
                         tier_candidates,
                         tier_deadline,

@@ -86,6 +86,30 @@ are not treated as temporary unavailability.
 
 </details>
 
+<details>
+<summary>Advanced: SIP 302 forwarding from a local account</summary>
+
+A registered local phone can return `302 Moved Temporarily` with one or more
+`Contact` destinations. VoIP Stack acknowledges that transaction and resolves
+those destinations through the normal dial plan, including account routing,
+HA receive adapters, registered SIP Contacts and the original caller's external
+call permissions. An external SIP URI remains an ordinary SIP URI; a redirect
+does not grant new access rights.
+
+The caller keeps its original call identity. Other original Contacts remain
+eligible to answer, and the normal first-answer arbiter closes losing branches,
+including a late SIP answer after cancellation. Contact preferences retain their
+priority. A phone that has fully left the offer releases its account claim.
+
+The saved **Local redirect maximum hops** setting in the PBX advanced SIP
+configuration starts at 5 and accepts 1 through 32. Revisited destinations fail
+with `482 Loop Detected`; exceeding the configured bound fails with `483 Too Many
+Hops`. A `302` received from an outgoing trunk is never followed. Local application
+destinations are handled through the existing automation and call-routing actions,
+rather than this transport redirect adapter.
+
+</details>
+
 ## Multiple providers
 
 Use **Add SIP trunk** on the integration page to create another named line.

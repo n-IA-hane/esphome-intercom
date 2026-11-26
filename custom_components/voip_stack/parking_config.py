@@ -24,7 +24,8 @@ def parking_settings(hass):
             "unavailable_reason": "route_conflict" if conflict else ""}
 
 
-def normalize_parking_config(value):
+def parking_addresses(value):
+    """Read route identities without depending on a residence-time policy."""
     if not isinstance(value, dict):
         raise ValueError("Invalid parking configuration")
     access = str(value.get("access") or "700").strip()
@@ -35,9 +36,13 @@ def normalize_parking_config(value):
             or {access.casefold(), "park"} & {slot.casefold() for slot in slots}
             or any(value.casefold().startswith("*8") for value in (access, *slots))):
         raise ValueError("Choose a parking access code and up to 100 distinct slots")
-    result = {"access": access, "slots": list(slots)}
-    for name, default in (("timeout", 180), ("return_timeout", None)):
-        number = value.get(name, default)
+    return {"access": access, "slots": list(slots)}
+
+
+def normalize_parking_config(value):
+    result = parking_addresses(value)
+    for name in ("timeout", "return_timeout"):
+        number = value.get(name)
         if name == "return_timeout" and number is None:
             result[name] = None
             continue

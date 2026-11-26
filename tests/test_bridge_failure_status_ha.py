@@ -1,4 +1,7 @@
-"""A failed outbound bridge cannot challenge or redirect its independent caller."""
+"""Remote bridge failures retain wire status without exporting auth/redirect context.
+
+Local account 302 forwarding is covered separately by test_local_redirect_ha.
+"""
 
 import asyncio
 import socket
@@ -122,10 +125,20 @@ async def _failure_on_caller_wire(
 
         monkeypatch.setattr(target, "datagram_received", receive)
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
+    remote_uri = f"sip:failure-target@127.0.0.1:{lab.phones[0].transport.get_extra_info('sockname')[1]}"
+    observed_routes = []
+    from custom_components.voip_stack import invite_router
+    original_bridge = invite_router.route_sip_bridge
+
+    async def observed_bridge(**kwargs):
+        observed_routes.append((kwargs["target_endpoint"], kwargs["bridge_to_trunk"], kwargs["decision"]))
+        return await original_bridge(**kwargs)
+
+    monkeypatch.setattr(invite_router, "route_sip_bridge", observed_bridge)
     config = normalized_trunk_config({
-        "trunk_enabled": True, "trunk_register": False,
+        "trunk_enabled": True, "trunk_register": False, "trunk_options_interval": 30,
         "trunk_server": "127.0.0.42", "trunk_allowed_ips": ["127.0.0.42/32"],
-        "trunk_inbound_default_target": "Reception" if group else "bedroom0",
+        "trunk_inbound_default_target": "Reception" if group else remote_uri,
     })
     provider = SipTrunkClient(
         config=trunk_client_config(config), local_ip=listener[0],
@@ -148,6 +161,7 @@ async def _failure_on_caller_wire(
         result = await client.invite(
             target="450", remote_host=listener[0], remote_sip_port=listener[1], timeout=3
         )
+        assert all(target.invites for target in targets), (result, [(message.status_code, message.reason) for message in client.protocol.invite_responses])
         await asyncio.wait_for(asyncio.gather(*(target.invited.wait() for target in targets)), 3)
         if provisional:
             assert result == "ringing"
@@ -160,6 +174,11 @@ async def _failure_on_caller_wire(
         assert any(message.status_code == 180 for message in responses) == provisional
         finals = [message for message in responses if message.status_code >= 200]
         assert {message.status_code for message in finals} == {expected_status}
+        if not group:
+            assert len(observed_routes) == 1
+            target_endpoint, bridge_to_trunk, decision = observed_routes[0]
+            assert target_endpoint is None and bridge_to_trunk is False
+            assert decision.sip_uri == remote_uri and decision.entry is None
         assert client.last_sip_status_code == expected_status
         if expected_status == 480:
             assert {message.reason for message in finals} == {"Temporarily Unavailable"}

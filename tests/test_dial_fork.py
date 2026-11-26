@@ -85,7 +85,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         first = FakeCandidate("first", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200))
         second = FakeCandidate("second", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200))
         busy = FakeCandidate("busy", dial_fork.DialOutcome(dial_fork.DialDisposition.BUSY, 486))
-        result = await dial_fork.DialForkController(session, (first.candidate, second.candidate, busy.candidate)).run_all(lambda *_: True)
+        result = await dial_fork.DialForkController(session, (first.candidate, second.candidate, busy.candidate), step_timeout=15).run_all(lambda *_: True)
         self.assertEqual(result.answered, (first.candidate, second.candidate))
         self.assertFalse(first.closes)
         self.assertFalse(second.closes)
@@ -99,7 +99,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         def commit(*_args):
             accepted.set()
             return True
-        task = asyncio.create_task(dial_fork.DialForkController(session, (first.candidate, pending.candidate)).run_all(commit))
+        task = asyncio.create_task(dial_fork.DialForkController(session, (first.candidate, pending.candidate), step_timeout=15).run_all(commit))
         await asyncio.wait_for(accepted.wait(), 1)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -113,7 +113,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         original = FakeCandidate("original", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200), dial_gate=ready)
         gate = dial_fork.ForkAnswerGate()
         external = dial_fork.DialCandidate("pickup", gate.dial, gate.reject, control=True, confirm=gate.confirm)
-        runner = asyncio.create_task(dial_fork.DialForkController(session, (original.candidate, external)).run(lambda *_: True))
+        runner = asyncio.create_task(dial_fork.DialForkController(session, (original.candidate, external), step_timeout=15).run(lambda *_: True))
         answer = gate.submit("picker")
         try:
             self.assertTrue(await asyncio.wait_for(answer.selected, 1))
@@ -143,6 +143,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (first.candidate, second.candidate),
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertIs(result.outcome.disposition, dial_fork.DialDisposition.DND)
@@ -163,6 +164,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (dnd.candidate, available.candidate),
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertIs(result.winner, available.candidate)
@@ -182,6 +184,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (dnd.candidate, busy.candidate),
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertIs(result.outcome.disposition, dial_fork.DialDisposition.BUSY)
@@ -197,6 +200,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (winner.candidate, loser.candidate),
+            step_timeout=15,
         ).run(lambda candidate, _outcome: not committed.append(candidate.candidate_id))
 
         self.assertIs(result.winner, winner.candidate)
@@ -213,6 +217,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (second.candidate, first.candidate),
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertEqual(result.winner.candidate_id, "first")
@@ -236,6 +241,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (answer.candidate, source_cancel.candidate),
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertIsNone(result.winner)
@@ -258,6 +264,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (reroute.candidate,),
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertIsNone(result.winner)
@@ -308,6 +315,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             session,
             candidates,
             strategy=dial_fork.ForkStrategy.SEQUENTIAL,
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertEqual(events, ["first", "second"])
@@ -351,6 +359,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (branch, browser),
+            step_timeout=15,
         ).run(lambda candidate, _outcome: not committed.append(candidate.candidate_id))
 
         self.assertIs(result.winner, browser)
@@ -384,7 +393,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         observer = dial_fork.DialCandidate("route-observer", watch_route, close_route,
             control=True, keeps_offer_open=False)
         result = await asyncio.wait_for(dial_fork.DialForkController(session,
-            (failed.candidate, observer), overall_timeout=float("inf")).run(lambda *_: True), 2)
+            (failed.candidate, observer), overall_timeout=float("inf"), step_timeout=15).run(lambda *_: True), 2)
         self.assertTrue(waiting.is_set())
         self.assertTrue(drained.is_set())
         self.assertIsNone(result.winner)
@@ -426,6 +435,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             dial_fork.DialForkController(
                 session,
                 (branch, browser),
+                step_timeout=15,
             ).run(lambda _candidate, _outcome: True)
         )
 
@@ -476,6 +486,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
                 session,
                 (answer_candidate, control_candidate),
                 strategy=dial_fork.ForkStrategy.SEQUENTIAL,
+                step_timeout=15,
             ).run(
                 lambda candidate, _outcome: not committed.append(candidate.candidate_id)
             )
@@ -519,6 +530,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         controller = dial_fork.DialForkController(
             session,
             (winner.candidate, loser.candidate),
+            step_timeout=15,
         )
         running = asyncio.create_task(
             controller.run(
@@ -567,7 +579,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             tier=1,
         )
 
-        result = await dial_fork.DialForkController(session, (low, high)).run(
+        result = await dial_fork.DialForkController(session, (low, high), step_timeout=15).run(
             lambda _candidate, _outcome: True
         )
 
@@ -600,6 +612,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             session,
             (second, first),
             strategy=dial_fork.ForkStrategy.SEQUENTIAL,
+            step_timeout=15,
         ).run(lambda _candidate, _outcome: True)
 
         self.assertEqual(events, ["first", "second"])
@@ -645,6 +658,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
                 candidates,
                 strategy=dial_fork.ForkStrategy.SEQUENTIAL,
                 tier_strategies={1: dial_fork.ForkStrategy.PARALLEL},
+                step_timeout=15,
             ).run(lambda _candidate, _outcome: True)
         )
         while len(events) < 3:
@@ -702,3 +716,17 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExplicitForkPolicyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_sequential_and_tiered_forks_reject_an_absent_step_policy(self):
+        session = endpoint_session.EndpointCallSession("configured-policy", 1)
+        first = FakeCandidate("first", dial_fork.DialOutcome(dial_fork.DialDisposition.BUSY))
+        second = FakeCandidate("second", dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED), tier=1)
+        with self.assertRaisesRegex(ValueError, "explicit step_timeout"):
+            dial_fork.DialForkController(session, (first.candidate,), strategy=dial_fork.ForkStrategy.SEQUENTIAL)
+        with self.assertRaisesRegex(ValueError, "explicit step_timeout"):
+            dial_fork.DialForkController(session, (first.candidate, second.candidate))
+        # A single parallel tier never consults a step timer.
+        controller = dial_fork.DialForkController(session, (first.candidate,))
+        self.assertIsNone(controller.step_timeout)

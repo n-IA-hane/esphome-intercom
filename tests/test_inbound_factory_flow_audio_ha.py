@@ -156,7 +156,7 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
 
         monkeypatch.setattr(module, "SipCallClient", client_factory)
         with pytest.raises(_FactoryCompleted):
-            await module.route_sip_bridge(runtime=runtime, invite=invite, decision=decision, peers=[],
+            await module.route_sip_bridge(runtime=runtime, invite=invite, decision=decision, peers=[], roster_entries=[],
                 trunk_config={}, bridge_to_trunk=False, source_endpoint=None, target_endpoint=None,
                 resolved_callee="phone", trunk_invite=False, registry=registry)
         await asyncio.sleep(0)

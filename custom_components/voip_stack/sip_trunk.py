@@ -21,6 +21,7 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from .trunk_policy import trusted_networks
+from .sip_registration_policy import TRUNK_OPTIONS_FIELD
 from .sip_capture import send_sip_datagram
 
 from .core import sip
@@ -102,8 +103,10 @@ class SipTrunkConfig:
     audio_ordered: bool = True
     video_ordered: bool = True
     audio_configured: bool | None = None
+    options_interval: int = TRUNK_OPTIONS_FIELD.default
 
     def __post_init__(self):
+        TRUNK_OPTIONS_FIELD.validate(self.options_interval)
         if self.audio_configured is None:
             object.__setattr__(self, "audio_configured", self.audio_codecs is not None)
 
@@ -160,6 +163,7 @@ class SipTrunkClient:
         self.local_tag = sip.make_tag()
         self.cseq = 1
         self.registered = False
+        self._static_qualified = False
         self.status_code = 0
         self.status_reason = ""
         self.last_sip_event = ""
@@ -330,15 +334,24 @@ class SipTrunkClient:
             raise
 
     @property
+    def inbound_source_ready(self) -> bool:
+        """Identify a configured source independently of outbound OPTIONS health."""
+        if not self.config.enabled or self._stopped or self.config.inbound_account:
+            return False
+        return self.registered if self.config.register else bool(self._trusted_networks)
+
+    @property
     def ready(self) -> bool:
         """Static peers use the existing listener and per-call SIP transports."""
         return not self._stopped and (
-            self.registered if self.config.register else bool(self.config.inbound_account or self._trusted_networks)
+            self.registered if self.config.register else (
+                bool(self.config.inbound_account or self._trusted_networks)
+                and (not self.config.options_interval or self._static_qualified))
         )
 
     async def wait_for_registration(self, *, timeout: float = 15.0) -> bool:
         """Wait for the existing registration owner, without sending another REGISTER."""
-        if not self.config.register or self.ready:
+        if self.ready or (not self.config.register and not self.config.options_interval):
             return self.ready
         await asyncio.wait_for(self._registration_attempted.wait(), timeout)
         return self.ready
@@ -357,6 +370,9 @@ class SipTrunkClient:
                 "Registration disabled; incoming SIP account authentication active"
                 if self.config.inbound_account else "Registration disabled; inbound IP allowlist active"
             )
+            if self.config.options_interval:
+                self.status_reason = "Waiting for OPTIONS qualification"
+                self._ensure_keepalive_task()
             self.notify_state_change()
             return
         try:
@@ -470,7 +486,7 @@ class SipTrunkClient:
     def _ensure_keepalive_task(self) -> None:
         if (
             not self._stopped
-            and self._flow_timer > 0
+            and (self._flow_timer > 0 or (not self.config.register and self.config.options_interval > 0))
             and (self._keepalive_task is None or self._keepalive_task.done())
         ):
             self._keepalive_task = asyncio.create_task(
@@ -479,6 +495,9 @@ class SipTrunkClient:
             )
 
     async def _keepalive_loop(self) -> None:
+        if not self.config.register:
+            await self._static_qualification_loop()
+            return
         while not self._stopped and self._flow_timer > 0:
             interval = _UDP_KEEPALIVE_INTERVAL if self.transport_name == "UDP" else max(2.5, self._flow_timer / 2.0)
             await asyncio.sleep(interval)
@@ -494,8 +513,36 @@ class SipTrunkClient:
             if tx is not None and not await tx.send(b"\r\n\r\n"):
                 return
 
+    async def _static_qualification_loop(self) -> None:
+        """Qualify only this selected static peer, using the existing OPTIONS owner."""
+        while not self._stopped and self.config.options_interval > 0:
+            started = asyncio.get_running_loop().time()
+            self.last_sip_event = "OPTIONS"
+            try:
+                if self.transport_name == "TCP":
+                    await self._connect_tcp()
+                else:
+                    await self._connect_udp()
+                self._ensure_receive_task()
+                response = await self._send_options()
+                self.status_code = response.status_code if response is not None else 408
+                self.status_reason = response.reason if response is not None else "OPTIONS timed out"
+                self._static_qualified = 200 <= self.status_code < 300
+            except (OSError, ConnectionError, asyncio.TimeoutError) as err:
+                self._static_qualified = False
+                self.status_code = 0
+                self.status_reason = str(err)
+            self._registration_attempted.set()
+            self.notify_state_change()
+            elapsed = asyncio.get_running_loop().time() - started
+            await asyncio.sleep(max(0, self.config.options_interval - elapsed))
+
     async def _send_udp_keepalive(self) -> None:
-        """Maintain a NAT binding with an independent OPTIONS transaction."""
+        """Maintain a NAT binding with the shared OPTIONS transaction sender."""
+        await self._send_options()
+
+    async def _send_options(self) -> sip.SipMessage | None:
+        """Send one transport-aware OPTIONS without changing dialog ownership."""
         self._keepalive_cseq += 1
         ids = sip.SipDialogIds(
             call_id=self._keepalive_call_id, local_tag=self.local_tag,
@@ -504,8 +551,9 @@ class SipTrunkClient:
         headers = sip.dialog_headers(
             request_uri=self.registration_uri, local_uri=self.address_uri,
             remote_uri=self.registration_uri, dialog=ids, method="OPTIONS",
-            contact_uri=self.contact_uri, transport="UDP",
-            via_sent_by=(self.local_ip, self._udp_local_port),
+            contact_uri=self.contact_uri, transport=self.transport_name,
+            via_sent_by=(self.local_ip, self._udp_local_port)
+            if self.transport_name == "UDP" else None,
         )
         raw = sip.build_request("OPTIONS", self.registration_uri, headers, b"")
 
@@ -521,8 +569,8 @@ class SipTrunkClient:
             await self._send_raw(raw)
 
         await send()
-        transaction = SipClientTransaction(transport="UDP", timeout=SIP_TIMER_F, t1=SIP_T1, t2=SIP_T2)
-        await transaction.receive(read, send)
+        transaction = SipClientTransaction(transport=self.transport_name, timeout=SIP_TIMER_F, t1=SIP_T1, t2=SIP_T2)
+        return await transaction.receive(read, send)
 
     async def _refresh_loop(self) -> None:
         retry_delay = _REGISTER_RETRY_INITIAL
@@ -783,13 +831,13 @@ class SipTrunkClient:
         if not self.config.register:
             source = self._normalize_ip(source_host)
             return bool(
-                self.ready
+                self.inbound_source_ready
                 and str(signaling_transport or "").upper() == self.transport_name
                 and source
                 and any(ipaddress.ip_address(source) in network for network in self._trusted_networks)
             )
         return bool(
-            self.registered
+            self.inbound_source_ready
             and self.transport_name == "UDP"
             and str(signaling_transport or "").upper() == "UDP"
             and self._udp_source_is_trusted((source_host, 0))
@@ -976,6 +1024,7 @@ class SipTrunkClient:
         if reader is not self.reader:
             return
         self.registered = False
+        self._static_qualified = False
         self.status_code = 0
         self.status_reason = reason
         self.notify_state_change()

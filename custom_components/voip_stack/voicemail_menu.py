@@ -12,6 +12,7 @@ from .call_ivr import CallIVR
 from .call_projection import publish_bridge_projection
 from .core.audio_format import AudioFormat
 from .core.media_archive import ArchiveError
+from .duration_policy import resolve_service_timeout
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import TerminationIntent
 from .local_application import LocalCallApplication
@@ -20,7 +21,6 @@ from .runtime_data import require_runtime_data
 from .voicemail_prompts import phrase
 
 _LOGGER = logging.getLogger(__name__)
-VOICEMAIL_MENU_SETUP_TIMEOUT = 30.0
 
 
 @dataclass(slots=True)
@@ -50,13 +50,13 @@ class VoicemailMenu(LocalCallApplication):
             return False
         text = phrase(self.settings["language"], key, **values)
         options = {"voice": self.settings["voice"]} if self.settings.get("voice") else None
-        async with asyncio.timeout(30):
+        async with asyncio.timeout(resolve_service_timeout(self.hass, "ivr_prompt_timeout")):
             return await self.ivr.play(self.speech_stream(text, self.settings["tts_entity_id"], self.settings["language"], options))
 
     async def _authorize(self):
         if not self.mailbox_id:
             await self.say("mailbox")
-            number = await self.ivr.collect()
+            number = await self.ivr.collect(timeout=resolve_service_timeout(self.hass, "ivr_interdigit_timeout"))
             endpoint = require_runtime_data(self.hass).endpoints.resolve(number) if number else None
             if endpoint is None:
                 await self.say("denied")
@@ -72,7 +72,8 @@ class VoicemailMenu(LocalCallApplication):
         if encoded:
             for _attempt in range(3):
                 await self.say("pin")
-                pin = await self.ivr.collect(maximum=10)
+                pin = await self.ivr.collect(maximum=10,
+                    timeout=resolve_service_timeout(self.hass, "ivr_interdigit_timeout"))
                 if pin is not None and await self.hass.async_add_executor_job(verify_pin, pin, encoded):
                     return True
         await self.say("denied")
@@ -113,7 +114,7 @@ class VoicemailMenu(LocalCallApplication):
         registry = call_registry(self.hass)
         reason = "voicemail_menu_complete"
         try:
-            async with asyncio.timeout(VOICEMAIL_MENU_SETUP_TIMEOUT):
+            async with asyncio.timeout(resolve_service_timeout(self.hass, "voicemail_menu_setup_timeout")):
                 await self.answer()
                 self.media.private_dtmf = True
                 self.ivr = CallIVR(self.media, self.session.create_task)
@@ -140,12 +141,12 @@ class VoicemailMenu(LocalCallApplication):
                 if play:
                     await self._play_message(archive, messages[selected], selected + 1)
                     await self.say("choices")
-                digit = await self.ivr.next_digit()
+                digit = await self.ivr.next_digit(timeout=resolve_service_timeout(self.hass, "ivr_digit_timeout"))
                 play = False
                 if digit == "#":
                     break
                 if digit == "0":
-                    value = await self.ivr.collect()
+                    value = await self.ivr.collect(timeout=resolve_service_timeout(self.hass, "ivr_interdigit_timeout"))
                     if value and 1 <= int(value) <= len(messages):
                         selected, play = int(value) - 1, True
                     elif value is not None:
@@ -190,5 +191,7 @@ class VoicemailMenu(LocalCallApplication):
                                              generation=self.session.generation)
 
     async def close(self, _reason):
+        # Wake API readers even when the run task was cancelled before it began.
+        self.ready.set()
         if self.ivr is not None:
             await self.ivr.close()

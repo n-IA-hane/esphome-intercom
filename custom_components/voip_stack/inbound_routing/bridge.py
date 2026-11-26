@@ -87,6 +87,7 @@ class BridgeRuntime(Protocol):
     send_final_response: Callable[..., Any]
     sip_uri_transport: Callable[..., Any]
     terminate_sip_bridge: Callable[..., Any]
+    run_ring_group_call: Callable[..., Any]
 
 
 def _resolve_bridge_uri(
@@ -135,6 +136,7 @@ async def route_sip_bridge(
     invite: SipInvite,
     decision: RouteDecision,
     peers: list[Any],
+    roster_entries: list[Any],
     trunk_config: dict[str, Any],
     bridge_to_trunk: bool,
     source_endpoint: PhoneEndpoint | None,
@@ -271,6 +273,7 @@ async def route_sip_bridge(
         hass, trunk_config, invite=invite, caller_name=runtime.ha_peer_name(hass),
     ) if bridge_to_trunk else None
     client = SipCallClient(
+        audio_rtcp_min_interval=invite.audio_rtcp_min_interval,
         max_forwards=max(0, invite.max_forwards - 1) if invite.max_forwards is not None else 70,
         codec_policy=codec_policy,
         local_ip=local_ip,
@@ -456,7 +459,7 @@ async def route_sip_bridge(
                     require_current()
                     update()
             answer = build_answer_directional(local_ip, local_ip, source_relay_port,
-                invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None))
+                invite.send_format, invite.recv_format, recv_formats=invite.recv_formats, send_formats=invite.send_formats, audio_rtcp=invite.audio_rtcp_min_interval > 0, remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None))
             if not runtime.send_final_response(hass, invite.call_id, 183, "Session Progress", answer_sdp=answer):
                 raise RuntimeError("source no longer accepts provisional media")
             early_answer_sdp = answer
@@ -541,6 +544,47 @@ async def route_sip_bridge(
             to_tag="",
             decline_reason=TerminalReason.CANCELLED.value,
         )
+    async def handoff_local_redirect() -> bool:
+        """Transfer only a real local 302 to the ordinary account offer owner."""
+        nonlocal early_relay, video_relay
+        from ..account_dialing import account_fork_entry
+        from ..endpoint_lifecycle import create_runtime_task
+        from ..phone_endpoint import EndpointKind
+
+        if (bridge_to_trunk or client.last_sip_status_code != 302
+                or not getattr(client, "last_redirect_contacts", ())
+                or logical_target_endpoint is None
+                or logical_target_endpoint.kind is not EndpointKind.SIP_ACCOUNT):
+            return False
+        entry = account_fork_entry(hass, logical_target_endpoint, decision.entry, all_transports=True)
+        session = registry.get_session(invite.call_id, generation=call_generation)
+        if entry is None or session is None or not session.live:
+            return False
+        token = session.token
+        if early_relay is not None:
+            await early_relay.stop()
+            session.release_resource(f"relay:{invite.call_id}", value=early_relay)
+            early_relay = None
+        await registry.close_leg(invite.call_id, client.dialog_ids.call_id, reason="redirected")
+        registry.forget_bridge_link(invite.call_id)
+        session.release_resource(pending_media_name, value=bridge_ports)
+        session.ensure_live(token)
+        retained = OutboundLeg(member=resolved_callee, uri=decision_uri, client=client,
+            ports=bridge_ports, endpoint_id=logical_target_endpoint.endpoint_id,
+            video_relay=video_relay, video_failure_reason=video_failure_reason,
+            redirect_pending=True)
+        video_relay = None
+        registry.upsert(invite.call_id, state=CallState.RINGING.value, owner="router",
+            caller=invite.caller, callee=resolved_callee, route_kind=decision.action.value)
+        session.artifacts.caller_invite = invite
+        task = create_runtime_task(hass, runtime.run_ring_group_call(invite, entry, peers,
+            roster_entries, redirected_leg=retained))
+        session.own_task(task, name="ring_group")
+        return True
+
+    if result not in {"ringing", "in_call"} and await handoff_local_redirect():
+        return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
+
     def failure_response(result: str) -> tuple[int, str, str, str]:
         status, reason, terminal_reason, public_state = sip_failure_response(result)
         # Redirect and authentication context belongs to the independent
@@ -579,6 +623,8 @@ async def route_sip_bridge(
         if final == "ringing":
             final = await client.wait_for_final()
         if final != "in_call" or client.dialog is None:
+            if await handoff_local_redirect():
+                return
             status_code, sip_reason, terminal_reason, public_state = (
                 failure_response(final)
             )

@@ -135,6 +135,24 @@ def test_serial_parser_reports_fatal_runtime_events() -> None:
     assert metrics["fatal_errors"] == ["Guru Meditation"]
 
 
+def test_serial_parser_accepts_normal_dma_i2s_watchdog_status() -> None:
+    metrics = parse_serial_metrics(SERIAL + "DMA budget=65536 I2S running watchdog enabled panic handler configured\n")
+    assert metrics["fatal_errors"] == []
+
+
+def test_cycle_validation_rejects_unobserved_send_fail_counter() -> None:
+    with pytest.raises(AssertionError, match="p4_video_session"):
+        validate_cycle(_peer(), parse_serial_metrics(COMPACT_SERIAL),
+            {"codec": "h264", "width": 352, "height": 288, "frames": 12}, termination_owner="peer")
+
+
+def test_cycle_validation_reads_send_fail_from_release_evidence() -> None:
+    compact = COMPACT_SERIAL.replace("completed_au=18 dropped_au=0", "completed_au=18 dropped_au=0 send_fail=0")
+    result = validate_cycle(_peer(), parse_serial_metrics(compact),
+        {"codec": "h264", "width": 352, "height": 288, "frames": 12}, termination_owner="peer")
+    assert result["checks"]["p4_video_session"]
+
+
 def test_ffprobe_requires_decodable_h264_frames() -> None:
     result = parse_ffprobe(
         {

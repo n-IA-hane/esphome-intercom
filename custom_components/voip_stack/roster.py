@@ -58,10 +58,14 @@ def _entry_from_mapping(raw: dict[str, Any]) -> RosterEntry:
             raise RosterError("An automation extension must be numeric")
         if address or sip_uri or number or raw.get("port") or raw.get("sip_port"):
             raise RosterError("An automation contact cannot declare a physical address or trunk number")
-        timeout = float(metadata.get("automation_timeout", 30))
-        if not 1 <= timeout <= 300:
-            raise RosterError("Automation timeout must be between 1 and 300 seconds")
-        metadata["automation_timeout"] = timeout
+        from .duration_policy import validate_duration
+
+        try:
+            metadata["automation_timeout"] = validate_duration(
+                metadata.get("automation_timeout"), "automation_timeout"
+            )
+        except ValueError as error:
+            raise RosterError(str(error)) from error
     port = _parse_port(raw.get("port") or raw.get("sip_port") or metadata.get("port") or metadata.get("sip_port"))
     return RosterEntry(
         id=entry_id,

@@ -58,7 +58,7 @@ async def prepared_call(lab):
 async def originate(lab, preparation):
     return await automation_originate.async_originate_application_call(
         ServiceCall(lab.hass, "voip_stack", "call", {"destination": "bedroom0", "answer_timeout": 1}, context=Context()),
-        source=RosterEntry("paging:test", name="Announcement", metadata={"virtual_endpoint": "paging"}),
+        source=RosterEntry("paging:test", name="Announcement", metadata={"virtual_endpoint": "paging", "automation_timeout": 120}),
         answer_mode="Auto", audio_direction="sendonly", preparation=preparation)
 
 

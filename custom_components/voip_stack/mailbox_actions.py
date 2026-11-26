@@ -9,6 +9,7 @@ from homeassistant.exceptions import ServiceValidationError
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .core.media_archive import ArchiveError
+from .duration_policy import resolve_service_timeout
 from .mailbox import get_archive, selected_mailbox, message_audio_reference
 
 current_message: ContextVar[tuple[str, str] | None] = ContextVar("voip_voicemail_message", default=None)
@@ -56,6 +57,7 @@ async def transcription_pcm(archive, message):
 async def async_transcribe_voicemail(call):
     from homeassistant.components import stt
 
+    timeout = resolve_service_timeout(call.hass, "transcription_timeout", call.data.get("timeout"))
     archive, message = await selected_message(call)
     engine = (stt.async_get_speech_to_text_entity(call.hass, call.data["stt_entity_id"])
               if stt.DATA_COMPONENT in call.hass.data else None)
@@ -69,7 +71,7 @@ async def async_transcribe_voicemail(call):
     if not engine.check_metadata(metadata):
         raise ServiceValidationError("The speech-to-text entity must support the selected language and 16 kHz mono PCM")
     try:
-        async with asyncio.timeout(call.data.get("timeout", 120)):
+        async with asyncio.timeout(timeout):
             async with aclosing(transcription_pcm(archive, message)) as frames:
                 result = await engine.internal_async_process_audio_stream(metadata, frames)
     except TimeoutError as err:

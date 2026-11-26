@@ -50,6 +50,8 @@ OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional("caller"): cv.string,
         vol.Optional("destination"): cv.string,
+        vol.Optional("destination_device"): cv.string,
+        vol.Optional("destination_entity"): cv.string,
         vol.Optional("caller_account"): cv.string,
         vol.Optional("destination_account"): cv.string,
         vol.Optional("caller_number"): cv.string,
@@ -80,6 +82,12 @@ class VoipCallTrigger(Trigger):
         result = vol.Schema({vol.Optional("options", default=dict): OPTIONS_SCHEMA})(
             config
         )
+        if any(result["options"].get(key) for key in ("destination_device", "destination_entity")):
+            from .automation_contact_device import resolve_automation_contact_selection
+            try:
+                resolve_automation_contact_selection(hass, result["options"])
+            except ValueError as error:
+                raise vol.Invalid(str(error)) from error
         if result["options"].get("trunk"):
             result["options"]["trunk"] = _trunk_selector_id(hass, result["options"]["trunk"])
         from .sip_account_identity import ha_account_username

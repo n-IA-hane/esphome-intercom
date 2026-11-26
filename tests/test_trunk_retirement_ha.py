@@ -25,10 +25,11 @@ async def test_legacy_menu_migration_keeps_destination_and_persistent_repair(has
     record = ConfigSubentry(subentry_type="trunk", title="Provider", unique_id="trunk:provider", data=original)
     hass.config_entries.async_add_subentry(entry, record)
     assert await async_migrate_entry(hass, entry)
-    assert (entry.version, entry.minor_version) == (7, 6)
-    assert VoipStackConfigFlow.MINOR_VERSION == 6
+    assert (entry.version, entry.minor_version) == (7, 7)
+    assert VoipStackConfigFlow.MINOR_VERSION == 7
     expected = {key: value for key, value in original.items()
         if key not in {"trunk_inbound_mode", "trunk_dtmf_enabled", "trunk_dtmf_timeout_ms", "trunk_dtmf_terminator"}}
+    expected["trunk_options_interval"] = 30
     assert dict(record.data) == expected
     issues = ir.async_get(hass).issues
     issue = issues[("voip_stack", "trunk_dtmf_retired_" + record.subentry_id)]
@@ -50,7 +51,7 @@ async def test_direct_trunk_migration_does_not_create_menu_warning(hass):
         "trunk_inbound_default_target": "Office"})
     hass.config_entries.async_add_subentry(entry, record)
     assert await async_migrate_entry(hass, entry)
-    assert dict(record.data) == {"trunk_id": "direct", "trunk_inbound_default_target": "Office"}
+    assert dict(record.data) == {"trunk_id": "direct", "trunk_inbound_default_target": "Office", "trunk_options_interval": 30}
     assert not ir.async_get(hass).issues
 
 
@@ -98,7 +99,7 @@ async def test_retirement_warning_requires_enabled_collection(hass, settings, wa
         "trunk_id": "provider", "trunk_inbound_default_target": "", **settings})
     hass.config_entries.async_add_subentry(entry, record)
     assert await async_migrate_entry(hass, entry)
-    assert dict(record.data) == {"trunk_id": "provider", "trunk_inbound_default_target": ""}
+    assert dict(record.data) == {"trunk_id": "provider", "trunk_inbound_default_target": "", "trunk_options_interval": 30}
     issue = ir.async_get(hass).issues.get(("voip_stack", "trunk_dtmf_retired_" + record.subentry_id))
     assert (issue is not None) is warning
     if issue is not None:

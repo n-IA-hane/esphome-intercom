@@ -501,9 +501,9 @@ async def test_native_phone_flow_can_enable_mailbox(mailbox_lab, custom_integrat
     assert result["type"] == "create_entry"
     created = next(item for item in entry.subentries.values() if item.title == "Study")
     assert created.data["kind"] == "sip_account"
-    assert created.data["voicemail"] == {"enabled": True}
+    assert created.data["voicemail"] == {"enabled": True, "max_seconds": 180}
     from custom_components.voip_stack.mailbox import mailbox_settings
-    assert mailbox_settings(lab.hass, phone_endpoint_id(created)) == {"enabled": True}
+    assert mailbox_settings(lab.hass, phone_endpoint_id(created)) == {"enabled": True, "max_seconds": 180}
 
 
 async def test_phone_rename_preserves_private_mailbox_settings(mailbox_lab, custom_integrations):
@@ -993,7 +993,7 @@ async def test_standard_phone_own_mailbox_play_delete_and_hangup(trunks, tmp_pat
     lab.hass.config.config_dir = str(tmp_path)
     lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={"voicemail": {
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {
         "enabled": True, "tts_entity_id": "tts.test", "language": "en",
     }})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
@@ -1353,7 +1353,7 @@ async def test_disabling_mailbox_deletes_only_its_messages_and_recreates_empty(
     await lab.hass.services.async_call("voip_stack", "set_voicemail_settings", {
         "device_id": "mailbox-device", "enabled": True,
     }, blocking=True)
-    assert mailbox_settings(lab.hass, "kitchen") == {"enabled": True}
+    assert mailbox_settings(lab.hass, "kitchen") == {"enabled": True, "max_seconds": 180}
     assert archive.counts("kitchen") == (0, 0)
 
 

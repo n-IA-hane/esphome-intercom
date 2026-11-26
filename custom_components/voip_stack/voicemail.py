@@ -16,6 +16,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .automation_context import current_execution
 from .call_projection import publish_bridge_projection
+from .duration_policy import resolve_service_timeout, validate_duration
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, TerminationIntent
 from .local_application import LocalCallApplication, attach_local_application
@@ -52,9 +53,11 @@ class VoicemailCall(LocalCallApplication):
         registry = call_registry(self.hass)
         try:
             self.require_current()
+            maximum = validate_duration((self.settings or {}).get("max_seconds"), "recording_timeout")
+            greeting_timeout = resolve_service_timeout(self.hass, "voicemail_greeting_timeout")
             archive = await get_archive(self.hass)
             self.writer = await archive.begin(self.mailbox_id, caller=self.recorded_caller or self.session.caller)
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(greeting_timeout):
                 await self.answer()
                 if not self.media.can_receive:
                     raise ServiceValidationError("The caller cannot send voicemail audio")
@@ -77,7 +80,7 @@ class VoicemailCall(LocalCallApplication):
             )
             publish_bridge_projection(self.hass, self.session, event_type="voicemail_recording", route_kind="voicemail")
             try:
-                await asyncio.wait_for(self.writer.failed.wait(), float((self.settings or {}).get("max_seconds", 180)))
+                await asyncio.wait_for(self.writer.failed.wait(), maximum)
             except TimeoutError:
                 pass
             registry.request_termination(self.session.call_id, TerminationIntent("voicemail_complete", public_state="idle"),
@@ -140,6 +143,25 @@ async def async_send_to_voicemail(call: ServiceCall) -> None:
     )
 
 
+def _validated_application_settings(hass, endpoint, mode):
+    """Reject an invalid policy before replacing an existing call application."""
+    from .mailbox_config import validate_mailbox_settings
+
+    settings = mailbox_settings(hass, endpoint.endpoint_id) if endpoint is not None else {}
+    if (mode == "deposit" or endpoint is not None) and not settings.get("enabled", False):
+        raise ServiceValidationError("Enable voicemail for the selected phone first")
+    if mode == "deposit":
+        try:
+            settings = validate_mailbox_settings(settings)
+        except ValueError as error:
+            raise ServiceValidationError(str(error)) from error
+        resolve_service_timeout(hass, "voicemail_greeting_timeout")
+    else:
+        for key in ("voicemail_menu_setup_timeout", "ivr_prompt_timeout", "ivr_digit_timeout", "ivr_interdigit_timeout"):
+            resolve_service_timeout(hass, key)
+    return settings
+
+
 async def start_voicemail_application(hass, session, invite, endpoint, local_ip, *,
                                       previous=None, local_source=None, skip_greeting=False,
                                       mode="deposit", caller_endpoint_id=""):
@@ -151,12 +173,11 @@ async def start_voicemail_application(hass, session, invite, endpoint, local_ip,
     from .voicemail_menu import VoicemailMenu
 
     voice = require_voicemail_config(hass) if mode != "deposit" else {}
-    settings = mailbox_settings(hass, endpoint.endpoint_id) if endpoint is not None else {}
-    if mode == "deposit" and not settings.get("enabled", False):
-        raise ServiceValidationError("Enable voicemail for the selected phone first")
+    settings = _validated_application_settings(hass, endpoint, mode)
     await get_archive(hass)
-    if endpoint is not None and not mailbox_settings(hass, endpoint.endpoint_id).get("enabled"):
-        raise ServiceValidationError("The selected mailbox was removed or disabled")
+    # Opening the archive can yield while the user edits the mailbox or PBX.
+    # Recheck the current owner before transition/attach/closing the old app.
+    settings = _validated_application_settings(hass, endpoint, mode)
     label = (mailbox_display_name(endpoint) if mode != "deposit"
              else endpoint.name if endpoint is not None else "Voicemail")
     identity = endpoint.endpoint_id if endpoint is not None else ""

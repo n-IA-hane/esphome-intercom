@@ -53,7 +53,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
         if key not in {
             CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS,
             EXTERNAL_CALL_BLOCKED_ENDPOINTS, CONF_ESPHOME_PHONE_POLICIES,
-            "default_trunk_id", "default_ringing_timeout", "max_dialog_subscription_expires",
+            "default_trunk_id", "default_ringing_timeout", "max_dialog_subscription_expires", "service_timeouts",
             "esphome_mailboxes", "voicemail", "parking",
             "managed_esphome_phones", "esphome_sip_enrollments",
             "esphome_phone_memberships",
@@ -206,6 +206,9 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         from .account_runtime import recompute_account_availability
         recompute_account_availability(hass)
 
+    if contacts_changed:
+        from .automation_contact_device import async_sync_automation_contact_devices
+        async_sync_automation_contact_devices(hass, entry)
     # A failed sync must remain unapplied so a later reconciliation can retry.
     runtime.entry_runtime_signature = runtime_signature
     runtime.entry_phone_signature = phone_signature
@@ -220,6 +223,8 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     )
     if directory_phones_changed or contacts_changed or groups_changed:
         await async_refresh_directory(hass)
+    from .services import async_update_duration_service_defaults
+    await async_update_duration_service_defaults(hass)
     from .mailbox import async_refresh_mailbox_state
     await async_refresh_mailbox_state(hass)
     from .physical_phone_runtime import async_reconcile_physical_phone_runtime

@@ -4,6 +4,7 @@ from copy import deepcopy
 from urllib.parse import quote
 
 import pytest
+from custom_components.voip_stack.config_flow import VoipStackConfigFlow
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 from pytest_homeassistant.common import MockConfigEntry
@@ -91,7 +92,7 @@ async def test_v7_3_upgrade_rekeys_only_typed_references_and_keeps_native_owners
         suggested_object_id='kept_kitchen_state')
     native_ids = (esp.subentry_id, other.subentry_id, paging.subentry_id, account.id, entity.entity_id)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 4
+    assert entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
     assert phone_endpoint_id(esp) == 'kitchen literal'
     assert phone_endpoint_id(other) == 'desk'
     assert esp.data['kind'] == 'sip_account'
@@ -236,7 +237,7 @@ async def test_older_release_login_and_native_subentry_survive_upgrade(hass, ver
     hass.config_entries.async_add_subentry(entry, row)
     identity = row.subentry_id
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 4 and row.subentry_id == identity
+    assert entry.minor_version == VoipStackConfigFlow.MINOR_VERSION and row.subentry_id == identity
     assert phone_endpoint_id(row) == row.data['username'] == ('Display' if kind == 'browser' else 'ha_browser_retained')
     assert row.data['password'] == 'fixture-kept-password'
 

@@ -219,6 +219,7 @@ def parse_media_sections(
     document = SdpDocument.parse(sdp_body)
     session_connection = ""
     session_direction = "sendrecv"
+    session_rtcp_bandwidth: dict[str, int] = {}
     current: dict | None = None
     sections: list[dict] = []
     for line in document.lines:
@@ -243,6 +244,7 @@ def parse_media_sections(
                 "rtpmap": {},
                 "fmtp": {},
                 "rtcp_feedback": {},
+                "rtcp_bandwidth": {},
                 "rtcp_port": 0,
                 "rtcp_address": "",
                 "rtcp_address_supported": True,
@@ -253,6 +255,18 @@ def parse_media_sections(
                 "direction": session_direction,
             }
             sections.append(current)
+            continue
+        if line.startswith("b="):
+            modifier, separator, raw = line[2:].partition(":")
+            if modifier.upper() in {"RS", "RR"}:
+                try:
+                    value = int(raw) if separator else -1
+                except ValueError as error:
+                    raise SdpError("Invalid SDP RTCP bandwidth") from error
+                if value < 0:
+                    raise SdpError("Invalid SDP RTCP bandwidth")
+                target = session_rtcp_bandwidth if current is None else current["rtcp_bandwidth"]
+                target[modifier.upper()] = value
             continue
         if line.startswith("c="):
             if current is None:
@@ -332,10 +346,22 @@ def parse_media_sections(
         except ValueError as err:
             raise SdpError(f"bad SDP media attribute: {line}") from err
     for section in sections:
+        section["rtcp_bandwidth"] = {**session_rtcp_bandwidth, **section["rtcp_bandwidth"]}
         if not section["connection_seen"]:
             section["connection_ip"] = session_connection
         section["connection_held"] = section["connection_ip"] == "0.0.0.0"
     return session_connection, session_direction, sections
+
+
+def audio_rtcp_allowed(sdp_body: str | bytes | None) -> bool:
+    """Honor RFC 3556 report disable on the selected audio media section."""
+    if not sdp_body:
+        return True
+    _connection, _direction, sections = parse_media_sections(sdp_body)
+    selected = next((section for section in sections if section["media"] == "audio"
+        and section["transport"] == "RTP/AVP" and section["port"] > 0), None)
+    bandwidth = selected["rtcp_bandwidth"] if selected is not None else {}
+    return not (bandwidth.get("RS") == 0 and bandwidth.get("RR") == 0)
 
 
 def section_rtpmap(section: dict, payload_type: int) -> tuple[str, int, int] | None:

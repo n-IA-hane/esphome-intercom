@@ -174,7 +174,7 @@ def entry_route_mappings(
     from .phone_config import phone_endpoint_id, phone_subentries, phone_subentry_data
     from .phone_endpoint import EndpointKind
     from .const import CONF_ASSIST_EXTENSION, CONF_ASSIST_ENDPOINT_ENABLED
-    from .parking_config import normalize_parking_config
+    from .parking_config import parking_addresses
 
     excluded = set(exclude_endpoint_ids)
     mappings: list[Mapping[str, Any]] = (
@@ -182,7 +182,7 @@ def entry_route_mappings(
     )
     if include_features:
         mappings.append({"mailbox_feature_routes": True})
-        mappings.append({"parking_feature_routes": normalize_parking_config(data.get("parking", {}))})
+        mappings.append({"parking_feature_routes": parking_addresses(data.get("parking", {}))})
     mappings.extend(
         item
         for item in data.get("sip_accounts", []) or []

@@ -5,16 +5,18 @@ from __future__ import annotations
 from builtins import BaseExceptionGroup
 from inspect import signature
 import logging
+import math
 from pathlib import Path
 import voluptuous as vol
 
 from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import section
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.selector import (BooleanSelector, DeviceSelector, SelectSelector, SelectSelectorConfig,
-    TextSelector, TextSelectorConfig, TextSelectorType)
+    NumberSelector, NumberSelectorConfig, TextSelector, TextSelectorConfig, TextSelectorType)
 
 from .const import DOMAIN
 from .runtime_data import runtime_data
@@ -207,8 +209,127 @@ class AccountMigrationRetryRepairFlow(AccountMigrationRepairFlow):
         return await self.async_step_confirm(user_input)
 
 
+class DurationMigrationRepairFlow(ConfirmRepairFlow):
+    """Correct saved duration fields even when migration prevents PBX setup."""
+
+    def __init__(self, entry_id: str) -> None:
+        self.entry_id = entry_id
+        self._selected = None
+
+    async def async_step_init(self, user_input=None):
+        from .duration_repair import duration_repair_owners
+
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        owners = duration_repair_owners(entry)
+        if not owners:
+            return await self.async_step_confirm()
+        if user_input is not None:
+            self._selected = next((owner for owner in owners if owner.identity == user_input.get("owner")), None)
+            if self._selected is not None:
+                return await self.async_step_edit_durations()
+        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+            vol.Required("owner", default=owners[0].identity): SelectSelector(SelectSelectorConfig(
+                options=[{"value": owner.identity, "label": owner.title} for owner in owners], mode="dropdown")),
+        }))
+
+    async def async_step_edit_durations(self, user_input=None):
+        from .duration_repair import _at_path, duration_repair_owners, duration_repair_update
+
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        if self._selected is None:
+            return await self.async_step_init()
+        errors = {}
+        detail = self._selected.error()
+        if user_input is not None:
+            try:
+                row, data = duration_repair_update(entry, self._selected, user_input.get("advanced", user_input))
+            except RuntimeError:
+                self._selected = None
+                result = await self.async_step_init()
+                if result["type"] == "form":
+                    result["errors"] = {"base": "configuration_changed"}
+                return result
+            except (ValueError, TypeError, KeyError, OverflowError) as error:
+                errors["base"] = "invalid_duration"
+                detail = str(error)
+            else:
+                try:
+                    if row is None:
+                        self.hass.config_entries.async_update_entry(entry, data=data)
+                    else:
+                        self.hass.config_entries.async_update_subentry(entry, row, data=data)
+                except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError):
+                    errors["base"] = "migration_retry_failed"
+                else:
+                    self._selected = None
+                    if duration_repair_owners(entry):
+                        return await self.async_step_init()
+                    return await self.async_step_confirm({})
+        schema = {}
+        for field in self._selected.fields:
+            value = (user_input or {}).get(field.name, _at_path(self._selected.data, field.path))
+            try:
+                numeric = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+            except OverflowError:
+                numeric = False
+            required = vol.Required(field.name, **({"default": value} if numeric else {}))
+            schema[required] = NumberSelector(NumberSelectorConfig(mode="box", step="any", unit_of_measurement="s"))
+        return self.async_show_form(step_id="edit_durations", errors=errors, data_schema=vol.Schema({
+                vol.Optional("advanced"): section(vol.Schema(schema), {"collapsed": True}),
+            }), description_placeholders={"owner": self._selected.title, "error": detail})
+
+    def _diagnostic(self, entry):
+        """Expose only controlled duration errors or a failure class, never data."""
+        from .duration_config import duration_migration_plan
+
+        try:
+            duration_migration_plan(entry)
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError, OverflowError) as error:
+            return type(error).__name__
+        return ""
+
+    async def async_step_confirm(self, user_input=None):
+        from .duration_repair import duration_repair_owners
+
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        if duration_repair_owners(entry):
+            return await self.async_step_init()
+        if user_input is None:
+            return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}),
+                description_placeholders={"error": self._diagnostic(entry)})
+        try:
+            if entry.state is ConfigEntryState.MIGRATION_ERROR:
+                await self.hass.config_entries.async_retry_migration(self.entry_id)
+            else:
+                from . import async_migrate_entry
+
+                await async_migrate_entry(self.hass, entry)
+        except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError):
+            pass
+        else:
+            from .duration_config import duration_migration_plan
+            try:
+                data, updates = duration_migration_plan(entry)
+            except (ValueError, TypeError, KeyError, OSError, RuntimeError, OverflowError):
+                data, updates = None, [None]
+            if entry.version == 7 and entry.minor_version >= 7 and data == entry.data and not updates:
+                if entry.state is ConfigEntryState.SETUP_ERROR:
+                    await self.hass.config_entries.async_reload(self.entry_id)
+                return self.async_create_entry(data={})
+        return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}),
+            errors={"base": "migration_retry_failed"}, description_placeholders={"error": self._diagnostic(entry)})
+
+
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
     """Create the native retry flow only for an account migration conflict."""
+    if issue_id.startswith("duration_configuration_invalid_") and data is not None:
+        return DurationMigrationRepairFlow(str(data["entry_id"]))
     if issue_id.startswith("account_migration_failed_") and data is not None:
         return AccountMigrationRetryRepairFlow(str(data["entry_id"]))
     if issue_id.startswith('managed_record_') and data is not None:

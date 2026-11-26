@@ -1,6 +1,7 @@
 """Decode real preanswer PCMA RTP through the authenticated production audio WS."""
 import asyncio
 import json
+import socket
 import struct
 from unittest.mock import AsyncMock
 
@@ -18,7 +19,7 @@ pytestmark = pytest.mark.ha
 
 @pytest.mark.parametrize('final_answer', [False, True])
 async def test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
-        lab, monkeypatch, aiohttp_client, hass_admin_user, final_answer):
+        lab, monkeypatch, aiohttp_client, hass_admin_user, final_answer, *, check_rtcp=False):
     from custom_components.voip_stack import audio_ws_view, softphone_originate
     from custom_components.voip_stack.audio_ws import decode_audio_frame
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
@@ -38,6 +39,12 @@ async def test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
     media_client = 'early-pcm-browser-owner'
     call_id = ''
     ws = None
+    peer_rtcp = None
+    rtcp_owner = None
+    if check_rtcp:
+        peer_rtcp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        peer_rtcp.bind(('127.0.0.1', 0))
+        peer_rtcp.setblocking(False)
 
     @web.middleware
     async def authenticated(request, handler):
@@ -58,6 +65,8 @@ async def test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
             'c=IN IP4 127.0.0.1\r\nt=0 0\r\n'
             f'm=audio {phone.rtp_socket.getsockname()[1]} RTP/AVP 8\r\n'
             f'a=rtpmap:8 PCMA/8000\r\na=ptime:20\r\na={direction}\r\n').encode()
+        if peer_rtcp is not None:
+            body += f'a=rtcp:{peer_rtcp.getsockname()[1]} IN IP4 127.0.0.1\r\n'.encode()
         phone.transport.sendto(sip.build_response(status,'Session Progress' if status==183 else 'OK',headers,body),phone.remote)
 
     async def wait_for(predicate):
@@ -130,6 +139,18 @@ async def test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
         assert state['state']=='remote_ringing' and state['connected_elapsed']==0
         assert not lab.calls.get_session(call_id).answer_committed
 
+        if check_rtcp:
+            async with asyncio.timeout(5):
+                report, sender = await lab.hass.loop.sock_recvfrom(peer_rtcp, 65535)
+            # Independent RFC 3550 RR header and its first reception block.
+            version_count, packet_type, length = struct.unpack_from('!BBH', report)
+            assert version_count == 0x81 and packet_type == 201 and length == 7
+            assert struct.unpack_from('!I', report, 8)[0] == 0x11223344
+            assert sender[1] == selected.local_rtp_port + 1
+            rtcp_owner = next((resource.value for resource in lab.calls.get_session(call_id).resources
+                if resource.name == f'audio_rtcp:{selected.local_rtp_port}'), None)
+            assert rtcp_owner is not None and owned.audio_rtcp is rtcp_owner
+
         if final_answer:
             response(200,direction='sendrecv')
             await wait_for(lambda: _ha_softphone_state(lab.hass,endpoint.endpoint_id)['state']=='in_call')
@@ -141,6 +162,14 @@ async def test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
             assert client.audio_rtp_socket is None, 'The existing WS transport retains the original socket'
             assert lab.runtime.media.owners_for('audio')[endpoint.endpoint_id+'|'+call_id] is owner
             assert owned.media_generation==1
+            if check_rtcp:
+                assert owned.audio_rtcp is rtcp_owner
+                async with asyncio.timeout(8):
+                    while True:
+                        report, _sender = await lab.hass.loop.sock_recvfrom(peer_rtcp, 65535)
+                        if report[1] == 200:
+                            break
+                assert struct.unpack_from('!I', report, 20)[0] > 0
     finally:
         if call_id:
             await lab.hass.services.async_call('voip_stack','hangup',{'device_id':endpoint.device_id,
@@ -149,9 +178,32 @@ async def test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
             await ws.close()
         await http.close()
         await lab.hass.async_block_till_done()
+        if peer_rtcp is not None:
+            try:
+                async with asyncio.timeout(2):
+                    while True:
+                        report, _sender = await lab.hass.loop.sock_recvfrom(peer_rtcp, 65535)
+                        offset = 0
+                        packet_types = []
+                        while offset + 4 <= len(report):
+                            _version, packet_type, length = struct.unpack_from('!BBH', report, offset)
+                            packet_types.append(packet_type)
+                            offset += (length + 1) * 4
+                        if 203 in packet_types:
+                            break
+                if rtcp_owner is not None:
+                    assert rtcp_owner.closed and rtcp_owner.transport is None
+            finally:
+                peer_rtcp.close()
     assert sum(request.method=='BYE' for request in phone.requests)==int(final_answer)
     assert any(request.method=='CANCEL' for request in phone.requests) is (not final_answer)
     assert_call_resources_released(lab)
+
+
+async def test_browser_rtcp_rr_before_answer_sr_after_answer_and_bye(
+        lab, monkeypatch, aiohttp_client, hass_admin_user):
+    await test_pcma_rtp_is_decoded_on_audio_ws_before_any_200(
+        lab, monkeypatch, aiohttp_client, hass_admin_user, True, check_rtcp=True)
 
 
 async def test_pcma_preanswer_witness_detects_confirmed_only_gate(

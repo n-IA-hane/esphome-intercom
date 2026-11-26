@@ -7,7 +7,26 @@ from .roster import RosterEntry, normalize_roster_key
 
 GROUP_SUBENTRY_TYPE = "group"
 GROUP_KINDS = frozenset({"queue", "ring"})
+INITIAL_RING_STEP_TIMEOUT = 15.0
 _LOGGER = logging.getLogger(__name__)
+
+
+def materialize_ring_step(policy, *, legacy=False):
+    """Persist the initial step at creation or during the explicit legacy upgrade.
+
+    Old policies treated a missing or false-valued step as the initial value,
+    capped by an explicitly shorter group limit. Only migration accepts that
+    legacy spelling; new configuration and runtime reject an explicit zero.
+    """
+    values = dict(policy or {})
+    if "step_timeout" not in values or (legacy and not values["step_timeout"]):
+        overall = values.get("overall_timeout")
+        if overall is None:
+            overall = values.get("ring_timeout")
+        values["step_timeout"] = (min(INITIAL_RING_STEP_TIMEOUT, overall)
+                                  if isinstance(overall, (int, float)) and not isinstance(overall, bool)
+                                  and overall > 0 else INITIAL_RING_STEP_TIMEOUT)
+    return values
 
 
 def group_subentries(entry):
@@ -27,7 +46,8 @@ def group_records(entry, kind=None):
     return records
 
 
-def normalize_group_data(data, *, identity=""):
+def normalize_group_data(data, *, identity="", legacy_policy=False):
+    """Validate a configuration write, materializing only absent duration choices."""
     name = str(data.get("name") or "").strip()
     extension = str(data.get("extension") or "").strip()
     kind = data.get("kind")
@@ -48,13 +68,16 @@ def normalize_group_data(data, *, identity=""):
     enabled = bool(data.get('enabled', policy.get('enabled', True)))
     if kind == "queue":
         from .queue_policy import QueuePolicy
+        from .queue_config import initial_queue_policy
         from dataclasses import asdict
+        policy = initial_queue_policy(policy)
         policy = asdict(QueuePolicy.from_data({**policy, 'enabled': enabled, "agent_order": members}))
         policy.pop("agent_order", None)
         policy.pop('enabled', None)
     else:
         from .dial_plan import RingPolicy
         from dataclasses import asdict
+        policy = materialize_ring_step(policy, legacy=legacy_policy)
         inherited = policy.get("overall_timeout") is None and policy.get("ring_timeout") is None
         configured = policy.get("overall_timeout")
         if configured is None:
@@ -153,8 +176,8 @@ def validate_group_namespace(hass, entry, data, *, exclude=""):
     from .config_validation import entry_route_mappings, mapping_route_aliases, normalized_aliases
     wanted = normalized_aliases((data["name"], data.get("extension")))
     from .mailbox_address import parse_mailbox_address
-    from .parking_config import normalize_parking_config, parse_parking_address
-    parking = normalize_parking_config(entry.data.get("parking", {}))
+    from .parking_config import parking_addresses, parse_parking_address
+    parking = parking_addresses(entry.data.get("parking", {}))
     for alias in (data["name"], data.get("extension", "")):
         if alias and (parse_mailbox_address(alias) is not None or parse_parking_address(parking, alias) is not None
                       or alias.startswith(("queue-login+", "queue-pause+"))):
@@ -220,7 +243,8 @@ def reconcile_group_records(hass, entry, *, replaced=()):
         legacy = declared.get((data["kind"], normalize_roster_key(data["name"])), ("", []))[1]
         preferred = data.get("policy", {}).get("agent_order", ())
         data["members"] = list(dict.fromkeys((*preferred, *legacy)))
-        data = normalize_group_data(data, identity=data.get("group_id", item.subentry_id))
+        data = normalize_group_data(data, identity=data.get("group_id", item.subentry_id),
+                                    legacy_policy=entry.version < 7 or entry.minor_version < 7)
         hass.config_entries.async_update_subentry(entry, item, data=data)
     occupied = {(record["kind"], normalize_roster_key(record["name"])) for record in records.values()}
     for (kind, key), (name, members) in declared.items():
@@ -304,7 +328,8 @@ async def async_apply_group_updates(hass, entry, previous=None):
         old_name = data.pop("previous_name", "")
         if old_name:
             replaced.add((data["kind"], normalize_roster_key(old_name)))
-        data = normalize_group_data(data, identity=data.get("group_id", item.subentry_id))
+        data = normalize_group_data(data, identity=data.get("group_id", item.subentry_id),
+                                    legacy_policy=entry.version < 7 or entry.minor_version < 7)
         hass.config_entries.async_update_subentry(entry, item, data=data)
     reconcile_group_records(hass, entry, replaced=replaced)
     from .phone_queue_membership import sync_group_membership_projection

@@ -47,6 +47,7 @@ def trunk_client_config(cfg: dict, *, parent=None):
         auth_username=str(cfg[CONF_TRUNK_AUTH_USERNAME]),
         password=str(cfg[CONF_TRUNK_PASSWORD]),
         expires=int(cfg[CONF_TRUNK_EXPIRES]),
+        options_interval=int(cfg["trunk_options_interval"]),
         outbound_proxy=str(cfg[CONF_TRUNK_OUTBOUND_PROXY]),
         registration_id=int(cfg.get("trunk_registration_id", 1)),
         outbound_media_address=str(cfg.get("trunk_outbound_media_address") or ""),

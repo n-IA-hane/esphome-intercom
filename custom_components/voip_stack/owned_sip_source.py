@@ -277,11 +277,27 @@ class OwnedSipSource:
             async with _media_identity_guard(runtime.media, f"{self.endpoint_id}|{self.session.call_id}"):
                 self.validate()
                 self.successor = successor
-                original = None
+                original = original_rtcp = None
                 if self.active is None:
+                    rtcp_resource = next((resource.value for resource in self.session.resources
+                        if resource.name == f"audio_rtcp:{self.local_port}"), None)
+                    if rtcp_resource is not None:
+                        if hasattr(successor, "audio_rtcp"):
+                            successor.audio_rtcp["left"] = rtcp_resource
+                        else:
+                            successor.rtcp = rtcp_resource
                     original = getattr(self.client, "audio_rtp_socket", None) if self.client is not None else None
                     if original is None and self.reservation is not None:
                         original = self.reservation.audio_socket(self.local_port)
+                    original_rtcp = getattr(self.client, "audio_rtcp_socket", None) if self.client is not None else None
+                    if original_rtcp is None and self.reservation is not None:
+                        original_rtcp = self.reservation.audio_socket(self.local_port + 1)
+                    if original_rtcp is not None:
+                        rtcp_copy = original_rtcp.dup()
+                        if hasattr(successor, "_pending_audio_rtcp_socket"):
+                            successor._pending_audio_rtcp_socket = rtcp_copy
+                        else:
+                            successor._rtcp_socket = rtcp_copy
                     sock = original.dup() if original is not None else None
                     await install(None, None, sock)
                     sock = None
@@ -296,6 +312,12 @@ class OwnedSipSource:
                     if self.reservation is not None and self.reservation.audio_socket(self.local_port) is original:
                         self.reservation.take_audio_socket(self.local_port)
                     original.close()
+                if original_rtcp is not None:
+                    if self.client is not None and getattr(self.client, "audio_rtcp_socket", None) is original_rtcp:
+                        self.client.audio_rtcp_socket = None
+                    if self.reservation is not None and self.reservation.audio_socket(self.local_port + 1) is original_rtcp:
+                        self.reservation.take_audio_socket(self.local_port + 1)
+                    original_rtcp.close()
                 self._commit_resources(staged, destination_port, preserve_staged=preserve_staged,
                                        connected_party=connected_party)
             if self.previous_watcher is not None:
@@ -378,6 +400,10 @@ class OwnedSipSource:
             relay.left.sequence, relay.left.timestamp, relay.left.ssrc = (
                 self.sender.sequence, self.sender.timestamp, self.sender.ssrc)
             relay.left.clock_rate = self.sender.clock_rate
+        rtcp_socket, relay._pending_audio_rtcp_socket = relay._pending_audio_rtcp_socket, None
+        if rtcp_socket is None:
+            rtcp_socket = self.reservation.take_audio_socket(self.local_port + 1)
+        await relay.async_start_audio_rtcp("left", sock=rtcp_socket)
         return relay
 
     def release_to_session(self, successor):

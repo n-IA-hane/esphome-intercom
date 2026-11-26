@@ -356,6 +356,10 @@ def invite_rtp_peer(
     dtmf = invite.recv_dtmf_format
     send_dtmf = invite.send_dtmf_format
     updated = RtpPeer(
+        rtcp_host=invite.remote_audio_rtcp_host,
+        rtcp_port=invite.remote_audio_rtcp_port,
+        rtcp_minimum_interval=invite.audio_rtcp_min_interval,
+        audio_rtcp_allowed=invite.audio_rtcp_allowed,
         host=invite.remote_rtp_host,
         port=invite.remote_rtp_port,
         payload_type=invite.recv_format.payload_type,
@@ -392,6 +396,10 @@ def dialog_rtp_peer(dialog: SipDialog) -> RtpPeer:
     """Build the relay peer represented by one established outbound dialog."""
 
     return RtpPeer(
+        rtcp_host=dialog.remote_audio_rtcp_host,
+        rtcp_port=dialog.remote_audio_rtcp_port,
+        rtcp_minimum_interval=dialog.audio_rtcp_min_interval,
+        audio_rtcp_allowed=dialog.audio_rtcp_allowed,
         host=dialog.remote_rtp_host,
         port=dialog.remote_rtp_port,
         payload_type=dialog.recv_format.payload_type,

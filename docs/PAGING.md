@@ -36,22 +36,28 @@ data:
     media_content_type: audio/wav
 ```
 
-Targets are logical accounts. If an account has a card and several registered
-clients, paging offers the call through its eligible clients using the account's
-ringing policy. The first client that accepts and has a ready audio output
-receives that account's announcement. Other client offers are closed before the
-message source starts. Sharing an account does not make every handset on that
-account play at once.
+Targets are logical accounts. VoIP Stack offers an announcement to every
+eligible registered SIP client and the account's active HA browser audio
+adapter. Every client that accepts and has a ready output receives the message.
+For example, Reception's HA card and its registered desk phone can both play it. Several open cards are views of one HA audio owner, rather than
+additional phone devices. Ordinary conversations still use first-answer routing.
 
-Several distinct target accounts still receive the same announcement. For
-example, targeting Reception and Warehouse sends the shared message to the
-selected output of each available account; it does not choose only one account
-from that list.
+Each ready output starts without waiting for another client to answer. TTS is
+synthesized once. For a finite TTS message or recorded file, a later-answering
+client receives the complete message from the beginning, provided it can finish
+within the announcement's total time limit. A ringing SIP client has not yet
+accepted an announcement and receives no audio until it answers.
 
-Busy, DND and unreachable phones are skipped. The result identifies each target
-and its outcome. The answer window closes before the message starts, so a late
-recipient does not join halfway through. With no available recipients there is
-no successful delivery to report.
+Several distinct target accounts receive the same shared announcement as well.
+Ending one client's output does not stop the other accepted outputs. Ending one
+recipient account's call does not stop announcements to other accounts.
+
+Busy, DND and unreachable phones are skipped. Results distinguish completed,
+skipped and failed clients. When only some requested clients receive the full
+message, the result is `partial`, with per-account `clients` details identifying
+the HA or SIP output and its reason. Already completed deliveries remain
+recorded when another client does not answer or reaches a deadline. No ready
+outputs means no successful delivery; a truncated source is not completion.
 
 `wait: true` waits for completion. `wait: false` returns an `announcement_id` so
 the automation can continue. Stop that announcement with:
@@ -63,7 +69,9 @@ data:
 ```
 
 Stopping an already finished announcement is safe. It cannot stop an unrelated
-call. Completing an announcement drains the audio before closing its calls.
+call. Completing an announcement drains each output before closing it. Stop
+closes delivery consumers and the job-owned file/URL decoder; a finite TTS
+request already started remains owned by Home Assistant's TTS engine.
 
 ## Saved groups and live announcements
 
@@ -85,7 +93,9 @@ card shows outgoing progress and offers **Hang up**.
 Call that extension from a SIP phone to make a live one-way announcement to
 the available target accounts.
 The originating phone supplies the audio; recipients do not send microphone
-audio back to it.
+audio back to it. Live speech uses the existing bounded live fanout without
+history. A late live recipient hears current speech, not a replay of earlier
+microphone audio.
 
 ## Automatic answer and compatibility
 
@@ -118,11 +128,21 @@ saved paging group keeps its existing explicit answer window. New groups inherit
 choose an override in the native form.
 
 `timeout` is a separate limit on the entire announcement, including admission
-and playback, and retains its 120-second default. Even with an unlimited answer
-window, the job ends at that total limit. A SIP transaction with no provisional
+and playback. Omit it to use the configured PBX announcement duration; new or
+migrated configuration starts at 120 seconds. An action can override it from
+1 to 600 seconds. Even with an unlimited answer window, the job ends at that
+total limit. A SIP transaction with no provisional
 response still has its normal protocol timeout. Limits and failures are
 returned to the automation. Test your phone's speakerphone and paging behavior
 before relying on unattended delivery.
+
+
+Finite file and URL audio is decoded once. Its decoded PCM budget follows the
+time remaining in the announcement's existing total limit. Exceeding that byte
+or time budget closes the source and reports failure, even if some audio was
+already transmitted. Native HA replay retains finite audio; it is not a bounded
+live fanout. Each output feeds its existing encoder in small sample-aligned
+chunks.
 
 See [groups and queues](GROUPS_AND_QUEUES.md) for operator groups and
 [automations as dialplan](AUTOMATION_DIALPLAN.md) for interactive call flows.
