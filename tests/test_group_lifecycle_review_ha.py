@@ -71,12 +71,13 @@ async def test_startup_consumes_saved_membership_command_before_queue_reconcile(
 
 async def test_first_stable_group_materialization_migrates_existing_name_keyed_agent_intent(phone_lab, monkeypatch):
     from custom_components.voip_stack.call_queues import QueuePolicy, async_setup_queues
+    from custom_components.voip_stack.queue_config import initial_queue_policy
     from dataclasses import asdict
     from homeassistant.helpers import storage
 
     lab = phone_lab
     add_phone(lab, "first", queues=["Support"])
-    old_policy = asdict(QueuePolicy(max_wait=17, wrap_up=9))
+    old_policy = asdict(QueuePolicy.from_data(initial_queue_policy({"max_wait": 17, "wrap_up": 9})))
     store = SimpleNamespace(async_load=AsyncMock(return_value={
         "policies": {"support": old_policy}, "agent_states": {"support": {"first": "logged_out"}},
     }), async_save=AsyncMock(), async_delay_save=Mock())

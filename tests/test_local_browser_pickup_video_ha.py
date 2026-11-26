@@ -41,7 +41,7 @@ async def test_ringing_local_browser_camera_reaches_jpeg_picker(
     from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {**entry.data['parking'], 'enabled': True}})
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(('127.0.0.1', 0))
         sip_port = probe.getsockname()[1]

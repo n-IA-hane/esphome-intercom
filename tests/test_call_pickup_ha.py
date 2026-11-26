@@ -146,7 +146,7 @@ async def test_directed_sip_pickup_has_duplex_audio_and_one_caller(
     runtime = trunks
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "parking": {"enabled": True}}
+        entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}}
     )
     runtime.runtime.endpoints.update("transfer_b", extension="101")
     caller, old_phone, picker = registered_phones
@@ -231,7 +231,7 @@ async def test_pickup_preparation_cannot_steal_answered_or_cancelled_call(
     runtime = trunks
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "parking": {"enabled": True}}
+        entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}}
     )
     caller, original, picker = registered_phones
 
@@ -242,7 +242,7 @@ async def test_pickup_preparation_cannot_steal_answered_or_cancelled_call(
 
     if group:
         from custom_components.voip_stack.roster import RosterEntry
-        runtime.roster.append(RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": ["transfer_b"]}))
+        runtime.roster.append(RosterEntry("PickupGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": ["transfer_b"]}))
     await asyncio.to_thread(caller.command, "/dial PickupGroup" if group else "/dial transfer_b")
     await wait_for(
         lambda: any(
@@ -326,7 +326,7 @@ async def test_browser_picks_up_local_phone_using_original_session(trunks, monke
     runtime = trunks
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "parking": {"enabled": True}}
+        entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}}
     )
     for name in ("local-a", "local-b", "local-c"):
         runtime.runtime.endpoints.register(
@@ -401,7 +401,7 @@ async def test_sip_phone_picks_up_local_browser_call(
     runtime = trunks
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "parking": {"enabled": True}}
+        entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}}
     )
     for name in ("local-a", "local-b"):
         runtime.runtime.endpoints.register(
@@ -499,7 +499,7 @@ async def test_sip_pickup_uses_committed_relay_without_private_device_commands(
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(entry, data={
         **entry.data,
-        "parking": {"enabled": True},
+        "parking": {**entry.data["parking"], "enabled": True},
         "audio_codecs": ["PCMA"],
         "video_codecs": [],
     })
@@ -579,7 +579,7 @@ async def test_sip_pickup_after_forward_to_browser_retains_original_caller(
     runtime = trunks
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "parking": {"enabled": True}}
+        entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}}
     )
     runtime.runtime.endpoints.register(
         PhoneEndpoint(
@@ -835,7 +835,7 @@ async def test_sip_pickup_negotiates_video_and_forwards_decodable_frames(registe
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     captured = defaultdict(list)
     original_start = SipVideoRtpRelay.start
     class Capture:
@@ -884,14 +884,14 @@ async def test_sip_pickup_wins_a_ringing_group_without_redialing_caller(register
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     members = [] if mixed == "browser_only" else ["transfer_b"]
     if mixed:
         runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id="group-browser", username="group-browser", name="Group browser",
             device_id="group-browser-device", kind=EndpointKind.BROWSER, availability="available"))
         runtime.roster.append(RosterEntry("group-browser", metadata={"local_ha": True, "endpoint_id": "group-browser"}))
         members.append("group-browser")
-    runtime.roster.append(RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": members}))
+    runtime.roster.append(RosterEntry("PickupGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": members}))
     caller, ringing, picker = registered_phones
     async def wait_for(predicate):
         async with asyncio.timeout(6):
@@ -937,7 +937,7 @@ async def test_early_replaces_matches_all_tags_before_picking_up(
     from custom_components.voip_stack.sip_registrar import SipAccount, SipRegistration
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     caller, _old, _unused = registered_phones
     if browser_source:
         from unittest.mock import AsyncMock
@@ -1033,7 +1033,7 @@ async def test_group_callback_failure_keeps_original_phone_ringing(trunks, regis
     from custom_components.voip_stack.dialog_info import snapshot
     runtime = trunks
     caller, original, _picker = registered_phones
-    runtime.roster.append(RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": ["transfer_b"]}))
+    runtime.roster.append(RosterEntry("PickupGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": ["transfer_b"]}))
     runtime.runtime.endpoints.update("transfer_c", device_id="pickup-device")
     async def wait_for(predicate):
         async with asyncio.timeout(4):
@@ -1075,8 +1075,8 @@ async def test_pickup_of_forwarded_group_uses_the_same_fork_owner(trunks, regist
     runtime = trunks
     caller, picker, ringing = registered_phones
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
-    runtime.roster.append(RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": ["transfer_c"]}))
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
+    runtime.roster.append(RosterEntry("PickupGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": ["transfer_c"]}))
     from custom_components.voip_stack.store import store_manual_roster_entries
     store_manual_roster_entries(runtime.hass, [runtime.roster[-1]])
     async def wait_for(predicate):
@@ -1127,7 +1127,7 @@ async def test_browser_service_can_join_an_existing_sip_group(trunks, registered
     browser = PhoneEndpoint(endpoint_id="pickup-browser", username="pickup-browser", device_id="pickup-browser-device", name="Pickup browser",
                             kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
     runtime.runtime.endpoints.register(browser)
-    group = RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": ["transfer_c"]})
+    group = RosterEntry("PickupGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": ["transfer_c"]})
     runtime.roster.append(group)
     store_manual_roster_entries(runtime.hass, [group])
     async def wait_for(predicate):
@@ -1165,7 +1165,7 @@ async def test_cancelling_callback_waiter_cannot_close_the_selected_fork_leg(tru
     events = []
     detach = runtime.hass.bus.async_listen(CALL_EVENT, lambda event: events.append(event.data))
     caller, _original, picker = registered_phones
-    runtime.roster.append(RosterEntry("PickupGroup", metadata={"group_type": "ring", "members": ["transfer_b"]}))
+    runtime.roster.append(RosterEntry("PickupGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": ["transfer_b"]}))
     runtime.runtime.endpoints.update("transfer_c", device_id="pickup-device")
     async def wait_for(predicate):
         async with asyncio.timeout(4):
@@ -1207,7 +1207,7 @@ async def test_pickup_rollback_survives_repeated_cancellation(trunks, registered
     runtime = trunks
     caller, original, picker = registered_phones
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     async def wait_for(predicate):
         async with asyncio.timeout(4):
             while not predicate():
@@ -1274,7 +1274,7 @@ async def test_declined_browser_pickup_preserves_real_group_and_next_call(trunks
         runtime.runtime.endpoints.register(endpoint)
         runtime.roster.append(RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name}))
         browsers.append(endpoint)
-    runtime.roster.append(RosterEntry("BrowserGroup", metadata={"group_type": "ring", "members": [e.name for e in browsers]}))
+    runtime.roster.append(RosterEntry("BrowserGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": [e.name for e in browsers]}))
     a, b = browsers
 
     async def wait_for(predicate):
@@ -1330,7 +1330,7 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     caller, _, picker = registered_phones
     ordinary, alternate = runtime.phones
     ordinary.auto_answer = False
@@ -1346,7 +1346,7 @@ async def test_route_forward_invalidates_real_sip_pickup_before_ordinary_answer_
                             kind="browser", availability="available", capabilities=frozenset({"audio", "dtmf"}))
     runtime.runtime.endpoints.register(browser)
     runtime.roster.append(RosterEntry(browser.username, name=browser.name, metadata={"local_ha": True, "endpoint_id": browser.endpoint_id}))
-    runtime.roster.append(RosterEntry("RouteGroup", metadata={"group_type": "ring", "members": ["bedroom0", browser.name]}))
+    runtime.roster.append(RosterEntry("RouteGroup", metadata={"step_timeout": 15, "group_type": "ring", "members": ["bedroom0", browser.name]}))
     from custom_components.voip_stack.store import store_manual_roster_entries
     store_manual_roster_entries(runtime.hass, runtime.roster)
     events = []

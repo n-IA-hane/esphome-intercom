@@ -1121,7 +1121,7 @@ async def test_single_position_queue_choice_is_scoped_to_queue_devices(physical_
     queue = QueueDefinition(data["group_id"], "Support", ("481",), "700")
     manager = QueueManager(state.lab.hass, state.lab.entry)
     manager.definitions[queue.queue_id] = queue
-    manager.policies[queue.queue_id] = QueuePolicy()
+    manager.policies[queue.queue_id] = QueuePolicy.from_data(data["policy"])
     state.lab.runtime.queues = manager
     state.lab.runtime.directory = PhoneDirectory(manager.roster_entries())
     queue_device = dr.async_get(state.lab.hass).async_get_device_by_identifier(

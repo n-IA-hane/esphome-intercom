@@ -355,6 +355,13 @@ async def test_different_account_winner_removes_the_losing_account_projection(
                                for account in registrar.accounts.values()])
     for identity in ("casa", "transfer_b"):
         lab.runtime.endpoints.update(identity, ring_group="UxGroup")
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.voip_stack.group_config import normalize_group_data
+    group = normalize_group_data({"kind": "ring", "name": "UxGroup",
+        "members": ["casa", "transfer_b"], "policy": {"step_timeout": 15}})
+    lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
+        subentry_type="group", title=group["name"], data=group,
+        unique_id="group:ring:" + group["group_id"]))
     observer = await open_browser_ws(lab, hass_ws_client)
     caller, winner, _other = registered_phones
     try:

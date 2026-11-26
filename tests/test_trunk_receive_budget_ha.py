@@ -174,7 +174,7 @@ async def test_registered_trunk20ms_reframes_to_registered_phone10ms(trunks,monk
         assert b''.join(item.payload for item in resumed)==payload
         from custom_components.voip_stack.parking import park_established_sip_call,get_parking_lot
         entry=config_entry(runtime.hass)
-        runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
+        runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{**entry.data["parking"], 'enabled':True}})
         parked=await park_established_sip_call(runtime.hass,session.call_id,'caps')
         assert parked.invite.local_recv_capabilities==original_capabilities
         assert parked.invite.local_audio_capabilities is original_backend

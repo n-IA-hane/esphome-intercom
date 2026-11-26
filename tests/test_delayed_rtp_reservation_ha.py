@@ -114,7 +114,7 @@ async def test_both_preanswer_leg_packets_survive_transport_adoption(trunks):
     lab = trunks
     reservation = RtpPortReservation.allocate(lab.hass)
     reservation.bind_audio_sockets()
-    sockets = reservation._audio_sockets
+    sockets = tuple(reservation.audio_socket(port) for port in reservation.ports)
     fds = tuple(sock.fileno() for sock in sockets)
     left, right = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
     for peer, host in [(left, "127.0.0.2"), (right, "127.0.0.3")]:
@@ -154,7 +154,7 @@ async def test_local_receiver_and_spare_keep_queued_packets_and_exact_fds(applic
     app, registry, caller, released = application
     owner = local_application.RtpPortReservation.allocate(app.hass)
     owner.bind_audio_sockets()
-    source, spare = owner._audio_sockets
+    source, spare = (owner.audio_socket(port) for port in owner.ports)
     source_fd, spare_fd = source.fileno(), spare.fileno()
     first_payload = struct.pack("!320h", *([2345] * 320))
     first = rtp.build_packet(rtp.RtpPacket(96, 511, 640, 123, first_payload))
@@ -350,7 +350,7 @@ async def test_delayed_call_keeps_published_source_and_first_rtp_both_directions
     lab.runtime.endpoints.update("bedroom0", availability="available")
     target = "bedroom0"
     if route_kind == "group":
-        lab.roster.append(RosterEntry("ReservedGroup", metadata={"group_type": "ring", "members": ["bedroom0"]}))
+        lab.roster.append(RosterEntry("ReservedGroup", metadata={"group_type": "ring", "members": ["bedroom0"], "step_timeout": 15}))
         target = "ReservedGroup"
     lab.runtime.directory.replace(lab.roster)
     media = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

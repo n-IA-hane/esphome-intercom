@@ -58,7 +58,7 @@ async def test_registered_phone_trunk_auth_growth_remote_tcp_bye(trunks, registe
         local_rtp_port=audio_port, supported_formats=[AudioFormat(16000, 's16le', 1, 20)],
         on_invite=accept, udp_enabled=False, tcp_enabled=True)
     assert await server.start()
-    runtime.runtime.trunk_configs = {'work': normalized_trunk_config({'trunk_enabled': True,
+    runtime.runtime.trunk_configs = {'work': normalized_trunk_config({"trunk_options_interval": 30, 'trunk_enabled': True,
         'trunk_register': True, 'trunk_server': '127.0.0.2', 'trunk_port': port,
         'trunk_username': 'work', 'trunk_password': 'test-only'})}
     runtime.runtime.trunk_config = runtime.runtime.trunk_configs['work']

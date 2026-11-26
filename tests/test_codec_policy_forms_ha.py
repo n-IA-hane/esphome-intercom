@@ -93,7 +93,7 @@ def test_trunk_client_resolves_global_policy_without_persisting_the_result():
     from custom_components.voip_stack.trunk_runtime import trunk_client_config
 
     parent = CodecPolicy.from_config({"audio_codecs": ["PCMU", "PCMA"], "video_codecs": []}, prefix="")
-    raw = normalized_trunk_config({})
+    raw = normalized_trunk_config({"trunk_options_interval": 30, })
     client = trunk_client_config(raw, parent=parent)
     assert client.audio_codecs == ("PCMU", "PCMA") and client.video_codecs == ()
     assert client.audio_ordered and client.video_ordered

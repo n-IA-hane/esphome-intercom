@@ -51,15 +51,41 @@ class P4HilMeasurement:
                 self.native_call_id = found[1]
 
     async def directory(self, phase):
+        from tools.sip_video_peer import sip
+
         response = await self.ws.command({"type": "voip_stack/list_devices"})
         rows = [row for row in (response.get("result") or {}).get("devices", [])
-                if str(row.get("host")) == self.args.p4_host and str(row.get("extension")) == self.args.p4_extension]
-        require(len(rows) == 1 and rows[0].get("endpoint_type") == "esphome"
+                if row.get("endpoint_type") == "sip_account"
+                and str(row.get("extension")) == self.args.p4_extension]
+        require(len(rows) == 1
                 and rows[0].get("endpoint_id"), "P4 is absent or ambiguous in the actual HA directory")
         row = rows[0]
-        p4_uri = row.get("sip_uri") or f"sip:{self.args.p4_extension}@{self.args.p4_host}:5060"
+        states = await self.ws.command({"type": "get_states"})
+        books = [state for state in states.get("result", []) if state.get("entity_id") == "sensor.voip_phonebook"]
+        require(len(books) == 1, "Native account directory is unavailable")
+        roster = books[0].get("attributes", {}).get("roster_json")
+        roster = json.loads(roster) if isinstance(roster, str) else roster
+        require(isinstance(roster, dict), "Invalid native account directory")
+        contacts = [contact for contact in roster.get("contacts", [])
+                    if contact.get("metadata", {}).get("endpoint_id") == row["endpoint_id"]
+                    and str(contact.get("extension")) == self.args.p4_extension]
+        require(len(contacts) == 1, "P4 account has no unique phonebook identity")
+        metadata = contacts[0].get("metadata", {})
+        require(metadata.get("registered") is True and metadata.get("device_id"),
+                "P4 account has no registered native device")
+        uris = {item.get("uri") for item in metadata.get("sip_contacts", []) if item.get("uri")}
+        matching = []
+        for uri in sorted(uris):
+            try:
+                parsed = sip.parse_sip_uri(uri)
+            except (sip.SipError, TypeError):
+                continue
+            if parsed.host == self.args.p4_host:
+                matching.append(uri)
+        require(len(matching) == 1, "P4 has no unique registered Contact at its verified API host")
+        p4_uri = matching[0]
         payload = {"endpoints": {
-            "p4": {"host": self.args.p4_host, "device_id": row["endpoint_id"], "destination": p4_uri},
+            "p4": {"host": self.args.p4_host, "device_id": metadata["device_id"], "destination": p4_uri},
             "peer": {"host": self.args.local_ip, "device_id": "maintained-sip-video-peer",
                      "destination": self.peer_uri}}, "signaling_hosts": [socket.gethostbyname(self.args.sip_host)]}
         self.measurement.directory(phase, payload)
@@ -70,6 +96,8 @@ class P4HilMeasurement:
         self.esp, self.args = esp, args
         require(args.duration >= 23 and args.video_hold_seconds >= 20,
                 "Measured P4 calls require duration >=23 and video hold >=20 seconds")
+        require(getattr(args, "ha_entry_id", "") and getattr(args, "ha_device_id", ""),
+                "Measured P4 calls require the native HA entry and account device")
         info = await esp.client.device_info()
         def normalize(value):
             return value.replace(":", "").replace("-", "").casefold()
@@ -82,11 +110,22 @@ class P4HilMeasurement:
         from tools.sip_video_peer import _remote_uri
         self.peer_uri = _remote_uri(args.p4_extension, args.sip_host, args.sip_port)
 
-    async def open(self, esp, ws, args):
+    async def open(self, esp, ws, args, *, ha):
         require(self.measurement.devices and self.esp is esp and self.args is args,
                 "P4 live identity must be verified before any actor action")
         self.ws = ws
+        self.ha = ha
         self.directory_before = await self.directory("pre")
+
+    async def snapshot(self):
+        public = await self.ws.softphone_state()
+        diagnostics = await self.ha.diagnostics(self.args.ha_entry_id)
+        runtime = diagnostics["data"]["runtime"]
+        resources = runtime["resources"]
+        require(len(resources.get("resource_counts", {})) >= 21,
+                "Full native runtime inventory is unavailable")
+        return {"state": public["state"], "active_dialogs": runtime["signaling"]["active_dialogs"],
+                "runtime_resources": resources}
 
     async def begin(self, termination_owner):
         require(self.call is None, "Another P4 measured call is active")
@@ -99,7 +138,7 @@ class P4HilMeasurement:
         self.native_call_id = None
         self.call = self.measurement.start_session(caller="peer", callee="p4",
             terminal="peer" if termination_owner == "peer" else "p4", route_kind="ha-directory")
-        self.call.runtime("pre", await self.ws.softphone_state())
+        self.call.runtime("pre", await self.snapshot())
 
     async def complete(self, peer):
         require(self.call is not None and self.writer is not None, "No P4 measured call is active")
@@ -107,7 +146,7 @@ class P4HilMeasurement:
         if "ended_at" not in self.call.data:
             self.call.ended()
         self.call.native_state("p4", self.esp.values.get("voip_state"), self.native_call_id or "")
-        self.call.runtime("post", await self.ws.softphone_state())
+        self.call.runtime("post", await self.snapshot())
         await self.writer.stop()
         self.call.quiescent()
         self.completed.append((self.call, self.writer, dict(peer), self.native_call_id))

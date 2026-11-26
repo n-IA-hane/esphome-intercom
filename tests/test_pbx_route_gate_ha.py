@@ -231,7 +231,7 @@ async def test_dtmf_fallback_native_cid_did_and_selected_line_reach_the_outbound
     lab = trunks
     events = []
     unlisten = lab.hass.bus.async_listen(CALL_EVENT, lambda event: events.append(dict(event.data)))
-    config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+    config = normalized_trunk_config({"trunk_options_interval": 0, "trunk_enabled": True, "trunk_register": False,
         "trunk_server": "127.0.0.42", "trunk_allowed_ips": ["127.0.0.42/32"],
         "trunk_inbound_mode": "dtmf", "trunk_dtmf_enabled": True,
         "trunk_dtmf_timeout_ms": 100, "trunk_inbound_default_target": "12345"})

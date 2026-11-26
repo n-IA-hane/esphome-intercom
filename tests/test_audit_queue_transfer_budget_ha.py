@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from custom_components.voip_stack.call_queues import QueueDefinition, QueuePolicy
+from custom_components.voip_stack.queue_config import initial_queue_policy
 from custom_components.voip_stack.roster import RosterEntry
 
 from .test_queue_call_ha import queue_lab as queue_lab, dial_queue, lab as lab, trunks as trunks
@@ -19,7 +20,7 @@ async def test_queue_transfer_preserves_configured_offer_budget(queue_lab, overr
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
     lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
-    lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=0.12, retry_delay=2, no_agent_wait=5)
+    lab.manager.policies[other] = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5, "ring_timeout": 0.12, "retry_delay": 2, "no_agent_wait": 5}))
     lab.manager.agent_states[other] = {"bedroom0": "available"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", extension="405", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))

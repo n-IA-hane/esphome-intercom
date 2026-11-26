@@ -22,7 +22,9 @@ DECISION = "deadline:phone_policy_decision"
 
 @pytest.fixture
 async def ringing(hass):
-    entry = MockConfigEntry(domain="voip_stack", data={})
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    from custom_components.voip_stack.config import entry_transport_config
+    entry = MockConfigEntry(domain="voip_stack", data=initialize_duration_config({}))
     entry.add_to_hass(hass)
     endpoints = EndpointRegistry()
     endpoints.register(PhoneEndpoint(
@@ -32,7 +34,7 @@ async def ringing(hass):
     calls = SipEndpointRuntime(allow_dark_sessions=True)
     calls.activate()
     entry.runtime_data = VoipStackRuntime(
-        transport_config={}, assist_config={}, trunk_config={}, endpoints=endpoints,
+        transport_config=entry_transport_config(entry), assist_config={}, trunk_config={}, endpoints=endpoints,
         phones=None, sip=calls,
     )
     ended = asyncio.Event()

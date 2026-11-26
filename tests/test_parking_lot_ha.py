@@ -29,7 +29,7 @@ async def test_real_sip_parking_pickup_keeps_audio_and_releases_resources(regist
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     caller, picker, _other = registered_phones
     async def wait_for(predicate):
         async with asyncio.timeout(5):
@@ -336,7 +336,7 @@ async def test_browser_pickup_uses_existing_call_and_actual_rtp(registered_phone
 
     runtime=trunks
     entry=config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
+    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{**entry.data["parking"], 'enabled':True}})
     endpoint=PhoneEndpoint(endpoint_id='browser-pickup', username='browser-pickup',name='Pickup Browser',device_id='pickup-device',kind=EndpointKind.BROWSER,
                            availability='available',capabilities=frozenset({'audio','dtmf'}))
     runtime.runtime.endpoints.register(endpoint)
@@ -444,7 +444,7 @@ async def test_sip_refer_parks_established_caller_without_redial(registered_phon
     from custom_components.voip_stack.parking import get_parking_lot
     runtime=trunks
     entry=config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
+    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{**entry.data["parking"], 'enabled':True}})
     caller,operator,picker=registered_phones
     async def wait_for(predicate):
         async with asyncio.timeout(5):
@@ -492,7 +492,7 @@ async def test_caller_can_park_answered_outgoing_peer_and_keep_its_dialog(regist
     from custom_components.voip_stack.parking import get_parking_lot
     runtime=trunks
     entry=config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
+    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{**entry.data["parking"], 'enabled':True}})
     operator,remaining,picker=registered_phones
     async def wait_for(predicate):
         async with asyncio.timeout(5):
@@ -544,7 +544,7 @@ async def test_failed_pickup_handoff_keeps_original_call_and_allows_retry(regist
     from custom_components.voip_stack.parking import get_parking_lot
     runtime=trunks
     entry=config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
+    runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{**entry.data["parking"], 'enabled':True}})
     caller,first,second=registered_phones
     async def wait_for(predicate):
         async with asyncio.timeout(5):
@@ -593,7 +593,7 @@ async def test_local_browser_parking_keeps_other_phone_for_sip_pickup(registered
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {**entry.data["parking"], 'enabled': True}})
     for name in ('local-a', 'local-b', 'local-c'):
         runtime.runtime.endpoints.register(PhoneEndpoint(endpoint_id=name, username=name, name=name,
             device_id='device-' + name, kind=EndpointKind.BROWSER,
@@ -737,14 +737,14 @@ async def test_inbound_trunk_parking_can_return_to_same_browser(trunks, monkeypa
 
     lab = trunks
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     phone = PhoneEndpoint(endpoint_id="desk", username="desk", name="Desk", device_id="desk-device",
                           kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf", "video"}))
     lab.runtime.endpoints.register(phone)
     lab.runtime.preferred_phone_device_id = phone.device_id
     lab.roster.append(RosterEntry(phone.username, name=phone.name, metadata={"local_ha": True, "endpoint_id": phone.endpoint_id}))
     lab.runtime.directory.replace(lab.roster)
-    lab.runtime.trunk_configs["home"] = normalized_trunk_config({
+    lab.runtime.trunk_configs["home"] = normalized_trunk_config({"trunk_options_interval": 0,
         "trunk_enabled": True, "trunk_register": False, "trunk_server": "127.0.0.3",
         "trunk_allowed_ips": ["127.0.0.3"], "trunk_inbound_default_target": "Desk",
     })
@@ -974,7 +974,7 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {**entry.data["parking"], 'enabled': True}})
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = offer_video
     if offer_video:
         from .test_video_originate_unknown_ha import set_configured_video_policy
@@ -1029,6 +1029,8 @@ async def test_originated_browser_call_parks_without_inbound_media_descriptor(
             'device_id': endpoint.device_id, 'destination': 'transfer_a', 'media_client_id': 'direct-browser-media',
             'receive_video': offer_video, 'send_video': False,
         }, blocking=True)
+        from custom_components.voip_stack.websocket_api import _ha_softphone_state
+        await wait_for(lambda: _ha_softphone_state(runtime.hass, endpoint.endpoint_id).get("state") == "in_call")
         call_id = runtime.runtime.endpoints.get(endpoint.endpoint_id).active_call_id
         client = runtime.calls.sip_client_for(call_id)
         assert client.dialog is not None and client.dialog.video_format is None
@@ -1094,7 +1096,7 @@ async def test_audio_parking_pickup_rejects_only_new_jpeg_offer(trunks, monkeypa
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     await async_stop_sip_trunk(runtime.hass)
     runtime.runtime.trunk_configs = {}
     runtime.runtime.trunk_config = {}

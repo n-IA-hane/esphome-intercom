@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -146,6 +147,63 @@ def _prepare_integration_dependencies(hass: HomeAssistant) -> None:
     prepare_frontend_dependency(hass)
     hass.http = MagicMock()
     hass.http.async_register_static_paths = AsyncMock()
+
+
+@asynccontextmanager
+async def _native_contact_events(hass, entry):
+    """Load the actual event platform for the configured contact owner only."""
+    from homeassistant.config_entries import ConfigEntryState
+    from pytest_homeassistant.common import mock_component
+    from custom_components.voip_stack.config import entry_transport_config
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    for dependency in (DOMAIN, "assist_pipeline", "ffmpeg", "frontend", "http", "lovelace", "media_source", "network", "web_rtc"):
+        if dependency not in hass.config.components:
+            mock_component(hass, dependency)
+    endpoints = EndpointRegistry()
+    entry.runtime_data = VoipStackRuntime(entry_transport_config(entry), {}, {},
+        endpoints, PhoneAdapterRegistry(hass, endpoints))
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    await hass.config_entries.async_forward_entry_setups(entry, ["event"])
+    await hass.async_block_till_done()
+    try:
+        yield entry.runtime_data
+    finally:
+        assert await hass.config_entries.async_unload_platforms(entry, ["event"])
+
+
+def _assert_native_contact_owner(hass, entry, contact_id):
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.voip_stack.automation_contact_device import (
+        AUTOMATION_CONTACT_MODEL, automation_contact_device_identifier,
+        automation_contact_event_unique_id, automation_contact_id_for_entity,
+    )
+    identifier = automation_contact_device_identifier(entry.entry_id, contact_id)
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, identifier), entry.entry_id)
+    assert device is not None and device.identifiers == {(DOMAIN, identifier)}
+    assert device.model == AUTOMATION_CONTACT_MODEL and device.entry_type is dr.DeviceEntryType.SERVICE
+    assert device.config_entry_id == entry.entry_id
+    contact = next(row for row in entry.subentries.values() if row.subentry_type == "contact" and row.data["id"] == contact_id)
+    assert device.config_subentry_id == contact.subentry_id
+    entities = er.async_get(hass)
+    entity_id = entities.async_get_entity_id("event", DOMAIN,
+        automation_contact_event_unique_id(entry.entry_id, contact_id))
+    entity = entities.async_get(entity_id)
+    assert entity is not None and entity.device_id == device.id
+    assert entity.config_entry_id == entry.entry_id and entity.config_subentry_id == contact.subentry_id
+    assert automation_contact_id_for_entity(hass, entity_id, entry.entry_id) == contact_id
+    assert hass.states.get(entity_id) is not None
+    assert {row.unique_id for row in er.async_entries_for_config_entry(entities, entry.entry_id)} == {
+        "voip_stack_call_event", automation_contact_event_unique_id(entry.entry_id, contact_id)}
+    assert not any(row.subentry_type == "phone" for row in entry.subentries.values())
+    assert not entry.runtime_data.endpoints.endpoints
+    owned = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert {row.model for row in owned} == {"PBX", AUTOMATION_CONTACT_MODEL}
+    assert {frozenset(row.identifiers) for row in owned} == {
+        frozenset({(DOMAIN, entry.entry_id)}), frozenset({(DOMAIN, identifier)})}
+    return device, entity
 
 
 @pytest.fixture(autouse=True)
@@ -742,14 +800,16 @@ async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
         entry_phone_signature,
         entry_runtime_signature,
     )
+    from custom_components.voip_stack.config import entry_transport_config
+    from custom_components.voip_stack.duration_config import initialize_duration_config
 
-    entry = MockConfigEntry(domain=DOMAIN, data={}, version=4)
+    entry = MockConfigEntry(domain=DOMAIN, data=initialize_duration_config({}), version=4)
     entry.add_to_hass(hass)
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
 
     entry.runtime_data = VoipStackRuntime(
-        transport_config={},
+        transport_config=entry_transport_config(entry),
         assist_config={},
         trunk_config={},
         endpoints=EndpointRegistry(),
@@ -821,29 +881,33 @@ async def test_contact_migration_preserves_routes_without_phone_entities(hass):
     ]
     entry = MockConfigEntry(domain=DOMAIN, data={"phonebook_contacts": records}, version=5)
     entry.add_to_hass(hass)
-    devices = len(device_registry.async_get(hass).devices)
-    entities = len(entity_registry.async_get(hass).entities)
     assert await async_migrate_entry(hass, entry)
     assert contact_dicts(entry) == records
     assert "phonebook_contacts" not in entry.data
     identities = tuple(entry.subentries)
-    replace_contacts(hass, entry, records)
-    assert tuple(entry.subentries) == identities
-    assert len(device_registry.async_get(hass).devices) == devices
-    assert len(entity_registry.async_get(hass).entities) == entities
-    replace_contacts(hass, entry, [])
-    assert contact_dicts(entry) == []
-    assert not entry.subentries
+    async with _native_contact_events(hass, entry):
+        device, event = _assert_native_contact_owner(hass, entry, "Sample contact")
+        replace_contacts(hass, entry, records)
+        await hass.async_block_till_done()
+        assert tuple(entry.subentries) == identities
+        same_device, same_event = _assert_native_contact_owner(hass, entry, "Sample contact")
+        assert same_device.id == device.id and same_event.entity_id == event.entity_id
+        replace_contacts(hass, entry, [])
+        await hass.async_block_till_done()
+        assert contact_dicts(entry) == []
+        assert not entry.subentries
+        assert device_registry.async_get(hass).async_get(device.id) is None
+        assert entity_registry.async_get(hass).async_get(event.entity_id) is None
 
 
 async def test_native_add_contact_flow_creates_only_a_contact(hass, monkeypatch):
     from custom_components.voip_stack import phonebook_services
     from custom_components.voip_stack.contact_config import contact_dicts
-    from homeassistant.helpers import device_registry, entity_registry
+    from custom_components.voip_stack.duration_config import initialize_duration_config
 
     _prepare_integration_dependencies(hass)
     monkeypatch.setattr(phonebook_services, "_runtime_route_mappings", lambda _: [])
-    entry = MockConfigEntry(domain=DOMAIN, data={}, version=6)
+    entry = MockConfigEntry(domain=DOMAIN, data=initialize_duration_config({}), version=6)
     entry.add_to_hass(hass)
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, "contact"), context={"source": "user"},
@@ -857,8 +921,8 @@ async def test_native_add_contact_flow_creates_only_a_contact(hass, monkeypatch)
     assert contacts[0]["name"] == "Sample contact"
     assert contacts[0]["metadata"]["virtual_endpoint"] == "automation"
     assert not contacts[0]["extension"]
-    assert not device_registry.async_get(hass).devices
-    assert not entity_registry.async_get(hass).entities
+    async with _native_contact_events(hass, entry):
+        _assert_native_contact_owner(hass, entry, contacts[0]["id"])
 
 
 async def test_native_cookbook_triggers_and_conditions_validate(hass):
@@ -867,8 +931,14 @@ async def test_native_cookbook_triggers_and_conditions_validate(hass):
     from homeassistant.helpers import config_validation as cv
     from homeassistant.helpers.trigger import async_validate_trigger_config
     from homeassistant.helpers.condition import async_validate_condition_config
+    from custom_components.voip_stack.contact_config import replace_contacts
+    from custom_components.voip_stack.duration_config import initialize_duration_config
 
     _prepare_integration_dependencies(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data=initialize_duration_config({}))
+    entry.add_to_hass(hass)
+    replace_contacts(hass, entry, [{"id": "welcome", "name": "Welcome",
+        "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}}])
     text = (Path(__file__).parents[1] / "docs/AUTOMATION_DIALPLAN.md").read_text()
     counts = {"triggers": 0, "conditions": 0}
 
@@ -886,8 +956,11 @@ async def test_native_cookbook_triggers_and_conditions_validate(hass):
             for child in value:
                 await validate(child)
 
-    for block in re.findall(r"```yaml\n(.*?)```", text, re.S):
-        await validate(yaml.safe_load(block))
+    async with _native_contact_events(hass, entry):
+        _device, event = _assert_native_contact_owner(hass, entry, "welcome")
+        assert event.entity_id == "event.welcome_call"
+        for block in re.findall(r"```yaml\n(.*?)```", text, re.S):
+            await validate(yaml.safe_load(block))
     assert counts["triggers"] >= 15
     assert counts["conditions"] >= 3
 
@@ -1045,13 +1118,21 @@ async def test_long_extension_can_be_published_as_ha_text(hass, extension):
 
 
 async def test_retired_native_phones_migrate_without_removing_supported_phones(hass):
+    from copy import deepcopy
     from homeassistant.config_entries import ConfigSubentry
     from homeassistant.helpers import entity_registry as er
     from custom_components.voip_stack import async_migrate_entry
+    from custom_components.voip_stack.duration_config import initial_service_timeouts
+    from custom_components.voip_stack.sip_registration_policy import (
+        registrar_policy_defaults, AUDIO_RTCP_INTERVAL_FIELD, LOCAL_REDIRECT_HOPS_FIELD,
+    )
 
     entry = MockConfigEntry(
         domain=DOMAIN, version=6, minor_version=1,
-        data={"companion_enabled": True, "sip_port": 5060},
+        data={"companion_enabled": True, "sip_port": 5060,
+              "default_ringing_timeout": 37, "max_dialog_subscription_expires": 90,
+              "registrar_contact_limit": 23, "service_timeouts": {"automation_timeout": 47},
+              "parking": {"timeout": 321}},
     )
     entry.add_to_hass(hass)
     kinds = ("browser", "sip_account", "companion")
@@ -1076,12 +1157,22 @@ async def test_retired_native_phones_migrate_without_removing_supported_phones(h
 
     assert await async_migrate_entry(hass, entry)
     assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
-    assert dict(entry.data) == {'sip_port': 5060, 'sip_registrar_enabled': True}
+    assert dict(entry.data) == {
+        'sip_port': 5060, 'sip_registrar_enabled': True,
+        'default_ringing_timeout': 37, 'max_dialog_subscription_expires': 90,
+        **registrar_policy_defaults(), 'registrar_contact_limit': 23,
+        'audio_rtcp_min_interval': AUDIO_RTCP_INTERVAL_FIELD.default,
+        'local_redirect_max_hops': LOCAL_REDIRECT_HOPS_FIELD.default,
+        'service_timeouts': initial_service_timeouts({'automation_timeout': 47}),
+        'parking': {'timeout': 321, 'return_destination': ''},
+    }
     assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
     assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None
     assert registry.async_get(tracker.entity_id) is tracker
     assert hass.config_entries.async_get_entry(mobile.entry_id) is mobile
+    migrated = deepcopy(entry.as_dict())
     assert await async_migrate_entry(hass, entry)
+    assert entry.as_dict() == migrated
     assert len(entry.subentries) == 2
 
 

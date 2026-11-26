@@ -11,6 +11,7 @@ import pytest
 from homeassistant.core import callback
 
 from custom_components.voip_stack.call_queues import QueueDefinition, QueueManager, QueuePolicy
+from custom_components.voip_stack.queue_config import initial_queue_policy
 from custom_components.voip_stack.core import rtp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
@@ -270,6 +271,23 @@ async def test_answered_queue_caller_never_confirms_an_unanswered_sip_candidate(
                 "device_id": source.device_id, "destination": "Reception",
             }, blocking=True)
             call_id = lab.runtime.endpoints.get(source.endpoint_id).active_call_id
+            # Service completion means dispatch, while dial_queue waits for
+            # its real caller's final response. Observe the browser UAC's
+            # same answer barrier before comparing confirmed projections.
+            source_client = lab.calls.sip_client_for(call_id)
+            assert source_client is not None
+            source_answered = asyncio.Event()
+            def observe_source_answer(_snapshot):
+                current = lab.calls.get_session(call_id)
+                leg = current.legs.get(source_client.dialog_ids.call_id) if current else None
+                if source_client.dialog is not None and leg is not None and leg.phase.value == "answered":
+                    source_answered.set()
+            detach_source = lab.calls.subscribe_state(observe_source_answer)
+            try:
+                observe_source_answer(None)
+                await asyncio.wait_for(source_answered.wait(), 2)
+            finally:
+                detach_source()
         session = lab.calls.get_session(call_id)
         await asyncio.wait_for(prepared.wait(), 2)
         assert session.answer_committed and session.state == "in_call"
@@ -464,7 +482,7 @@ async def test_queue_fallback_to_another_queue_preserves_original_exit_cause_at_
     lab = queue_lab
     other = "478e08a5a14545e8ad795ec6a4332222"
     lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom1",), "402")
-    lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=1)
+    lab.manager.policies[other] = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5, "ring_timeout": 1}))
     lab.manager.agent_states[other] = {"bedroom1": "available"}
     lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{other}")
     lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity], max_wait=1,
@@ -603,7 +621,7 @@ async def test_queue_to_distinct_queue_commits_one_ticket_and_preserves_source_u
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
     lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
-    lab.manager.policies[other] = QueuePolicy(max_wait=5, ring_timeout=1)
+    lab.manager.policies[other] = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5, "ring_timeout": 1}))
     lab.manager.agent_states[other] = {"bedroom0": "available"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", extension="405", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
@@ -632,7 +650,7 @@ async def test_rejected_queue_transfer_leaves_original_ticket_media_and_claims_i
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
     lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
-    lab.manager.policies[other] = QueuePolicy(max_wait=5, max_waiting=1, enabled=blocked != "disabled")
+    lab.manager.policies[other] = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5, "max_waiting": 1, "enabled": blocked != "disabled"}))
     lab.manager.agent_states[other] = {"bedroom0": "paused"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
@@ -662,7 +680,7 @@ async def test_disabled_queue_forward_uses_its_fallback_before_retiring_source_q
     lab = queue_lab
     other = "1f37a89d29a9436c9ff348d94b1e7777"
     lab.manager.definitions[other] = QueueDefinition(other, "Closed queue", ("bedroom0",))
-    lab.manager.policies[other] = QueuePolicy(enabled=False, fallback_disabled="bedroom1")
+    lab.manager.policies[other] = QueuePolicy.from_data(initial_queue_policy({"enabled": False, "fallback_disabled": "bedroom1"}))
     lab.manager.agent_states[other] = {"bedroom0": "paused"}
     lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{other}")
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
@@ -705,7 +723,7 @@ async def test_disabled_queue_fallback_cycle_rejects_before_retiring_original_ap
     lab = queue_lab
     for identity, name, fallback in (("closed-b", "Closed B", "Closed C"), ("closed-c", "Closed C", "Closed B")):
         lab.manager.definitions[identity] = QueueDefinition(identity, name, ("bedroom0",))
-        lab.manager.policies[identity] = QueuePolicy(enabled=False, fallback_disabled=fallback)
+        lab.manager.policies[identity] = QueuePolicy.from_data(initial_queue_policy({"enabled": False, "fallback_disabled": fallback}))
         lab.manager.agent_states[identity] = {"bedroom0": "paused"}
         lab.roster.extend(entry for entry in lab.manager.roster_entries() if entry.id == f"queue:{identity}")
     lab.manager.agent_states[lab.identity] = {member: "paused" for member in lab.manager.definitions[lab.identity].members}
@@ -734,7 +752,7 @@ async def test_queue_disabled_after_staging_rolls_back_only_the_new_ticket(queue
     lab = queue_lab
     other = "761571623e9d4d28aa518eac0fcb9512"
     lab.manager.definitions[other] = QueueDefinition(other, "Support", ("bedroom0",))
-    lab.manager.policies[other] = QueuePolicy(max_wait=5)
+    lab.manager.policies[other] = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5}))
     lab.manager.agent_states[other] = {"bedroom0": "paused"}
     lab.roster.append(RosterEntry(f"queue:{other}", name="Support", ha_bridge=True,
         metadata={"virtual_endpoint": "queue", "queue_id": other, "endpoint_id": f"service:queue:{other}"}))
@@ -1286,7 +1304,7 @@ async def test_caller_member_does_not_mask_no_agents_but_other_busy_members_do(q
         else:
             other_id = "eafcd6396efa4be7ad63e052992dce36"
             lab.manager.definitions[other_id] = QueueDefinition(other_id, "Other queue", ("bedroom0",))
-            lab.manager.policies[other_id] = QueuePolicy(max_wait=5)
+            lab.manager.policies[other_id] = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5}))
             lab.manager.agent_states[other_id] = {"bedroom0": "available"}
             other_ticket = lab.manager.enqueue(other_id, other_session.call_id, other_session.generation)
             assert lab.manager.claim_turn(other_ticket) == ("bedroom0",)

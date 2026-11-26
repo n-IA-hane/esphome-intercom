@@ -12,6 +12,8 @@ import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from .voip_phase1_support import _load_intercom_module
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
@@ -56,6 +58,7 @@ class _Dialog:
         self.send_video_format = None
         self.recv_video_format = None
         self.local_video_direction = "inactive"
+        self.audio_rtcp_min_interval = 0
 
 
 class _Client:
@@ -87,8 +90,10 @@ class _Client:
 
 class _Registry:
     def __init__(self) -> None:
+        self.owner = _load_intercom_module("pbx_runtime").SipEndpointRuntime()
+        self.owner.activate()
         self.sip_clients: dict[str, object] = {}
-        self.sessions: dict[str, object] = {}
+        self.sessions = self.owner.sessions
         self.calls: list[tuple] = []
         self.watchers: dict[str, asyncio.Task] = {}
 
@@ -112,23 +117,15 @@ class _Registry:
     async def terminate_call_wait(self, call_id: str, **kwargs) -> None:
         self.calls.append(("finish", call_id, kwargs))
         client = self.sip_clients.pop(call_id, None)
-        self.sessions.pop(call_id, None)
+        intent = kwargs.get("intent")
+        await self.owner.terminate_call_wait(call_id, reason=intent.reason if intent is not None else "removed")
         self.watchers.pop(call_id, None)
         if client is not None and hasattr(client, "close"):
             await client.close()
 
     def upsert(self, call_id: str, **kwargs):
         self.calls.append(("upsert", call_id, kwargs))
-        session = types.SimpleNamespace(
-            call_id=call_id,
-            owner=kwargs.get("owner", "ha_softphone"),
-            state=kwargs.get("state", ""),
-            caller=kwargs.get("caller", ""),
-            callee=kwargs.get("callee", ""),
-            metadata={"endpoint_id": kwargs.get("endpoint_id", "default")},
-        )
-        self.sessions[call_id] = session
-        return session
+        return self.owner.upsert(call_id, **kwargs)
 
     def add_leg(self, call_id: str, leg_id: str, **kwargs) -> None:
         self.calls.append(("leg", call_id, leg_id, kwargs))
@@ -149,10 +146,19 @@ class _Registry:
 
 
 class _Hass:
-    def __init__(self) -> None:
+    def __init__(self, owner) -> None:
         self.data: dict = {}
         self.config = types.SimpleNamespace(location_name="Casa")
         self.artifacts = types.SimpleNamespace(softphone_start_locks={})
+        endpoints = _load_intercom_module("endpoint_registry").EndpointRegistry()
+        self.runtime = _load_intercom_module("runtime_data").VoipStackRuntime(
+            transport_config=_load_intercom_module("duration_config").initialize_duration_config({}),
+            assist_config={}, trunk_config={}, endpoints=endpoints,
+            phones=None,
+            sip=owner,
+        )
+        entry = types.SimpleNamespace(runtime_data=self.runtime)
+        self.config_entries = types.SimpleNamespace(async_entries=lambda _domain: (entry,))
 
     @staticmethod
     def async_create_task(coroutine):
@@ -331,7 +337,11 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
             self.stores,
             self.cleanup,
         )
-        self.hass = _Hass()
+        self.hass = _Hass(self.registry.owner)
+
+    async def asyncTearDown(self) -> None:
+        await self.registry.owner.shutdown()
+        self.assertFalse(self.registry.owner.sessions)
 
     async def test_terminal_invite_result_closes_and_finishes_immediately(self) -> None:
         client = _Client("call-busy", final="busy")
@@ -361,6 +371,10 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
             endpoint_id="default",
             sip_uri="sip:kitchen@192.0.2.10",
         )
+        session = self.registry.get_session("call-1")
+        self.assertTrue(session.live)
+        self.assertEqual(session.token.call_id, "call-1")
+        self.assertGreater(session.token.generation, 0)
         await self.registry.watchers["call-1"]
 
         self.assertEqual(client.closed, 1)
@@ -430,14 +444,8 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 "call-other": other,
             }
         )
-        self.registry.sessions.update(
-            {
-                "call-selected": types.SimpleNamespace(
-                    metadata={"endpoint_id": "default"}
-                ),
-                "call-other": types.SimpleNamespace(metadata={"endpoint_id": "office"}),
-            }
-        )
+        self.registry.upsert("call-selected", state="calling", endpoint_id="default")
+        self.registry.upsert("call-other", state="calling", endpoint_id="office")
 
         await self.module.async_prepare_ha_outbound_call(
             self.hass,

@@ -23,11 +23,14 @@ pytestmark = pytest.mark.ha
 async def phones(hass, monkeypatch):
     from homeassistant.helpers import entity_registry as er
 
-    entry = MockConfigEntry(domain="voip_stack", data={})
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    from custom_components.voip_stack.config import entry_transport_config
+
+    entry = MockConfigEntry(domain="voip_stack", data=initialize_duration_config({}))
     entry.add_to_hass(hass)
     registry = EndpointRegistry()
     entry.runtime_data = VoipStackRuntime(
-        transport_config={}, assist_config={}, trunk_config={}, endpoints=registry,
+        transport_config=entry_transport_config(entry), assist_config={}, trunk_config={}, endpoints=registry,
         phones=PhoneAdapterRegistry(hass, registry),
     )
     for name in ("Kitchen", "Bedroom", 'ESP'):

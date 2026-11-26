@@ -284,6 +284,7 @@ async def test_camera_change_keeps_parent_reconciliations(hass, camera, monkeypa
     hass.config_entries.async_update_entry(
         camera.entry,
         data={
+            **camera.entry.data,
             "parking": {"slots": ["701", "702"], "timeout": 120},
             "default_trunk_id": "new-default",
             "phone_services": {},

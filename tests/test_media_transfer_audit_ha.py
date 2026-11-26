@@ -243,7 +243,7 @@ async def test_parking_commits_canonical_application_party_to_original_card(queu
 
     runtime = queue_lab
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     card = await card_accounts("audit-parking-card")
     projections = []
     original = call_projection.observe_phone_leg_projection

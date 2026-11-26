@@ -26,7 +26,7 @@ async def test_direct_did_policy_and_fallback_reach_real_registered_peers(trunks
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
     lab.runtime.endpoints.update("bedroom1", extension="401")
     lab.roster[:] = [replace(row, extension="401") if row.id == "bedroom1" else row for row in lab.roster]
-    config = normalized_trunk_config({
+    config = normalized_trunk_config({"trunk_options_interval": 0,
         "trunk_enabled": True, "trunk_register": False,
         "trunk_allowed_ips": ["127.0.0.2/32"], "trunk_server": "127.0.0.2",
         "trunk_did_source": "to", "trunk_inbound_default_target": "bedroom0",

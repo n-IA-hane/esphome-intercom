@@ -25,7 +25,8 @@ pytestmark = pytest.mark.ha
 @pytest.mark.parametrize("legacy", [None, False, True])
 def test_parking_defaults_do_not_depend_on_old_global_switch(legacy):
     config = {} if legacy is None else {"enabled": legacy}
-    result = normalize_parking_config(config)
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    result = normalize_parking_config(initialize_duration_config({"parking": config})["parking"])
     assert result.get("access") == "700"
     assert result["slots"] == [str(n) for n in range(701, 721)]
     assert "enabled" not in result
@@ -40,7 +41,7 @@ async def test_migration_preserves_resource_configuration_and_drops_only_global_
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
     assert entry.version == 7 and entry.minor_version == VoipStackConfigFlow.MINOR_VERSION
-    assert entry.data["parking"] == {"access": "800", "slots": ["801"], "hold_media": "media-source://media_source/local/hold.wav", "return_destination": ""}
+    assert entry.data["parking"] == {"access": "800", "slots": ["801"], "hold_media": "media-source://media_source/local/hold.wav", "return_destination": "", "timeout": 180}
     assert entry.data["voicemail"] == {"tts_entity_id": "tts.existing", "language": "it"}
     assert entry.data["esphome_mailboxes"]["esp"]["enabled"]
     saved = dict(entry.data)
@@ -73,7 +74,7 @@ async def test_reconfigure_has_separate_resource_panels(lab, custom_integrations
 async def test_available_applications_do_not_open_an_unused_archive(lab, tmp_path):
     lab.hass.config.media_dirs = {"local": str(tmp_path)}
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={"voicemail": {"enabled": True, "tts_entity_id": "tts.example", "language": "en"}})
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {"enabled": True, "tts_entity_id": "tts.example", "language": "en"}})
     await async_setup_mailboxes(lab.hass, entry)
     assert parking_settings(lab.hass)["enabled"]
     assert lab.calls.component("parking") is None

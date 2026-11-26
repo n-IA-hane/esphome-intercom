@@ -524,7 +524,7 @@ async def test_media_candidate_confirmation_precedes_loser_cleanup(strategy):
         DialCandidate("first", answer, close, confirm=reject),
         DialCandidate("second", answer, close, order=1),
     ]
-    result = await DialForkController(session, candidates, strategy=strategy).run(
+    result = await DialForkController(session, candidates, strategy=strategy, step_timeout=.1).run(
         lambda *_: True
     )
     assert result.winner.candidate_id == "second"
@@ -634,7 +634,8 @@ async def test_ready_route_control_precedes_answer_after_failed_pickup(
         session, candidates, payloads, invite=None, attempts=attempts,
         browser_legs=old_gate.browser_legs, on_leg_state=None,
         commit_winner=lambda candidate, _: commits.append(candidate.candidate_id) or True,
-        strategy=strategy, overall_timeout=.1 if failure == "deadline" else 1))
+        strategy=strategy, step_timeout=.1 if failure == "deadline" else 1,
+        overall_timeout=.1 if failure == "deadline" else 1))
     try:
         await until(lambda: runtime.calls.resource_for(session.call_id, "fork_answer") is not None)
         gate = runtime.calls.resource_for(session.call_id, "fork_answer")

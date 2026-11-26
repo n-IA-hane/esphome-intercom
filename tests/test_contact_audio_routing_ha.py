@@ -106,7 +106,7 @@ async def test_group_and_forward_keep_audio_provenance_per_authenticated_contact
         assert "sip_audio_tx_geometry_complete" not in bindings[0].capabilities
         assert bindings[1].capabilities is None
         runtime.roster[:] = roster_from_peers(runtime.hass, [], registrar.registered_roster_entries())
-        runtime.roster.append(RosterEntry("ContactGroup", metadata={"group_type": "ring", "members": ["caps"]}))
+        runtime.roster.append(RosterEntry("ContactGroup", metadata={"group_type": "ring", "members": ["caps"], "step_timeout": 15}))
         if route == "forward":
             runtime.phones[0].auto_answer = False
             runtime.runtime.endpoints.update("bedroom0", availability=EndpointAvailability.AVAILABLE)

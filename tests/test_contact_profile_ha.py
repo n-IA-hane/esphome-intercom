@@ -31,7 +31,8 @@ def entry(hass, monkeypatch):
     monkeypatch.setattr(phonebook_services, "_runtime_route_mappings", lambda _: [])
     hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
     prepare_frontend_dependency(hass)
-    config = MockConfigEntry(domain="voip_stack", data={}, version=6)
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    config = MockConfigEntry(domain="voip_stack", data=initialize_duration_config({}), version=7, minor_version=7)
     config.add_to_hass(hass)
     return config
 
@@ -165,8 +166,10 @@ async def test_public_contact_profiles_survive_storage_and_drive_real_sip_offer(
     transport, _ = await hass.loop.create_datagram_endpoint(Peer, local_addr=("127.0.0.1", 0))
     port = transport.get_extra_info("sockname")[1]
     uri = f"sip:8001@127.0.0.1:{port}"
+    from custom_components.voip_stack.config import entry_transport_config
+    hass.config_entries.async_update_entry(entry, data={**entry.data, "sip_port": 5099, "rtp_port": 40000})
     entry.runtime_data = VoipStackRuntime(
-        transport_config={"sip_port": 5099, "rtp_port": 40000},
+        transport_config=entry_transport_config(entry),
         assist_config={}, trunk_config={}, endpoints=EndpointRegistry(), phones=Mock(),
     )
     await services.async_register_services(hass, phonebook_services.build_phonebook_service_handlers(AsyncMock()))

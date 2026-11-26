@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv6Address
 from pathlib import Path
 import struct
 import subprocess
@@ -279,6 +279,21 @@ def wire_capture(tmp_path, name, packets, *, signal_source="192.0.2.10",
         payload = struct.pack("!HHHH", sport, dport, 8+len(body), 0)+body
         return struct.pack("!BBHHHBBH4s4s",0x45,0,20+len(payload),1,0,64,17,0,
                            IPv4Address(source).packed,IPv4Address(destination).packed)+payload
+    def quoted_error(packet, version):
+        if version == 4:
+            body = struct.pack("!BBHI", 3, 3, 0, 0) + packet
+            return struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20+len(body), 1, 0, 64, 1, 0,
+                IPv4Address("192.0.2.2").packed, IPv4Address("192.0.2.1").packed) + body
+        assert version == 6
+        def ipv6(body, next_header, source, destination):
+            return struct.pack("!IHBB16s16s", 6 << 28, len(body), next_header, 64,
+                IPv6Address(source).packed, IPv6Address(destination).packed) + body
+        # The ICMPv6 error quotes an IPv4-in-IPv6 packet. The embedded IPv4
+        # tuple is already known to the real SIP/SDP/RTP dissector. This tests
+        # ICMPv6 exclusion without adding unsupported native IPv6 SDP mappings.
+        quoted = ipv6(packet, 4, "2001:db8::1", "2001:db8::2")
+        body = struct.pack("!BBHI", 1, 4, 0, 0) + quoted
+        return ipv6(body, 58, "2001:db8::2", "2001:db8::1")
     for source, destination, media_ip, port, response in (
             (signal_source,"192.0.2.20","192.0.2.1",40000,False),
             ("192.0.2.20",signal_source,"192.0.2.2",40002,True)):
@@ -310,7 +325,10 @@ def wire_capture(tmp_path, name, packets, *, signal_source="192.0.2.10",
         sport,dport = opts.get("sport",40000),opts.get("dport",40002)
         payload = struct.pack("!BBH",1,0x8a,480) if pt==101 else bytes([0x55])*160
         raw = struct.pack("!BBHII",0x80,pt,seq,stamp,opts.get("ssrc",0x12345678))+payload
-        records.append((1000000+index*20000,udp(source,destination,sport,dport,raw)))
+        packet = udp(source,destination,sport,dport,raw)
+        if opts.get("icmp"):
+            packet = quoted_error(packet, opts["icmp"])
+        records.append((1000000+index*20000,packet))
     # A valid RTCP receiver report must never join the RTP sequence ledger.
     records.append((1500000,udp("192.0.2.1","192.0.2.2",40001,40003,struct.pack("!BBHI",0x80,201,1,0x12345678))))
     path = tmp_path/(name+".pcap")
@@ -403,3 +421,22 @@ def test_shared_unknown_payload_cannot_bypass_the_single_source_loss_gate(tmp_pa
     failures=strict_failures(streams)
     assert any("unknown SDP" in reason for reason in failures)
     assert len([reason for reason in failures if "lost 1" in reason])==1
+
+
+@pytest.mark.parametrize("version", [4, 6])
+def test_actual_icmp_quoted_rtp_never_joins_the_media_ledger(tmp_path, version):
+    """ICMP quotes expose RTP fields but are not actual received media packets."""
+    packets = [(100, 9, 1000), (101, 9, 1160), (102, 9, 1320),
+               (300, 9, 33000, {"icmp": version})]
+    path = wire_capture(tmp_path, f"icmp{version}-quoted-rtp", packets)
+    # Prove the fixture actually exercises tshark's nested RTP dissection.
+    decoded = subprocess.run(["tshark", "-r", str(path), "-Y", "rtp && (icmp || icmpv6)",
+        "-T", "fields", "-e", "rtp.seq"], check=True, capture_output=True, text=True)
+    assert decoded.stdout.strip() == "300"
+    streams = MODULE.analyze_pcap(path, sip_ports=(5060,))
+    assert len(streams) == 1
+    assert streams[0]["packets"] == 3
+    assert streams[0]["lost_packets"] == 0
+    assert streams[0]["duration_seconds"] == .04
+    assert streams[0]["media_type"] == "audio"
+    assert strict_failures(streams) == []

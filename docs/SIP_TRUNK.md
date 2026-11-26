@@ -357,8 +357,9 @@ rewritten DID.
 An explicit menu accepts negotiated RTP `telephone-event` and compatible SIP
 INFO digits through the call's existing DTMF owner. Acoustic in-band tones are
 not decoded. The [menu recipe](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
-sets its own total wait, time between digits and `#` end key; those are
-Automation action settings, not trunk-wide configuration.
+sets its own total wait and time between digits, with no end key required.
+An end key is optional. These belong to the Automation input action; ordinary
+incoming trunk calls have no keypad wait.
 
 ## Experimental automation override
 

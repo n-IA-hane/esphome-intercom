@@ -68,10 +68,10 @@ async def test_phone_key_validation_uses_current_contacts_without_mutating_the_d
 
     lab = managed
     store_manual_roster_entries(lab.hass, [RosterEntry("New action", name="New action", ha_bridge=True,
-        metadata={"virtual_endpoint": "automation", "automation_entity_id": "automation.new"})])
+        metadata={"virtual_endpoint": "automation", "automation_entity_id": "automation.new", "automation_timeout": 30})])
     stale = PhoneDirectory([
         RosterEntry("Removed action", name="Removed action", ha_bridge=True,
-            metadata={"endpoint_id": "service:automation:Removed action", "virtual_endpoint": "automation"}),
+            metadata={"endpoint_id": "service:automation:Removed action", "virtual_endpoint": "automation", "automation_timeout": 30}),
         RosterEntry("Shared", name="First group", ha_bridge=True,
             metadata={"endpoint_id": "group:ring:first", "group_type": "ring"}),
         RosterEntry("Shared", name="Second group", ha_bridge=True,
@@ -240,7 +240,7 @@ async def test_public_ha_sensor_and_native_json_share_offline_phones_groups_and_
     store_manual_roster_entries(lab.hass, [RosterEntry("External", name="External", number="12345",
         metadata={"nested": {"password": "synthetic-contact-secret"}}),
         RosterEntry("Door action", name="Door action", ha_bridge=True,
-            metadata={"virtual_endpoint": "automation", "automation_entity_id": "automation.door"})])
+            metadata={"virtual_endpoint": "automation", "automation_entity_id": "automation.door", "automation_timeout": 30})])
     lab.runtime.assist_config.update({CONF_ASSIST_ENDPOINT_ENABLED: True, CONF_ASSIST_EXTENSION: "777", "name": "Assist"})
     coordinator = entry_phonebook(lab.hass, lab.runtime)
     await coordinator.async_start()
@@ -525,7 +525,7 @@ async def test_contacts_and_virtual_destinations_never_gain_phone_kind_from_uri_
     store_manual_roster_entries(lab.hass, [
         RosterEntry("looks-like-phone", name="Browser phone", sip_uri="sip:browser@127.0.0.1:5060"),
         RosterEntry("group", name="Explicit group", metadata={"endpoint_kind": "browser", "group_type": "ring"}),
-        RosterEntry("service", name="Explicit service", metadata={"endpoint_kind": "sip_account", "virtual_endpoint": "automation"}),
+        RosterEntry("service", name="Explicit service", metadata={"endpoint_kind": "sip_account", "virtual_endpoint": "automation", "automation_timeout": 30}),
     ])
     await async_refresh_directory(lab.hass)
     for name, kind in (("Browser phone", "contact"), ("Explicit group", "group"), ("Explicit service", "service")):

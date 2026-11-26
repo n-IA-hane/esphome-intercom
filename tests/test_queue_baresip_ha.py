@@ -12,6 +12,7 @@ import pytest
 from homeassistant.config_entries import ConfigSubentry
 
 from custom_components.voip_stack.call_queues import QueuePolicy
+from custom_components.voip_stack.queue_config import initial_queue_policy
 from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.sip_capture import SipCapture
 from .test_queue_call_ha import queue_lab as queue_lab
@@ -43,7 +44,7 @@ async def test_real_baresip_queue_excludes_its_caller_and_obeys_no_agent_wait(
     evidence.mkdir(parents=True, exist_ok=True)
     lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity],
         members=("transfer_a", "transfer_b"))
-    lab.manager.policies[lab.identity] = QueuePolicy(fallback_no_agents="transfer_c" if mode == "caller_only" else "")
+    lab.manager.policies[lab.identity] = QueuePolicy.from_data(initial_queue_policy({"fallback_no_agents": "transfer_c" if mode == "caller_only" else ""}))
     lab.manager.agent_states[lab.identity] = {
         "transfer_a": "logged_out" if mode == "all_logged_out" else "available",
         "transfer_b": "available" if mode == "other_available" else "logged_out",
@@ -172,10 +173,10 @@ async def test_baresip_queue_boundary_and_immediate_endpoint_reuse(
     lab.manager.entry = entry
     evidence = Path(os.environ.get("VOIP_QUEUE_BARESIP_EVIDENCE_DIR", str(tmp_path / "evidence"))) / boundary
     evidence.mkdir(parents=True, exist_ok=True)
-    policy = QueuePolicy(max_wait=6, ring_timeout=2, no_agent_wait=.25,
-        retry_delay=.1, auto_pause_after=1,
-        fallback_no_agents="Support" if boundary == "queue_to_queue" else
-        "transfer_c" if boundary.startswith("agent_") else "")
+    policy = QueuePolicy.from_data(initial_queue_policy({"max_wait": 6, "ring_timeout": 2, "no_agent_wait": .25,
+        "retry_delay": .1, "auto_pause_after": 1,
+        "fallback_no_agents": "Support" if boundary == "queue_to_queue" else
+        "transfer_c" if boundary.startswith("agent_") else ""}))
     members = ("transfer_a", "transfer_c") if boundary == "queue_to_queue" else names
     lab.manager.definitions[lab.identity] = replace(lab.manager.definitions[lab.identity], members=members)
     lab.manager.policies[lab.identity] = policy

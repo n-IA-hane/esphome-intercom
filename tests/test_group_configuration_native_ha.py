@@ -151,7 +151,7 @@ async def test_paging_form_preserves_explicit_answer_window_and_can_restore_inhe
     prepare_flows(lab)
     from custom_components.voip_stack.paging_config import normalize_paging_group
     add_account(lab, "Receiver")
-    data = normalize_paging_group({"name": "Announcement", "members": ["Receiver"], "answer_timeout": saved})
+    data = normalize_paging_group({"timeout": 120, "name": "Announcement", "members": ["Receiver"], "answer_timeout": saved})
     row = ConfigSubentry(subentry_type="paging", title="Announcement", unique_id="paging:" + data["paging_group_id"], data=data)
     lab.hass.config_entries.async_add_subentry(lab.entry, row)
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "paging"),
@@ -195,7 +195,7 @@ async def test_native_application_entities_follow_existing_owners_without_pollin
     queue = normalize_group_data({"kind": "queue", "name": "Support", "members": [username]})
     row = ConfigSubentry(subentry_type="group", title="Support", unique_id="group:" + queue["group_id"], data=queue)
     lab.hass.config_entries.async_add_subentry(lab.entry, row)
-    paging = normalize_paging_group({"name": "Announcement", "members": [username]})
+    paging = normalize_paging_group({"timeout": 120, "name": "Announcement", "members": [username]})
     page = ConfigSubentry(subentry_type="paging", title="Announcement", unique_id="paging:" + paging["paging_group_id"], data=paging)
     lab.hass.config_entries.async_add_subentry(lab.entry, page)
     sync_group_devices(lab.hass, lab.entry)
@@ -340,7 +340,7 @@ async def test_membership_actions_adapt_native_group_devices_and_reject_wrong_gr
     lab.hass.config_entries.async_update_entry(lab.entry, data={**lab.entry.data, 'group_membership_version': 1})
     queue = normalize_group_data({'kind': 'queue', 'name': 'Support'})
     queue_row = ConfigSubentry(subentry_type='group', title='Support', unique_id='group:' + queue['group_id'], data=queue)
-    paging = normalize_paging_group({'name': 'Announcement'})
+    paging = normalize_paging_group({"timeout": 120, 'name': 'Announcement'})
     page_row = ConfigSubentry(subentry_type='paging', title='Announcement', unique_id='paging:' + paging['paging_group_id'], data=paging)
     for row in (queue_row, page_row):
         lab.hass.config_entries.async_add_subentry(lab.entry, row)

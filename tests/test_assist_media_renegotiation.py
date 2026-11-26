@@ -279,6 +279,7 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video(generic) -> Non
         {
             "recv_formats": (),
             "send_formats": (),
+            "audio_rtcp": False,
             "dtmf_direction": None,
             "remote_sdp": invite.remote_sdp,
             "audio_direction": "sendrecv",

@@ -35,7 +35,7 @@ async def test_baresip_registers_gets_mwi_plays_and_deletes_message(trunks, tmp_
     lab.hass.config.config_dir = str(tmp_path / "ha")
     lab.hass.config.media_dirs = {"local": str(tmp_path / "media")}
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={"voicemail": {
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, "voicemail": {
         "enabled": True, "tts_entity_id": "tts.test", "language": "en",
     }})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(

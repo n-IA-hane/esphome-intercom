@@ -96,7 +96,7 @@ async def test_direct_uri_trunk_cancel_closes_pending_peer_and_can_ring_again(tr
         lab.roster[:] = [*compose_directory_entries(lab.hass, [], registrar.registered_roster_entries()), *automation]
         lab.runtime.directory.replace(lab.roster)
     listener = ('127.0.0.1', lab.runtime.transport_config['sip_port'])
-    config = normalized_trunk_config({'trunk_enabled': True, 'trunk_register': False,
+    config = normalized_trunk_config({"trunk_options_interval": 0, 'trunk_enabled': True, 'trunk_register': False,
         'trunk_server': '127.0.0.42', 'trunk_allowed_ips': ['127.0.0.42/32'],
         'trunk_inbound_mode': 'dtmf', 'trunk_dtmf_enabled': True,
         'trunk_inbound_default_target': destination, 'trunk_dtmf_timeout_ms': 100})

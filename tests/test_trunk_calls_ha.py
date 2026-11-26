@@ -844,12 +844,13 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
             destination = "bedroom1"
             if mode == "forward-queue":
                 from custom_components.voip_stack.call_queues import QueueManager, QueueDefinition, QueuePolicy
+                from custom_components.voip_stack.queue_config import initial_queue_policy
                 from custom_components.voip_stack.group_config import normalize_group_data
                 from homeassistant.config_entries import ConfigSubentry
                 entry = lab.hass.config_entries.async_entries("voip_stack")[0]
                 queue_id = "fd8aba0b247840e898892f90ff83be4b"
                 manager = QueueManager(lab.hass, entry)
-                policy = QueuePolicy(max_wait=5, no_agent_wait=5)
+                policy = QueuePolicy.from_data(initial_queue_policy({"max_wait": 5, "no_agent_wait": 5}))
                 manager.definitions[queue_id] = QueueDefinition(queue_id, "Media queue", ("bedroom1",), "405")
                 manager.policies[queue_id] = policy
                 manager.agent_states[queue_id] = {"bedroom1": "paused"}
@@ -869,8 +870,10 @@ async def test_registered_trunk_early_media_primes_nat_and_retains_one_relay(tru
                     metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
                 destination = endpoint.name
             if mode == "forward-group":
+                from custom_components.voip_stack.group_config import materialize_ring_step
                 lab.roster.append(RosterEntry("Replacement group", ha_bridge=True,
-                    metadata={"group_type": "ring", "members": ["bedroom1"]}))
+                    metadata={"group_type": "ring", "members": ["bedroom1"],
+                              "ring_policy": materialize_ring_step({})}))
                 destination = "Replacement group"
             if mode == "forward-stage-failure":
                 original_add = session.add_resource

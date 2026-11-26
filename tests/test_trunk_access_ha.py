@@ -35,7 +35,6 @@ def _custom_integrations(enable_custom_integrations):
 @pytest.fixture
 async def phones(hass):
     """Load real service registration without opening SIP or media sockets."""
-    from custom_components.voip_stack.config import entry_transport_config
     from custom_components.voip_stack.endpoint_registry import EndpointRegistry
     from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
     from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
@@ -50,7 +49,10 @@ async def phones(hass):
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
-    entry = MockConfigEntry(domain=DOMAIN, data={"sip_port": 5099})
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    from custom_components.voip_stack.config import entry_transport_config
+
+    entry = MockConfigEntry(domain=DOMAIN, data=initialize_duration_config({"sip_port": 5099}))
     entry.add_to_hass(hass)
     registry = EndpointRegistry()
     for kind in EndpointKind:

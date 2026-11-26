@@ -524,6 +524,9 @@ async def _run_peer_cycle(
         "--out",
         str(paths["peer"]),
     ]
+    credentials = getattr(args, "sip_credentials_file", None)
+    if credentials is not None:
+        command.extend(["--credentials-file", str(credentials)])
     process = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -585,7 +588,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             await _wait_api_ready(args.p4_host, args.p4_api_port)
             async with (
                 EspApi(p4_spec, state_observer=measured.api_observation if measured else None) as p4,
-                HaWs(args.ha_url, token, insecure=args.insecure) as ws,
+                HaWs(args.ha_url, token, insecure=args.insecure,
+                     device_id=getattr(args, "ha_device_id", "")) as ws,
             ):
                 if measured:
                     await measured.verify_identity(p4, args)
@@ -597,7 +601,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                         ws, args.p4_extension, args.p4_host
                     )
                     if measured:
-                        await measured.open(p4, ws, args)
+                        await measured.open(p4, ws, args, ha=ha)
                     try:
                         for cycle in range(1, args.cycles + 1):
                             mark = serial_capture.mark()
@@ -623,7 +627,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                                     "cycle": cycle,
                                     "termination_owner": owner,
                                     "cleanup": cleanup_evidence(
-                                        await ws.softphone_state(),
+                                        await measured.snapshot() if measured else await ws.softphone_state(),
                                         p4.values.get("voip_state"),
                                     ),
                                     "artifacts": {
@@ -660,12 +664,16 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ha-url", required=True)
+    parser.add_argument("--ha-device-id", default="")
+    parser.add_argument("--ha-entry-id", default="")
     parser.add_argument("--token")
     parser.add_argument("--token-file", type=Path, default=Path("/nonexistent"))
     parser.add_argument("--auth-file", type=Path, default=Path("/nonexistent"))
     parser.add_argument("--insecure", action="store_true")
     parser.add_argument("--sip-host", required=True)
     parser.add_argument("--sip-port", type=int, required=True)
+    parser.add_argument("--sip-credentials-file", "--credentials-file", type=Path,
+                        help="private SIP account JSON forwarded to the qualification peer")
     parser.add_argument("--local-ip", required=True)
     parser.add_argument("--p4-host", required=True)
     parser.add_argument("--p4-api-port", type=int, default=6053)

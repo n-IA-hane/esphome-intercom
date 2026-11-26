@@ -29,7 +29,7 @@ import types
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
-CORE_MODULES = {"rtp", "sdp", "sip", "video_rtcp", "video_rtp"}
+CORE_MODULES = {"rtp", "sdp", "sip", "sip_auth", "video_rtcp", "video_rtp"}
 
 
 async def _repeat_udp_bye(sock, request, destination, *, t1=0.5, t2=4.0):
@@ -72,10 +72,78 @@ def _load(name: str):
 
 
 sip = _load("sip")
+sip_auth = _load("sip_auth")
 sdp = _load("sdp")
 rtp = _load("rtp")
 video_rtp = _load("video_rtp")
 video_rtcp = _load("video_rtcp")
+
+
+def _load_credentials(path):
+    """Read optional account credentials from their private JSON file only."""
+    if path is None:
+        return None
+    private = Path(path).resolve(strict=True)
+    info = private.stat()
+    if ".secrets" not in private.parts or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("SIP credentials require an owner-only file under .secrets")
+    try:
+        data = json.loads(private.read_text())
+        username, password = data["username"], data["password"]
+        auth_username = data.get("auth_username", "")
+        if (not all(isinstance(value, str) for value in (username, password, auth_username))
+                or not username or not password or any(char in username + auth_username for char in "\r\n")):
+            raise ValueError
+    except (ValueError, TypeError, KeyError):
+        raise ValueError("Invalid SIP credentials file") from None
+    return sip_auth.SipDigestCredentials(username, password, auth_username)
+
+
+class _DigestSession:
+    """Reuse the production Digest writer while tracking nonce counts per call."""
+
+    def __init__(self, credentials):
+        self.credentials = credentials
+        self.counts = {}
+
+    def retry(self, raw, response, tracker):
+        request = sip.parse_message(raw)
+        credential = self.credentials
+        header = "Proxy-Authorization" if response.status_code == 407 else "Authorization"
+        offered = response.header_values("Proxy-Authenticate" if response.status_code == 407 else "WWW-Authenticate")
+        challenge = sip_auth.parse_digest_challenge(sip_auth.select_digest_challenge(offered))
+        key = (header, challenge.get("realm"), challenge.get("nonce"))
+        count = self.counts.get(key, 0) + 1
+        name, _challenge, authorization = tracker.authorize(
+            response, username=credential.username, password=credential.password,
+            auth_username=credential.auth_username, method=request.method, uri=request.uri,
+            nonce_count=count, body=request.body,
+        )
+        self.counts[key] = count
+        cseq = sip.parse_cseq(request.header("CSeq")).number + 1
+        branch = sip.make_branch()
+        headers = []
+        for key, value in request.headers:
+            if key.lower() in {name.lower(), "content-length"}:
+                continue
+            if key.lower() == "via":
+                value = value.replace("branch=" + sip.parse_via(value).branch, "branch=" + branch)
+            elif key.lower() == "cseq":
+                value = f"{cseq} {request.method}"
+            headers.append((key, value))
+        headers.append((name, authorization))
+        return sip.build_request(request.method, request.uri, headers, request.body), cseq, branch
+
+
+def _challenge_ack(raw, response):
+    """ACK one final INVITE response using that exact transaction identity."""
+    request = sip.parse_message(raw)
+    sequence = sip.parse_cseq(request.header("CSeq")).number
+    headers = [(name, f"{sequence} ACK" if name.lower() == "cseq" else
+                response.header("To") if name.lower() == "to" else value)
+               for name, value in request.headers
+               if name.lower() not in {"content-type", "content-length"}]
+    return sip.build_request("ACK", request.uri, headers)
 
 
 VIDEO_PROFILES = {
@@ -384,7 +452,7 @@ def _request_headers(
     branch: str,
     remote_to: str | None = None,
     content_type: str | None = None,
-    user_agent: str = "VoIP-Stack-Video-Lab/1",
+    user_agent: str = "VoIP-Stack-Video-Lab",
 ) -> list[tuple[str, str]]:
     local_identity = sip.format_name_addr(
         f"sip:{local_user}@{local_ip}:{local_port}",
@@ -431,6 +499,7 @@ async def _cancel_pending_invite(
     invite_branch: str,
     user_agent: str,
     result: dict,
+    invite_cseq: int = 1,
 ) -> None:
     """Complete the client side of one pending INVITE cancellation."""
 
@@ -447,7 +516,7 @@ async def _cancel_pending_invite(
             remote_uri=remote_uri,
             call_id=call_id,
             local_tag=local_tag,
-            cseq=1,
+            cseq=invite_cseq,
             branch=invite_branch,
             user_agent=user_agent,
         ),
@@ -467,9 +536,9 @@ async def _cancel_pending_invite(
             continue
         cseq = message.header("CSeq").upper()
         status = int(message.status_code)
-        if cseq.endswith(" CANCEL"):
+        if cseq == f"{invite_cseq} CANCEL":
             result["cancel_response_status"] = status
-        elif cseq.endswith(" INVITE") and status >= 300:
+        elif cseq == f"{invite_cseq} INVITE" and status >= 300:
             result["cancel_invite_status"] = status
             ack = sip.build_request(
                 "ACK",
@@ -484,7 +553,7 @@ async def _cancel_pending_invite(
                     remote_to=message.header("To"),
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=1,
+                    cseq=invite_cseq,
                     branch=invite_branch,
                     user_agent=user_agent,
                 ),
@@ -886,6 +955,9 @@ async def _start_video_receiver(
 
 
 async def async_main(args: argparse.Namespace) -> int:
+    credentials = _load_credentials(getattr(args, "credentials_file", None))
+    digest = _DigestSession(credentials)
+    local_user = args.user or (credentials.username if credentials is not None else "video-lab-peer")
     add_video_mid_dialog = args.add_video_after >= 0
     activate_video_mid_dialog = args.activate_video_after >= 0
     remove_video_mid_dialog = args.remove_video_after >= 0
@@ -902,7 +974,7 @@ async def async_main(args: argparse.Namespace) -> int:
     peer_user_agent = (
         args.user_agent
         or ("Dahua UAC/3.0" if args.audio_codec == "dahua-pcm" else "")
-        or "VoIP-Stack-Video-Lab/1"
+        or "VoIP-Stack-Video-Lab"
     )
     local_ip = args.local_ip or _local_ip(args.host, args.port)
     sip_socket = _reserve_udp_socket(local_ip)
@@ -918,6 +990,9 @@ async def async_main(args: argparse.Namespace) -> int:
     local_tag = secrets.token_hex(8)
     remote_uri = _remote_uri(args.target, args.host, args.port)
     invite_branch = f"z9hG4bK{secrets.token_hex(8)}"
+    invite_cseq = 1
+    invite_auth = sip_auth.DigestChallengeTracker()
+    pending_invite = True
     invite = sip.build_request(
         "INVITE",
         remote_uri,
@@ -925,12 +1000,12 @@ async def async_main(args: argparse.Namespace) -> int:
             method="INVITE",
             local_ip=local_ip,
             local_port=sip_port,
-            local_user=args.user,
+            local_user=local_user,
             local_display_name=args.display_name,
             remote_uri=remote_uri,
             call_id=call_id,
             local_tag=local_tag,
-            cseq=1,
+            cseq=invite_cseq,
             branch=invite_branch,
             content_type="application/sdp",
             user_agent=peer_user_agent,
@@ -990,6 +1065,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "connected_identity_name": "",
         "connected_identity_uri": "",
         "video_transitions": [],
+        "authentication_retries": 0,
     }
     video_process = None
     video_receiver_process = None
@@ -1002,11 +1078,28 @@ async def async_main(args: argparse.Namespace) -> int:
     remote_bye = False
     bye_sent = False
     remote_to = ""
-    next_cseq = 2
+    next_cseq = invite_cseq + 1
     started = time.monotonic()
     audio_stderr: list[str] = []
     video_stderr: list[str] = []
     video_receiver_stderr: list[str] = []
+    invite_transactions = {invite_cseq: invite}
+
+    async def _ack_previous_challenge(message, current_cseq=None):
+        if message.status_code not in {401, 407} or message.header("Call-ID") != call_id:
+            return False
+        try:
+            sequence = sip.parse_cseq(message.header("CSeq"))
+            previous = invite_transactions.get(sequence.number)
+            if sequence.method != "INVITE" or sequence.number == current_cseq or previous is None:
+                return False
+            old = sip.parse_message(previous)
+            if sip.parse_via(message.header("Via")).branch != sip.parse_via(old.header("Via")).branch:
+                return False
+        except (ValueError, sip.SipError):
+            return False
+        await loop.sock_sendto(sip_socket, _challenge_ack(previous, message), (args.host, args.port))
+        return True
 
     async def _stop_negotiated_video() -> None:
         nonlocal video_process, video_receiver_process, jpeg_recorder
@@ -1043,14 +1136,18 @@ async def async_main(args: argparse.Namespace) -> int:
                     # OK on the same event-loop turn.
                     raw, _addr = await loop.sock_recvfrom(sip_socket, 65535)
                     message = sip.parse_message(raw)
+                    if await _ack_previous_challenge(message, invite_cseq):
+                        continue
                     if (
                         message.status_code is None
                         or message.header("Call-ID") != call_id
+                        or message.header("CSeq") != f"{invite_cseq} INVITE"
                     ):
                         continue
                     result["sip_statuses"].append(int(message.status_code))
                     print(f"SIP {message.status_code} {message.reason}", flush=True)
                     if message.status_code >= 300:
+                        pending_invite = False
                         # RFC 3261 17.1.1.3: every non-2xx final INVITE
                         # response is ACKed inside the INVITE transaction.
                         # Without this, a teardown/redial stress failure leaves
@@ -1063,13 +1160,13 @@ async def async_main(args: argparse.Namespace) -> int:
                                 method="ACK",
                                 local_ip=local_ip,
                                 local_port=sip_port,
-                                local_user=args.user,
+                                local_user=local_user,
                                 local_display_name=args.display_name,
                                 remote_uri=remote_uri,
                                 remote_to=message.header("To"),
                                 call_id=call_id,
                                 local_tag=local_tag,
-                                cseq=1,
+                                cseq=invite_cseq,
                                 branch=invite_branch,
                                 user_agent=peer_user_agent,
                             ),
@@ -1078,10 +1175,19 @@ async def async_main(args: argparse.Namespace) -> int:
                             sip_socket, failure_ack, (args.host, args.port)
                         )
                         result["failure_ack_sent"] = True
+                        if message.status_code in {401, 407} and credentials is not None:
+                            invite, invite_cseq, invite_branch = digest.retry(invite, message, invite_auth)
+                            invite_transactions[invite_cseq] = invite
+                            next_cseq = invite_cseq + 1
+                            result["authentication_retries"] += 1
+                            pending_invite = True
+                            await loop.sock_sendto(sip_socket, invite, (args.host, args.port))
+                            continue
                         raise RuntimeError(
                             f"SIP call failed: {message.status_code} {message.reason}"
                         )
                     if 200 <= message.status_code < 300:
+                        pending_invite = False
                         response = message
         except TimeoutError as err:
             raise TimeoutError("SIP call was not answered") from err
@@ -1095,7 +1201,8 @@ async def async_main(args: argparse.Namespace) -> int:
         answer_audio = sdp.parse_sdp(response.body)
         answer_audio_formats = sdp.offered_pcm_formats(
             response.body,
-            allow_dahua_pcm=args.audio_codec == "dahua-pcm",
+            optional_mappings=_load("peer_media_profile").legacy_pcm_compatibility(
+                args.audio_codec == "dahua-pcm").optional_mappings,
         )
         if not answer_audio_formats:
             raise RuntimeError("HA answered without a supported audio format")
@@ -1137,13 +1244,13 @@ async def async_main(args: argparse.Namespace) -> int:
                 method="ACK",
                 local_ip=local_ip,
                 local_port=sip_port,
-                local_user=args.user,
+                local_user=local_user,
                 local_display_name=args.display_name,
                 remote_uri=remote_uri,
                 remote_to=remote_to,
                 call_id=call_id,
                 local_tag=local_tag,
-                cseq=1,
+                cseq=invite_cseq,
                 branch=f"z9hG4bK{secrets.token_hex(8)}",
                 user_agent=peer_user_agent,
             ),
@@ -1160,7 +1267,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     *_response_headers(message),
                     (
                         "Contact",
-                        f"<sip:{args.user}@{local_ip}:{sip_port};transport=udp>",
+                        f"<sip:{local_user}@{local_ip}:{sip_port};transport=udp>",
                     ),
                     ("Supported", "from-change"),
                 ],
@@ -1322,6 +1429,9 @@ async def async_main(args: argparse.Namespace) -> int:
 
         async def _change_video(active: bool, prefix: str) -> None:
             nonlocal next_cseq, remote_bye
+            auth_tracker = sip_auth.DigestChallengeTracker()
+            request_cseq = next_cseq
+            next_cseq += 1
             branch = f"z9hG4bK{secrets.token_hex(8)}"
             request = sip.build_request(
                 "INVITE",
@@ -1330,13 +1440,13 @@ async def async_main(args: argparse.Namespace) -> int:
                     method="INVITE",
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=next_cseq,
+                    cseq=request_cseq,
                     branch=branch,
                     content_type="application/sdp",
                     user_agent=peer_user_agent,
@@ -1351,6 +1461,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     audio_codec=args.audio_codec,
                 ),
             )
+            invite_transactions[request_cseq] = request
             await loop.sock_sendto(sip_socket, request, (args.host, args.port))
             statuses: list[int] = []
             final_response = None
@@ -1359,6 +1470,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     raw, addr = await loop.sock_recvfrom(sip_socket, 65535)
                     message = sip.parse_message(raw)
                     if message.header("Call-ID") != call_id:
+                        continue
+                    if await _ack_previous_challenge(message, request_cseq):
                         continue
                     if await _handle_connected_identity_update(message, addr):
                         continue
@@ -1376,7 +1489,7 @@ async def async_main(args: argparse.Namespace) -> int:
                         return
                     if message.status_code is None:
                         continue
-                    if message.header("CSeq") != f"{next_cseq} INVITE":
+                    if message.header("CSeq") != f"{request_cseq} INVITE":
                         continue
                     status = int(message.status_code)
                     statuses.append(status)
@@ -1385,6 +1498,14 @@ async def async_main(args: argparse.Namespace) -> int:
                         flush=True,
                     )
                     if status >= 200:
+                        if status in {401, 407} and credentials is not None:
+                            await loop.sock_sendto(sip_socket, _challenge_ack(request, message), (args.host, args.port))
+                            request, request_cseq, branch = digest.retry(request, message, auth_tracker)
+                            invite_transactions[request_cseq] = request
+                            next_cseq = request_cseq + 1
+                            result["authentication_retries"] += 1
+                            await loop.sock_sendto(sip_socket, request, (args.host, args.port))
+                            continue
                         final_response = message
             result[f"{prefix}_statuses"] = statuses
             result[f"{prefix}_status"] = int(final_response.status_code)
@@ -1398,19 +1519,18 @@ async def async_main(args: argparse.Namespace) -> int:
                     method="ACK",
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=final_response.header("To") or remote_to,
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=next_cseq,
-                    branch=branch,
+                    cseq=request_cseq,
+                    branch=branch if final_response.status_code >= 300 else sip.make_branch(),
                     user_agent=peer_user_agent,
                 ),
             )
             await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
-            next_cseq += 1
             expected = int(args.expect_reinvite_status or 0) if active else 200
             if expected and int(final_response.status_code) != expected:
                 raise RuntimeError(
@@ -1468,6 +1588,9 @@ async def async_main(args: argparse.Namespace) -> int:
 
         async def _change_audio_direction(direction: str, prefix: str) -> None:
             nonlocal next_cseq, remote_bye
+            auth_tracker = sip_auth.DigestChallengeTracker()
+            request_cseq = next_cseq
+            next_cseq += 1
             branch = f"z9hG4bK{secrets.token_hex(8)}"
             request = sip.build_request(
                 "INVITE",
@@ -1476,13 +1599,13 @@ async def async_main(args: argparse.Namespace) -> int:
                     method="INVITE",
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=next_cseq,
+                    cseq=request_cseq,
                     branch=branch,
                     content_type="application/sdp",
                     user_agent=peer_user_agent,
@@ -1498,6 +1621,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     audio_codec=args.audio_codec,
                 ),
             )
+            invite_transactions[request_cseq] = request
             await loop.sock_sendto(sip_socket, request, (args.host, args.port))
             statuses: list[int] = []
             final_response = None
@@ -1506,6 +1630,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     raw, addr = await loop.sock_recvfrom(sip_socket, 65535)
                     message = sip.parse_message(raw)
                     if message.header("Call-ID") != call_id:
+                        continue
+                    if await _ack_previous_challenge(message, request_cseq):
                         continue
                     if await _handle_connected_identity_update(message, addr):
                         continue
@@ -1519,7 +1645,7 @@ async def async_main(args: argparse.Namespace) -> int:
                         return
                     if message.status_code is None:
                         continue
-                    if message.header("CSeq") != f"{next_cseq} INVITE":
+                    if message.header("CSeq") != f"{request_cseq} INVITE":
                         continue
                     status = int(message.status_code)
                     statuses.append(status)
@@ -1528,6 +1654,14 @@ async def async_main(args: argparse.Namespace) -> int:
                         flush=True,
                     )
                     if status >= 200:
+                        if status in {401, 407} and credentials is not None:
+                            await loop.sock_sendto(sip_socket, _challenge_ack(request, message), (args.host, args.port))
+                            request, request_cseq, branch = digest.retry(request, message, auth_tracker)
+                            invite_transactions[request_cseq] = request
+                            next_cseq = request_cseq + 1
+                            result["authentication_retries"] += 1
+                            await loop.sock_sendto(sip_socket, request, (args.host, args.port))
+                            continue
                         final_response = message
             result[f"{prefix}_statuses"] = statuses
             result[f"{prefix}_status"] = int(final_response.status_code)
@@ -1541,19 +1675,18 @@ async def async_main(args: argparse.Namespace) -> int:
                     method="ACK",
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=final_response.header("To") or remote_to,
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=next_cseq,
-                    branch=branch,
+                    cseq=request_cseq,
+                    branch=branch if final_response.status_code >= 300 else sip.make_branch(),
                     user_agent=peer_user_agent,
                 ),
             )
             await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
-            next_cseq += 1
             if int(final_response.status_code) >= 300:
                 raise RuntimeError(
                     f"{prefix} re-INVITE failed: {final_response.status_code}"
@@ -1613,6 +1746,8 @@ async def async_main(args: argparse.Namespace) -> int:
             message = sip.parse_message(raw)
             if message.header("Call-ID") != call_id:
                 continue
+            if await _ack_previous_challenge(message):
+                continue
             if await _handle_connected_identity_update(message, addr):
                 continue
             if message.method == "INVITE" and args.answer_local_reinvite:
@@ -1632,7 +1767,7 @@ async def async_main(args: argparse.Namespace) -> int:
                             audio_codec=args.audio_codec,
                         )
                         headers.append(("Content-Type", "application/sdp"))
-                        headers.append(("Contact", f"<sip:{args.user}@{local_ip}:{sip_port}>"))
+                        headers.append(("Contact", f"<sip:{local_user}@{local_ip}:{sip_port}>"))
                         local_answer_version += 1
                     except (ValueError, sdp.SdpError) as error:
                         status = 488
@@ -1656,6 +1791,9 @@ async def async_main(args: argparse.Namespace) -> int:
         result["remote_bye"] = remote_bye
 
         if not remote_bye:
+            bye_auth = sip_auth.DigestChallengeTracker()
+            bye_cseq = next_cseq
+            next_cseq += 1
             bye = sip.build_request(
                 "BYE",
                 remote_uri,
@@ -1663,13 +1801,13 @@ async def async_main(args: argparse.Namespace) -> int:
                     method="BYE",
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=next_cseq,
+                    cseq=bye_cseq,
                     branch=f"z9hG4bK{secrets.token_hex(8)}",
                     user_agent=peer_user_agent,
                 ),
@@ -1703,7 +1841,18 @@ async def async_main(args: argparse.Namespace) -> int:
                             continue
                         if message.status_code is not None and message.header(
                             "CSeq"
-                        ).upper().endswith(" BYE"):
+                        ) == f"{bye_cseq} BYE":
+                            if message.status_code < 200:
+                                continue
+                            if message.status_code in {401, 407} and credentials is not None:
+                                bye_retry.cancel()
+                                await asyncio.gather(bye_retry, return_exceptions=True)
+                                bye, bye_cseq, _branch = digest.retry(bye, message, bye_auth)
+                                next_cseq = bye_cseq + 1
+                                result["authentication_retries"] += 1
+                                await loop.sock_sendto(sip_socket, bye, (args.host, args.port))
+                                bye_retry = asyncio.create_task(_repeat_udp_bye(sip_socket, bye, (args.host, args.port)))
+                                continue
                             result["bye_response_status"] = int(message.status_code)
             except TimeoutError as err:
                 raise TimeoutError("SIP BYE was not acknowledged") from err
@@ -1740,21 +1889,20 @@ async def async_main(args: argparse.Namespace) -> int:
         raise
     finally:
         stopped.set()
-        if not answered and not any(
-            int(status) >= 200 for status in result.get("sip_statuses", [])
-        ):
+        if not answered and pending_invite:
             with contextlib.suppress(OSError):
                 await _cancel_pending_invite(
                     sip_socket,
                     (args.host, args.port),
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     call_id=call_id,
                     local_tag=local_tag,
                     invite_branch=invite_branch,
+                    invite_cseq=invite_cseq,
                     user_agent=peer_user_agent,
                     result=result,
                 )
@@ -1766,7 +1914,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     method="BYE",
                     local_ip=local_ip,
                     local_port=sip_port,
-                    local_user=args.user,
+                    local_user=local_user,
                     local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
@@ -1812,7 +1960,9 @@ def main() -> int:
         default=os.environ.get("SIP_VIDEO_TARGET", "2600"),
         help="SIP destination; defaults to the stable HA lab extension 2600",
     )
-    parser.add_argument("--user", default="video-lab-peer")
+    parser.add_argument("--user", default=None)
+    parser.add_argument("--credentials-file", type=Path,
+                        help="owner-only JSON under .secrets with SIP username, password and optional auth_username")
     parser.add_argument(
         "--display-name",
         default="",

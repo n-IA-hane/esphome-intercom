@@ -246,7 +246,7 @@ async def _assert_incoming_caller_identity_through_forward(
     lab.runtime.directory.replace(lab.roster)
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     listener = ("127.0.0.1", lab.runtime.transport_config["sip_port"])
-    config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+    config = normalized_trunk_config({"trunk_options_interval": 0, "trunk_enabled": True, "trunk_register": False,
         "trunk_server": "127.0.0.2", "trunk_allowed_ips": ["127.0.0.2/32"],
         "trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Casa"})
     lab.runtime.trunk_configs["identity"] = config

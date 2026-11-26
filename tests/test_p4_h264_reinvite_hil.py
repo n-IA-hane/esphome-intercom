@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from types import SimpleNamespace
 
@@ -24,6 +25,43 @@ SERIAL = """
 [I][p4_video_renderer]: H.264 RX stats: admitted=19 rendered=17 rate_drop=0 busy_drop=0 dependency_drop=0 decode_drop=2 geometry_drop=0 presented=16 refresh_done=16
 [I][voip_stack.video]: Video session totals: tx=50 rx=70 completed_au=18 dropped_au=0 backpressure=0 send_fail=0 slow_send=0
 """
+
+
+@pytest.mark.parametrize("codec", ["h264", "jpeg"])
+async def test_peer_cycle_forwards_only_private_credential_file(tmp_path, monkeypatch, codec):
+    from scripts import run_p4_h264_reinvite_hil as actor
+
+    credentials = tmp_path / ".secrets" / "peer.json"
+    commands = []
+
+    async def spawn(*command, **_kwargs):
+        commands.append(command)
+        peer_path = command[command.index("--out") + 1]
+        actor.Path(peer_path).write_text(json.dumps({"ok": True}))
+        stdout, stderr = asyncio.StreamReader(), asyncio.StreamReader()
+        stdout.feed_data(b"reinvite re-INVITE SIP 200 OK\n")
+        stdout.feed_eof()
+        stderr.feed_eof()
+
+        async def wait():
+            return 0
+
+        return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=0, wait=wait)
+
+    async def wait_p4(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(actor.asyncio, "create_subprocess_exec", spawn)
+    args = SimpleNamespace(out_dir=tmp_path, sip_host="127.0.0.1", sip_port=5060,
+        p4_extension="destination", local_ip="127.0.0.1", codec=codec, duration=5,
+        video_hold_seconds=1, sip_credentials_file=credentials)
+    p4 = SimpleNamespace(values={"voip_state": "in_call"}, wait=wait_p4)
+    result, owner, _paths = await actor._run_peer_cycle(args, p4, 1)
+    assert result == {"ok": True} and owner == "peer"
+    (command,) = commands
+    assert command[command.index("--credentials-file") + 1] == str(credentials)
+    assert command[command.index("--codec") + 1] == codec
+    assert "--password" not in command
 
 COMPACT_SERIAL = """
 [I][p4_video_renderer]: H.264 first AU: bytes=7900 key=YES

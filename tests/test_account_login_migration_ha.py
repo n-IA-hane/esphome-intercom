@@ -96,11 +96,13 @@ async def test_absent_login_upgrade_preserves_every_other_account_field(
     expected = {**before, "username": name, "username_source": "user",
         "call_policy": {"ringing_timeout": 25, "no_answer": {"kind": "voicemail", "target": name}}}
     assert encoded(dict(subentry.data)) == encoded(expected)
-    assert entry.version == 7 and entry.minor_version == 6
+    assert entry.version == 7 and entry.minor_version == 7
     assert phone_endpoint_id(subentry) == name and subentry.unique_id == "phone:" + name
     expected_parent = json.loads(parent)
     expected_parent.update(legacy_phone_references={identity: name}, sip_registrar_enabled=True,
         default_ringing_timeout=120, max_dialog_subscription_expires=60)
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    expected_parent = initialize_duration_config(expected_parent)
     assert encoded(dict(entry.data)) == encoded(expected_parent) and encoded(dict(entry.options)) == options
     assert devices.async_get(device.id).identifiers == {("voip_stack", "phone_endpoint:" + name)}
     assert er.async_get(hass).async_get(entity.entity_id).id == entity.id
@@ -267,7 +269,7 @@ async def test_collision_repair_uses_native_retry_and_stays_open_until_upgrade_s
     passwords = absent.data["password"], other.data["password"]
     result = await manager.async_configure(result["flow_id"], {"name": "Desk", "username": "desk-login", "extension": "222"})
     assert result["type"] == "create_entry"
-    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 6
+    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 7
     assert absent.data["username"] == "Casa"
     assert (absent.subentry_id, other.subentry_id) == native_ids
     assert (absent.data["password"], other.data["password"]) == passwords
@@ -341,7 +343,7 @@ async def test_cold_legacy_repair_edits_default_account_before_native_subentries
     result = await manager.async_configure(result['flow_id'], {
         'name': name, 'username': name + ' intercom', 'extension': '223'})
     assert result['type'] == 'create_entry'
-    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 6
+    assert entry.state is ConfigEntryState.LOADED and entry.minor_version == 7
     accounts = {row.data['username']: row for row in entry.subentries.values() if row.subentry_type == 'phone'}
     assert set(accounts) == {name, name + ' intercom'}
     assert accounts[name].data['password'] == password

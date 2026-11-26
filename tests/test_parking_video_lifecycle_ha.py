@@ -274,7 +274,7 @@ async def test_established_video_parking_reuses_source_and_resumes_on_another_ph
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     captured = defaultdict(list)
     original_start = SipVideoRtpRelay.start
 
@@ -335,7 +335,11 @@ async def test_established_video_parking_reuses_source_and_resumes_on_another_ph
                for (side, _rtcp), transport in video._transports.items())
     assert retained.read().count("Call established") == 1
     await asyncio.to_thread(retained.command, "/hold")
-    await wait_for(lambda: not parked_media.can_send)
+    source_client = runtime.calls.source_sip_client_for(source_id)
+    # The media commit can precede the peer's ACK. Complete that existing
+    # transaction before asking the same UA to originate its next offer.
+    await wait_for(lambda: not parked_media.can_send and (
+        source_client is None or source_client.snapshot()["pending_remote_invite_ack"] == 0))
     assert video.left.video_format.direction == video.right.video_format.direction == "inactive"
     await asyncio.to_thread(retained.command, "/resume")
     await wait_for(lambda: parked_media.can_send)
@@ -492,7 +496,7 @@ async def test_browser_parks_existing_video_and_another_sip_phone_picks_up(
 
     monkeypatch.setattr(SipCallClient, "_read_response", observe_response)
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     runtime.runtime.transport_config[CONF_SIP_VIDEO] = True
     runtime.runtime.transport_config[CONF_VIDEO_CAMERA_SEND] = camera_enabled
     endpoint = PhoneEndpoint(endpoint_id="av-browser", name="av_browser", username="av_browser", device_id="av-browser-device",
@@ -706,7 +710,7 @@ async def test_video_pickup_before_answer_failure_preserves_park_and_retry(regis
     from custom_components.voip_stack.store import config_entry
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     caller, operator, picker = registered_phones
 
     async def wait_for(predicate):
@@ -777,7 +781,7 @@ async def test_parking_waits_for_remote_video_commit(
 
     runtime = trunks
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     caller, operator, _picker = registered_phones
 
     async def wait_for(predicate):
@@ -908,7 +912,7 @@ async def test_caller_bye_owns_resources_after_parking_close(
     runtime = trunks
     entry = config_entry(runtime.hass)
     runtime.hass.config_entries.async_update_entry(
-        entry, data={**entry.data, "parking": {"enabled": True}}
+        entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}}
     )
     caller, operator, _picker = registered_phones
 
@@ -1035,7 +1039,7 @@ async def test_service_video_pickup_rejects_unavailable_video_and_retries_same_o
     runtime = trunks
     caller, _operator, _picker = registered_phones
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
 
     async def wait_for(predicate):
         async with asyncio.timeout(6):

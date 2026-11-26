@@ -57,8 +57,11 @@ async def phone_lab(hass):
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
     from custom_components.voip_stack.sip_registrar import SipRegistrar
 
-    entry = MockConfigEntry(domain="voip_stack", data={
-        "initial_phone_created": True, "advertise_host": "127.0.0.1"})
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    from custom_components.voip_stack.config import entry_transport_config
+
+    entry = MockConfigEntry(domain="voip_stack", data=initialize_duration_config({
+        "initial_phone_created": True, "advertise_host": "127.0.0.1"}))
     entry.add_to_hass(hass)
     hass.data.setdefault("voip_stack", {})
     endpoints = EndpointRegistry()
@@ -74,7 +77,7 @@ async def phone_lab(hass):
         on_registration_change=registration_changed)
     calls.attach_component("registrar", registrar)
     calls.activate()
-    entry.runtime_data = VoipStackRuntime(transport_config={"sip_port": 5060,
+    entry.runtime_data = VoipStackRuntime(transport_config={**entry_transport_config(entry), "sip_port": 5060,
         "rtp_port": 40000, "advertise_host": "127.0.0.1"}, assist_config={},
         trunk_config={}, endpoints=endpoints, phones=PhoneAdapterRegistry(hass, endpoints), sip=calls)
     native = MockConfigEntry(domain="esphome", title="Technical name", data={

@@ -50,7 +50,7 @@ async def test_direct_trunk_browser_fork_answer_video(shared_account,hass_ws_cli
     runtime.runtime.endpoints.update('casa', capabilities=endpoint.capabilities | {'video'})
     for endpoint in runtime.calls.component("udp_listener")._dialog_endpoints():
         endpoint.enable_video = True
-    cfg=normalized_trunk_config({'trunk_enabled':True,'trunk_register':False,
+    cfg=normalized_trunk_config({"trunk_options_interval": 0, 'trunk_enabled':True,'trunk_register':False,
         'trunk_server':'127.0.0.2','trunk_allowed_ips':['127.0.0.2/32'],
         'trunk_inbound_mode':'direct','trunk_inbound_default_target':'Casa'})
     runtime.runtime.trunk_configs['provider-video']=cfg

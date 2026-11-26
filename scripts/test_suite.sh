@@ -440,6 +440,7 @@ ha_tests=(
   tests/test_local_redirect_ha.py
   tests/test_audio_rtcp_duplicate_wire_ha.py
   tests/test_audio_rtcp_negotiated_disabled_ha.py
+  tests/test_queue_membership_autocreate_ha.py
 )
 ha_ignores=()
 for test_path in "${ha_tests[@]}"; do

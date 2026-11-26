@@ -48,7 +48,7 @@ async def test_assist_noanswer_retains_same_consumer_context_media_and_call(queu
     consumer, context = media._consumer_task, conversation.context
     lab.phones[0].auto_answer = False
     entry = RosterEntry("attempt", name="Reception", ha_bridge=True,
-                        metadata={"group_type": "ring", "members": ["bedroom0"]})
+                        metadata={"group_type": "ring", "members": ["bedroom0"], "step_timeout": 15})
     await registry.forward_call(call_id=call_id, destination="Reception", on_failure="resume",
                                 _resolved_decision=RouteDecision(RouteAction.GROUP, target="Reception", entry=entry), _ring_timeout=0.2)
     task = registry.task_for(call_id, "forward")
@@ -244,7 +244,7 @@ async def test_assist_browser_ready_commits_duplex_audio_and_failed_bind_can_ret
     lab.runtime.softphone_presence[endpoint.endpoint_id] = 1
     lab.roster.append(RosterEntry("Browser", metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id, "endpoint_kind": "browser"}))
     if through_group:
-        lab.roster.append(RosterEntry("Browser group", ha_bridge=True, metadata={"group_type": "ring", "members": ["Browser"]}))
+        lab.roster.append(RosterEntry("Browser group", ha_bridge=True, metadata={"group_type": "ring", "members": ["Browser"], "step_timeout": 15}))
     client, audio = await enter_assist(lab, monkeypatch)
     session = lab.calls.get_session(client.dialog_ids.call_id)
     app = lab.calls.resource_for(session.call_id, "assist_application")

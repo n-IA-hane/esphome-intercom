@@ -60,7 +60,7 @@ async def test_public_transfer_service_defers_logical_offline_and_builtin_target
     if destination in {"810", "park.811"}:
         entry = config_entry(lab.hass)
         lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
-            "parking": {"access": "810", "slots": ["811"]}})
+            "parking": {**entry.data["parking"], "access": "810", "slots": ["811"]}})
     references = []
     peer = lab.phones[0]
     original = peer.datagram_received
@@ -148,7 +148,7 @@ async def test_public_transfer_to_local_application_addresses_pbx_on_real_sip_pe
     queue_manager = None
     if kind == "paging":
         data = normalize_paging_group({"name": "Local destination", "extension": extension,
-            "members": ["bedroom0"]}, identity=identity.removeprefix("paging:"))
+            "members": ["bedroom0"], "timeout": 120}, identity=identity.removeprefix("paging:"))
         item = ConfigSubentry(subentry_type="paging", title=data["name"],
             unique_id="paging:" + data["paging_group_id"], data=data)
     else:
@@ -385,7 +385,7 @@ async def test_automation_transfer_targets_ha_listener_not_remote_phone(destinat
         directory=PhoneDirectory(parse_roster_json(json.dumps([
             {"id": "HA", "address": "192.0.2.1", "port": 5070,
              "metadata": {"local_ha": True, "sip_transport": "tcp"}},
-            {"id": "Wakeup-Caller", "extension": "666", "metadata": {"virtual_endpoint": "automation"}},
+            {"id": "Wakeup-Caller", "extension": "666", "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}},
         ]))),
     )
     original_directory = runtime.directory.snapshot()
@@ -407,7 +407,7 @@ def test_automation_transfer_without_extension_uses_listener_fallback():
         transport_config={"advertise_host": "ha.example.test", "sip_port": 5080},
         sip=SimpleNamespace(component=lambda name: listener if name == "udp_listener" else None),
         directory=PhoneDirectory(parse_roster_json(json.dumps([
-            {"id": "Wakeup-Caller", "metadata": {"virtual_endpoint": "automation"}},
+            {"id": "Wakeup-Caller", "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}},
         ]))),
     )
     original_directory = runtime.directory.snapshot()
@@ -422,7 +422,7 @@ def test_automation_transfer_without_reachable_ha_address_fails_explicitly():
     runtime = SimpleNamespace(
         transport_config={}, sip=SimpleNamespace(component=lambda _: None),
         directory=PhoneDirectory(parse_roster_json(json.dumps([
-            {"id": "Wakeup", "metadata": {"virtual_endpoint": "automation"}},
+            {"id": "Wakeup", "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}},
         ]))),
     )
     with pytest.raises(sip.SipError, match="Home Assistant SIP address is unavailable"):

@@ -69,6 +69,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             raise RuntimeError("Measured P4 JPEG actor requires " + ", ".join(required))
         measured_args = argparse.Namespace(**vars(args))
         measured_args.ha_url = os.environ["HIL_HA_URL"]
+        measured_args.ha_device_id = os.environ.get("HIL_HA_DEVICE_ID", "")
+        measured_args.ha_entry_id = os.environ.get("HIL_HA_ENTRY_ID", "")
         measured_args.token = None
         measured_args.token_file = Path(os.environ["HIL_HA_TOKEN_FILE"])
         measured_args.auth_file = Path("/nonexistent")
@@ -125,6 +127,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "--out",
             str(peer_output),
         ]
+        credentials = getattr(args, "sip_credentials_file", None)
+        if credentials is not None:
+            command.extend(["--credentials-file", str(credentials)])
         started = time.monotonic()
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -168,6 +173,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sip-host", required=True)
     parser.add_argument("--sip-port", type=int, default=5060)
+    parser.add_argument("--sip-credentials-file", "--credentials-file", type=Path,
+                        help="private SIP account JSON retained by the measured JPEG actor")
     parser.add_argument("--local-ip", required=True)
     parser.add_argument("--codec", choices=("h264", "jpeg"), default="h264")
     parser.add_argument("--target", default="Waveshare P4 Touch")

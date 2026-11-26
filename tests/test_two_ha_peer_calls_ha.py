@@ -97,9 +97,11 @@ async def make_pbx(hass, *, username, inbound_account, port, remote_port, transp
     from custom_components.voip_stack.runtime_data import VoipStackRuntime
     from custom_components.voip_stack.trunk_config import entry_trunk_configs
 
-    entry = MockConfigEntry(domain="voip_stack", data={
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    from custom_components.voip_stack.config import entry_transport_config
+    entry = MockConfigEntry(domain="voip_stack", data=initialize_duration_config({
         "initial_phone_created": True, "sip_registrar_enabled": True, "default_trunk_id": "remote",
-    })
+    }))
     entry.add_to_hass(hass)
     second_username = str(int(username) + 1)
     for name in (username, second_username, inbound_account):
@@ -109,7 +111,7 @@ async def make_pbx(hass, *, username, inbound_account, port, remote_port, transp
                   "password": PASSWORD, "username_source": "user"},
         ))
     remote_account = "from_" + username
-    trunk = normalized_trunk_config({
+    trunk = normalized_trunk_config({"trunk_options_interval": 30,
         "trunk_enabled": True, "trunk_register": register, "trunk_server": "127.0.0.1",
         "trunk_port": remote_port, "trunk_transport": transport.lower(),
         "trunk_username": remote_account, "trunk_auth_username": remote_account,
@@ -124,7 +126,7 @@ async def make_pbx(hass, *, username, inbound_account, port, remote_port, transp
     endpoints = EndpointRegistry()
     calls = SipEndpointRuntime(allow_dark_sessions=True)
     runtime = VoipStackRuntime(
-        transport_config={"sip_port": port, "rtp_port": free_port(), "advertise_host": "127.0.0.1",
+        transport_config={**entry_transport_config(entry), "sip_port": port, "rtp_port": free_port(), "advertise_host": "127.0.0.1",
                           "sip_registrar_enabled": True},
         assist_config={}, trunk_config=trunk, trunk_configs=entry_trunk_configs(entry),
         default_trunk_id="remote", endpoints=endpoints, phones=PhoneAdapterRegistry(hass, endpoints),

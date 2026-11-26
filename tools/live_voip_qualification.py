@@ -26,7 +26,7 @@ import time
 from typing import Any
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 try:
     from aioesphomeapi import APIClient, LogLevel
@@ -218,6 +218,11 @@ class HaRest:
     async def state(self, entity_id: str) -> dict[str, Any]:
         return await asyncio.to_thread(self._request, "GET", f"/api/states/{entity_id}")
 
+    async def diagnostics(self, entry_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._request, "GET", "/api/diagnostics/config_entry/" + quote(entry_id, safe="")
+        )
+
     async def service(
         self, domain: str, service: str, data: dict[str, Any] | None = None
     ) -> Any:
@@ -227,9 +232,11 @@ class HaRest:
 
 
 class HaWs:
-    def __init__(self, base_url: str, token: str, *, insecure: bool = False) -> None:
+    def __init__(self, base_url: str, token: str, *, insecure: bool = False,
+                 device_id: str = "") -> None:
         self.base_url = normalize_ha_url(base_url)
         self.token = token
+        self.device_id = device_id
         self.ssl_context = ha_ssl_context(self.base_url, insecure=insecure)
         self.ws: Any = None
         self._next_id = 1
@@ -284,7 +291,8 @@ class HaWs:
         raise AssertionError(f"HA websocket command timed out: {msg}")
 
     async def softphone_state(self) -> dict[str, Any]:
-        msg = await self.command({"type": "voip_stack/ha_softphone_state"})
+        msg = await self.command({"type": "voip_stack/ha_softphone_state",
+                                  **({"device_id": self.device_id} if self.device_id else {})})
         return dict(msg.get("result") or {})
 
     async def drain_events(self, seconds: float) -> None:

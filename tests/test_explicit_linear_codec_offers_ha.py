@@ -281,10 +281,10 @@ def test_runtime_trunk_policy_keeps_absence_inheritance_and_unordered_constructo
     from custom_components.voip_stack.sip_client import SipCallClient
     from dataclasses import fields
 
-    absent = trunk_client_config(normalized_trunk_config({}))
+    absent = trunk_client_config(normalized_trunk_config({"trunk_options_interval": 30, }))
     assert absent.audio_configured is False
     parent = CodecPolicy.from_config({"audio_codecs": ["L24"]}, prefix="")
-    inherited = trunk_client_config(normalized_trunk_config({}), parent=parent)
+    inherited = trunk_client_config(normalized_trunk_config({"trunk_options_interval": 30, }), parent=parent)
     assert inherited.audio_codecs == ("L24",) and inherited.audio_configured is True
     raw = {
         field.name: getattr(absent, field.name)

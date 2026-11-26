@@ -172,7 +172,8 @@ def test_disabled_trunk_uses_safe_defaults_for_empty_legacy_values(
     assert result[constants["CONF_TRUNK_TRANSPORT"]] == "udp"
     assert result[constants["CONF_TRUNK_PORT"]] == constants["VOIP_STACK_SIP_PORT"]
     assert result[constants["CONF_TRUNK_EXPIRES"]] == 300
-    assert result[constants["CONF_TRUNK_DTMF_TIMEOUT_MS"]] == 3000
+    assert constants["CONF_TRUNK_DTMF_TIMEOUT_MS"] not in result
+    assert constants["CONF_TRUNK_DTMF_ENABLED"] not in result
     assert result["sip_accounts"] == []
     assert result[constants["CONF_PHONEBOOK_CONTACTS"]] == []
 

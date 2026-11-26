@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import callback
 
 from custom_components.voip_stack.call_queues import QueuePolicy
+from custom_components.voip_stack.queue_config import initial_queue_policy
 from custom_components.voip_stack.group_config import normalize_group_data
 from custom_components.voip_stack.phone_policy import PhonePolicy
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
@@ -33,7 +34,7 @@ async def test_member_noanswer_mailbox_does_not_steal_group_winner_media(
     entry = config_entry(lab.hass)
     lab.manager.entry = entry
     name = "Protection"
-    queue_policy = QueuePolicy(max_wait=8, ring_timeout=3, no_agent_wait=1)
+    queue_policy = QueuePolicy.from_data(initial_queue_policy({"max_wait": 8, "ring_timeout": 3, "no_agent_wait": 1}))
     group = normalize_group_data({"kind": kind, "name": name, "extension": "402",
         "members": ["transfer_b", "transfer_c"],
         "origin": "manual", "policy": asdict(queue_policy) if kind == "queue" else {}}, identity=lab.identity)
@@ -64,7 +65,7 @@ async def test_member_noanswer_mailbox_does_not_steal_group_winner_media(
         lab.roster.append(lab.manager.roster_entries()[0])
     else:
         lab.roster.append(RosterEntry(name, name=name, metadata={"group_type": "ring",
-            "members": ["transfer_b", "transfer_c"]}))
+            "members": ["transfer_b", "transfer_c"], "ring_policy": group["policy"]}))
     lab.runtime.directory.replace(lab.roster)
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
     class Speech:

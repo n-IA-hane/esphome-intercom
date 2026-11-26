@@ -79,17 +79,18 @@ async def test_audio_only_refresh_reuses_invite_offer_answer_ack_and_reader():
     offer = ("v=0\r\no=- 1 1 IN IP4 192.0.2.1\r\ns=Refresh\r\n"
              "c=IN IP4 192.0.2.1\r\nt=0 0\r\nm=audio 42000 RTP/AVP 96\r\n"
              "a=rtpmap:96 L16/8000/1\r\na=ptime:20\r\na=maxptime:20\r\na=sendrecv\r\n")
+    from custom_components.voip_stack.audio_rtcp import remote_audio_rtcp_fields
+    answer = offer.replace("192.0.2.1", "192.0.2.2").replace("audio 42000", "audio 40000")
     dialog = SipDialog(target="peer", remote_host="192.0.2.2", remote_sip_port=5060,
         remote_rtp_host="192.0.2.2", remote_rtp_port=40000, local_rtp_port=42000,
         call_id=client.dialog_ids.call_id, local_uri="sip:ha@192.0.2.1",
         remote_uri="sip:peer@192.0.2.2", remote_target_uri="sip:peer@192.0.2.2",
         send_format=fmt, recv_format=fmt, recv_formats=(fmt,), send_formats=(fmt,),
         remote_tag="peer", local_sdp_session_id=1, local_sdp_session_version=1,
-        local_sdp_body=offer)
+        local_sdp_body=offer, **remote_audio_rtcp_fields(answer))
     client.dialog = dialog
     dialog.session_timer.configure(sip.SipSessionExpires(90, "uac"), local_role="uac",
                                    now=asyncio.get_running_loop().time())
-    answer = offer.replace("192.0.2.1", "192.0.2.2").replace("audio 42000", "audio 40000")
     responses = asyncio.Queue()
     released = []
 

@@ -76,7 +76,7 @@ async def test_migration_75_stores_prefill_once_without_overwriting_values(hass,
         data={"initial_phone_created": True, "unrelated": "preserved", **existing})
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
     assert entry.data["max_dialog_subscription_expires"] == 60
     assert entry.data["default_ringing_timeout"] == existing.get("default_ringing_timeout", 120)
     before = deepcopy(entry.as_dict())
@@ -108,7 +108,7 @@ async def test_75_does_not_run_past_real_73_identity_conflict(hass):
     devices.async_remove_device(other.id)
     await hass.async_block_till_done()
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 6 and entry.data["default_ringing_timeout"] == 120
+    assert entry.minor_version == 7 and entry.data["default_ringing_timeout"] == 120
     assert devices.async_get(one.id) is not None
     assert row.subentry_id in entry.subentries
 
@@ -130,9 +130,11 @@ async def test_global_update_does_not_request_transport_reload(hass, ringing, mo
 
 def test_rule_inheritance_preserves_explicit_values_and_unlimited():
     from custom_components.voip_stack.dial_plan import RingPolicy
+    from custom_components.voip_stack.duration_config import initialize_duration_config
     from custom_components.voip_stack.group_config import normalize_group_data
     from custom_components.voip_stack.parking_config import normalize_parking_config
     from custom_components.voip_stack.queue_policy import QueuePolicy
+    from custom_components.voip_stack.queue_config import initial_queue_policy
     from custom_components.voip_stack.ringing_policy import cap_ringing_timeout, resolve_ringing_timeout
 
     group = normalize_group_data({'kind': 'ring', 'name': 'Support'})
@@ -145,12 +147,12 @@ def test_rule_inheritance_preserves_explicit_values_and_unlimited():
     assert unlimited.overall_timeout == float('inf')
     short = RingPolicy.from_metadata(explicit['policy'], timeout_override=0.5)
     assert short.overall_timeout == short.step_timeout == 0.5
-    assert QueuePolicy.from_data({}).ring_timeout is None
-    assert QueuePolicy.from_data({'ring_timeout': 20}).ring_timeout == 20
-    assert QueuePolicy.from_data({'ring_timeout': 0}).ring_timeout == 0
-    assert normalize_parking_config({})['return_timeout'] is None
-    assert normalize_parking_config({'return_timeout': 30})['return_timeout'] == 30
-    assert normalize_parking_config({'return_timeout': 0})['return_timeout'] == 0
+    assert QueuePolicy.from_data(initial_queue_policy({})).ring_timeout is None
+    assert QueuePolicy.from_data(initial_queue_policy({'ring_timeout': 20})).ring_timeout == 20
+    assert QueuePolicy.from_data(initial_queue_policy({'ring_timeout': 0})).ring_timeout == 0
+    assert normalize_parking_config(initialize_duration_config({})['parking'])['return_timeout'] is None
+    assert normalize_parking_config(initialize_duration_config({'parking': {'return_timeout': 30}})['parking'])['return_timeout'] == 30
+    assert normalize_parking_config(initialize_duration_config({'parking': {'return_timeout': 0}})['parking'])['return_timeout'] == 0
     assert cap_ringing_timeout(resolve_ringing_timeout({'default_ringing_timeout': 120}, override=0), 7) == 7
     assert resolve_ringing_timeout({}) is None
 

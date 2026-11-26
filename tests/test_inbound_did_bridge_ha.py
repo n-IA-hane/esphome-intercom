@@ -66,7 +66,7 @@ async def test_100_did_dictionary_exceptions_reach_independent_phones_and_duplex
         phone.transport.sendto(sip.build_request("REGISTER", uri, [*headers, ("Authorization", authorization)]), listener)
         assert (await asyncio.wait_for(replies.get(), 3)).status_code == 200
         assert lab.runtime.endpoints.require(f"bedroom{index}").is_available
-    config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+    config = normalized_trunk_config({"trunk_options_interval": 0, "trunk_enabled": True, "trunk_register": False,
         "trunk_allowed_ips": ["127.0.0.2/32"], "trunk_server": "127.0.0.2",
         "trunk_inbound_default_target": "bedroom0", "trunk_did_source": "to",
         "automation_routing_enabled": False})

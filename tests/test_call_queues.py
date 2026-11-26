@@ -9,6 +9,7 @@ from .test_groups import _load_module
 queues = _load_module("call_queues")
 phones = _load_module("phone_endpoint")
 registry = _load_module("endpoint_registry")
+queue_config = _load_module("queue_config")
 
 
 @pytest.fixture
@@ -21,6 +22,10 @@ def manager():
     now = [100.0]
     entry = SimpleNamespace(runtime_data=SimpleNamespace(endpoints=endpoints))
     manager = queues.QueueManager(None, entry, clock=lambda: now[0])
+    # The configuration writer persists initial durations before runtime reads
+    # declarations. Reconciliation must never invent missing duration policies.
+    saved_policies = {key: queue_config.initial_queue_policy() for key in ("1002", "support")}
+    manager.policies = {key: queues.QueuePolicy.from_data(value) for key, value in saved_policies.items()}
     manager.test_clock = now
     manager.reconcile([("sip:1", ("1002",)), ("sip:2", ("1002", "Support"))])
     return manager
@@ -104,7 +109,7 @@ def test_removed_queue_wakes_waiters_and_releases_without_ending_connected_calls
     ticket.changed.clear()
     manager.reconcile([])
     assert ticket.changed.is_set()
-    assert not manager.claim_turn(queues.QueueTicket("1002", "other", 2, 100, 120))
+    assert not manager.claim_turn(queues.QueueTicket("1002", "other", 2, 100, 120, ticket.policy))
     manager.finish(ticket)
     manager.finish(ticket)
     assert not manager.reservations and not manager.waiting

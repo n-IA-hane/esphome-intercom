@@ -102,7 +102,7 @@ async def test_v7_3_upgrade_rekeys_only_typed_references_and_keeps_native_owners
     assert other.data['ha_bindings'][0]['reference'] == old
     assert entry.data['unrelated']['literal'] == old
     assert entry.data['esphome_sip_enrollments']['hardware']['endpoint_id'] == 'kitchen literal'
-    assert esp.data['voicemail'] == {'enabled': True}
+    assert esp.data['voicemail'] == {'enabled': True, 'max_seconds': 180}
     assert esp.data['call_policy']['busy']['target'] == 'desk'
     assert not entry.data['esphome_mailboxes']
     assert not entry.data['esphome_phone_policies']

@@ -84,7 +84,7 @@ async def test_trunk_account_policy_deposits_caller_audio_twice(
     automation = [row for row in runtime.roster if row.metadata.get("virtual_endpoint") == "automation"]
     runtime.roster[:] = [*compose_directory_entries(hass, [], runtime.calls.component("registrar").registered_roster_entries()), *automation]
     runtime.runtime.directory.replace(runtime.roster)
-    config = normalized_trunk_config({
+    config = normalized_trunk_config({"trunk_options_interval": 0,
         "trunk_enabled": True, "trunk_register": False, "trunk_server": PROVIDER_HOST,
         "trunk_allowed_ips": [f"{PROVIDER_HOST}/32"], "trunk_inbound_mode": "dtmf", "trunk_dtmf_enabled": True,
         "trunk_dtmf_timeout_ms": 200, "trunk_inbound_default_target": "Kitchen",

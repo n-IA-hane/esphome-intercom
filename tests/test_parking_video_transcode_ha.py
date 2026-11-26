@@ -43,7 +43,7 @@ async def test_parked_h264_source_jpeg_pickup_uses_two_owned_converters(
     runtime = trunks
     runtime.runtime.transport_config[CONF_VIDEO_TRANSCODING] = enabled
     entry = config_entry(runtime.hass)
-    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {"enabled": True}})
+    runtime.hass.config_entries.async_update_entry(entry, data={**entry.data, "parking": {**entry.data["parking"], "enabled": True}})
     captured = defaultdict(list)
     spawned = defaultdict(list)
     native_spawn = video_transcoder.asyncio.create_subprocess_exec

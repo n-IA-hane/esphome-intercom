@@ -42,11 +42,13 @@ def custom_integrations(enable_custom_integrations):
 @pytest.fixture
 def catalog(hass):
     records = [ConfigSubentry(subentry_type="trunk", title=name, unique_id=f"trunk:{name}", data={
-        "trunk_id": name, "trunk_enabled": True, "trunk_register": False,
+        "trunk_options_interval": 0, "trunk_id": name, "trunk_enabled": True, "trunk_register": False,
         "trunk_server": "192.0.2.1", "trunk_transport": "udp",
         "trunk_allowed_ips": [source], "trunk_inbound_default_target": target,
     }) for name, source, target in (("home", "192.0.2.1", "Kitchen"), ("work", "192.0.2.2", "Office"))]
-    entry = MockConfigEntry(domain="voip_stack", data={"default_trunk_id": "home"})
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    from custom_components.voip_stack.config import entry_transport_config
+    entry = MockConfigEntry(domain="voip_stack", data=initialize_duration_config({"default_trunk_id": "home"}))
     entry.add_to_hass(hass)
     for record in records:
         hass.config_entries.async_add_subentry(entry, record)
@@ -54,7 +56,7 @@ def catalog(hass):
     sip = SipEndpointRuntime(allow_dark_sessions=True)
     sip.activate()
     entry.runtime_data = VoipStackRuntime(
-        transport_config={"sip_port": 5060}, assist_config={}, trunk_config=normalized_trunk_config({}),
+        transport_config={**entry_transport_config(entry), "sip_port": 5060}, assist_config={}, trunk_config=normalized_trunk_config({"trunk_options_interval": 30, }),
         endpoints=endpoints, phones=PhoneAdapterRegistry(hass, endpoints), sip=sip,
         trunk_configs=entry_trunk_configs(entry), default_trunk_id=entry_default_trunk(entry, entry_trunk_configs(entry)),
     )
@@ -699,7 +701,7 @@ async def test_home_assistant_stop_unregisters_owned_trunk_binding(hass, catalog
     from custom_components.voip_stack import _register_runtime_shutdown
     peer, port = registrar
     runtime = catalog.runtime_data
-    runtime.trunk_configs = {'home': normalized_trunk_config({
+    runtime.trunk_configs = {'home': normalized_trunk_config({"trunk_options_interval": 30,
         'trunk_enabled': True, 'trunk_register': True,
         'trunk_server': '127.0.0.1', 'trunk_port': port,
         'trunk_username': 'ha', 'trunk_password': 'test-only',
@@ -773,6 +775,7 @@ async def test_native_first_trunk_keeps_client_ready_with_eager_entry_listener(
             **({"trunk_username": "ha", "trunk_password": "test-only", "trunk_port": registrar[1]}
                if register else {"trunk_allowed_ips": ["127.0.0.1"]}),
             "trunk_inbound_default_target": "Kitchen",
+            "advanced": {"trunk_options_interval": 30 if register else 0},
         })
         assert result["type"] == "create_entry", result
         await hass.async_block_till_done()

@@ -357,7 +357,7 @@ async def test_esp_group_destination_reaches_the_member_over_sip(
     member, phone, tone = (("transfer_b", ring_member, 550) if kind == "ring"
                            else ("transfer_c", conference_member, 650))
     group = RosterEntry(name, ha_bridge=True, extension=extension,
-                        metadata={"group_type": kind, "members": [member], "ring_members": [member]})
+                        metadata={"group_type": kind, "members": [member], "ring_members": [member], "step_timeout": 15})
     lab.roster.append(group)
     lab.runtime.directory.replace(lab.roster)
     port = lab.runtime.transport_config["sip_port"]
@@ -401,13 +401,14 @@ async def ringing_group(trunks, registered_phones, request):
         entry = lab.hass.config_entries.async_entries("voip_stack")[0]
         manager = QueueManager(lab.hass, entry)
         manager.definitions["controlled-queue"] = QueueDefinition("controlled-queue", "Controlled", ("transfer_b", "transfer_c"))
-        manager.policies["controlled-queue"] = QueuePolicy(ring_timeout=5)
+        from custom_components.voip_stack.queue_config import initial_queue_policy
+        manager.policies["controlled-queue"] = QueuePolicy.from_data(initial_queue_policy({"ring_timeout": 5}))
         manager.agent_states["controlled-queue"] = {"transfer_b": "available", "transfer_c": "available"}
         lab.runtime.queues = manager
         lab.roster.extend(manager.roster_entries())
     else:
         lab.roster.append(RosterEntry("Controlled", ha_bridge=True,
-            metadata={"group_type": "ring", "members": ["transfer_b", "transfer_c"]}))
+            metadata={"group_type": "ring", "members": ["transfer_b", "transfer_c"], "step_timeout": 15}))
     caller, first, second = registered_phones
     await asyncio.to_thread(caller.command, "/dial Controlled")
     await wait_until(lambda: any(session.endpoint_claims.get("transfer_b") and session.endpoint_claims.get("transfer_c")
@@ -570,7 +571,7 @@ async def test_ring_group_worker_terminal_outcomes_allow_next_call(
                 await asyncio.to_thread(phone.hangup)
         await asyncio.wait_for(session.terminated.wait(), 3)
     assert session.terminal_reason == {
-        "busy": "busy", "timeout": "timeout", "unavailable": "transport_unreachable",
+        "busy": "busy", "timeout": "no_answer", "unavailable": "transport_unreachable",
         "preparation_error": "protocol_error", "prepared_error": "protocol_error",
     }[ending]
     assert not lab.calls.sessions and not session.tasks

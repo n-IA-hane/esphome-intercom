@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +16,27 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+
+
+def test_measured_jpeg_actor_preserves_private_sip_credential_path(tmp_path, monkeypatch):
+    credentials = tmp_path / ".secrets" / "peer.json"
+    captured = []
+
+    async def measured(args):
+        captured.append(args)
+        return {"status": "passed"}
+
+    monkeypatch.setenv("HIL_MEASUREMENT_RECEIPT", str(tmp_path / "receipt.json"))
+    for key, value in {"HIL_HA_URL": "http://ha.invalid", "HIL_HA_TOKEN_FILE": str(tmp_path / "token"),
+                       "HIL_P4_SERIAL_PORT": "/dev/null"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setitem(sys.modules, "run_p4_h264_reinvite_hil", SimpleNamespace(run=measured))
+    args = SimpleNamespace(sip_host="127.0.0.1", sip_port=5060, local_ip="127.0.0.1", codec="jpeg",
+        target="destination", esp_host="127.0.0.1", duration=30, output=tmp_path / "result.json",
+        sip_credentials_file=credentials)
+    assert asyncio.run(MODULE.run(args)) == {"status": "passed"}
+    (forwarded,) = captured
+    assert forwarded.codec == "jpeg" and forwarded.sip_credentials_file == credentials
 
 
 def valid_result() -> dict[str, object]:

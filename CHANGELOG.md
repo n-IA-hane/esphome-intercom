@@ -2,6 +2,12 @@
 
 ## 2026.12.0-dev
 
+- Keep legacy incoming-trunk aliases attached to the original account after
+  login migration. Deleting that account no longer rings another account
+  selected in a Home Assistant card.
+- Preserve disabled audio RTCP when the browser updates its negotiated media,
+  including Dahua calls that change audio format.
+
 - Add new programmable phone keys at the end of the draggable list without a
   manual position field. Use the sole configured SIP account automatically,
   or choose a named account when the phone has several lines.
@@ -47,7 +53,7 @@
   can be dialed from the same list.
 - Snom 360 BLF keys use the selected line's SIP address when monitoring a
   name containing spaces, so dialing and monitoring reach the same account.
-- Public firmware profiles target ESPHome 2026.11.0. The shared packages load
+- Maintained firmware recipes are built with ESPHome 2026.11.1. The shared packages load
   the selected voice and playback backports when the profile uses those features.
 - Choose a device by its Home Assistant name and icon when assigning a desk
   phone line or BLF key. Single-position profiles show
@@ -119,9 +125,8 @@
 - Opt in to the experimental **Stop** command to silence a ringing timer on ESP profiles with
   local wake-word detection and timers. Active calls and Assist keep their
   normal behavior. [Setup and recognition results](docs/DEPLOYMENT_GUIDE.md#stop-a-ringing-timer-by-voice)
-- Declare ESPHome 2026.12 as the minimum for the coordinated Intercom recipes,
-  using the shared platform owners. Retain the exact official Core 373 preview
-  for qualification without raising unrelated standalone-component minimums.
+- Build coordinated Intercom recipes with ESPHome 2026.11.1 and the shared
+  platform packages. Standalone components retain their declared minimums.
 - Align the remaining wake-word, Voice Assistant and playback providers with
   one complete official ESPHome revision. Keep only the documented lifecycle
   corrections until their upstream replacements are qualified.

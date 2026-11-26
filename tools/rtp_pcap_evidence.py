@@ -200,7 +200,8 @@ def analyze_pcap(path: Path, *, sip_ports: tuple[int, ...] = ()) -> list[dict[st
     tshark = shutil.which("tshark")
     if not tshark:
         raise RuntimeError("tshark is required for RTP PCAP evidence")
-    command = [tshark, *_sip_decode_arguments(sip_ports), "-r", str(path), "-Y", "rtp", "-T", "fields"]
+    # ICMP errors may dissect a quoted RTP header, not an actual media datagram.
+    command = [tshark, *_sip_decode_arguments(sip_ports), "-r", str(path), "-Y", "rtp && !(icmp || icmpv6)", "-T", "fields"]
     for field in (*FIELDS, "udp.payload"):
         command.extend(("-e", field))
     result = subprocess.run(

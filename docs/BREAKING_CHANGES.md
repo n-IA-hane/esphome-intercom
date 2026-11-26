@@ -36,8 +36,10 @@ check the trunk's intended destination before relying on incoming calls.
 To retain a spoken extension menu, create an Automation contact named `Welcome`,
 select it as the appropriate incoming destination and add the [complete keypad-menu automation](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
 It speaks a greeting, waits for up to 32 digits with a 30-second total limit,
-a three-second inter-digit gap and `#` as the end key, then forwards collected
-digits. An inter-digit timeout with a non-empty extension still forwards it.
+a three-second inter-digit gap, then forwards the complete selection. No end
+key is required: `1` followed by a pause selects a menu option, while `111`
+followed by a pause dials that full extension. You can optionally configure an
+end key. An inter-digit timeout with a non-empty selection still forwards it.
 Configure a working TTS entity and real receiving extensions before testing.
 
 The older trunk-routing migration sections below describe their original

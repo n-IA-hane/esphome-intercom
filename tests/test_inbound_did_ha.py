@@ -88,7 +88,7 @@ def test_did_native_form_preserves_string_numbers_and_omitted_reconfigure_fields
 async def test_native_100_did_dictionary_and_explicit_exceptions_from_real_wire(lab):
     """SIP parsing, trunk trust, event snapshot, HA script and existing service."""
     hass, registry = lab.hass, lab.calls
-    config = normalized_trunk_config({
+    config = normalized_trunk_config({"trunk_options_interval": 0,
         "trunk_enabled": True, "trunk_register": False,
         "trunk_server": "127.0.0.1", "trunk_allowed_ips": ["127.0.0.1/32"],
         "trunk_did_source": "to",
@@ -237,7 +237,7 @@ async def test_named_core_automation_is_attributed_to_its_public_routing_action(
     }]})
     await hass.async_start()
     await hass.async_block_till_done()
-    config = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+    config = normalized_trunk_config({"trunk_options_interval": 0, "trunk_enabled": True, "trunk_register": False,
         "trunk_server": "127.0.0.1", "trunk_allowed_ips": ["127.0.0.1/32"], "trunk_did_source": "to"})
     provider = SipTrunkClient(config=trunk_client_config(config), local_ip="127.0.0.1",
         local_sip_port=5090, trunk_id="provider-a")

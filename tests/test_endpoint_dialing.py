@@ -1,6 +1,7 @@
 """Behavioral tests for the canonical outbound SIP leg builder."""
 
 from types import SimpleNamespace
+from functools import partial
 from unittest.mock import Mock
 
 import homeassistant.exceptions as ha_exceptions
@@ -164,14 +165,16 @@ def _dialer(
 
     monkeypatch.setattr(endpoint_dialing, "SipCallClient", build_client)
     reused = Mock(return_value=True)
+    resolver = Mock(spec=endpoint_routing.EndpointRouteResolver)
+    resolver.route.side_effect = partial(endpoint_routing.resolve_ha_router, trunk_ready=False)
+    resolver.is_local_listener_uri.side_effect = partial(endpoint_routing.is_local_listener_uri,
+        local_ip="127.0.0.1", sip_port=5060)
+    resolver.logical_endpoint.return_value = None
     dialer = endpoint_dialing.EndpointDialer(
         hass=SimpleNamespace(),
         local_ip="127.0.0.1",
         config={"sip_port": 5060, "sip_video": False, "audio_rtcp_min_interval": 5},
-        route_resolver=SimpleNamespace(
-            is_local_listener_uri=lambda _uri: False,
-            logical_endpoint=lambda *_args: None,
-        ),
+        route_resolver=resolver,
         sip_uri_transport=lambda _uri: "TCP",
         enable_reused_tcp_connection=reused,
     )

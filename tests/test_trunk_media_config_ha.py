@@ -127,7 +127,7 @@ async def test_explicit_modes_do_not_consult_stun_or_change_signaling(hass, mode
     from types import SimpleNamespace
     from custom_components.voip_stack.trunk_media import prepare_trunk_media
 
-    config = trunk_client_config(normalized_trunk_config({
+    config = trunk_client_config(normalized_trunk_config({"trunk_options_interval": 30,
         "trunk_media_nat": mode, "trunk_outbound_media_address": "198.51.100.22",
         "trunk_server": "pbx.example.org", "trunk_password": "fixture-only",
     }))
@@ -142,7 +142,7 @@ async def test_explicit_modes_do_not_consult_stun_or_change_signaling(hass, mode
 
 def test_normalization_without_form_keeps_legacy_override_and_default_auto():
     assert normalized_trunk_config({})["trunk_media_nat"] == "auto"
-    legacy = normalized_trunk_config({"trunk_outbound_media_address": "198.51.100.22"})
+    legacy = normalized_trunk_config({"trunk_options_interval": 30, "trunk_outbound_media_address": "198.51.100.22"})
     assert legacy["trunk_media_nat"] == "manual"
     assert trunk_client_config(legacy).outbound_media_address == "198.51.100.22"
 

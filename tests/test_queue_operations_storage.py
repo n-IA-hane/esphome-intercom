@@ -9,12 +9,15 @@ from .test_groups import _load_module
 queues = _load_module("call_queues")
 endpoints = _load_module("endpoint_registry")
 phones = _load_module("phone_endpoint")
+queue_config = _load_module("queue_config")
 
 
 def manager():
     registry = endpoints.EndpointRegistry()
     registry.register(phones.PhoneEndpoint(endpoint_id="op", name="Operator", kind="sip_account", availability="available"))
     result = queues.QueueManager(None, SimpleNamespace(runtime_data=SimpleNamespace(endpoints=registry)))
+    saved_policy = queue_config.initial_queue_policy()
+    result.policies["support"] = queues.QueuePolicy.from_data(saved_policy)
     result.reconcile([("op", ["Support"])])
     return result
 
