@@ -121,10 +121,11 @@ async def test_global_update_does_not_request_transport_reload(hass, ringing, mo
     runtime.entry_runtime_signature = entry_runtime_signature(entry)
     reload = AsyncMock()
     monkeypatch.setattr(hass.config_entries, "async_reload", reload)
-    hass.config_entries.async_update_entry(entry, data={**entry.data, "default_ringing_timeout": 0})
+    hass.config_entries.async_update_entry(entry, data={**entry.data, "default_ringing_timeout": 0, "max_dialog_subscription_expires": 600})
     await async_config_entry_updated(hass, entry)
     assert not reload.called
     assert runtime.transport_config["default_ringing_timeout"] == 0
+    assert runtime.transport_config["max_dialog_subscription_expires"] == 600
 
 
 def test_rule_inheritance_preserves_explicit_values_and_unlimited():
@@ -152,3 +153,28 @@ def test_rule_inheritance_preserves_explicit_values_and_unlimited():
     assert normalize_parking_config({'return_timeout': 0})['return_timeout'] == 0
     assert cap_ringing_timeout(resolve_ringing_timeout({'default_ringing_timeout': 120}, override=0), 7) == 7
     assert resolve_ringing_timeout({}) is None
+
+
+@pytest.mark.parametrize('saved,account_value,expected', [(0, None, None), (300, None, 300),
+                                                        (None, None, 120), (None, 23, 23)])
+async def test_parking_return_override_preserves_zero_and_owner_deadline(hass, ringing, saved, account_value, expected):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from custom_components.voip_stack.parking import ParkingCall
+    runtime = runtime_data(hass)
+    runtime.transport_config['default_ringing_timeout'] = 120
+    runtime.endpoints.update('kitchen', policy=PhonePolicy(ringing_timeout=account_value))
+    ringing.calls.forward_call = AsyncMock(return_value=None)
+    application = SimpleNamespace(hass=hass, session=ringing.session,
+        parked=SimpleNamespace(return_destination='kitchen'), settings={'return_timeout': saved},
+        stop_music=AsyncMock())
+    claim = Mock()
+    before = hass.loop.time()
+    await ParkingCall._return(application, claim)
+    claim.commit.assert_called_once()
+    assert ringing.calls.forward_call.call_args.kwargs['ringing_timeout'] == (expected if expected is not None else 0)
+    timer = ringing.calls.resource_for(ringing.session.call_id, 'parking_return')
+    if expected is None:
+        assert timer is None
+    else:
+        assert timer is not None and before + expected <= timer.handle.when() <= hass.loop.time() + expected

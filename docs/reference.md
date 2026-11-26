@@ -98,7 +98,8 @@ schema. Use the pinned component source for all fields and resource limits.
 | `blf` | Optional SIP presence/dialog subscriptions for account-bound contacts. See the selected Native registration/BLF guide and [phonebook identities](PHONEBOOK_PROTOCOL.md#standard-ldap-directory). |
 | `static_contacts` | Optional manual contacts loaded at boot. Structured entries accept `name`, `ip`, `port`, `rtp_port`, and `transport`. Compatible managed firmware uses the [LDAP directory](PHONEBOOK_PROTOCOL.md#standard-ldap-directory) for shared contacts and preserves manual entries. |
 | `use_ha_as_first_contact` | Select the HA peer after the first roster population. |
-| `ringing_timeout` / `calling_timeout` | Optional local guard timers, disabled when omitted. Maintained profiles leave these unset so the PBX can control ringing. SIP transaction timers remain active. |
+| `calling_timeout` | Outgoing ringing budget. Maintained packages explicitly set the user-editable `voip_calling_timeout: 120s` substitution. Omitted or `0s` is unlimited; SIP transaction timers remain active. REFER uses the same outgoing value. |
+| `ringing_timeout` | Independent incoming ringing limit. The P4 phone retains `30s` incoming; it no longer sets the outgoing budget. See [firmware timeouts](FIRMWARE_CALL_TIMEOUTS.md). |
 | `dc_offset_removal` | Remove DC bias from TX microphone samples. |
 | `buffers_in_psram` | Place VoIP-owned staging buffers in PSRAM. |
 | `task_stacks_in_psram` | Place supported VoIP task stacks in PSRAM. Requires PSRAM and is rejected on the original ESP32. |
@@ -622,3 +623,14 @@ See [Record a conversation](CALL_RECORDING.md) for examples and media scope.
 
 `voip_stack.delete_recording` accepts the same `device_id` and `recording_id`
 and removes the recording together with its metadata.
+
+## Keypad sending from an established call
+
+`voip_stack.send_dtmf` sends up to 32 digits using the existing negotiated
+RFC 4733 sender or SIP INFO fallback. Supply `digits`; a normal phone call uses
+`device_id`, while a native call trigger or a preceding Automation-contact
+`voip_stack.call` in the same execution supplies call context automatically.
+Explicit Automation `call_id` selection also requires `expected_generation`.
+Optional `duration_ms` (160 by default, 40-5000) and `gap_ms` (100 by default,
+50-2000) set press/gap timing. Teardown cancels any remaining sequence. See the
+[service example](SERVICES.md#voip_stacksend_dtmf).

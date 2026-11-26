@@ -1126,16 +1126,4 @@ class _ForwardAdmission:
                 "call_inactive",
                 call_id=call_id,
             )
-        def handoff_ringing_policy(completed):
-            if completed.cancelled() or completed.exception() is not None:
-                return
-            if (completed.result().status == "ringing" and session is not None
-                    and session.live and self.registry.task_for(call_id, "forward") in {None, completed}):
-                # A pending browser destination outlives the preparation task.
-                # Publish its committed state after that task has released the
-                # deadline to the existing session policy owner.
-                from .call_projection import publish_bridge_projection
-                publish_bridge_projection(self.runtime.hass, session)
-
-        task.add_done_callback(handoff_ringing_policy)
         return task

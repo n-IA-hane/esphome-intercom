@@ -16,7 +16,9 @@
           "sip_registrar_enabled": "Ativar contas SIP locais",
           "trunk_enabled": "Ativar tronco SIP opcional",
           "audio_codecs": "Audio codec preference",
-          "video_codecs": "Video codec preference"
+          "video_codecs": "Video codec preference",
+          "default_ringing_timeout": "Tempo padrão de toque",
+          "max_dialog_subscription_expires": "Duração máxima da assinatura BLF"
         },
         "data_description": {
           "sip_port": "Porta de escuta do endpoint SIP do Home Assistant. O Home Assistant aceita sinalização SIP por UDP e TCP nessa porta.",
@@ -30,7 +32,9 @@
           "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
           "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF.",
           "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
-          "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path."
+          "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
+          "default_ringing_timeout": "Seconds for future calls that inherit the PBX policy. Initially filled with 120 and stored as ordinary configuration. Zero means unlimited. Account and per-call overrides take precedence; active calls keep their current deadline.",
+          "max_dialog_subscription_expires": "Maximum dialog/BLF lease, from 60 to 3600 seconds. The initial value remains 60. Longer leases reduce periodic renewals; state changes still notify immediately. A shorter phone request is honored. SIP registration expiry is separate."
         }
       },
       "video": {
@@ -150,7 +154,12 @@
           "return_timeout": "Tempo de toque no retorno",
           "return_destination": "Destino de retorno",
           "hold_media": "Áudio de espera",
-          "clear_hold_media": "Remover áudio de espera salvo"
+          "clear_hold_media": "Remover áudio de espera salvo",
+          "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
+        },
+        "data_description": {
+          "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
+          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings."
         }
       },
       "reconfigure": {
@@ -305,10 +314,14 @@
           "unavailable_to": "Unavailable destination",
           "ringing_timeout": "No-answer ringing limit",
           "no_answer_action": "When unanswered",
-          "no_answer_to": "No-answer destination"
+          "no_answer_to": "No-answer destination",
+          "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
         },
         "data_description": {
-          "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
+          "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
+          "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
+          "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
+          "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
         }
       },
       "esphome_enrollment": {
@@ -384,7 +397,9 @@
       "invalid_phone_admin_credentials": "Enter valid administrative credentials for this phone.",
       "phone_provisioning_disabled": "O provisionamento está desativado. Ative-o em VoIP Stack > Reconfigurar > Descoberta e provisionamento de telefones e volte aqui.",
       "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
-      "managed_esphome_missing": "Select a connected ESPHome phone whose managed SIP account was removed."
+      "managed_esphome_missing": "Select a connected ESPHome phone whose managed SIP account was removed.",
+      "phone_policy_invalid": "Choose a ringing time from 0 to 3600 seconds. Zero means unlimited.",
+      "subscription_expiry_invalid": "Choose a whole number from 60 to 3600 seconds for the BLF lease."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -447,7 +462,8 @@
             "unavailable_to": "Unavailable destination",
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
-            "no_answer_to": "No-answer destination"
+            "no_answer_to": "No-answer destination",
+            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
           },
           "data_description": {
             "voicemail_enabled": "Desativar exclui permanentemente as mensagens, arquivos, PIN e configurações da caixa postal. Ativar novamente cria uma caixa vazia.",
@@ -460,11 +476,13 @@
             "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
             "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
-            "ringing_timeout": "Seconds before the no-answer action. Zero leaves this account without a no-answer deadline.",
+            "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
             "busy_to": "Used by the selected busy action.",
             "unavailable_to": "Used by the selected unavailable action.",
-            "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account."
+            "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
+            "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
           }
         },
         "reconfigure": {
@@ -479,17 +497,20 @@
             "unavailable_to": "Unavailable destination",
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
-            "no_answer_to": "No-answer destination"
+            "no_answer_to": "No-answer destination",
+            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
           },
           "data_description": {
             "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
             "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
-            "ringing_timeout": "Seconds before the no-answer action. Zero leaves this account without a no-answer deadline.",
+            "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
             "busy_to": "Used by the selected busy action.",
             "unavailable_to": "Used by the selected unavailable action.",
-            "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account."
+            "no_answer_to": "Forwarding uses a directory destination or manual address. Voicemail requires an enabled mailbox account.",
+            "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
           }
         }
       },
@@ -699,20 +720,22 @@
             "fallback_removed": "Destino alternativo quando a fila é removida",
             "overall_timeout": "Overall ringing limit",
             "step_timeout": "Ringing time per step",
-            "clear_hold_media": "Remove saved hold audio"
+            "clear_hold_media": "Remove saved hold audio",
+            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
           },
           "data_description": {
             "auto_pause_after": "Desativado em 0. Defina 3 para pausar após três tentativas com toque sem atendimento; ocupado, indisponível e cancelamentos não contam.",
             "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
-            "ring_timeout": "Tempo de toque de cada tentativa. A fila usa seu próprio limite de espera e destino alternativo. A regra pessoal de chamada não atendida do telefone vale para chamadas diretas.",
+            "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
             "max_wait": "Tempo total de espera, incluindo os toques e as pausas entre tentativas. A última tentativa pode ser menor para respeitar esse limite.",
             "retry_delay": "Pausa antes de oferecer novamente a mesma chamada em espera. Uma mudança na disponibilidade dos agentes pode antecipar a verificação.",
             "fallback_timeout": "Destino após o tempo máximo de espera. Um destino de correio de voz grava diretamente; um destino de telefone aplica as regras normais de toque desse telefone. Vazio usa o destino alternativo comum.",
             "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
             "strategy": "Parallel rings eligible members together. Sequential follows the member list. Queue distribution follows its selected strategy and uses the same ordered list.",
-            "overall_timeout": "Maximum time for this ring group before fallback. The default is 30 seconds.",
+            "overall_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "step_timeout": "Maximum time before advancing to the next member or priority tier. The default is 15 seconds and cannot exceed the overall limit.",
-            "hold_media": "Choose audio from Home Assistant Media for waiting callers."
+            "hold_media": "Choose audio from Home Assistant Media for waiting callers.",
+            "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited."
           }
         }
       },
@@ -868,10 +891,14 @@
             "unavailable_to": "Unavailable destination",
             "ringing_timeout": "No-answer ringing limit",
             "no_answer_action": "When unanswered",
-            "no_answer_to": "No-answer destination"
+            "no_answer_to": "No-answer destination",
+            "inherit_ringing_timeout": "Herdar o tempo de toque do PBX"
           },
           "data_description": {
-            "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox."
+            "voicemail_enabled": "Disabling this mailbox permanently deletes its messages, files, PIN and mailbox settings. Enabling it again creates an empty mailbox.",
+            "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
+            "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
+            "no_answer_action": "Optional fallback when ringing expires. Without a fallback, the call ends with no_answer. It does not need a separate account timeout."
           }
         },
         "reconfigure": {
@@ -2406,7 +2433,8 @@
           "name": "Espera máxima"
         },
         "ring_timeout": {
-          "name": "Tempo de toque por tentativa"
+          "name": "Tempo de toque por tentativa",
+          "description": "Seconds per offer; 0 removes that limit and YAML null inherits the PBX. The queue maximum wait still applies. Omit to retain the stored value."
         },
         "no_agent_wait": {
           "name": "Espera sem operadores"
@@ -2574,7 +2602,7 @@
         },
         "answer_timeout": {
           "name": "Aguardar atendimento",
-          "description": "Máximo de segundos para aguardar o atendimento de uma chamada iniciada por Automação. Toque e mídia antecipada não contam como atendimento. Uma falha interrompe a ação e libera a chamada."
+          "description": "Optional ringing limit for the initial Automation-originated destination. Omit to inherit the account and PBX policy; 0 is unlimited. A later forwarding action selects its own destination budget. A final SIP answer ends ringing before media preparation."
         },
         "destination": {
           "name": "Destino",
@@ -2631,6 +2659,10 @@
         },
         "expected_sequence": {
           "name": "Sequência esperada"
+        },
+        "ringing_timeout": {
+          "name": "Tempo padrão de toque",
+          "description": "Optional ringing limit for this destination attempt. Omit to inherit the account or group and PBX policy; 0 is unlimited. Existing queue wait limits still apply."
         }
       },
       "sections": {
@@ -2739,6 +2771,10 @@
         "decline_reason": {
           "name": "Motivo da recusa",
           "description": "Motivo enviado com a rejeição SIP padrão."
+        },
+        "ringing_timeout": {
+          "name": "Tempo padrão de toque",
+          "description": "Optional ringing limit for this destination attempt. Omit to inherit the account or group and PBX policy; 0 is unlimited. Existing queue wait limits still apply."
         }
       },
       "sections": {
@@ -2768,6 +2804,10 @@
         "trunk_id": {
           "name": "Tronco SIP de saída",
           "description": "Linha de saída configurada opcional para este destino."
+        },
+        "ringing_timeout": {
+          "name": "Tempo padrão de toque",
+          "description": "Optional ringing limit for this destination attempt. Omit to inherit the account or group and PBX policy; 0 is unlimited. Existing queue wait limits still apply."
         }
       },
       "sections": {
@@ -3008,11 +3048,11 @@
         },
         "ringing_timeout": {
           "name": "Tempo limite de toque",
-          "description": "Segundos antes da ação por falta de resposta. Zero desativa o limite. Omita para manter a configuração atual."
+          "description": "Seconds before the no-answer action. Zero is unlimited. Use YAML null to inherit the PBX setting; omit the field to keep the current value."
         },
         "no_answer_action": {
           "name": "Quando ninguém atende",
-          "description": "Obrigatório ao ativar um novo limite de toque. Escolha desligar, encaminhar ou uma caixa postal ativada."
+          "description": "Independent fallback: none, hangup, forward or voicemail. none clears the explicit fallback; expiration then ends with no_answer."
         },
         "no_answer_to": {
           "name": "Destino por falta de resposta",

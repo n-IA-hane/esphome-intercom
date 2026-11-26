@@ -23,7 +23,7 @@ The initial settings are:
 | Access number | `700` | Transfer a call here to use the first free slot. |
 | Slots | `701` through `720` | Call the occupied slot to retrieve its caller. |
 | Parking timeout | 180 seconds | How long the caller can remain parked. |
-| Return ringing timeout | 30 seconds | How long the return destination may ring. |
+| Return ringing timeout | Inherit | Inherit the destination account/PBX duration, or override it; zero is unlimited. Existing explicit 30-second values remain. |
 | Return destination | The phone that parked the call | Optional alternate contact. |
 | Hold audio | None | Optional media selected through Home Assistant. |
 

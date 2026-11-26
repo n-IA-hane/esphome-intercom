@@ -170,10 +170,10 @@ class ParkingCall(LocalCallApplication):
         callback = registry.forward_call
         if callback is None:
             raise ParkingError("Call forwarding is unavailable")
-        from .ringing_policy import resolve_ringing_timeout, cap_ringing_timeout
+        from .ringing_policy import resolve_ringing_timeout
         config = require_runtime_data(self.hass).transport_config
-        timeout = cap_ringing_timeout(resolve_ringing_timeout(config, account=target),
-            resolve_ringing_timeout({}, override=self.settings.get("return_timeout")))
+        timeout = resolve_ringing_timeout(config, account=target,
+            override=self.settings.get("return_timeout"))
         await self.stop_music()
         forward = await callback(call_id=self.session.call_id, destination=destination,
             on_failure="terminate", ringing_timeout=timeout if timeout is not None else 0)

@@ -165,7 +165,8 @@ Originate a call from Home Assistant.
 
 For a backend announcement, set `source_automation` to an enabled Automation
 contact's name or extension instead of selecting `device_id`. Set
-`answer_timeout` (default 30 seconds). After the destination answers and media
+`answer_timeout` only for an explicit initial-attempt override (0-3600 seconds;
+omitted inherits account/PBX policy, zero is unlimited). After the destination answers and media
 is ready, the next `tts_say`, `play_media` or `hangup` automatically selects this
 execution's outgoing call. No `response_variable` or call identifiers are needed
 for a single-call sequence. Advanced workflows may still capture the response
@@ -219,8 +220,9 @@ These choices also apply while an Automation contact's outgoing announcement
 is waiting for an answer. `resume` starts a fresh SIP attempt to the previous
 destination using its previous trunk; the automation keeps its original call
 reference. `trunk_id` can select another configured line for the forwarded
-destination. The original `answer_timeout` remains the total answer deadline
-and is not restarted by forwarding.
+destination. Each forward resolves its destination's ringing policy, or the
+explicit `ringing_timeout` supplied on that action. The original call action's
+`answer_timeout` is not an additional timer spanning every replacement.
 
 The failure policy covers routing preflight as well as a destination that rings
 and fails. Once an operation has accepted a valid, authorized source call,
@@ -298,6 +300,33 @@ Hang up the selected phone's active call or a specific `call_id`.
 It stops SIP client legs, relay/media reservations, pending invites and HA
 softphone media where applicable.
 
+### `voip_stack.send_dtmf`
+
+Send up to 32 keypad digits (`0-9`, `A-D`, `*` and `#`) on the established call.
+A normal phone call selects `device_id`. An Automation contact's call uses its
+native trigger context or the outgoing call already bound to the same HA
+execution, just like TTS and Hang up; it does not need a phone selector.
+
+```yaml
+sequence:
+  - action: voip_stack.call
+    data:
+      source_automation: Gate-Control
+      destination: Doorphone
+  - action: voip_stack.send_dtmf
+    data:
+      digits: "1234#"
+  - action: voip_stack.hangup
+```
+
+The call action returns after final acceptance and local media preparation.
+DTMF uses the existing negotiated RFC 4733 payload/clock, or SIP INFO when
+telephone-event is unavailable. `duration_ms` defaults to 160 (40-5000 allowed)
+and `gap_ms` to 100 (50-2000 allowed). Teardown cancels an active sequence before
+releasing media. An explicit Automation `call_id` also needs its
+`expected_generation`; native triggers and a single outgoing call supply these
+automatically. Separate Developer Tools executions do not share that context.
+
 ### `voip_stack.set_dnd`
 
 Enable or disable DND on the selected HA softphone.
@@ -336,8 +365,10 @@ phone. Select the Phone in the HA action editor; it supplies `device_id`.
   reports temporary unavailability. In the preview, closing a browser card does
   not make its enabled logical phone unavailable; use a no-answer rule if no
   receiving browser answers.
-- `ringing_timeout`: seconds before the no-answer action; zero disables the limit.
-- `no_answer_action`: `hangup`, `forward` or `voicemail`, required when enabling a new timeout.
+- `ringing_timeout`: seconds before the no-answer action; zero is unlimited,
+  YAML `null` restores PBX inheritance, and omission leaves the value unchanged.
+- `no_answer_action`: independent `none`, `hangup`, `forward` or `voicemail`;
+  `none` clears the fallback and expiration ends with `no_answer`.
 - `no_answer_to`: destination required for `forward`; for `voicemail`, an enabled phone mailbox, defaulting to this phone when empty.
 
 Omitted fields retain their current values. An empty string clears that rule.
@@ -346,13 +377,14 @@ does not break the rule. Self-forwarding and unconditional cycles are rejected.
 These settings do not move a call already in progress. Explicit automation
 routing decisions take precedence; external-call restrictions still apply.
 
-Ringing has no application timeout unless configured. A `call_unanswered`
-trigger without `for` follows this phone's timeout. With an explicit `for`, the
+An unset account duration inherits the PBX value from Reconfigure, initially
+filled with 120 seconds. Explicit zero means unlimited. A `call_unanswered`
+trigger without `for` follows this resolved timeout. With an explicit `for`, the
 automation retains its own duration. At the phone deadline, matching automations
 have the existing 1.5-second routing decision window before the configured
 fallback is committed. A notification alone leaves the fallback in effect;
 answering or handing the call to another owner supersedes it. SIP transaction
-timeouts and an outgoing action's answer deadline remain separate.
+timeouts remain separate from this application policy.
 
 The shared roster marks policy-controlled destinations for HA routing. Calls
 made directly to a physical phone's IP bypass Home Assistant and its policies.
@@ -362,11 +394,11 @@ does not silently fall back to another phone or operator.
 For an outgoing Automation announcement, a configured no-answer contact can
 redirect the attempt to another supported SIP or ESPHome phone. The `call`
 action still returns the same application call reference, so the following
-`tts_say` and `hangup` need no changes. Its `answer_timeout` covers all attempts
-together. Synthesis starts only after the selected phone answers; a failed
+`tts_say` and `hangup` need no changes. Each new destination resolves its ringing
+budget through the same policy. Synthesis starts only after the selected phone answers; a failed
 replacement ends the action and releases both attempts. An explicit forward
 with `on_failure: resume` can start a fresh attempt to the previous destination,
-within that original answer deadline. A no-answer policy cannot replace this
+with that destination's resolved budget. A no-answer policy cannot replace this
 still-ringing announcement destination with a mailbox; handing an answered
 Automation call to voicemail is a separate action.
 
@@ -939,3 +971,12 @@ confer permission to grant trunk access.
 
 See [Account media processing](MEDIA_PROCESSING.md) for the native diagnostic
 sensor and optional ESPHome presentation.
+
+### Shared ringing configuration
+
+`route`, `select_inbound_destination` and `forward` accept optional
+`ringing_timeout`: omitted inherits the destination account/group and PBX value,
+zero is unlimited, and a positive value is the selected attempt's limit. Queue
+maximum wait remains an enclosing caller-wait budget. Parking return values
+override account/PBX ringing values, including zero for unlimited.
+See [ringing policy and migration](RINGING_POLICY.md).

@@ -208,10 +208,11 @@ configure_queue:
           mode: box
     ring_timeout:
       name: Ring time per attempt
+      description: Zero is unlimited; YAML null inherits the PBX. The queue maximum wait still applies.
       selector:
         number:
-          min: 1
-          max: 120
+          min: 0
+          max: 3600
           unit_of_measurement: s
           mode: box
     no_agent_wait:
@@ -504,13 +505,13 @@ call:
             model: SIP trunk
     answer_timeout:
       name: Wait for answer
-      description: Maximum seconds to wait for the called party to answer an Automation-originated call. Ringing
-        and early media do not count as an answer. Failure stops the action and releases the call.
-      default: 30
+      description: Optional initial Automation-call ringing limit. Omit to inherit the account and PBX; zero is unlimited.
+        A later forward chooses its own destination budget. A final SIP answer ends ringing before media preparation.
       selector:
         number:
-          min: 1
-          max: 120
+          min: 0
+          max: 3600
+          step: 0.1
           unit_of_measurement: s
           mode: box
     destination:
@@ -594,6 +595,16 @@ forward:
       description: Select a specific concurrent call or reject stale automation decisions.
       collapsed: true
       fields:
+        ringing_timeout:
+          name: Ringing time override
+          description: Omit to inherit the destination and PBX policy. Zero is unlimited; queue maximum wait still applies.
+          selector:
+            number:
+              min: 0
+              max: 3600
+              step: 0.1
+              unit_of_measurement: s
+              mode: box
         call_id:
           name: Call ID
           required: false
@@ -765,6 +776,16 @@ route:
       required: false
       selector:
         text: null
+    ringing_timeout:
+      name: Ringing time override
+      description: Omit to inherit the destination and PBX policy. Zero is unlimited; queue maximum wait still applies.
+      selector:
+        number:
+          min: 0
+          max: 3600
+          step: 0.1
+          unit_of_measurement: s
+          mode: box
     advanced:
       name: Advanced options
       description: Native VoIP triggers supply call context. Use these fields for explicit concurrent-call selection.
@@ -793,6 +814,16 @@ select_inbound_destination:
       description: Select one of several simultaneous route requests or reject stale decisions.
       collapsed: true
       fields:
+        ringing_timeout:
+          name: Ringing time override
+          description: Omit to inherit the destination and PBX policy. Zero is unlimited; queue maximum wait still applies.
+          selector:
+            number:
+              min: 0
+              max: 3600
+              step: 0.1
+              unit_of_measurement: s
+              mode: box
         trunk_id:
           name: Outgoing SIP trunk
           description: Optional configured outgoing line for this destination.
@@ -1198,7 +1229,7 @@ set_phone_settings:
           mode: dropdown
     ringing_timeout:
       name: Ringing timeout
-      description: Seconds before the no-answer action. Zero disables the limit. Omit to keep the current setting.
+      description: Seconds before the no-answer action. Zero is unlimited. YAML null inherits the PBX; omit to keep the current setting.
       selector:
         number:
           min: 0
@@ -1207,11 +1238,11 @@ set_phone_settings:
           unit_of_measurement: s
     no_answer_action:
       name: When nobody answers
-      description: Required when enabling a new ringing timeout. Choose hangup, forwarding or an enabled voicemail
-        mailbox.
+      description: Optional independent fallback. none clears the explicit fallback; expiration then ends with no_answer.
       selector:
         select:
           options:
+          - none
           - hangup
           - forward
           - voicemail

@@ -11,8 +11,10 @@ controller, timers and cleanup. Card controls, HA actions and SIP addresses
 enter that same backend. Settings belong to a phone, never to a browser tab.
 
 Optional phone policies cover unconditional forwarding, busy/unavailable
-fallback and no-answer behavior. An unset ringing timeout imposes no PBX
-application deadline; SIP transaction timers remain active. Accepted automation
+fallback and no-answer behavior. An unset account ringing timeout inherits the
+stored PBX setting; explicit zero is unlimited. Positive defaults live in the
+initial form and migration configuration, not in the call runtime. SIP
+transaction timers remain active. Accepted automation
 commands override defaults for their own call. Notification-only automations
 leave the default action intact. Group branches do not individually answer via
 personal forwarding rules while other members are still ringing.

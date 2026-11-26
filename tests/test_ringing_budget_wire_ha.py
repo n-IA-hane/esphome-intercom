@@ -127,3 +127,26 @@ async def test_automation_call_inherits_global_or_honors_explicit_override(lab, 
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_pending_browser_handoff_keeps_the_admitted_budget_after_live_edit(browser_lab, monkeypatch):
+    from custom_components.voip_stack.forward_operation import ForwardOperation
+    lab = browser_lab
+    lab.runtime.transport_config['default_ringing_timeout'] = 0.15
+    lab.phones[0].auto_answer = False
+    session = await originate(lab)
+    prepared, release = asyncio.Event(), asyncio.Event()
+    original = ForwardOperation.retire_application
+    async def gated(operation, **kwargs):
+        await original(operation, **kwargs)
+        if kwargs.get('pending_browser'):
+            prepared.set()
+            await release.wait()
+    monkeypatch.setattr(ForwardOperation, 'retire_application', gated)
+    task = await lab.calls.forward_call(call_id=session.call_id, destination='kitchen', on_failure='terminate')
+    await asyncio.wait_for(prepared.wait(), 2)
+    lab.runtime.transport_config['default_ringing_timeout'] = 0
+    release.set()
+    assert (await asyncio.wait_for(task, 3)).status == 'ringing'
+    await wait_until(lambda: not session.live)
+    assert session.terminal_reason == 'no_answer'

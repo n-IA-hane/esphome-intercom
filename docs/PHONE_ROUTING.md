@@ -22,10 +22,12 @@ Open the phone card's **Options > Call routing**, or choose the native action
 | After timeout | Hang up, forward, or enter an enabled voicemail mailbox. |
 | Preferred outgoing SIP trunk | Choose this phone's default provider for external calls. |
 
-With no ringing timeout configured, the PBX adds no application-level ringing
-limit. Network failures, caller cancellation and SIP transaction timers still
-end failed attempts. A timeout and its outcome are configured together, so
-turning on a timeout never silently enables voicemail.
+An account without its own ringing number inherits the PBX value from
+**Reconfigure > General settings**, initially filled with 120 seconds. An
+explicit zero means unlimited. The no-answer destination is independent of
+that number: it can run on an inherited deadline. With no fallback, expiration
+ends with `no_answer`. Existing positive values remain unchanged. See the
+[ringing policy guide](RINGING_POLICY.md) for overrides and migration details.
 
 ![Optional ringing timeout and its three outcomes](images/phone-no-answer-policy.svg)
 

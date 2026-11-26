@@ -245,9 +245,9 @@ Cards render the state of their owner only:
 HA trunk registration status is observability data on the HA softphone snapshot;
 it is not an ESP phone state.
 
-Capacity refusals return SIP 503 with `Retry-After` increasing per authenticated
-subscriber through 5, 10, 20, 40 and 60 seconds. An admitted new usage resets that
-subscriber's refusal history. Refreshes and orderly unsubscribe remain available
-when the shared pool is full; retiring notifications retain their slots until
-cleanup finishes. Refusal bookkeeping is bounded and creates no timer or task
-per rejection. The total covers BLF, presence, MWI, feature and REFER usages.
+Dialog BLF leases keep a 60-second maximum until changed explicitly in
+Reconfigure. The configurable range is 60-3600 seconds; shorter requests are
+honored. Renewals and immediate state notifications remain standard SIP.
+This lease does not change REGISTER expiry or account availability. Idle leases
+use TimerHandle callbacks, while only pending NOTIFY transactions need tasks.
+See [notification recovery](NOTIFY_TRANSPORT_RECOVERY.md).

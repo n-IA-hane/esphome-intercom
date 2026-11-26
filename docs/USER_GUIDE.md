@@ -613,7 +613,7 @@ The ESP mirror card exposes the same phone-routing policy.
 For a phone that should ring for 20 seconds and then take a message:
 
 1. Enable its mailbox as described in the next section.
-2. Enable **Ringing timeout** and enter **20 seconds**.
+2. Enable **Override PBX ringing limit** and enter **20 seconds**.
 3. Choose **Voicemail** under **After timeout**.
 4. Leave the mailbox destination empty to use this phone's mailbox, or choose
    another phone with an enabled mailbox.
@@ -622,9 +622,10 @@ For a phone that should ring for 20 seconds and then take a message:
 Choose **Forward** and a destination instead to try another phone. Choose
 **Hang up** to finish the unanswered call. Rules for forwarding every call,
 forwarding while busy/DND, and forwarding while unavailable are separate.
-Leave them unset when you do not need them. With no ringing timeout, VoIP Stack
-adds no application-level no-answer deadline; caller cancellation and SIP
-network timeouts still apply.
+Leave forwarding rules unset when you do not need them. An account without its
+own duration inherits the PBX setting, initially 120 seconds in Reconfigure.
+Explicit zero means unlimited. The no-answer action can use the inherited
+budget. See [ringing policy](RINGING_POLICY.md).
 
 An automation that accepts control with a routing action can override the
 phone's fallback for that call. Merely sending a notification does not take

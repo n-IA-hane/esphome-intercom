@@ -33,6 +33,10 @@ rules, voicemail, transfers, parking, pickup, ring groups and audio conferences.
 Connect a provider trunk when you want an outside line. Add native HA automations
 when calls should follow presence, office hours, doorbell events or keypad input.
 
+Set a shared ringing duration in Reconfigure, then let accounts and groups
+inherit it or choose explicit overrides. The [ringing policy guide](docs/RINGING_POLICY.md)
+explains the initial 120-second setting, unlimited ringing and no-answer routes.
+
 The house can transfer callers, take messages and keep someone waiting while
 you move to another room. **A decent improvement over shouting "IT'S FOR YOU"
 through three walls.**
