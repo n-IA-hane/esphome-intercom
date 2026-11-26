@@ -739,6 +739,60 @@ configured forwarding interval and leave the contact fallback empty. The
 provider must implement that forwarding; HA cannot guarantee its policy.
 See [the no-answer recipe](AUTOMATION_DIALPLAN.md#leave-an-incoming-call-unanswered).
 
+### `voip_stack.send_dtmf`
+
+Send keypad digits on the current Automation contact's call, or on a selected
+phone's established call. The action reuses the negotiated RTP event sender or
+the actual SIP INFO dialog, with the existing media transport and cleanup owner.
+It does not generate in-band tones when neither sender is available.
+
+Required `digits` accepts 1 to 32 characters from `0-9`, `A-D`, `*` and `#`.
+Lowercase `a-d` is accepted and normalized. Optional `duration_ms` defaults to
+`160` and accepts `40` to `5000`; `gap_ms` defaults to `100` and accepts `50` to
+`2000`.
+
+In a native VoIP call trigger, omit `device_id` to use the same call context as
+`tts_say` and `wait_for_dtmf`. The Automation contact answers an incoming call
+if needed. After `voip_stack.call` with `source_automation`, the same execution
+also selects its outgoing call and generation automatically:
+
+```yaml
+- action: voip_stack.call
+  data:
+    source_automation: Door controller
+    destination: Front door
+    answer_timeout: 30
+  response_variable: door_call
+- action: voip_stack.send_dtmf
+  data:
+    digits: "1234#"
+    duration_ms: 160
+    gap_ms: 100
+  response_variable: keypad_result
+- action: voip_stack.hangup
+```
+
+When the execution owns multiple calls, select one with `call_id` and
+`expected_generation`, using the returned `door_call.call_id` and
+`door_call.generation`. An explicit Automation call ID requires its generation.
+The call context stays with that execution. Sending digits, speech, playback
+and waits share the application's operation lock.
+
+For a normal established phone call, provide its SIP account `device_id`.
+Use `call_id` when the phone has multiple calls, `expected_generation` to guard
+a stored call reference, and `line_id` to select a physical phone's SIP line.
+The existing browser or PBX relay sends the digits with the phone's native
+control permission. Automation calls retain the authorization and controller
+ownership required by other Automation actions; this action does not take over
+an unrelated Assist or mailbox application.
+
+The optional response contains `call_id`, `generation`, normalized `digits`
+and the count `sent`. Completion means the sender finished the sequence; it
+does not establish that a remote IVR accepted the command. An unauthorized
+phone, ambiguous call, changed generation, inactive sender or failed SIP INFO
+raises an action error. Ending the call cancels the sequence before the next
+digit.
+
 ### `voip_stack.wait_for_dtmf`
 
 Wait for keypad input from the caller of an automation contact. The call is

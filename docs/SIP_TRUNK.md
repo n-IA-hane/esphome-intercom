@@ -35,7 +35,7 @@ A directory contact remains a destination you can dial. Its address or
 display name does not authorize incoming calls. Existing configured trunks
 continue to use their own source and routing settings.
 
-### Calls between PBXs
+### Calls between PBX systems
 
 When HA sends an identified incoming trunk caller to a local SIP destination,
 the new leg preserves the caller's complete `From` URI, including its domain.

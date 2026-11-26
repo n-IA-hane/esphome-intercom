@@ -287,6 +287,7 @@ for the complete action schemas, selectors, responses and preconditions.
 - `voip_stack.transfer`
 - `voip_stack.pickup`: recover a ringing call or parking slot on a selected phone.
 - `voip_stack.get_phone_state`: read phone, call and mailbox state into an action response.
+- `voip_stack.send_dtmf`: send keypad digits through an Automation call context or a selected phone's established call, using its negotiated RTP or SIP INFO sender. See [keypad input](SERVICES.md#voip_stacksend_dtmf).
 - `voip_stack.route`
 - `voip_stack.select_inbound_destination`
 - `voip_stack.set_deadline`

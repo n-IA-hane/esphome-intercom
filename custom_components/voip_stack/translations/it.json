@@ -1691,7 +1691,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1757,7 +1757,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1823,7 +1823,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1889,7 +1889,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -1963,7 +1963,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2037,7 +2037,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2107,7 +2107,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
@@ -2188,7 +2188,7 @@
         },
         "destination_extension": {
           "name": "Destination extension",
-          "description": "Confronta l’interno di destinazione configurato o l’indirizzo chiamato originale conservato dal trunk in ingresso."
+          "description": "Confronta l'interno di destinazione configurato o l'indirizzo chiamato originale conservato dal trunk in ingresso."
         },
         "caller_match": {
           "name": "Caller value matching",
