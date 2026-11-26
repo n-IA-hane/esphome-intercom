@@ -19,7 +19,7 @@ const [
   },
   { normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches },
   { BrowserMediaDevices, exactDeviceConstraint },
-  { phoneCallPresentation, publicDialTarget, isEstablishedCallState },
+  { phoneCallPresentation, publicDialTarget, isEstablishedCallState, hasAttachableCallMedia },
   { BrowserAudioSession, AudioSetupSupersededError, settleWithin },
 ] = await Promise.all([
   import(`./ringtone.js?v=${encodeURIComponent(MODULE_VERSION)}`),
@@ -661,7 +661,7 @@ class VoipStackEngine extends EventTarget {
           softphoneStateMatches(state, this._softphoneSubscriberSelectors.get(listener) || {}))) return;
     const callId = String(state.call_id || "");
     const sync = async () => {
-      if (isEstablishedCallState(state.state) && callId === owned && state.media_owner !== "other" && state.can_attach_media !== false) {
+      if (hasAttachableCallMedia(state) && callId === owned && state.media_owner !== "other" && state.can_attach_media !== false) {
         let microphoneAntiAlias = true;
         try {
           microphoneAntiAlias = localStorage.getItem(
@@ -1549,7 +1549,7 @@ class VoipStackEngine extends EventTarget {
     const callId = String(snapshot.call_id || "");
     if (String(snapshot.endpoint_id || endpointId) !== endpointId) return;
     if (this._dashboardOperations.has(endpointId) || this._mediaIntent?.endpointId === endpointId) return;
-    if (isEstablishedCallState(snapshot.state) && this.ownsSoftphoneSession(callId, endpointId) &&
+    if (hasAttachableCallMedia(snapshot) && this.ownsSoftphoneSession(callId, endpointId) &&
         snapshot.media_owner !== "other" && snapshot.can_attach_media !== false) {
       return this.resumeSession(this._browserPhoneInfo(owner), owner.device_id, snapshot);
     }
@@ -2199,7 +2199,7 @@ class VoipStackEngine extends EventTarget {
       return reply;
     }
     this.claimSoftphoneSession(callId, endpointId);
-    if (isEstablishedCallState(state)) {
+    if (hasAttachableCallMedia(reply)) {
       const mediaInfo = {
         ...(softphoneInfo || {}),
         ...targetInfo,
@@ -2232,8 +2232,7 @@ class VoipStackEngine extends EventTarget {
 
   async resumeSession(deviceInfo, sessionDeviceId, statePayload) {
     if (this._pageHiding) return;
-    const state = String(statePayload?.state || "").toLowerCase();
-    if (!isEstablishedCallState(state)) return;
+    if (!hasAttachableCallMedia(statePayload)) return;
     const deviceId = sessionDeviceId || statePayload?.session_device_id || statePayload?.device_id || this._deviceId;
     const endpointId = String(statePayload?.endpoint_id || deviceInfo?.endpoint_id || "").trim();
     if (!deviceId || !endpointId) return;
@@ -2272,7 +2271,7 @@ class VoipStackEngine extends EventTarget {
   async reconcileSession(statePayload) {
     const callId = String(statePayload?.call_id || "");
     if (
-      !isEstablishedCallState(statePayload?.state) ||
+      !hasAttachableCallMedia(statePayload) ||
       !callId ||
       this._callId !== callId
     ) return;
@@ -2303,7 +2302,7 @@ class VoipStackEngine extends EventTarget {
       this._ws.readyState === WebSocket.OPEN &&
       this._audioSession.ready
     ) {
-      this._setState("IN_CALL");
+      this._setState(isEstablishedCallState(statePayload.state) ? "IN_CALL" : String(statePayload.state).toUpperCase());
       void this._ensureVideo(statePayload);
       return;
     }
@@ -2316,7 +2315,7 @@ class VoipStackEngine extends EventTarget {
       endpointId,
     )) return;
     if (this._sessionAttachKey !== attachKey) return;
-    this._setState("IN_CALL");
+    this._setState(isEstablishedCallState(statePayload.state) ? "IN_CALL" : String(statePayload.state).toUpperCase());
     // Video is optional and directionally independent from the audio call.
     // In particular, a real browser may leave getUserMedia pending while it
     // asks for camera permission. Never make audio attachment or call control

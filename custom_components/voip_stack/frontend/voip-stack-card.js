@@ -33,6 +33,7 @@ const [
     queueDeclarationText,
     isPagingAutoAnswer,
     isEstablishedCallState,
+    hasAttachableCallMedia,
     phoneCallPresentation,
     formatListFromMetadata,
     formatCallDuration,
@@ -684,7 +685,7 @@ class VoipStackCard extends HTMLElement {
   _ensureHaSoftphoneAudioPath(snapshot = {}) {
     if (!this._isSoftphoneController()) return;
     if (snapshot.can_attach_media === false) return;
-    if (!isEstablishedCallState(snapshot.state)) return;
+    if (!hasAttachableCallMedia(snapshot)) return;
     // Hangup deliberately closes the local media socket before the backend
     // snapshot becomes idle. Engine cleanup emits synchronously, so without
     // this gate the still-in-call snapshot can start a second audio attach

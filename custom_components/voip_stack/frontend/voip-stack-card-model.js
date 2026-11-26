@@ -297,3 +297,12 @@ export function normaliseCardConfig(rawConfig = {}) {
   delete config.endpoint_id;
   return { config };
 }
+
+/** Media can be negotiated before the SIP INVITE is answered. */
+export function hasAttachableCallMedia(snapshot = {}) {
+  return isEstablishedCallState(snapshot.state) || (
+    snapshot.early_media === true && snapshot.can_attach_media === true &&
+    snapshot.direction === "outgoing" &&
+    ["calling", "connecting", "remote_ringing"].includes(String(snapshot.state || "").toLowerCase())
+  );
+}

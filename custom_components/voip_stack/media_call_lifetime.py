@@ -28,6 +28,26 @@ class ActiveMediaCall:
     registry: SipEndpointRuntime
 
 
+def selected_browser_dialog(registry, call_id):
+    """Use the confirmed dialog or the selected provisional branch of this owner."""
+    session = registry.get_session(registry.resolve_session_id(call_id))
+    client = registry.sip_client_for(call_id)
+    if session is None or not session.live or client is None:
+        return None
+    if client.dialog is not None:
+        return client.dialog
+    tag = session.metadata.get("browser_early_media_tag")
+    return client.early_dialogs.get(tag) if tag else None
+
+
+def _media_state_active(store):
+    state = str(store.get("state") or "").strip().lower()
+    return state in _MEDIA_CALL_STATES or (
+        state in {"calling", "remote_ringing"} and store.get("early_media") is True
+        and store.get("direction") == "outgoing"
+    )
+
+
 def active_media_call(
     hass: HomeAssistant,
     endpoint_id: str,
@@ -36,8 +56,7 @@ def active_media_call(
 
     store = _ha_softphone_store(hass, endpoint_id)
     call_id = str(store.get("call_id") or "").strip()
-    state = str(store.get("state") or "").strip().lower()
-    if not call_id or state not in _MEDIA_CALL_STATES:
+    if not call_id or not _media_state_active(store):
         return None
     registry = call_projection(hass)
     if registry is None or not hasattr(registry, "sessions"):
@@ -69,17 +88,21 @@ def listen_for_media_call_end(
             current = _ha_softphone_store(hass, endpoint_id)
             if (
                 str(current.get("call_id") or "") == call_id
-                and str(current.get("state") or "").lower() in _MEDIA_CALL_STATES
+                and _media_state_active(current)
             ):
                 return
-        if str(payload.get("state") or "").lower() not in _MEDIA_CALL_STATES:
+        current = _ha_softphone_store(hass, endpoint_id)
+        terminal = str(payload.get("state") or "").lower() in {
+            "idle", "unavailable", "terminating", "ended", "failed", "error", "busy", "cancelled"
+        }
+        if terminal or str(current.get("call_id") or "") != call_id or not _media_state_active(current):
             call_ended.set()
 
     remove_listener = hass.bus.async_listen(CALL_EVENT, on_call_event)
     store = _ha_softphone_store(hass, endpoint_id)
     if (
         str(store.get("call_id") or "") != call_id
-        or str(store.get("state") or "").lower() not in _MEDIA_CALL_STATES
+        or not _media_state_active(store)
     ):
         call_ended.set()
     return call_ended, remove_listener

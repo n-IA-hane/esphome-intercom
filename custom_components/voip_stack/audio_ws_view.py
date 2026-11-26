@@ -595,8 +595,9 @@ def _active_softphone_media_session(
 
     client = registry.sip_client_for(call_id) if call_id else None
     if client is not None:
-        if client.dialog is not None:
-            dialog = client.dialog
+        from .media_call_lifetime import selected_browser_dialog
+        dialog = selected_browser_dialog(registry, call_id)
+        if dialog is not None:
             rtp_source = getattr(client, "audio_rtp_source", None)
             if not isinstance(rtp_source, rtp.AudioRtpSenderState):
                 rtp_source = rtp.AudioRtpSenderState.create()
@@ -941,8 +942,9 @@ async def _run_audio_session(
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
 
     def negotiation_payload(*, message_type: str = "") -> dict[str, Any]:
+        current = _ha_softphone_store(hass, endpoint_id)
         payload: dict[str, Any] = {
-            "state": "in_call",
+            "state": str(current.get("state") or "connecting"),
             "call_id": session.call_id,
             "tx_format": browser_plan.microphone.wire_token(),
             "rx_format": browser_plan.speaker.wire_token(),

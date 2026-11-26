@@ -478,6 +478,12 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         ),
         "connected_cards": connected_cards,
         "ha_client_supported": bool(endpoint is not None and endpoint.supports_ha_client),
+        "early_media": bool(can_attach_media and direction == "outgoing"
+            and view_state in {"calling", "connecting", "remote_ringing"}
+            and session is not None and session.metadata.get("browser_early_media_tag")
+            and (client := registry.sip_client_for(str(call_id or ""))) is not None
+            and client.dialog is None
+            and client.early_dialogs.get(session.metadata["browser_early_media_tag"]) is not None),
         "can_attach_media": can_attach_media,
         **({"media_handoff": media_handoff} if media_handoff is not None else {}),
         "can_answer": can_answer,

@@ -787,6 +787,37 @@ async def _async_prepare_browser_sip_call(
     from .browser_playback import BrowserPlayback
     from .endpoint_session import CleanupStage
 
+    async def prepare_browser_provisional_media(candidate):
+        # Provisional SDP belongs to an early branch, never client.dialog.
+        current = registry.get_session(session.call_id)
+        if (current is not session or not current.live or current.owner != "ha_softphone"
+                or registry.sip_client_for(session.call_id) is not client
+                or client.dialog is not None
+                or client.early_dialogs.get(candidate.remote_tag) is not candidate):
+            return None
+        selected = current.metadata.get("browser_early_media_tag")
+        if selected and selected != candidate.remote_tag:
+            return None
+        from .sip_client import PreparedDialogMediaUpdate
+        async def commit():
+            if not registry.is_generation_current(session.call_id, session.generation):
+                raise RuntimeError("provisional media belongs to a terminated browser call")
+            current.update_metadata(browser_early_media_tag=candidate.remote_tag)
+            audio = require_runtime_data(hass).media.sessions_for("audio").get((session.call_id, endpoint_id))
+            if audio is not None:
+                from .media_session_updates import commit_audio_session_update
+                commit_audio_session_update(audio, candidate,
+                    dtmf_payload_type=candidate.dtmf_payload_type, dtmf_events=candidate.dtmf_events)
+            publish_phone_projection(hass, current, endpoint_id,
+                direction="outgoing", early_media=True,
+                audio_direction=candidate.local_audio_direction,
+                sip_status_code=client.last_sip_status_code, last_sip_event="SIP_RESPONSE")
+        async def rollback():
+            return None
+        return PreparedDialogMediaUpdate(commit=commit, rollback=rollback)
+
+    client.on_provisional_media = prepare_browser_provisional_media
+
     playback = BrowserPlayback()
     registry.own_resource(
         session.call_id, f"browser_playback:{session.call_id}", playback,

@@ -201,6 +201,14 @@ async def async_track_outbound_sip_client(
             # response must never resurrect a detached call in the HA store.
             return
         if public_final == CallState.IN_CALL.value and client.dialog is not None:
+            from .runtime_data import require_runtime_data
+            from .media_session_updates import commit_audio_session_update
+            audio = require_runtime_data(hass).media.sessions_for("audio").get(
+                (client.dialog_ids.call_id, endpoint_id))
+            if audio is not None:
+                commit_audio_session_update(audio, client.dialog,
+                    dtmf_payload_type=client.dialog.dtmf_payload_type,
+                    dtmf_events=client.dialog.dtmf_events)
             video_active = bool(
                 client.dialog.video_format is not None
                 and client.dialog.local_video_direction != "inactive"
