@@ -106,7 +106,7 @@ def ha_router_decision(hass: HomeAssistant, target: str, entries: list, *, sourc
             return RouteDecision(RouteAction.TRUNK if selected.available else RouteAction.REJECT,
                 target=dial_target, trunk_id=selected.identity, source="trunk",
                 status=0 if selected.available else 503,
-                reason=RouteReason.TRUNK_UNAVAILABLE if not selected.available else RouteReason.TRUNK_SERVICE_CODE)
+                reason=RouteReason.TRUNK_UNAVAILABLE if not selected.available else RouteReason.EXPLICIT_ROUTE)
 
     from .parking import resolve_parking_route
     parking = resolve_parking_route(hass, target)

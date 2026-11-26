@@ -101,6 +101,19 @@ def test_trunk_rename_does_not_change_identity_or_selection(hass, catalog):
     assert entry_default_trunk(catalog, entry_trunk_configs(catalog)) == "home"
 
 
+async def test_public_named_trunk_destination_resolves_for_an_account(hass, catalog):
+    from custom_components.voip_stack.endpoint_routing import ha_router_decision
+    from custom_components.voip_stack.router import RouteAction, RouteReason
+
+    await async_start_sip_trunk(hass, local_ip="127.0.0.1")
+    try:
+        decision = ha_router_decision(hass, "trunk.work.202", [], source_endpoint_id="caller")
+        assert decision.action is RouteAction.TRUNK and decision.trunk_id == "work"
+        assert decision.target == "202" and decision.reason is RouteReason.EXPLICIT_ROUTE
+    finally:
+        await async_stop_sip_trunk(hass)
+
+
 class Registrar(asyncio.DatagramProtocol):
     """Independent digest oracle with a real UDP REGISTER exchange."""
     def __init__(self):
