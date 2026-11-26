@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from homeassistant.exceptions import ServiceValidationError
 
-from .call_scope import call_belongs_to_endpoint
+from .call_scope import call_belongs_to_endpoint, call_endpoint_id
 from .endpoint_session import CleanupStage
 from .mailbox import get_archive, message_audio_reference
 from .runtime_data import require_runtime_data
@@ -95,6 +95,38 @@ class CallRecording:
             await async_wait_for_cleanup(self.task)
 
 
+def _browser_media_endpoint(runtime, session):
+    """Use the call's existing browser transport owner, never its archive owner."""
+    if (not session.live or session.owner != "ha_softphone"
+            or session.route_kind == "conference"
+            or not runtime.sip.is_generation_current(session.call_id, session.generation)):
+        return ""
+    identity = call_endpoint_id(runtime.sip, session.call_id)
+    endpoint = runtime.endpoints.get(identity)
+    if (endpoint is None or not endpoint.supports_ha_client
+            or not call_belongs_to_endpoint(runtime.sip, session.call_id, identity)):
+        return ""
+    return identity
+
+
+def bind_browser_recording(runtime, media, endpoint_id):
+    """Bind one current call recording when its canonical audio adapter opens."""
+    registry = runtime.sip
+    if registry is None:
+        return False
+    session = registry.get_session(registry.resolve_session_id(media.call_id))
+    recording = registry.resource_for(media.call_id, "recording")
+    if (session is None or recording is None or recording.session is not session
+            or recording.stopped.is_set() or media.call_token != session.token
+            or _browser_media_endpoint(runtime, session) != endpoint_id
+            or runtime.media.sessions_for("audio").get((media.call_id, endpoint_id)) is not media
+            or runtime.endpoints.get(recording.endpoint.endpoint_id) is None
+            or not call_belongs_to_endpoint(registry, session.call_id, recording.endpoint.endpoint_id)):
+        return False
+    recording.bind_media(media.observe_audio)
+    return True
+
+
 def _media_observer(runtime, session, endpoint_id):
     """Select the existing media adapter, without starting another receiver."""
     bridge = runtime.local_bridge
@@ -109,12 +141,13 @@ def _media_observer(runtime, session, endpoint_id):
     relay = runtime.sip.resource_for(session.call_id, "relay")
     if relay is not None and hasattr(relay, "observe_audio"):
         return lambda recording: relay.observe_audio(recording.capture, recording.end)
-    audio = runtime.media.sessions_for("audio").get((session.call_id, endpoint_id))
+    browser_endpoint = _browser_media_endpoint(runtime, session)
+    audio = runtime.media.sessions_for("audio").get((session.call_id, browser_endpoint))
     if audio is not None and audio.observe_audio is not None:
+        if audio.call_token != session.token:
+            raise ServiceValidationError("Call audio belongs to a previous call generation")
         return lambda recording: audio.observe_audio(recording.capture, recording.end)
-    endpoint = runtime.endpoints.get(endpoint_id)
-    if (endpoint is not None and endpoint.supports_ha_client
-            and session.owner == "ha_softphone" and session.route_kind != "conference"):
+    if browser_endpoint:
         # The connected event can precede the browser media attachment.
         # The existing adapter binds this session-owned tap when it starts.
         return lambda _recording: None

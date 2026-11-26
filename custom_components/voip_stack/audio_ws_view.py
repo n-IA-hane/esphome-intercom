@@ -25,6 +25,7 @@ from .audio_ws import decode_audio_frame, encode_audio_frame
 from .audio_ws_frames import BrowserAudioReceiver, BrowserPcmPlayout, DeferredAudioFrames
 from .browser_playback import BROWSER_MEDIA_START_TIMEOUT, BrowserPlayback
 from .call_projection import publish_media_route
+from .endpoint_session import CallToken
 from .config import debug_mode, media_capture_enabled
 from .core.audio_format import HA_SIP_PCM_FORMATS, MAX_PCM_FRAME_BYTES
 from .core.audio_pcm import PcmFrameConverter
@@ -113,6 +114,7 @@ class _SoftphoneMediaSession:
     audio_state: Any = None
     validate_handoff: Callable | None = None
     observe_audio: Callable | None = None
+    call_token: CallToken | None = None
     application_playback: Any = None
 
 
@@ -466,6 +468,8 @@ def _active_softphone_media_session(
         return None
     call_id = active.call_id
     registry = active.registry
+    owner_session = registry.get_session(registry.resolve_session_id(call_id))
+    call_token = owner_session.token if owner_session is not None else None
     item = (registry.resource_for(call_id, f"softphone_media_endpoint:{endpoint_id}")
             or registry.resource_for(call_id, "softphone_media")) if call_id else None
     if item is not None and item.get("endpoint_id") not in (None, "", endpoint_id):
@@ -506,6 +510,7 @@ def _active_softphone_media_session(
                 return None
             fmt = RtpPcmFormat(96, "L16", BROWSER_PAGING_PCM.sample_rate, 1, BROWSER_PAGING_PCM.frame_ms)
             return _SoftphoneMediaSession(call_id=call_id, local_rtp_port=0,
+                call_token=call_token,
                 remote_rtp_host="", remote_rtp_port=0, send_format=fmt, recv_format=fmt,
                 local_audio_direction="recvonly", application_playback=application_playback)
         if item.get("rtp_loopback"):
@@ -517,6 +522,7 @@ def _active_softphone_media_session(
                 item["audio_rtp_source"] = rtp_source
             return _SoftphoneMediaSession(
                 call_id=call_id,
+                call_token=call_token,
                 local_rtp_port=0,
                 remote_rtp_host=str(item["remote_rtp_host"]),
                 remote_rtp_port=int(item["remote_rtp_port"]),
@@ -532,6 +538,7 @@ def _active_softphone_media_session(
 
             return _SoftphoneMediaSession(
                 call_id=call_id,
+                call_token=call_token,
                 local_rtp_port=0,
                 remote_rtp_host="",
                 remote_rtp_port=0,
@@ -556,6 +563,7 @@ def _active_softphone_media_session(
             source_client = registry.source_sip_client_for(call_id) if retained_source else None
             return _SoftphoneMediaSession(
                 call_id=invite.call_id,
+                call_token=call_token,
                 local_rtp_port=local_rtp_port,
                 rtp_reservation=item.get("rtp_reservation"),
                 remote_rtp_host=invite.remote_rtp_host,
@@ -604,6 +612,7 @@ def _active_softphone_media_session(
                 client.audio_rtp_source = rtp_source
             return _SoftphoneMediaSession(
                 call_id=dialog.call_id,
+                call_token=call_token,
                 local_rtp_port=int(dialog.local_rtp_port),
                 rtp_socket=getattr(client, "audio_rtp_socket", None),
                 remote_rtp_host=dialog.remote_rtp_host,
@@ -798,6 +807,13 @@ async def _run_audio_session(
             handoff_requested=handoff_requested,
             endpoint_id=endpoint_id,
         )
+        return
+    owner_registry = require_runtime_data(hass).sip
+    owner_session = (owner_registry.get_session(owner_registry.resolve_session_id(session.call_id))
+                     if owner_registry is not None else None)
+    if session.call_token is not None and (
+        owner_session is None or not owner_session.live or owner_session.token != session.call_token
+    ):
         return
     browser_plan = plan_browser_audio(session.send_format, session.recv_format)
     frame_ms = max(1.0, float(session.recv_format.audio_format.frame_ms))
@@ -1191,12 +1207,12 @@ async def _run_audio_session(
             audio_observers.pop(callback, None)
         return remove
     session.observe_audio = observe_audio
-    sip_owner = require_runtime_data(hass).sip
-    recording = sip_owner.resource_for(session.call_id, "recording") if sip_owner is not None else None
-    if recording is not None and recording.endpoint.endpoint_id == endpoint_id:
-        try:
-            recording.bind_media(observe_audio)
-        except Exception:
+    from .call_recording import bind_browser_recording
+    try:
+        bind_browser_recording(require_runtime_data(hass), session, endpoint_id)
+    except Exception:
+        recording = owner_registry.resource_for(session.call_id, "recording") if owner_registry is not None else None
+        if recording is not None:
             recording.end("capture_error")
 
     async def session_updates_to_ws() -> None:
