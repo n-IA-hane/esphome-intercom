@@ -72,10 +72,10 @@ entries are **ESPHome firmware actions**, not HA services to paste directly into
 HA's Actions editor. These dumps do not require verbose audio tracing.
 
 The dumps report component state, negotiated formats and existing counters.
-Older firmware must be
-rebuilt to add them; installing a HACS update does not change ESP firmware.
-The VoIP action is part of ESP VoIP Stack 2026.10.0, and the Audio action requires
-Audio Stack 2026.10.1 (or the corresponding development previews).
+Older firmware must be rebuilt to add them; installing a HACS update does not
+change ESP firmware. The maintained preview packages provide these actions
+through their coordinated component sources. Rebuild the matching board profile
+when upgrading firmware that does not expose them.
 
 For custom YAMLs, see the
 [ESP VoIP diagnostic button](https://github.com/n-IA-hane/esphome-voip-stack/blob/main/README.md#before-opening-an-issue)

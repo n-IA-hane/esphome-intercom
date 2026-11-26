@@ -486,9 +486,9 @@ new LDAP query is needed with otherwise unchanged configuration.
 
 ### `voip_stack.purge_devices`
 
-This legacy action is disabled. VoIP Stack does not own ESPHome Device
-Registry entries and therefore never removes them. Home Assistant returns a
-translated error for every invocation.
+This retired action is not registered. Remove calls to it from old automations.
+VoIP Stack does not own ESPHome Device Registry entries and never removes them;
+manage the hardware through its owning ESPHome integration.
 
 ## Local SIP endpoint account services
 

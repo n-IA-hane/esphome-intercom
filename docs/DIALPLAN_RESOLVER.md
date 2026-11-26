@@ -24,7 +24,7 @@ previews. They do not supply SIP routes, extensions or media capabilities. An
 API connection does not make an unregistered SIP account reachable. Routing reads
 the canonical directory; it never parses `sensor.voip_phonebook`.
 
-In **2026.11.1-dev**, losing connectivity or a REGISTER binding does not
+In **2026.12.0-dev**, losing connectivity or a REGISTER binding does not
 remove a saved phone identity. Routing still checks availability, DND and the
 phone's policy. Removing the configured phone removes that identity. A dynamic
 group exists while a configured endpoint or manual contact declares it. See

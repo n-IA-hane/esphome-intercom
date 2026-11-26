@@ -172,8 +172,8 @@ state.
   the administrator's service response, without mutating or broadcasting it.
 - `voip_stack.set_ha_softphone_settings`: updates extension and group settings,
   refreshes the roster and leaves unrelated settings intact.
-- `voip_stack.purge_devices`: rejects every request and never removes a Device
-  owned by ESPHome.
+- The retired `voip_stack.purge_devices` action is absent; VoIP Stack never
+  removes a Device Registry entry owned by ESPHome.
 - `voip_stack.create_account`, `remove_account`, `rotate_account_password`,
   `enable_account`, `disable_account`, and `list_accounts`:
   validate credential lifecycle, one-time secret handling, registrar refresh

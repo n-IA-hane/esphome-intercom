@@ -99,7 +99,9 @@ IP changes are reflected by the ESPHome owner and current SIP Contact bindings.
 
 A VoIP Stack account uses its literal SIP username. Its ESPHome hardware device
 is an association for provisioning and native controls, not another SIP
-identity. Hardware names do not rename the associated account after enrollment.
+identity. An automatically named managed account follows an effective ESPHome
+name change when idle, preserving its password and HA identity. An explicitly
+edited SIP username is retained. See [account naming](ESP_REGISTRATION.md#how-the-esp-gets-its-sip-username).
 
 A phone registered only with another PBX remains an external SIP contact unless
 an account is explicitly configured for it in VoIP Stack. For an explicit

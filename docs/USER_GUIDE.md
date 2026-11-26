@@ -418,7 +418,9 @@ phone is allowed after another preferred phone has been selected.
 4. Add it through the normal ESPHome integration.
 5. Wait for VoIP Stack to discover its endpoint and publish it in the phonebook.
 
-Custom profiles use ESPHome 2026.10.0 or newer and enable native API actions:
+The maintained preview profiles use ESPHome 2026.11.1, with the coordinated
+component sources supplied by their packages. Custom profiles also enable
+native API actions:
 
 ```yaml
 api:

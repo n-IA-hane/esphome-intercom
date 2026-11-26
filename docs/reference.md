@@ -304,7 +304,6 @@ for the complete action schemas, selectors, responses and preconditions.
 - `voip_stack.clear_contacts`
 - `voip_stack.export_phonebook`
 - `voip_stack.push_phonebook`
-- `voip_stack.purge_devices`
 - `voip_stack.create_account`
 - `voip_stack.remove_account`
 - `voip_stack.rotate_account_password`

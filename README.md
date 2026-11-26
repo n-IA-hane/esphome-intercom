@@ -433,7 +433,7 @@ paths.
 ## Installation
 
 This development tree requires **Home Assistant 2026.11.1 or newer**.
-Use **ESPHome Device Builder 2026.11.0 or newer** for the public firmware
+Use **ESPHome Device Builder 2026.11.1** for the maintained preview firmware
 profiles. Each profile loads its required components, including the selected
 December backports. The [stabilization guide](docs/STABILIZATION.md) lists
 their sources. The stable **VoIP Stack 2026.11.0** release retains its

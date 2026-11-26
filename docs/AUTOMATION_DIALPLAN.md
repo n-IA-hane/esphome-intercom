@@ -1152,22 +1152,23 @@ extension menu, wait for up to 32 digits with a three-second gap and a
 result status is `timeout`:
 
 ```yaml
-- action: voip_stack.wait_for_dtmf
-  data:
-    timeout: 30
-    inter_digit_timeout: 3
-    max_digits: 32
-  response_variable: selection
-- if: "{{ selection.digits | length > 0 }}"
-  then:
-    - action: voip_stack.forward
-      data:
-        destination: "{{ selection.digits }}"
+actions:
+  - action: voip_stack.wait_for_dtmf
+    data:
+      timeout: 30
+      inter_digit_timeout: 3
+      max_digits: 32
+    response_variable: selection
+  - if: "{{ selection.digits | length > 0 }}"
+    then:
+      - action: voip_stack.forward
+        data:
+          destination: "{{ selection.digits }}"
 ```
 
-Place these actions after the greeting in the Automation contact's existing
-call-received automation. Forwarding retains the current call and uses the
-normal destination and authorization rules.
+Copy the entries under `actions` after the greeting in the Automation contact's
+existing call-received automation. Forwarding retains the current call and uses
+the normal destination and authorization rules.
 
 The **Caller keypad input matches** condition reads the result of the latest
 input wait in this execution. You do not need a response variable for ordinary

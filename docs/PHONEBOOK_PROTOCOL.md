@@ -19,7 +19,7 @@ for the difference between a phone, contact, extension and external number.
 
 ## Standard LDAP directory
 
-LDAP and the persistent managed-phone directory require **2026.11.1-dev**;
+LDAP and the persistent managed-phone directory are part of **2026.12.0-dev**;
 use matching preview firmware for managed ESP directory provisioning. SIP BLF,
 presence and voicemail MWI are separate services already present in stable.
 
@@ -27,8 +27,10 @@ Home Assistant owns one persistent directory. The phonebook sensor, JSON
 export and LDAP service are projections of the same contacts,
 not separate contact databases. Managed phone identities remain listed while
 offline; availability describes current reachability without deleting identity.
-Native HA device and entity IDs survive explicit account edits. Hardware renaming
-does not rename the associated SIP account.
+Native HA device and entity IDs survive explicit account edits. An automatically
+named managed account follows an effective ESPHome name change while idle.
+An explicitly edited SIP username remains the chosen login; changing only the
+HA hardware display label does not replace it. See [ESP account naming](ESP_REGISTRATION.md#how-the-esp-gets-its-sip-username).
 
 Open **VoIP Stack > Reconfigure > LDAP directory** to configure the listener,
 base DN, anonymous-search policy and certificate/key paths. The TLS option
