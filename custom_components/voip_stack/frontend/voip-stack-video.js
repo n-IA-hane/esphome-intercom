@@ -377,6 +377,44 @@ export class VoipStackVideo extends EventTarget {
         video_active: true,
       });
     }
+    const codecContract = (direction, payload) => {
+      const contract = this._mediaContract(direction, payload);
+      // The format token repeats SDP direction; capabilities below own that
+      // change. Retain every codec, RTP profile and image constraint.
+      return { ...contract, format: contract.format.replace(
+        /;direction=(sendrecv|sendonly|recvonly|inactive)(?=;|$)/g, "") };
+    };
+    const sameContract = this._negotiated && ["send", "receive"].every((direction) =>
+      JSON.stringify(codecContract(direction, this._negotiated)) ===
+      JSON.stringify(codecContract(direction, negotiated)));
+    const directionChanged = this._negotiated && (
+      Boolean(this._negotiated.can_receive) !== Boolean(negotiated.can_receive) ||
+      Boolean(this._negotiated.can_send) !== Boolean(negotiated.can_send));
+    const sameGeneration = this._negotiated?.media_generation === negotiated.media_generation;
+    if (this._active && sameContract && (directionChanged || sameGeneration) &&
+        (negotiated.can_receive || negotiated.can_send)) {
+      // A direction change does not invalidate the other direction's codec
+      // callbacks, camera track or decoder reference chain.
+      const generation = this._generation;
+      const preserveReceive = Boolean(negotiated.can_receive &&
+        this._negotiated.can_receive && this._canReceive &&
+        this._receiver._decoder?.state === "configured");
+      if (!preserveReceive && this._negotiated.can_receive) {
+        this._receiver._cleanupReceiver();
+        this._receiver._resetMediaState(true);
+      }
+      if (!negotiated.can_send && this._negotiated.can_send) {
+        await this._sender._cleanupSender();
+      }
+      if (this._ws !== ws || this._callId !== callId || generation !== this._generation) return;
+      this._negotiated = negotiated;
+      this._updateMediaSummary(negotiated);
+      await this._setupCodecs(negotiated, generation, { preserveReceive });
+      if (this._ws !== ws || this._callId !== callId || generation !== this._generation) return;
+      this._active = Boolean(this._canReceive || this._canSend || this._cameraAllowed);
+      this._emit();
+      return;
+    }
     const generation = ++this._generation;
     const senderCleanup = this._sender._cleanupSender();
     this._receiver._cleanupReceiver();
@@ -393,15 +431,15 @@ export class VoipStackVideo extends EventTarget {
     this._emit();
   }
 
-  async _setupCodecs(negotiated, generation) {
+  async _setupCodecs(negotiated, generation, { preserveReceive = false } = {}) {
     if (generation !== this._generation) {
       throw new Error("SIP video session was superseded");
     }
     const receive = this._mediaContract("receive", negotiated);
     const send = this._mediaContract("send", negotiated);
     const failures = [];
-    let usablePaths = 0;
-    if (negotiated?.can_receive) {
+    let usablePaths = preserveReceive ? 1 : 0;
+    if (negotiated?.can_receive && !preserveReceive) {
       try {
         if (receive.encoding === "JPEG") {
           await this._receiver._setupJpegDecoder(generation);
