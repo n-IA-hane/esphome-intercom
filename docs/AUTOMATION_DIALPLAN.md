@@ -1145,6 +1145,29 @@ keys; the terminator ends input and is not included in the collected digits.
 For example, with a three-digit limit, `1`, `0`, `0` produces `100`. If the
 caller presses the terminator first, the received digits can be empty. A timeout
 is a separate result even if some digits were collected before it expired.
+Optional **Time between digits** (`inter_digit_timeout`, in seconds) restarts
+following each digit. The total `timeout` remains an absolute limit. For an
+extension menu, wait for up to 32 digits with a three-second gap and a
+30-second total limit, then route the collected number, including when the
+result status is `timeout`:
+
+```yaml
+- action: voip_stack.wait_for_dtmf
+  data:
+    timeout: 30
+    inter_digit_timeout: 3
+    max_digits: 32
+  response_variable: selection
+- if: "{{ selection.digits | length > 0 }}"
+  then:
+    - action: voip_stack.forward
+      data:
+        destination: "{{ selection.digits }}"
+```
+
+Place these actions after the greeting in the Automation contact's existing
+call-received automation. Forwarding retains the current call and uses the
+normal destination and authorization rules.
 
 The **Caller keypad input matches** condition reads the result of the latest
 input wait in this execution. You do not need a response variable for ordinary

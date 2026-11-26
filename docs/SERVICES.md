@@ -842,6 +842,13 @@ input and is not included in the result. Use the native condition
 or `status: timeout`, without templates. An optional HA response variable
 receives `{status: received|timeout, digits: "..."}` for advanced scripts.
 
+Optional `inter_digit_timeout` (seconds, range 0.1-300) restarts after each
+accepted digit. A gap returns `status: timeout` with the digits collected so
+far. The original `timeout` remains the total limit, including the first-digit
+wait; incoming digits never extend it. Omit `inter_digit_timeout` to retain
+the total-timeout behavior. A terminator or `max_digits` still finishes with
+`status: received`.
+
 The wait belongs to the current call and accepts only its caller's digits.
 Ending the call cancels the wait. Digits entered before this action starts
 are not collected. For an IVR, first speak the choices, then wait for a key,

@@ -1694,6 +1694,15 @@ wait_for_dtmf:
               min: 1
               max: 32
               mode: box
+        inter_digit_timeout:
+          name: Time between digits
+          description: Optional seconds to wait after each digit. A gap returns the digits collected so far with timeout status. The total wait limit still applies.
+          selector:
+            number:
+              min: 0.1
+              max: 300
+              unit_of_measurement: s
+              mode: box
         terminator:
           name: End input key
           description: 'Defaults to #. An empty value disables the end key.'

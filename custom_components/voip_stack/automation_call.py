@@ -182,10 +182,17 @@ class AutomationCall(LocalCallApplication):
             completed = self.hass.loop.create_future()
             maximum = int(call.data.get("max_digits", 1))
             terminator = str(call.data.get("terminator", "#"))
+            inter_digit_timeout = call.data.get("inter_digit_timeout")
+            digit_timer = None
+
+            @callback
+            def finish_gap():
+                if not completed.done():
+                    completed.set_result({"status": "timeout", "digits": collected})
 
             @callback
             def receive(event):
-                nonlocal collected
+                nonlocal collected, digit_timer
                 data = event.data
                 if (
                     data.get("call_id") != self.session.call_id
@@ -201,6 +208,10 @@ class AutomationCall(LocalCallApplication):
                     collected += digit
                 if digit == terminator or len(collected) >= maximum:
                     completed.set_result({"status": "received", "digits": collected})
+                elif inter_digit_timeout is not None:
+                    if digit_timer is not None:
+                        digit_timer.cancel()
+                    digit_timer = self.hass.loop.call_later(float(inter_digit_timeout), finish_gap)
 
             remove = self.hass.bus.async_listen(SIP_DTMF_EVENT, receive)
             try:
@@ -209,6 +220,8 @@ class AutomationCall(LocalCallApplication):
             except TimeoutError:
                 return {"status": "timeout", "digits": collected}
             finally:
+                if digit_timer is not None:
+                    digit_timer.cancel()
                 remove()
 
         result = await self.run_operation(call, collect, timeout=None)

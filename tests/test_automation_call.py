@@ -388,6 +388,57 @@ async def test_wait_for_digits_ignores_other_call_and_generation(application):
         await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
 
 
+@pytest.mark.parametrize("finish", ["gap", "total", "hangup"])
+async def test_dtmf_inter_digit_deadline_resets_and_releases(application, monkeypatch, finish):
+    from custom_components.voip_stack.const import SIP_DTMF_EVENT
+
+    app, registry, _peer, _released = application
+    handles = []
+    original_call_later = app.hass.loop.call_later
+
+    def track_timer(delay, callback, *args, **kwargs):
+        handle = original_call_later(delay, callback, *args, **kwargs)
+        if delay == 0.2:
+            handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(app.hass.loop, "call_later", track_timer)
+    initial_listeners = app.hass.bus.async_listeners().get(SIP_DTMF_EVENT, 0)
+    total = 0.3 if finish == "total" else 2
+    task = asyncio.create_task(app.wait_for_dtmf(service(
+        app, max_digits=8, timeout=total, inter_digit_timeout=0.2)))
+    try:
+        async with asyncio.timeout(2):
+            while not app.answered:
+                await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        payload = {"call_id": app.session.call_id,
+                   "generation": app.session.generation, "source_leg": "caller"}
+        app.hass.bus.async_fire(SIP_DTMF_EVENT, {**payload, "digit": "4"})
+        await asyncio.sleep(0.12)
+        app.hass.bus.async_fire(SIP_DTMF_EVENT, {**payload, "digit": "2"})
+        await asyncio.sleep(0.12)
+        assert not task.done(), "The second digit must renew the inter-digit deadline"
+        if finish == "hangup":
+            await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+            await asyncio.gather(task, return_exceptions=True)
+        else:
+            # A continuing stream cannot extend the original total limit.
+            if finish == "total":
+                app.hass.bus.async_fire(SIP_DTMF_EVENT, {**payload, "digit": "3"})
+            async with asyncio.timeout(0.25):
+                result = await task
+            assert result == {"status": "timeout", "digits": "423" if finish == "total" else "42"}
+        assert len(handles) >= 2
+        assert all(handle.cancelled() for handle in handles)
+        assert app.hass.bus.async_listeners().get(SIP_DTMF_EVENT, 0) == initial_listeners
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if (remaining := registry.get_session(app.session.call_id)) is not None and remaining.live:
+            await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
 async def test_local_announcement_decodes_negotiated_rtp_dtmf_once(application):
     app, registry, peer, _released = application
     from custom_components.voip_stack.core.media import negotiator

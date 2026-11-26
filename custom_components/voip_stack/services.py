@@ -188,6 +188,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Optional("expected_generation"): SEQUENCE,
         vol.Optional("timeout", default=10): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=300)),
         vol.Optional("max_digits", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=32)),
+        vol.Optional("inter_digit_timeout"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=300)),
         vol.Optional("terminator", default="#"): vol.In(["", "#", "*"]),
     }, extra=vol.PREVENT_EXTRA)
     dtmf_send_schema = vol.Schema({
