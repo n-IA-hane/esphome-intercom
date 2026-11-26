@@ -542,24 +542,70 @@ async def run_ring_group_call(
                 if winner.pickup:
                     publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")
                 return
-            local_rtp_port = _allocate_sip_rtp_port(hass)
-            answer = build_answer_directional(
-                local_ip,
-                local_ip,
-                local_rtp_port,
-                invite.send_format,
-                invite.recv_format,
-                recv_formats=invite.recv_formats, send_formats=invite.send_formats,
-                remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
-            )
+            from .config import transport_config
+            from .const import CONF_VIDEO_CAMERA_SEND
+            from .core.sdp import browser_video_send_supported, constrained_video_direction
+            from .media_ports import reserve_sip_video_media
+            from .sip_server_state import answered_media_contract
+
+            endpoint = endpoint_registry.get(winner.endpoint_id)
+            accept_video = bool(browser_decision.get("accept_video", True)) and (
+                endpoint is None or endpoint.supports("video"))
+            camera_send = bool(accept_video and transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False)
+                and browser_decision.get("send_video", False))
+            video_direction = (constrained_video_direction(invite.video_format.direction,
+                allow_send=bool(camera_send and browser_video_send_supported(invite.video_format)
+                    and not invite.remote_video_connection_held))
+                if accept_video and invite.video_format is not None else "inactive")
+            reservation = None
+            video_rtp_socket = video_rtcp_socket = None
+            local_video_rtp_port = 0
+            video_failure_reason = ""
+            if invite.video_format is not None and accept_video:
+                try:
+                    reservation, video_rtp_socket, video_rtcp_socket = reserve_sip_video_media(hass)
+                    local_rtp_port, local_video_rtp_port = reservation.ports
+                except (OSError, RuntimeError) as err:
+                    _LOGGER.warning("SIP fork video socket unavailable, answering audio-only: %s", err)
+                    video_failure_reason = "local_video_resources_unavailable"
+                    local_rtp_port = _allocate_sip_rtp_port(hass)
+                    video_direction = "inactive"
+            else:
+                local_rtp_port = _allocate_sip_rtp_port(hass)
             media = {
                 "invite": invite,
+                "local_video_rtp_port": local_video_rtp_port,
+                "video_direction": video_direction,
+                "camera_send_authorized": camera_send,
+                "video_rtp_socket": video_rtp_socket,
+                "video_rtcp_socket": video_rtcp_socket,
+                "rtp_reservation": reservation,
+                "video_failure_reason": video_failure_reason,
                 "local_rtp_port": local_rtp_port,
                 "endpoint_id": winner.endpoint_id,
                 "media_client_id": winner_media_client_id,
             }
-            registry.take_pending_invite(invite.call_id)
-            registry.attach_media(invite.call_id, media)
+            try:
+                answer = build_answer_directional(
+                    local_ip,
+                    local_ip,
+                    local_rtp_port,
+                    invite.send_format,
+                    invite.recv_format,
+                    recv_formats=invite.recv_formats, send_formats=invite.send_formats,
+                    remote_sdp=invite.remote_sdp, dtmf_direction=getattr(invite, "dtmf_direction", None),
+                    video_port=local_video_rtp_port,
+                    video_format=invite.answer_video_format if accept_video else None,
+                    video_direction=video_direction,
+                )
+                answered_invite = answered_media_contract(invite, answer)
+                media["invite"] = answered_invite
+                registry.take_pending_invite(invite.call_id)
+                registry.attach_media(invite.call_id, media)
+            except BaseException:
+                from .media_reservation import release_media_reservation
+                release_media_reservation(media)
+                raise
             registry.add_leg(
                 invite.call_id,
                 f"browser:{winner.endpoint_id}",
@@ -580,6 +626,7 @@ async def run_ring_group_call(
                     endpoint_id=winner.endpoint_id,
                     dest_endpoint_id=winner.endpoint_id,
                     media_client_id=winner_media_client_id,
+                    media_contract=answered_invite,
                 )
             ).committed:
                 await _rollback_route(
@@ -602,6 +649,15 @@ async def run_ring_group_call(
                 selected_tx_rtp_format=invite.send_format.wire_token(),
                 selected_rx_rtp_format=invite.recv_format.wire_token(),
                 audio_mode="full_duplex",
+                video_active=bool(local_video_rtp_port and video_direction != "inactive"),
+                video_requested=invite.video_format is not None,
+                video_negotiated=bool(local_video_rtp_port),
+                video_status="degraded" if video_failure_reason else "active" if local_video_rtp_port else "inactive",
+                video_failure_reason=video_failure_reason,
+                video_format=answered_invite.video_format.wire_token() if answered_invite.video_format else "",
+                video_send_format=answered_invite.send_video_format.wire_token() if answered_invite.send_video_format else "",
+                video_receive_format=answered_invite.recv_video_format.wire_token() if answered_invite.recv_video_format else "",
+                video_direction=video_direction,
                 route_kind=route_kind,
                 sip_status_code=200,
                 last_sip_event="SIP_RESPONSE",
