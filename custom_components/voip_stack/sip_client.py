@@ -1357,19 +1357,21 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             return None
         local_video_port = current.local_video_rtp_port if local_offer_sdp else self.local_video_rtp_port
         try:
+            remote_document = sdp.SdpDocument.parse(request.body)
+            offer_document = sdp.SdpDocument.parse(local_offer_sdp) if local_offer_sdp else None
             selected = (
                 sdp.negotiate_answer_directional(
-                    request.body,
+                    remote_document,
                     self.supported_send_formats,
                     self.supported_recv_formats,
-                    local_offer_sdp=local_offer_sdp,
+                    local_offer_sdp=offer_document,
                     codec_policy=self.codec_policy,
                     compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                     local_capabilities=HA_AUDIO_CAPABILITIES,
                 )
                 if local_offer_sdp
                 else sdp.negotiate_directional(
-                    request.body,
+                    remote_document,
                     self.supported_send_formats,
                     self.supported_recv_formats,
                     compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
@@ -1388,7 +1390,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
             audio_payloads = _audio_payload_update(current.audio_payloads,
                 send=selected.send_formats or (selected.send,),
                 receive=receive_formats)
-            parsed = sdp.parse_sdp(request.body)
+            parsed = sdp.parse_sdp(remote_document)
             accepted_video = tuple(
                 dict.fromkeys(
                     (
@@ -1469,7 +1471,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 recv_formats=receive_formats, send_formats=send_formats,
                 dtmf_direction=dtmf_direction,
                 audio_rtcp=False,
-                remote_sdp=request.body,
+                remote_sdp=remote_document,
                 video_port=(local_video_port if video is not None else 0),
                 video_format=video_answer,
                 video_direction=local_video_direction,
@@ -2755,9 +2757,11 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 != "application/sdp"
             ):
                 return None
+            offer_document = sdp.SdpDocument.parse(offer)
+            answer_document = sdp.SdpDocument.parse(answer.body)
             sdp.validate_sdp_answer(
-                offer,
-                answer.body,
+                offer_document,
+                answer_document,
                 # Some deployed SIP UAs retain their allocated RTP port while
                 # answering an m=video 0 removal with a=inactive. The stream
                 # is still unambiguously disabled, so normalize that legacy
@@ -2768,11 +2772,11 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 allow_video_direction_capability=True,
             )
             audio = sdp.negotiate_answer_directional(
-                answer.body,
+                answer_document,
                 self.supported_send_formats,
                 self.supported_recv_formats,
                 local_offer_direction=current.local_audio_direction,
-                local_offer_sdp=offer,
+                local_offer_sdp=offer_document,
                 codec_policy=self.codec_policy,
                 compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                 local_capabilities=HA_AUDIO_CAPABILITIES,
@@ -2783,7 +2787,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                 return None
             audio_payloads = _audio_payload_update(current.audio_payloads,
                 send=audio.send_formats or (audio.send,), receive=audio.recv_formats or (audio.recv,))
-            parsed = sdp.parse_sdp(answer.body)
+            parsed = sdp.parse_sdp(answer_document)
             video_pair, imageattr_fallback = (
                 self._video_answer_or_fallback(
                     answer.body,

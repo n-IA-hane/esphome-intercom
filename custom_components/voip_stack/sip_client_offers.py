@@ -591,24 +591,27 @@ class SipLocalOffers:
                 != "application/sdp"
             ):
                 raise sdp.SdpError("SIP 200 OK body is not application/sdp")
+            answer_document = sdp.SdpDocument.parse(msg.body)
+            offer_document = (sdp.SdpDocument.parse(self._local_sdp_body)
+                              if self._local_sdp_body else None)
             local_offer_direction = "sendrecv"
             if self._local_sdp_body:
                 sdp.validate_sdp_answer(
-                    self._local_sdp_body,
-                    msg.body,
+                    offer_document,
+                    answer_document,
                     allow_omitted_trailing_media=True,
                     # The local video direction below intersects both peers.
                     allow_video_direction_capability=True,
                 )
                 local_offer_direction = str(
-                    sdp.parse_sdp(self._local_sdp_body)["direction"]
+                    sdp.parse_sdp(offer_document)["direction"]
                 )
             selected = sdp.negotiate_answer_directional(
-                msg.body,
+                answer_document,
                 self.supported_send_formats,
                 self.supported_recv_formats,
                 local_offer_direction=local_offer_direction,
-                local_offer_sdp=self._local_sdp_body or None,
+                local_offer_sdp=offer_document,
                 codec_policy=self.codec_policy,
                 compatibility=legacy_pcm_compatibility(self.include_dahua_pcm),
                 local_capabilities=HA_AUDIO_CAPABILITIES,
@@ -641,7 +644,7 @@ class SipLocalOffers:
                     route_set=route_set,
                 )
             return False
-        parsed = sdp.parse_sdp(msg.body)
+        parsed = sdp.parse_sdp(answer_document)
         video_directional, imageattr_fallback = (
             self._video_answer_or_fallback(msg.body, self.video_formats)
             if self.video_formats
@@ -798,7 +801,7 @@ class SipLocalOffers:
             self.dialog_ids.call_id,
             selected.send.wire_token(),
             selected.recv.wire_token(),
-            ", ".join(sdp.offered_media_descriptions(msg.body)),
+            ", ".join(sdp.offered_media_descriptions(answer_document)),
         )
         if provisional:
             self.early_dialogs[remote_tag] = candidate

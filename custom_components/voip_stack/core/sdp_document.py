@@ -17,6 +17,11 @@ class SdpDocument:
 
     text: str
     lines: tuple[str, ...] = field(init=False, repr=False)
+    # Memoization belongs to this immutable description, never to a dialog or
+    # global cache. The parser returns independent mutable compatibility views.
+    _audio_facts: dict[bool, dict] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
 
     def __post_init__(self) -> None:
         normalized = (
