@@ -1,7 +1,8 @@
 # SIP trunks
 
 Home Assistant can connect named SIP trunks to providers or PBXs, either with
-registration or as a static trunk authorized by source IP. ESP devices can keep
+registration or as a static trunk authorized by source IP or a bound SIP
+account. ESP devices can keep
 using SIP through HA. Coordinated preview firmware can also configure
 independent registered accounts for another PBX; those accounts are separate
 from HA's trunk settings. See [ESP registration](ESP_REGISTRATION.md) for the
@@ -28,14 +29,19 @@ such as `192.0.2.45/32`. Choose its **Incoming call handling** and **Fallback
 destination**. Use an IPv6 `/128` for one IPv6 device, or a restricted subnet
 only when all its signaling peers should share that trunk's routing policy.
 This works with a local device without a provider subscription. The first
-trunk added also becomes the outgoing default; check the default when adding
-a provider later.
+trunk proposes becoming the outgoing default. Clear **Use as the default
+outgoing trunk** to keep calls on explicitly selected routes instead; check
+the default when adding a provider later.
 
 A directory contact remains a destination you can dial. Its address or
 display name does not authorize incoming calls. Existing configured trunks
 continue to use their own source and routing settings.
 
 ### Calls between PBX systems
+
+Use [Caller identity and calls between PBXs](TRUNK_CALLER_IDENTITY.md) for the
+explicit caller-versus-trunk policy, crossed SIP accounts, native extension
+range routes and a deployment with another PBX in the middle.
 
 When HA sends an identified incoming trunk caller to a local SIP destination,
 the new leg preserves the caller's complete `From` URI, including its domain.
@@ -84,16 +90,18 @@ it; the main integration's Reconfigure flow no longer contains provider settings
 
 The screenshot shows adding an additional line to an existing installation.
 Give the line a name, such as Home or Work, and choose **Register the trunk** if
-the provider requires account registration. The first trunk automatically becomes
-the outgoing default, without a default-selection switch. When adding another
-trunk, the form offers **Use as the default outgoing trunk**. The following step
-asks for trunk details:
+the provider requires account registration. **Use as the default outgoing
+trunk** is initially checked for the first trunk and is editable for every
+line. Unchecking the current default clears that selection; editing a different
+line unchecked leaves the selected default alone. The following step asks for
+trunk details:
 
 - transport: `udp` or `tcp`; `tls` is available for registered trunks
 - server, port and optional domain
 - username, optional auth username and password
 - REGISTER expiration when registration is enabled
-- allowed incoming IP addresses when registration is disabled
+- allowed incoming IP addresses, or an authenticated incoming account binding
+- outgoing caller identity policy and optional generic trunk number/name
 - optional outbound proxy
 - allowed audio codecs and video codecs for this line
 - inbound default target
@@ -252,7 +260,9 @@ fixed SIP address instead of accepting account registrations. In this mode (UDP 
 2. Add each **Allowed incoming IP address**, or CIDR network, supplied by the provider.
    These are the source addresses of its SIP signaling, which may differ from the
    outbound server. Use literal IPv4/IPv6 addresses or restricted networks; `/0`
-   entries are rejected. This list is required and is shown only in static mode.
+   entries are rejected. Alternatively, select an existing local SIP account as
+   the authenticated incoming account; this uses SIP Digest instead of an IP
+   allowlist. The list is required only for a static trunk without that binding.
 3. Configure the other system to send inbound calls to HA's reachable SIP address
    and listening port. Without REGISTER, HA does not publish this destination to it.
 4. Select the incoming destination or routing automation as usual.
@@ -263,7 +273,9 @@ servers needs each permitted source address or network listed separately.
 
 Username and password are optional in static mode. Keep credentials if the peer
 challenges outbound INVITEs; disabling REGISTER does not disable SIP digest support.
-The username also supplies the outbound SIP identity when configured.
+The username supplies the outbound SIP identity when the caller policy is
+`trunk` and no separate trunk caller number is configured. Other policies keep
+the original caller or select the local account's public outgoing number.
 
 HA sends no REGISTER, registration refresh or unregister in this mode. OPTIONS
 is not used to simulate registration. Availability means the static route is
@@ -324,8 +336,9 @@ Choose one routing mode in that named trunk's configuration:
 
 - **Route immediately** first resolves the destination from the incoming SIP
   request against the phonebook. A known extension or contact keeps its normal
-  routing and availability rules. Only an unknown destination uses **Fallback
-  destination**. Routing automations can override this choice; their event retains
+  routing and availability rules. An unknown destination uses **Fallback
+  destination**, unless **Unknown incoming destination** is set to reject,
+  which returns 404. Routing automations can override this choice; their event retains
   the original called address in `target_route`, `dialed_target` and
   `called_extension`, including when the fallback points to Assist or a group.
 - **DTMF extension selection** answers the trunk leg with SDP, collects
@@ -384,7 +397,9 @@ legacy Event Entity rules and is disabled by default. Both use the same bounded
   path.
 
 If no matching automation acts within 1.5 seconds, the original phonebook route
-continues. This makes time, presence and other HA state useful for contextual
+continues under the fallback policy. A bound peer configured to reject unknown
+targets instead returns 504 when an active matching decision window expires
+unanswered. This makes time, presence and other HA state useful for contextual
 routing without replacing the normal dial plan. See
 [Automation Dial Plan](AUTOMATION_DIALPLAN.md) for native UI-compatible
 examples.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
@@ -15,24 +16,39 @@ class RingPolicy:
     """Bounded forking policy resolved before any signaling starts."""
 
     strategy: ForkStrategy = ForkStrategy.PARALLEL
-    overall_timeout: float = 30.0
+    overall_timeout: float = float("inf")
     step_timeout: float = 15.0
     member_tiers: Mapping[str, int] = field(default_factory=dict)
     tier_strategies: Mapping[int, ForkStrategy] = field(default_factory=dict)
 
     @classmethod
-    def from_metadata(cls, metadata: Mapping[str, Any] | None) -> "RingPolicy":
+    def from_metadata(cls, metadata: Mapping[str, Any] | None, *, default_timeout: float | None = None,
+                      timeout_override: float | None = None) -> "RingPolicy":
         raw = dict(metadata or {})
         nested = raw.get("ring_policy")
         if isinstance(nested, Mapping):
             raw = {**raw, **nested}
         strategy = ForkStrategy(str(raw.get("strategy") or raw.get("ring_strategy") or "parallel"))
-        overall_timeout = float(raw.get("overall_timeout") or raw.get("ring_timeout") or 30.0)
-        step_timeout = float(raw.get("step_timeout") or 15.0)
-        if not 0.0 < overall_timeout <= 300.0:
-            raise ValueError("ring overall_timeout must be between 0 and 300 seconds")
-        if not 0.0 < step_timeout <= overall_timeout:
-            raise ValueError("ring step_timeout must be positive and no longer than overall_timeout")
+        configured = raw.get("overall_timeout")
+        if configured is None:
+            configured = raw.get("ring_timeout")
+        inherited = configured is None
+        if inherited:
+            configured = default_timeout
+        if timeout_override is not None:
+            configured = timeout_override
+        if configured is not None and (isinstance(configured, bool)
+                or not isinstance(configured, (int, float)) or not math.isfinite(configured)
+                or not 0 <= configured <= 3600):
+            raise ValueError("ring overall_timeout must be 0 (unlimited) or up to 3600 seconds")
+        overall_timeout = float(configured) if configured else float("inf")
+        step_timeout = float(raw.get("step_timeout") or min(15.0, overall_timeout))
+        if not math.isfinite(step_timeout) or step_timeout <= 0.0:
+            raise ValueError("ring step_timeout must be positive and finite")
+        if inherited or timeout_override is not None:
+            step_timeout = min(step_timeout, overall_timeout)
+        elif step_timeout > overall_timeout:
+            raise ValueError("ring step_timeout must be no longer than overall_timeout")
         member_tiers = {
             str(member).strip().lower(): int(tier)
             for member, tier in dict(raw.get("member_tiers") or {}).items()

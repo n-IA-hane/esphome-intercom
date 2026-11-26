@@ -3,6 +3,7 @@ api:
   custom_services: true
 voip_stack:
   initial_contact: ${ voip_initial_contact | default('') }
+  calling_timeout: ${ voip_calling_timeout | default('120s') }
   id: phone
   task_stacks_in_psram: false
   audio_task_stacks_in_psram: false

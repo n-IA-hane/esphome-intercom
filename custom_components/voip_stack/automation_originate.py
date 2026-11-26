@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
 from dataclasses import replace
 
 from homeassistant.core import ServiceCall
@@ -28,6 +27,7 @@ from .pbx_routing import roster_entry_for_target
 from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
 from .phonebook_runtime import registered_roster_entries
 from .runtime_data import require_runtime_data
+from .ringing_policy import resolve_ringing_timeout, wait_for_ringing_result
 from .sip_runtime import enable_reused_tcp_connection, uri_transport
 from .trunk_policy import is_trunk_uri
 from .route_abort import RouteAbortContext, RouteAbortIntent, async_abort_route
@@ -49,7 +49,7 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
         result = await client.invite(
             target=attempt.uri.user, target_display_name=destination,
             remote_host=attempt.uri.host, remote_sip_port=sip_default_port(attempt.uri),
-            request_uri=str(attempt.uri), timeout=timeout,
+            request_uri=str(attempt.uri),
             **({"answer_mode": answer_mode, "audio_direction": audio_direction}
                if answer_mode or audio_direction != "sendrecv" else {}),
         )
@@ -58,8 +58,13 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
                                 expected_generation=session.generation)
             publish_bridge_projection(hass, session, event_type="remote_ringing",
                                       direction="outgoing", route_kind="automation")
-            remaining = max(0.0, client.invite_sent_at + timeout - hass.loop.time()) if answer_mode else timeout
-            result = await client.wait_for_final(timeout=remaining)
+            if answer_mode:
+                remaining = (None if timeout is None else
+                    max(0.0, client.invite_sent_at + timeout - hass.loop.time()))
+                result = await wait_for_ringing_result(client, remaining)
+            else:
+                # The session policy owns ringing; protocol timers stay in SIP.
+                result = await client.wait_for_final()
         if result == "in_call" and session.owner == "automation":
             registry.transition(session.call_id, state=CallState.IN_CALL.value,
                                 expected_generation=session.generation)
@@ -89,7 +94,7 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
     fork = DialForkController(session, (
         DialCandidate(client.dialog_ids.call_id, dial, close, endpoint_id=attempt.endpoint_id),
         DialCandidate("route-control", reroute, close_control, control=True),
-    ), overall_timeout=timeout)
+    ), overall_timeout=float("inf"))
     try:
         result = await fork.run(lambda _candidate, _outcome: session.live and session.owner == "automation")
         return result.outcome, decision.result() if decision.done() and not decision.cancelled() else None
@@ -127,7 +132,6 @@ async def _async_originate_application_call(
     from .router import RouteAction, RouteReason
     from .endpoint_routing import ha_router_decision
     from .trunk_selection import select_call_trunk
-    from .config import trunk_identity_uri, trunk_leg_identity
 
     trunk_selection = select_call_trunk(hass, requested=str(call.data.get("trunk_id") or ""))
     def resolve_route(target, roster):
@@ -169,7 +173,7 @@ async def _async_originate_application_call(
         if override.action in {"forward", "bridge"} and override.destination:
             destination = override.destination
             explicit_route = True
-        initial_route = resolve_route(destination, entries)
+        initial_route = replace(resolve_route(destination, entries), ringing_timeout=override.ringing_timeout)
         routing_call_id = routing_session.call_id
     resolved = resolve_phone_target(
         decision=initial_route, endpoint_registry=runtime.endpoints,
@@ -216,8 +220,7 @@ async def _async_originate_application_call(
             uri_override=str(uri),
             policy=OutboundLegPolicy(
                 call_id=routing_call_id if initial and routing_call_id else "",
-                local_uri_user=trunk_leg_identity(cfg, source.extension or source.id) if use_trunk else source.extension or source.id,
-                local_identity_uri=trunk_identity_uri(cfg) if use_trunk else "",
+                local_uri_user=source.id if use_trunk and source.metadata.get("endpoint_kind") == "sip_account" else source.extension or source.id,
                 username=cfg.get("trunk_username", "") if use_trunk else "",
                 auth_username=cfg.get("trunk_auth_username", "") if use_trunk else "",
                 password=cfg.get("trunk_password", "") if use_trunk else "",
@@ -246,6 +249,9 @@ async def _async_originate_application_call(
             dest_endpoint_id=attempt.endpoint_id,
             policy_endpoint_ids=resolved.forwarded_endpoint_ids,
             outbound_trunk_id=attempt.trunk_id,
+            route_ringing_timeout=(initial_route.ringing_timeout
+                if initial_route.ringing_timeout is not None else call.data.get("answer_timeout")),
+            application_ringing_owned=bool(answer_mode),
         )
         registry.own_resource(
             call_id, f'automation_ports:{call_id}', attempt.ports,
@@ -319,92 +325,94 @@ async def _async_originate_application_call(
                 486 if failure_policy == 'busy' else 0,
             ))
 
-        timeout = float(call.data.get('answer_timeout', 30))
-        # Paging's INVITE transaction starts its answer budget after preparation.
-        # The paging job independently bounds DNS/media preparation and cleanup.
-        async with (nullcontext() if answer_mode else asyncio.timeout(timeout)):
-            while True:
-                outcome, route = await _dial_attempt(
-                    hass, registry, session, attempt, destination, timeout,
-                    answer_mode=answer_mode, audio_direction=audio_direction,
-                )
-                if outcome.disposition is DialDisposition.ANSWERED:
-                    break
-                if outcome.disposition is not DialDisposition.REROUTE:
-                    if fallback is not None:
-                        release_attempt_claim()
-                        if await abort_forward(outcome.reason or 'forward_failed'):
-                            fallback = None
-                            continue
-                    break
-                session.ensure_live()
-                previous_destination, previous_trunk = destination, trunk_selection.identity
-
-                async def resume(target=previous_destination, identity=previous_trunk):
-                    await install_attempt(target, select_call_trunk(hass, requested=identity))
-                    publish_bridge_projection(hass, session, event_type='forwarding',
-                                              direction='outgoing', route_kind='automation',
-                                              last_sip_event='ROUTE_RESUME')
-
-                fallback = RouteAbortContext(
-                    hass, registry, call_id, transition_resume=True, resume_owner='automation',
-                    resume_state=CallState.CALLING.value, resume_callee=previous_destination,
-                    resume_route_kind='automation', publish_resume=resume,
-                )
-                failure_policy = route.get('on_failure', 'terminate')
-                release_attempt_claim()
-                try:
-                    selection = select_call_trunk(hass, requested=route.get('trunk_id') or previous_trunk)
-                    await install_attempt(route['destination'], selection)
-                except Exception as err:
-                    if await abort_forward(str(err)):
+        # Paging owns admission, while ordinary calls use the session policy.
+        # Both resolve the same rule/account/PBX configuration without defaults.
+        timeout = (resolve_ringing_timeout(runtime.transport_config,
+            account=runtime.endpoints.get(attempt.endpoint_id),
+            override=session.metadata.get("route_ringing_timeout")) if answer_mode else None)
+        while True:
+            outcome, route = await _dial_attempt(
+                hass, registry, session, attempt, destination, timeout,
+                answer_mode=answer_mode, audio_direction=audio_direction,
+            )
+            if outcome.disposition is DialDisposition.ANSWERED:
+                break
+            if outcome.disposition is not DialDisposition.REROUTE:
+                if fallback is not None:
+                    release_attempt_claim()
+                    if await abort_forward(outcome.reason or 'forward_failed'):
                         fallback = None
                         continue
-                    raise
-            if outcome.disposition is not DialDisposition.ANSWERED or client.dialog is None:
-                raise ServiceValidationError(f"The destination did not answer: {outcome.reason or outcome.disposition.value}")
-            application.require_current()
-            # Final SIP acceptance ends ringing even if media preparation
-            # needs another event-loop turn. TTS still waits for media.start().
-            registry.transition(call_id, state=CallState.IN_CALL.value, expected_generation=session.generation)
+                break
+            session.ensure_live()
+            previous_destination, previous_trunk = destination, trunk_selection.identity
 
-            async def complete(reason):
-                registry.request_termination(call_id, TerminationIntent(reason), generation=session.generation)
+            async def resume(target=previous_destination, identity=previous_trunk):
+                await install_attempt(target, select_call_trunk(hass, requested=identity))
+                publish_bridge_projection(hass, session, event_type='forwarding',
+                                          direction='outgoing', route_kind='automation',
+                                          last_sip_event='ROUTE_RESUME')
 
-            media = LocalCallMedia(
-                hass, invite=LocalAudioContract.from_dialog(client.dialog),
-                local_rtp_port=attempt.ports.ports[0], reservation=attempt.ports,
-                on_complete=complete, rtp_socket=client.audio_rtp_socket,
+            fallback = RouteAbortContext(
+                hass, registry, call_id, transition_resume=True, resume_owner='automation',
+                resume_state=CallState.CALLING.value, resume_callee=previous_destination,
+                resume_route_kind='automation', publish_resume=resume,
             )
-            if not media.can_send:
-                raise ServiceValidationError("The destination cannot receive announcement audio")
-            media.release_reservation_on_stop = False
-            registry.attach_relay(call_id, media)
-            client.audio_rtp_socket = None
-            application.media = media
-            media.on_dtmf = application.handle_dtmf
-            media.on_dtmf_fallback = application.send_dtmf_info
-            client.on_info_dtmf = lambda digit, _duration: application.handle_dtmf("right", digit, "sip_info")
-            async def update_media(_current, updated, _method):
-                commit = media.prepare_media_update(LocalAudioContract.from_dialog(updated))
-                async def apply():
-                    if (not registry.is_generation_current(call_id, session.generation)
-                            or registry.resource_for(call_id, "relay") is not media):
-                        raise RuntimeError("The local application media owner changed")
-                    commit()
-                return apply
-            client.on_media_update = update_media
-            from .bridge_manager import async_watch_owned_sip_dialog
-            watcher = hass.async_create_task(async_watch_owned_sip_dialog(registry, call_id, client, session.generation))
-            registry.attach_client_watcher(client.dialog_ids.call_id, watcher)
-            application.require_current()
-            # Teardown must cancel preparation before closing its media/ports.
-            # Otherwise a remote BYE can leave start() waiting outside the owner.
-            await session.create_task(media.start(), name="automation-media-start")
-            application.require_current()
-            if client.dialog is None:
-                raise ServiceValidationError("The destination ended before audio became ready")
-            application.answered = True
+            failure_policy = route.get('on_failure', 'terminate')
+            release_attempt_claim()
+            try:
+                selection = select_call_trunk(hass, requested=route.get('trunk_id') or previous_trunk)
+                session.update_metadata(route_ringing_timeout=route.get("ringing_timeout"))
+                await install_attempt(route['destination'], selection)
+            except Exception as err:
+                if await abort_forward(str(err)):
+                    fallback = None
+                    continue
+                raise
+        if outcome.disposition is not DialDisposition.ANSWERED or client.dialog is None:
+            raise ServiceValidationError(f"The destination did not answer: {outcome.reason or outcome.disposition.value}")
+        application.require_current()
+        # Final SIP acceptance ends ringing even if media preparation
+        # needs another event-loop turn. TTS still waits for media.start().
+        registry.transition(call_id, state=CallState.IN_CALL.value, expected_generation=session.generation)
+
+        async def complete(reason):
+            registry.request_termination(call_id, TerminationIntent(reason), generation=session.generation)
+
+        media = LocalCallMedia(
+            hass, invite=LocalAudioContract.from_dialog(client.dialog),
+            local_rtp_port=attempt.ports.ports[0], reservation=attempt.ports,
+            on_complete=complete, rtp_socket=client.audio_rtp_socket,
+        )
+        if not media.can_send:
+            raise ServiceValidationError("The destination cannot receive announcement audio")
+        media.release_reservation_on_stop = False
+        registry.attach_relay(call_id, media)
+        client.audio_rtp_socket = None
+        application.media = media
+        media.on_dtmf = application.handle_dtmf
+        media.on_dtmf_fallback = application.send_dtmf_info
+        client.on_info_dtmf = lambda digit, _duration: application.handle_dtmf("right", digit, "sip_info")
+        async def update_media(_current, updated, _method):
+            commit = media.prepare_media_update(LocalAudioContract.from_dialog(updated))
+            async def apply():
+                if (not registry.is_generation_current(call_id, session.generation)
+                        or registry.resource_for(call_id, "relay") is not media):
+                    raise RuntimeError("The local application media owner changed")
+                commit()
+            return apply
+        client.on_media_update = update_media
+        from .bridge_manager import async_watch_owned_sip_dialog
+        watcher = hass.async_create_task(async_watch_owned_sip_dialog(registry, call_id, client, session.generation))
+        registry.attach_client_watcher(client.dialog_ids.call_id, watcher)
+        application.require_current()
+        # Teardown must cancel preparation before closing its media/ports.
+        # Otherwise a remote BYE can leave start() waiting outside the owner.
+        await session.create_task(media.start(), name="automation-media-start")
+        application.require_current()
+        if client.dialog is None:
+            raise ServiceValidationError("The destination ended before audio became ready")
+        application.answered = True
 
 
         application.arm_deadline()

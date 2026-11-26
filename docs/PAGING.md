@@ -91,9 +91,19 @@ It receives the announcement without opening its microphone. Browser autoplay,
 background suspension and mobile operating-system restrictions still apply;
 a closed Companion app is not an always-listening paging speaker.
 
-The default answer window is five seconds and the default total limit is
-120 seconds. Limits and failures are returned to the automation. Test your
-phone's speakerphone and paging behavior before relying on unattended delivery.
+`answer_timeout` is an optional per-recipient ringing limit from 0 to 3600
+seconds. Omit it to inherit each account's limit or the stored PBX setting;
+`0` means no answer deadline. The explicit five seconds in the example is a
+choice for that announcement, not another runtime default. A live call to a
+saved paging group keeps its existing explicit answer window. New groups inherit until you
+choose an override in the native form.
+
+`timeout` is a separate limit on the entire announcement, including admission
+and playback, and retains its 120-second default. Even with an unlimited answer
+window, the job ends at that total limit. A SIP transaction with no provisional
+response still has its normal protocol timeout. Limits and failures are
+returned to the automation. Test your phone's speakerphone and paging behavior
+before relying on unattended delivery.
 
 See [groups and queues](GROUPS_AND_QUEUES.md) for operator groups and
 [automations as dialplan](AUTOMATION_DIALPLAN.md) for interactive call flows.

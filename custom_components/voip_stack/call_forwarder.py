@@ -85,6 +85,7 @@ async def async_forward_existing_call(
     precondition: CallPrecondition | None = None,
     control_endpoint_id: str = "",
     _resolved_decision=None,
+    ringing_timeout: float | None = None,
     _ring_timeout: float | None = None,
     _queue_offer=None,
 ) -> asyncio.Task[TransferResult]:
@@ -100,7 +101,7 @@ async def async_forward_existing_call(
         precondition=precondition,
         control_endpoint_id=control_endpoint_id,
         resolved_decision=_resolved_decision,
-        ring_timeout=_ring_timeout,
+        ring_timeout=ringing_timeout if ringing_timeout is not None else _ring_timeout,
         queue_offer=_queue_offer,
     )
     if not request.call_id or not request.destination:
@@ -139,6 +140,7 @@ async def async_forward_existing_call(
                     "expected_sequence": request.expected_sequence,
                     "on_failure": request.on_failure,
                     "trunk_id": request.trunk_id,
+                    **({"ringing_timeout": request.ring_timeout} if request.ring_timeout is not None else {}),
                 },
             ):
                 request = replace(
@@ -232,13 +234,8 @@ class _ForwardAdmission:
                     "Internal queue attempts require a resolved ring group"
                 )
             self.pickup_claim = self.validate_pickup()
-        if (
-            self.request.ring_timeout is not None
-            and not 0 < float(self.request.ring_timeout) <= 120
-        ):
-            raise ValueError(
-                "Internal ring timeout must be positive and at most 120 seconds"
-            )
+        from .ringing_policy import validate_ringing_timeout
+        validate_ringing_timeout(self.request.ring_timeout, inherit=True)
         if (
             self.request.resolved_decision is None
             and context is not None
@@ -722,6 +719,22 @@ class _ForwardAdmission:
                 destination=destination,
                 source="automation",
             )
+        from .ringing_policy import resolve_ringing_timeout
+        from .dial_plan import RingPolicy
+        timeout_override = (self.request.ring_timeout if self.request.ring_timeout is not None
+                            else decision.ringing_timeout)
+        group_policy = None
+        if decision.action is RouteAction.GROUP and account_plan is None:
+            metadata = dict(decision.entry.metadata if decision.entry is not None else {})
+            group_policy = RingPolicy.from_metadata(metadata,
+                default_timeout=resolve_ringing_timeout(self.runtime.config), timeout_override=timeout_override)
+            ring_timeout = None if group_policy.overall_timeout == float("inf") else group_policy.overall_timeout
+        else:
+            ring_timeout = resolve_ringing_timeout(self.runtime.config,
+                account=account_endpoint or target_browser_endpoint, override=timeout_override)
+            if account_plan is not None:
+                group_policy = replace(account_plan.ring_policy,
+                    overall_timeout=ring_timeout if ring_timeout is not None else float("inf"))
         return ForwardPlan(
             destination=destination,
             decision=decision,
@@ -731,10 +744,8 @@ class _ForwardAdmission:
             browser_endpoint=target_browser_endpoint,
             initial_selection=self.request.initial_selection,
             preselected=self.request.resolved_decision is not None,
-            ring_timeout=(self.request.ring_timeout if self.request.ring_timeout is not None
-                          else account_endpoint.policy.ringing_timeout if account_endpoint is not None
-                          else target_browser_endpoint.policy.ringing_timeout
-                          if target_browser_endpoint is not None else None),
+            ring_timeout=ring_timeout,
+            ring_policy=group_policy,
             on_failure=self.request.on_failure,
         )
 
@@ -1011,6 +1022,7 @@ class _ForwardAdmission:
                     "expected_sequence": request.expected_sequence,
                     "on_failure": request.on_failure,
                     "trunk_id": request.trunk_id,
+                    **({"ringing_timeout": request.ring_timeout} if request.ring_timeout is not None else {}),
                 },
             )
             return self.submitted_result("started")
@@ -1085,6 +1097,10 @@ class _ForwardAdmission:
             receiver.device_id if receiver is not None else "",
             ha_claimed,
         )
+        session = source.session
+        if session is not None:
+            session.update_metadata(route_ringing_timeout=(
+                request.ring_timeout if request.ring_timeout is not None else plan.decision.ringing_timeout))
         operation = ForwardOperation(
             self.runtime,
             self.registry,

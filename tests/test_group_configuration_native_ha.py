@@ -67,7 +67,7 @@ async def test_native_ring_editor_projects_policy_and_public_destinations(phone_
     result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"], form["data_schema"]({
         "name": "Reception", "members": [{"device": device.id}, {"destination": "+3902123456"},
                                              {"destination": "sip:door@example.net"}],
-        "strategy": "sequential", "overall_timeout": 30, "step_timeout": 15,
+        "strategy": "sequential", "inherit_ringing_timeout": False, "overall_timeout": 30, "step_timeout": 15,
         "fallback": "Literal @ account", "keep_empty": True,
     }))
     assert result["type"] == "create_entry"
@@ -131,6 +131,7 @@ async def test_paging_flow_owns_one_service_device_and_keeps_receiver_order(phon
     identity = device.id
     assert device.config_subentry_id == row.subentry_id
     assert row.data["members"] == ["Second", "First"] and row.data["enabled"] is False
+    assert row.data["answer_timeout"] is None
     registry.async_update_device(identity, name_by_user="My announcement")
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "paging"),
         context={"source": "reconfigure", "subentry_id": row.subentry_id})
@@ -141,6 +142,34 @@ async def test_paging_flow_owns_one_service_device_and_keeps_receiver_order(phon
     kept = registry.async_get_device_by_identifier(("voip_stack", "paging:" + row.data["paging_group_id"]), lab.entry.entry_id)
     assert kept.id == identity and kept.name_by_user == "My announcement"
     assert row.data["members"] == ["Second", "First"]
+    assert row.data["answer_timeout"] is None
+
+
+@pytest.mark.parametrize("saved", [0, 5])
+async def test_paging_form_preserves_explicit_answer_window_and_can_restore_inheritance(phone_lab, saved):
+    lab = phone_lab
+    prepare_flows(lab)
+    from custom_components.voip_stack.paging_config import normalize_paging_group
+    add_account(lab, "Receiver")
+    data = normalize_paging_group({"name": "Announcement", "members": ["Receiver"], "answer_timeout": saved})
+    row = ConfigSubentry(subentry_type="paging", title="Announcement", unique_id="paging:" + data["paging_group_id"], data=data)
+    lab.hass.config_entries.async_add_subentry(lab.entry, row)
+    form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "paging"),
+        context={"source": "reconfigure", "subentry_id": row.subentry_id})
+    defaults = form["data_schema"]({})
+    assert defaults["inherit_ringing_timeout"] is False
+    assert defaults["answer_timeout"] == saved
+    result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"],
+        {**defaults, "inherit_ringing_timeout": True})
+    assert result["type"] == "abort", result.get("errors")
+    assert row.data["answer_timeout"] is None
+
+    form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "paging"),
+        context={"source": "reconfigure", "subentry_id": row.subentry_id})
+    result = await lab.hass.config_entries.subentries.async_configure(form["flow_id"],
+        {**form["data_schema"]({}), "name": "Receiver"})
+    assert result["errors"] == {"base": "invalid_paging_group"}
+    assert row.data["name"] == "Announcement"
 
 
 async def test_native_application_entities_follow_existing_owners_without_polling(phone_lab):

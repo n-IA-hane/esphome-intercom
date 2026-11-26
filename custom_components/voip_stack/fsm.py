@@ -30,6 +30,7 @@ class TerminalReason(StrEnum):
     CANCELLED = "cancelled"
     FORWARDED = "forwarded"
     TIMEOUT = "timeout"
+    NO_ANSWER = "no_answer"
     BUSY = "busy"
     TRANSPORT_UNREACHABLE = "transport_unreachable"
     MEDIA_INCOMPATIBLE = "media_incompatible"
@@ -106,6 +107,7 @@ def sip_public_state(state: str) -> str:
         "remote_hangup": CallState.IDLE.value,
         "not_in_call": CallState.IDLE.value,
         "timeout": CallState.TRANSPORT_UNREACHABLE.value,
+        "no_answer": CallState.IDLE.value,
         "error": CallState.TRANSPORT_UNREACHABLE.value,
         "protocol_error": CallState.TRANSPORT_UNREACHABLE.value,
     }
@@ -130,6 +132,7 @@ def sip_terminal_reason(result: str, public_state: str | None = None) -> str:
         "sip_401": TerminalReason.AUTH_REQUIRED_UNSUPPORTED.value,
         "sip_407": TerminalReason.PROXY_AUTH_REQUIRED_UNSUPPORTED.value,
         "dnd": "dnd",
+        "no_answer": TerminalReason.NO_ANSWER.value,
     }
     if value in reason_mapping:
         return reason_mapping[value]

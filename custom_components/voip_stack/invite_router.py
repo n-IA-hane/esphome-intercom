@@ -50,7 +50,7 @@ from .inbound_routing.targets import (
 from .inbound_routing.trunk import prepare_trunk_preanswer
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .pbx_trace import trace_call
-from .router import RouteAction, RouteDecision
+from .router import RouteAction, RouteDecision, RouteReason
 from .sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -124,11 +124,13 @@ async def route_invite(
     trunk_invite = _is_trunk_invite(invite)
     trunk_direct_preprocessed = False
     direct_fallback_target = ""
+    reject_unknown_target = False
+    unknown_trunk_target = False
     registry = _call_registry(hass)
     endpoint_registry = endpoint_directory(hass)
     source_endpoint_id = "" if trunk_invite else invite.identified_source_endpoint_id
     source_endpoint = endpoint_registry.get(source_endpoint_id) if source_endpoint_id else None
-    registration_only = invite.authenticated_username if source_endpoint is None else ""
+    registration_only = invite.authenticated_username if source_endpoint is None and not trunk_invite else ""
     if not trunk_invite and source_endpoint is None and not registration_only:
         return SipInviteResult(403, "Forbidden", decline_reason="unauthorized_caller")
     if invite.routing_target.startswith(("queue-login+", "queue-pause+")):
@@ -156,6 +158,7 @@ async def route_invite(
         invite = replace(invite, outbound_trunk_id=decision.trunk_id)
     if trunk_invite:
         trunk_cfg = _get_inbound_trunk_config(hass)
+        reject_unknown_target = trunk_cfg.get("trunk_inbound_unknown_target") == "reject"
         dtmf_timeout_ms = max(0, int(trunk_cfg.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0))
         dtmf_preanswer = bool(
             trunk_cfg.get(CONF_TRUNK_INBOUND_MODE) == TRUNK_INBOUND_MODE_DTMF
@@ -169,12 +172,16 @@ async def route_invite(
             )
             # Keep the original called address for routing automations. Only an
             # unmatched destination uses the configured inbound fallback.
-            if decision.entry is None and not _is_ha_target(invite.called_number):
-                direct_fallback_target = default_target
-                fallback_invite = replace(
-                    invite, target=default_target, target_route=default_target
-                )
-                decision = _inbound_route_decision(fallback_invite, peers, roster_entries)
+            if (decision.entry is None and not decision.action.is_local_application
+                    and not _is_ha_target(invite.called_number)):
+                if reject_unknown_target:
+                    unknown_trunk_target = True
+                else:
+                    direct_fallback_target = default_target
+                    fallback_invite = replace(
+                        invite, target=default_target, target_route=default_target
+                    )
+                    decision = _inbound_route_decision(fallback_invite, peers, roster_entries)
             trunk_direct_preprocessed = True
     if invite.replaces is not None:
         from .call_replaces import prepare_replacement
@@ -236,7 +243,7 @@ async def route_invite(
         runtime=runtime,
         invite=invite,
         decision=decision,
-        authenticated_account=bool(invite.authenticated_username),
+        authenticated_account=bool(invite.authenticated_username) and not trunk_invite,
         native_override=native_override,
         caller_is_trusted_endpoint=bool(source_endpoint or registration_only or trunk_invite),
         automation_routing_enabled=native_override or bool(
@@ -246,6 +253,7 @@ async def route_invite(
             )
         ),
         trunk_invite=trunk_invite,
+        reject_on_timeout=reject_unknown_target,
     )
     if rejected := automation_rejection(
         hass=hass,
@@ -255,6 +263,9 @@ async def route_invite(
         return rejected
     route_action = automation_route.action
     route_destination = automation_route.destination
+    if unknown_trunk_target and route_action not in {"forward", "bridge", "answer_ha"}:
+        return SipInviteResult(404, "Not Found", to_tag="",
+                               decline_reason=RouteReason.ROUTE_NOT_FOUND.value)
     if getattr(automation_route, "trunk_id", ""):
         from .endpoint_routing import EndpointRouteResolver
 
@@ -278,6 +289,7 @@ async def route_invite(
         if target_resolution.failure is not None:
             return target_resolution.failure
         decision = target_resolution.decision
+        decision = replace(decision, ringing_timeout=automation_route.ringing_timeout)
         trace_call(
             _LOGGER, invite.call_id,
             "Target %s selects %s via %s; action=%s, reason=%s",

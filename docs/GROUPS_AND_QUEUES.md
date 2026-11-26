@@ -85,8 +85,8 @@ states and changes them without modifying the membership declaration. A busy,
 offline or wrapping-up phone is not eligible merely because its state is
 `available`.
 
-Queue defaults are 10 waiting callers, 60 seconds maximum wait, 20 seconds per
-ring attempt, 1 second without any available online agents before fallback,
+Queue defaults are 10 waiting callers, 60 seconds maximum wait, inherited PBX
+time per ring attempt, 1 second without any available online agents before fallback,
 1 second between retries and no wrap-up delay. Fallback destination and waiting
 audio are empty by default. Configure them on the queue device or with
 `voip_stack.configure_queue`.
@@ -104,7 +104,9 @@ specific destination is empty. Without either destination, it ends the call.
 For example, a fallback to `Casa` starts an ordinary call with Casa's personal
 rules; `voicemail.Casa` deposits directly in Casa's enabled mailbox. To keep one
 continuous ring-all offer until the queue's deadline, set the ring time per
-attempt to the same duration as the maximum wait.
+attempt to zero. The queue maximum wait still applies. Existing explicit
+20-second offers and 30-second ring-group policies survive migration; only
+inherited values use the PBX setting. See [ringing policy](RINGING_POLICY.md).
 
 ## Actions
 

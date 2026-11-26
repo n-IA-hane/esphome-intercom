@@ -19,8 +19,6 @@ from .authorization import async_require_service_admin
 from .config import (
     transport_config as _get_transport_config,
     trunk_enabled as _trunk_enabled,
-    trunk_identity_uri as _trunk_identity_uri,
-    trunk_leg_identity as _trunk_leg_identity,
 )
 from .const import (
     CONF_SIP_VIDEO,
@@ -34,6 +32,7 @@ from .const import (
     CONF_VIDEO_CAMERA_SEND,
     HA_PEER_FALLBACK_NAME,
 )
+from .outbound_identity import outbound_identity
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator
@@ -331,7 +330,7 @@ async def _async_resolve_browser_call_route(
                 raise _service_error("The selected phone is unavailable", "phone_unavailable", phone=target)
             target = selected.username or selected.sip_uri_user
             explicit_route = True
-        route = resolve_route(target, contacts)
+        route = replace(resolve_route(target, contacts), ringing_timeout=override.ringing_timeout)
         routing_call_id = session.call_id
     from .inbound_routing.targets import resolve_phone_target
 
@@ -350,7 +349,7 @@ async def _async_resolve_browser_call_route(
         )
     if resolved.decision != route:
         target = resolved.decision.target
-    route = resolved.decision
+    route = replace(resolved.decision, ringing_timeout=route.ringing_timeout)
     if route.reason is RouteReason.TRUNK_UNAVAILABLE:
         raise trunk_selection.unavailable_error()
     policy_endpoint_ids = getattr(resolved, "forwarded_endpoint_ids", ())
@@ -494,6 +493,7 @@ async def _async_dispatch_browser_call_route(
             await _async_prepare_ha_outbound_call(hass, endpoint_id)
             await start_ring_group(
                 route.entry,
+                ringing_timeout=route.ringing_timeout,
                 **({"policy_endpoint_ids": policy_endpoint_ids} if policy_endpoint_ids else {}),
                 **({"outbound_trunk_id": trunk_selection.identity} if trunk_selection.identity else {}),
                 context=getattr(call, "context", None),
@@ -702,17 +702,18 @@ async def _async_prepare_browser_sip_call(
     else:
         local_rtp_port = _allocate_sip_rtp_port(hass)
         local_video_rtp_port = 0
-    provider_identity = (
-        _trunk_leg_identity(trunk_cfg, local_name) if use_trunk else local_name
-    )
+    caller_user = browser_endpoint.sip_uri_user if browser_endpoint is not None else local_name
+    identity = outbound_identity(
+        hass, trunk_cfg, endpoint=browser_endpoint, caller_user=caller_user, caller_name=local_name,
+    ) if use_trunk else None
     # Preserve the engine's complete RTP catalog through the SIP writer.
     client = SipCallClient(
         **({"call_id": routing_call_id} if routing_call_id else {}),
         codec_policy=codec_policy,
         local_ip=local_ip,
-        local_name=provider_identity,
+        local_name=identity.name if identity is not None else local_name,
         local_uri_user=(
-            provider_identity
+            str(trunk_cfg.get(CONF_TRUNK_USERNAME) or caller_user)
             if use_trunk
             else (
                 browser_endpoint.sip_uri_user
@@ -720,7 +721,8 @@ async def _async_prepare_browser_sip_call(
                 else local_name
             )
         ),
-        local_identity_uri=_trunk_identity_uri(trunk_cfg) if use_trunk else "",
+        local_identity_uri=identity.uri if identity is not None else "",
+        fixed_local_identity=identity.fixed if identity is not None else False,
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=local_rtp_port,
         supported_send_formats=sip_send_formats,

@@ -7,6 +7,8 @@
 # Status: maintained; bidirectional SIP/Opus media and redial tested on BOX V2.
 
 substitutions:
+  # Outgoing calls and REFER attempts: 0s leaves ringing unlimited.
+  voip_calling_timeout: 120s
   ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
   voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"

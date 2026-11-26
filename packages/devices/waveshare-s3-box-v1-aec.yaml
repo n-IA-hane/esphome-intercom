@@ -29,6 +29,7 @@ substitutions:
   firmware_voip_binding:
     voip_stack:
       initial_contact: ${ voip_initial_contact | default('') }
+      calling_timeout: ${ voip_calling_timeout | default('120s') }
       task_stacks_in_psram: true
       signaling_buffers_in_psram: true
       buffers_in_psram: true

@@ -40,6 +40,7 @@ class AutomationRoute:
     decline_reason: str = ""
     endpoint_id: str = ""
     trunk_id: str = ""
+    ringing_timeout: float | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> AutomationRoute:
@@ -53,6 +54,7 @@ class AutomationRoute:
             decline_reason=str(payload.get("decline_reason") or "").strip(),
             endpoint_id=str(payload.get("endpoint_id") or "").strip(),
             trunk_id=str(payload.get("trunk_id") or "").strip(),
+            ringing_timeout=payload.get("ringing_timeout"),
         )
 
 
@@ -66,6 +68,7 @@ async def request_route_override(
     automation_routing_enabled: bool,
     trunk_invite: bool,
     native_override: bool = False,
+    reject_on_timeout: bool = False,
 ) -> AutomationRoute:
     """Open one bounded automation window or keep the dialplan default."""
 
@@ -116,7 +119,10 @@ async def request_route_override(
             selected_tx_rtp_format=invite.send_format.wire_token(),
             selected_rx_rtp_format=invite.recv_format.wire_token(), audio_mode="full_duplex",
             rtp_format=f"{invite.selected_format.encoding}/{invite.selected_format.sample_rate}/{invite.selected_format.channels}")
-    payload = await request_route_window(hass, session, invite=invite, decision=decision, **presentation)
+    timeout_result = ({"action": "decline", "status": 504, "reason": "Route decision timed out",
+                       "decline_reason": TerminalReason.TIMEOUT.value} if reject_on_timeout else None)
+    payload = await request_route_window(hass, session, invite=invite, decision=decision,
+                                       timeout_result=timeout_result, **presentation)
     return AutomationRoute.from_payload(payload)
 
 

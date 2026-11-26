@@ -1,6 +1,7 @@
 # Complete standalone phone operation and its local controls.
 voip_stack:
   initial_contact: ${ voip_initial_contact | default('') }
+  calling_timeout: ${ voip_calling_timeout | default('120s') }
   id: phone
   transport: udp
   microphone: mic_afe

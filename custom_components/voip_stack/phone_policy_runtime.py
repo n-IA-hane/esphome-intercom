@@ -12,7 +12,8 @@ from .call_state import CallPrecondition
 from .call_scope import has_ringing_destination
 from .endpoint_session import TerminationIntent
 from .inbound_routing.automation import SIP_ROUTE_DECISION_TIMEOUT
-from .phone_policy import DestinationKind
+from .phone_policy import DestinationKind, PhonePolicy
+from .ringing_policy import resolve_ringing_timeout
 from .runtime_data import registration_data, runtime_data
 from .const import CALL_EVENT
 
@@ -31,7 +32,7 @@ def apply_phone_policy_state(hass, payload: dict) -> None:
     session = registry.get_session(str(payload.get("call_id") or ""))
     if session is None or not session.live or session.generation != payload.get("generation"):
         return
-    if payload.get("scope") == "phone_policy":
+    if payload.get("scope") == "phone_policy" or session.metadata.get("application_ringing_owned"):
         return
     if not has_ringing_destination(session) or automation_event_type(payload) == "forwarding":
         for name in (_TIMER, _DECISION):
@@ -50,9 +51,10 @@ def apply_phone_policy_state(hass, payload: dict) -> None:
     endpoint_id = str(session.metadata.get("dest_endpoint_id")
                       or session.metadata.get("target_endpoint_id") or "")
     endpoint = runtime.endpoints.get(endpoint_id) if endpoint_id else runtime.endpoints.resolve(session.callee)
-    if endpoint is None:
+    if endpoint is None and session.owner not in {"router", "ha_softphone", "automation"}:
         return
-    target = (endpoint.endpoint_id, session.callee)
+    target_id = endpoint.endpoint_id if endpoint is not None else ""
+    target = (target_id, session.callee)
     if session.metadata.get("phone_policy_ringing_target") == target:
         return
     for name in (_TIMER, _DECISION):
@@ -62,18 +64,20 @@ def apply_phone_policy_state(hass, payload: dict) -> None:
     # Snapshot even an unset rule, so a later settings edit cannot affect a
     # call that was already ringing before that edit.
     session.metadata["phone_policy_ringing_target"] = target
-    policy = endpoint.policy
-    if policy.ringing_timeout is None:
+    policy = endpoint.policy if endpoint is not None else PhonePolicy()
+    timeout = resolve_ringing_timeout(runtime.transport_config, account=endpoint,
+        override=session.metadata.get("route_ringing_timeout"))
+    if timeout is None:
         return
     token, owner, callee = session.token, session.owner, session.callee
 
     def current():
         candidate = registry.get_session(token.call_id, generation=token.generation)
         if (candidate is not session or not session.live or session.owner != owner
-                or not has_ringing_destination(session, endpoint.endpoint_id) or session.callee != callee):
+                or not has_ringing_destination(session, target_id) or session.callee != callee):
             return False
         destination_id = registry.bridge_link_for(token.call_id)
-        client = registry.sip_client_for(destination_id) if destination_id else None
+        client = registry.sip_client_for(destination_id or token.call_id)
         if client is not None and client.dialog is not None:
             # A final SIP answer wins even while the bridge prepares media.
             # Provisional SDP lives in early_dialogs, not this confirmed dialog.
@@ -85,7 +89,7 @@ def apply_phone_policy_state(hass, payload: dict) -> None:
         if not current() or not precondition.matches(session) or context is None or context.sequence != sequence:
             return
         destination = policy.no_answer
-        if destination.kind is DestinationKind.HANGUP:
+        if destination is None or destination.kind is DestinationKind.HANGUP:
             registry.request_termination(
                 token.call_id, TerminationIntent("no_answer", public_state="idle", response_status=480),
                 generation=token.generation,
@@ -124,10 +128,10 @@ def apply_phone_policy_state(hass, payload: dict) -> None:
         sequence = context.sequence
         precondition = CallPrecondition.capture(session)
         event = {**payload, "scope": "phone_policy", "event_type": "ringing_timeout_requested",
-                 "reason": "no_answer", "sequence": sequence, "timeout": policy.ringing_timeout}
+                 "reason": "no_answer", "sequence": sequence, "timeout": timeout}
         interested = any(
             matches_call(event, options, hass=hass)
-            and (options.get("for") is None or options["for"].total_seconds() <= policy.ringing_timeout)
+            and (options.get("for") is None or options["for"].total_seconds() <= timeout)
             for options in registration_data(hass).unanswered_trigger_filters.values()
         )
         hass.bus.async_fire(CALL_EVENT, event, context=registry.ha_context(token.call_id))
@@ -138,7 +142,7 @@ def apply_phone_policy_state(hass, payload: dict) -> None:
             commit(sequence, precondition)
 
     deadline = CallDeadline(registry, session, f"{_TIMER}:{session.call_id}", expired)
-    deadline.arm(hass.loop, policy.ringing_timeout)
+    deadline.arm(hass.loop, timeout)
 
 
 def phone_failure_destination(endpoint, status):

@@ -2,6 +2,7 @@
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigSubentryFlow
+from homeassistant.data_entry_flow import Required as visible_required
 from homeassistant.helpers.selector import (
     BooleanSelector, MediaSelector, NumberSelector, ObjectSelector, SelectSelector, TextSelector,
 )
@@ -127,6 +128,9 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
                     "fallback_disabled", "fallback_removed") if self._kind == "queue" else
                     ("strategy", "overall_timeout", "step_timeout"))
                 policy = {**previous.get("policy", {}), **{key: values[key] for key in policy_fields if key in values}}
+                timeout_key = "ring_timeout" if self._kind == "queue" else "overall_timeout"
+                if user_input.get("inherit_ringing_timeout") is True:
+                    policy[timeout_key] = None
                 if self._kind == "queue":
                     for integer in ("max_waiting", "auto_pause_after"):
                         if integer in policy:
@@ -159,17 +163,23 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
             vol.Required("enabled", default=values.get("enabled", True)): BooleanSelector(),
             vol.Required("keep_empty", default=values.get("origin") != "auto"): BooleanSelector(),
         }
+        timeout_key = "ring_timeout" if self._kind == "queue" else "overall_timeout"
+        fields[vol.Required("inherit_ringing_timeout", default=values.get("inherit_ringing_timeout", values.get(timeout_key) is None))] = BooleanSelector()
+        fields[visible_required(timeout_key,
+                default=values.get(timeout_key) if values.get(timeout_key) is not None else entry.data.get("default_ringing_timeout", 0),
+                visible={"field": "inherit_ringing_timeout", "value": False})] = NumberSelector({
+                    "min": 0, "max": 3600, "step": 0.1, "unit_of_measurement": "s", "mode": "box"})
         if self._kind == "ring":
             fields[vol.Required("strategy", default=values.get("strategy", "parallel"))] = SelectSelector({
                 "options": ["parallel", "sequential"], "translation_key": "ring_strategy"})
-            for key, default, maximum in (("overall_timeout", 30, 300), ("step_timeout", 15, 300)):
+            for key, default, maximum in (("step_timeout", 15, 3600),):
                 fields[vol.Required(key, default=values.get(key, default))] = NumberSelector({
                     "min": 0.1, "max": maximum, "step": 0.1, "unit_of_measurement": "s", "mode": "box"})
             fields[vol.Optional("fallback", default=values.get("fallback", ""))] = SelectSelector({
                 "options": options, "custom_value": True, "mode": "dropdown"})
         else:
             for key, default, minimum, maximum in (
-                ("max_waiting", 10, 1, 64), ("max_wait", 60, 1, 3600), ("ring_timeout", 20, 1, 120),
+                ("max_waiting", 10, 1, 64), ("max_wait", 60, 1, 3600),
                 ("no_agent_wait", 1, 0, 120), ("retry_delay", 1, 0.1, 120), ("wrap_up", 0, 0, 3600)):
                 config = {"min": minimum, "max": maximum, "mode": "box", "step": 1 if key == "max_waiting" else 0.1}
                 if key != "max_waiting":

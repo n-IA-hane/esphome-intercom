@@ -209,6 +209,7 @@ async def async_route_trunk_invite(
                 destination=destination,
                 on_failure="resume",
                 initial_selection=True,
+                ringing_timeout=automation_decision.get("ringing_timeout"),
             )
             return
     if automation_action in {"decline", "busy", "cancel"}:
@@ -267,6 +268,8 @@ async def async_route_trunk_invite(
             ),
             roster_entries, trunk_ready=False,
         )
+    if "ringing_timeout" in automation_decision:
+        decision = replace(decision, ringing_timeout=automation_decision["ringing_timeout"])
     if decision.action is RouteAction.ANSWER_HA and not explicit_account:
         # ANSWER_HA identifies the endpoint kind, not necessarily the default
         # browser phone. Preserve explicit DTMF extensions for the second pass.
@@ -293,7 +296,8 @@ async def async_route_trunk_invite(
     if decision.action is RouteAction.TRUNK:
         await runtime.forward_existing_call(call_id=invite.call_id, destination=destination,
             initial_selection=True, on_failure="terminate",
-            trunk_id=selected_trunk_id or getattr(decision, "trunk_id", ""))
+            trunk_id=selected_trunk_id or getattr(decision, "trunk_id", ""),
+            ringing_timeout=decision.ringing_timeout)
         return
     if explicit_account and decision.action in {
         RouteAction.FORWARD, RouteAction.GROUP, RouteAction.VOICEMAIL,
@@ -304,6 +308,7 @@ async def async_route_trunk_invite(
             call_id=invite.call_id, destination=destination, initial_selection=True,
             on_failure="resume" if decision.action is RouteAction.GROUP else "terminate",
             _resolved_decision=decision if decision.action is not RouteAction.FORWARD else None,
+            ringing_timeout=decision.ringing_timeout,
         )
         return
     if decision.action is RouteAction.AUTOMATION:
@@ -597,7 +602,11 @@ async def async_route_trunk_invite(
         request_uri=str(bridge_uri),
     )
     if result == "ringing":
-        result = await client.wait_for_final()
+        from .ringing_policy import resolve_ringing_timeout, wait_for_ringing_result
+        from .runtime_data import endpoint_directory
+        target_endpoint = endpoint_directory(hass).resolve(destination)
+        result = await wait_for_ringing_result(client,
+            resolve_ringing_timeout(cfg, account=target_endpoint, override=decision.ringing_timeout))
     if result != "in_call" or client.dialog is None:
         _LOGGER.info(
             "SIP trunk destination failed destination=%s result=%s",
@@ -611,7 +620,7 @@ async def async_route_trunk_invite(
         terminal_reason = sip_terminal_reason(result, public_result)
         await terminate_source(
             terminal_reason,
-            status=client.last_sip_status_code or 480,
+            status=client.last_sip_status_code if 300 <= client.last_sip_status_code <= 699 else 480,
             answered=bool((preanswered or {}).get("final_response_sent", True)),
         )
         return

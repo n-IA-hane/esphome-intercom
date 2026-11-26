@@ -7,6 +7,8 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
+    CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES,
+    DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES,
     CONF_ASSIST_ENDPOINT_ENABLED,
     CONF_ASSIST_EXTENSION,
     CONF_ASSIST_PIPELINE,
@@ -61,6 +63,8 @@ def entry_transport_config(entry: ConfigEntry | None = None) -> dict:
     return {
         EXTERNAL_CALL_BLOCKED_ENDPOINTS: tuple(data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())),
         CONF_REGISTRAR_ENABLED: bool(data.get(CONF_REGISTRAR_ENABLED, False)),
+        "default_ringing_timeout": data.get("default_ringing_timeout"),
+        CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES: data.get(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES),
         "sip_port": int(data.get("sip_port", VOIP_STACK_SIP_PORT)),
         "rtp_port": int(data.get("rtp_port", VOIP_STACK_RTP_PORT)),
         "advertise_host": (data.get("advertise_host") or "").strip(),
@@ -79,6 +83,7 @@ def normalized_trunk_config(data) -> dict:
     """Normalize one persisted trunk independently of its HA storage record."""
     from .core.codec_policy import AUDIO_CODECS, VIDEO_CODECS, CodecPolicy, normalize_codec_rows
     from .inbound_identity import normalized_did_config
+    from .outbound_identity import identity_text, normalized_outbound_identity_config
     CodecPolicy.from_config(data)
     codecs = {key: list(normalize_codec_rows(data[key], supported))
               for key, supported in (("trunk_audio_codecs", AUDIO_CODECS), ("trunk_video_codecs", VIDEO_CODECS))
@@ -95,8 +100,14 @@ def normalized_trunk_config(data) -> dict:
             TRUNK_INBOUND_MODE_DTMF if legacy_dtmf else TRUNK_INBOUND_MODE_DIRECT
         )
     dtmf_enabled = inbound_mode == TRUNK_INBOUND_MODE_DTMF and dtmf_timeout_ms > 0
+    unknown_target = identity_text(data.get("trunk_inbound_unknown_target") or "fallback", "unknown destination policy")
+    if unknown_target not in {"fallback", "reject"}:
+        raise ValueError("Invalid incoming trunk destination policy")
     return {
         **normalized_did_config(data),
+        **normalized_outbound_identity_config(data),
+        "trunk_inbound_account": identity_text(data.get("trunk_inbound_account", ""), "inbound account"),
+        "trunk_inbound_unknown_target": unknown_target,
         CONF_TRUNK_ENABLED: bool(data.get(CONF_TRUNK_ENABLED, False)),
         **codecs,
         "trunk_registration_id": int(data.get("trunk_registration_id") or 1),
@@ -184,22 +195,6 @@ def trunk_enabled(cfg: dict) -> bool:
         and (
             (cfg.get(CONF_TRUNK_USERNAME) and cfg.get(CONF_TRUNK_PASSWORD))
             if cfg.get(CONF_TRUNK_REGISTER, True)
-            else cfg.get(CONF_TRUNK_ALLOWED_IPS)
+            else cfg.get("trunk_inbound_account") or cfg.get(CONF_TRUNK_ALLOWED_IPS)
         )
     )
-
-
-def trunk_leg_identity(cfg: dict, fallback: str = "") -> str:
-    """Return the provider-facing identity for an outbound trunk leg."""
-
-    return str(cfg.get(CONF_TRUNK_USERNAME) or fallback).strip()
-
-
-def trunk_identity_uri(cfg: dict) -> str:
-    """Return the provider identity URI using the documented domain fallback."""
-
-    username = trunk_leg_identity(cfg)
-    domain = str(
-        cfg.get(CONF_TRUNK_DOMAIN) or cfg.get(CONF_TRUNK_SERVER) or ""
-    ).strip()
-    return f"sip:{username}@{domain}" if username and domain else ""

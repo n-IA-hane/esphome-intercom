@@ -73,3 +73,7 @@ SIP_CALL_STATE_EVENT = "voip_stack.call_state"
 SIP_INCOMING_CALL_EVENT = "voip_stack.incoming_call"
 SIP_ROUTE_REQUEST_EVENT = "voip_stack.route_request"
 SIP_DTMF_EVENT = "voip_stack.dtmf"
+
+# Dialog subscription leases are separate from SIP registration availability.
+CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES = "max_dialog_subscription_expires"
+DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES = 60

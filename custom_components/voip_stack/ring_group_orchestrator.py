@@ -106,6 +106,7 @@ async def run_ring_group_call(
     origin_media_client_id: str = "",
     request_video: bool = False,
     enable_caller_video_send: bool = False,
+    ringing_timeout: float | None = None,
 ) -> None:
     hass = runtime.hass
     local_ip = runtime.local_ip
@@ -133,8 +134,14 @@ async def run_ring_group_call(
             # The account's existing no-answer controller owns its policy.
             # An absent policy does not invent the ring-group's 30 s deadline.
             ring_policy = account_plan.ring_policy
+            session = registry.get_session(invite.call_id)
+            if session is not None:
+                session.update_metadata(route_ringing_timeout=ringing_timeout)
         else:
-            ring_policy = RingPolicy.from_metadata(entry.metadata)
+            from .ringing_policy import resolve_ringing_timeout
+            metadata = dict(entry.metadata)
+            ring_policy = RingPolicy.from_metadata(metadata,
+                default_timeout=resolve_ringing_timeout(runtime.config), timeout_override=ringing_timeout)
     except (TypeError, ValueError) as err:
         _LOGGER.error(
             "SIP ring group has invalid policy call_id=%s group=%s: %s",
@@ -391,7 +398,7 @@ async def run_ring_group_call(
             browser_winner = isinstance(winner, BrowserLeg)
         elif fork_result.outcome.disposition is DialDisposition.REROUTE:
             reroute_decision = dict(browser_decision)
-        final_result = fork_terminal_reason(
+        final_result = TerminalReason.NO_ANSWER.value if fork_result.outcome.disposition is DialDisposition.TIMEOUT else fork_terminal_reason(
             fork_result.outcome.disposition,
             final_result,
         )

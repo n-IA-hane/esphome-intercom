@@ -37,6 +37,7 @@ class QueueCall(LocalCallApplication):
     music: asyncio.Task | None = None
     detached: bool = False
     policy_snapshot: object = None
+    ringing_timeout: float | None = None
 
     def policy(self):
         try:
@@ -157,10 +158,14 @@ class QueueCall(LocalCallApplication):
                     entry = RosterEntry(id=f"queue-attempt:{definition.queue_id}", name=definition.name,
                         ha_bridge=True, metadata={"group_type": "ring", "members": [endpoint.username for endpoint in endpoints if endpoint]})
                     decision = RouteDecision(RouteAction.GROUP, target=definition.name, entry=entry)
+                    from .ringing_policy import resolve_ringing_timeout, cap_ringing_timeout
+                    from .runtime_data import require_runtime_data
+                    budget = resolve_ringing_timeout(require_runtime_data(self.hass).transport_config,
+                        override=self.ringing_timeout if self.ringing_timeout is not None else policy.ring_timeout)
                     try:
                         task = await registry.forward_call(call_id=self.session.call_id, destination=definition.name,
                             on_failure="resume", _resolved_decision=decision,
-                            _ring_timeout=min(policy.ring_timeout, self.ticket.deadline - now),
+                            _ring_timeout=cap_ringing_timeout(budget, self.ticket.deadline - now),
                             _queue_offer=(self.manager, self.ticket))
                         if task is not None:
                             await asyncio.shield(task)
@@ -200,6 +205,7 @@ async def route_queue_call(runtime, invite, decision, registry, source_endpoint)
         return busy
     session = registry.upsert(invite.call_id, state="ringing", owner="queue", caller=invite.caller,
                              callee=queue.name, route_kind="queue")
+    session.update_metadata(route_ringing_timeout=decision.ringing_timeout)
     try:
         start_queue_application(runtime.hass, session, invite, decision.entry, runtime.local_ip)
     except ValueError:
@@ -249,7 +255,8 @@ def start_queue_application(hass, session, invite, contact, local_ip, *, previou
     registry.set_pending_invite(invite.call_id, invite)
     application = attach_local_application(QueueCall, hass, session, invite, contact, local_ip,
                                            previous=previous, local_source=local_source, ticket=ticket, manager=manager,
-                                           policy_snapshot=manager.policy(queue_id))
+                                           policy_snapshot=manager.policy(queue_id),
+                                           ringing_timeout=session.metadata.get("route_ringing_timeout"))
     application.waiter = session.create_task(application.run(), name=f"queue-waiter:{queue_id}:{ticket.entry_id}")
     return application
 

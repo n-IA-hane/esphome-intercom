@@ -260,6 +260,7 @@ async def route_local_group(
                 decision.entry,
                 peers,
                 roster_entries,
+                ringing_timeout=decision.ringing_timeout,
             ),
         )
         session.own_task(task, name="ring_group")

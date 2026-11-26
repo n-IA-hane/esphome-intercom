@@ -20,6 +20,7 @@ from .local_application import LocalCallApplication, attach_local_application
 from .paging_config import MAX_PAGING_TARGETS, paging_group_configs
 from .ring_group import endpoint_preflight_disposition
 from .roster import RosterEntry
+from .ringing_policy import validate_ringing_timeout
 from .runtime_data import require_runtime_data
 from .service_endpoints import resolve_service_phone
 
@@ -42,9 +43,12 @@ def validate_announcement(data):
     has_media = bool(values.get("media"))
     if has_speech == has_media or (bool(values.get("message")) != bool(values.get("tts_entity_id"))):
         raise ServiceValidationError("Supply message and TTS provider, or one media file")
-    values["answer_timeout"] = float(values.get("answer_timeout", 5))
+    try:
+        values["answer_timeout"] = validate_ringing_timeout(values.get("answer_timeout"), inherit=True)
+    except ValueError as error:
+        raise ServiceValidationError(str(error)) from error
     values["timeout"] = float(values.get("timeout", 120))
-    if not 1 <= values["answer_timeout"] <= 120 or not 1 <= values["timeout"] <= 600:
+    if not 1 <= values["timeout"] <= 600:
         raise ServiceValidationError("Paging timeouts exceed the supported limits")
     if values.get("busy_policy", "skip") != "skip":
         raise ServiceValidationError("Paging busy_policy must be skip")
@@ -150,7 +154,7 @@ class PagingJob:
             return DialOutcome(disposition)
         # A selector identity such as sip:desk is not the URI sip:desk.
         # Feed its canonical phonebook name into the existing route resolver.
-        data = {"destination": endpoint.username, "answer_timeout": self.data["answer_timeout"]}
+        data = {"destination": endpoint.username, "answer_timeout": self.data.get("answer_timeout")}
         call = ServiceCall(self.manager.hass, "voip_stack", "call", data, context=self.call.context)
         try:
             if browser:
@@ -487,7 +491,7 @@ def start_paging_application(hass, session, invite, contact, local_ip, *, previo
     registry.set_pending_invite(invite.call_id, invite)
     application = attach_local_application(PagingCall, hass, session, invite, contact, local_ip,
                                            previous=previous, local_source=local_source)
-    data = {"targets": [f"paging:{identity}"], "answer_timeout": float(config.get("answer_timeout", 5)),
+    data = {"targets": [f"paging:{identity}"], "answer_timeout": config.get("answer_timeout"),
             "timeout": float(config.get("timeout", 120))}
     manager.start(ServiceCall(hass, "voip_stack", "announce", {}, context=Context()), data, application=application)
     return application

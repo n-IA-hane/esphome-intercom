@@ -99,6 +99,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         max_forwards: int = 70,
         local_uri_user: str = "",
         local_identity_uri: str = "",
+        fixed_local_identity: bool = False,
         local_sip_port: int,
         local_rtp_port: int,
         supported_formats: list[AudioFormat] | None = None,
@@ -140,6 +141,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self.local_name = local_name
         self.local_uri_user = str(local_uri_user or username or local_name).strip()
         self.local_identity_uri = str(local_identity_uri or "").strip()
+        self.fixed_local_identity = bool(fixed_local_identity)
         self.local_contact_uri = ""
         self.resolve_local_target: Callable[[sip.SipUri], sip.SipUri | None] | None = None
         self.local_sip_port = int(local_sip_port)

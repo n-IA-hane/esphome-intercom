@@ -38,6 +38,7 @@ def trunk_client_config(cfg: dict, *, parent=None):
         enabled=True,
         register=bool(cfg[CONF_TRUNK_REGISTER]),
         allowed_ips=tuple(cfg[CONF_TRUNK_ALLOWED_IPS]),
+        inbound_account=str(cfg.get("trunk_inbound_account") or "").strip(),
         transport=str(cfg[CONF_TRUNK_TRANSPORT]),
         server=str(cfg[CONF_TRUNK_SERVER]),
         port=int(cfg[CONF_TRUNK_PORT]),

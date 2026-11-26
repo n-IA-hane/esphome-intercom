@@ -26,16 +26,22 @@ creates a fresh SUBSCRIBE and receives a complete current snapshot. No idle
 state is inferred from missing packets, and subscriptions do not become
 immortal after transport loss.
 
-Dialog subscriptions now grant at most 60 seconds, honoring any shorter
-request. This is a declared lease contract change under RFC 6665, using the
-existing expiry task for each usage. Presence and mailbox leases are unchanged.
-Normal events are still delivered immediately; an ESP renewing at 80 percent
-requests a full snapshot after about 48 seconds instead of 48 minutes for the
-previous 3600-second grant. If that peer is unreachable, its last confirmed
-60-second lease expires to unknown. Silence alone is not treated as a fault.
-The 12/128-watch fixtures execute two renewal cycles, retain one timer per
-usage, and prove an unchanged authenticated REGISTER refresh does not schedule
-duplicate snapshots or grow the notifier owner set.
+Dialog subscriptions keep a 60-second maximum by default. Reconfigure exposes
+**Maximum BLF subscription lease**, accepting 60-3600 seconds. A user may choose
+600 or 3600 to reduce periodic renewal traffic. Shorter phone requests are still
+honored. Every state change still sends NOTIFY immediately; a longer lease
+lengthens the interval between periodic full snapshots after a missed update.
+An ESP renewing at 80 percent requests a new snapshot around 48 seconds for a
+60-second grant, or 480 seconds for a 600-second grant. These are client renewal
+choices, not registration/offline deadlines. SIP REGISTER and account
+availability remain independent; never infer that a phone is offline simply
+because its BLF lease is longer or there were no state changes.
+
+One monotonic TimerHandle owns each lease. Refresh cancels its old handle;
+late old callbacks cannot expire a renewed subscription. Terminal NOTIFY uses
+the existing notifier task owner. Expiry, unsubscribe, failed NOTIFY and runtime
+shutdown release handles and notifier resources. A renewal does not rebuild the
+installation-wide capacity map because it cannot consume a new usage.
 
 The same selected-flow distinction applies to complete INVITE requests.
 `SipCallClient._prepare_invite_request_transport` retains an explicit UDP

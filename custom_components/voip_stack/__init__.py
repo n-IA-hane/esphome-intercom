@@ -230,6 +230,16 @@ async def async_migrate_entry(
         async_sync_phone_identity_issue(hass, config_entry)
         async_sync_account_migration_issue(hass, config_entry)
         hass.config_entries.async_update_entry(config_entry, minor_version=4)
+    if config_entry.version == 7 and config_entry.minor_version < 5:
+        # Only reached after 7.4 succeeded. This is stored user configuration,
+        # sourced from the initial form, never a hidden runtime fallback.
+        from .config_flow import INITIAL_RINGING_TIMEOUT
+        from .ringing_policy import CONF_DEFAULT_RINGING_TIMEOUT
+        data = dict(config_entry.data)
+        data.setdefault(CONF_DEFAULT_RINGING_TIMEOUT, INITIAL_RINGING_TIMEOUT)
+        from .const import CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES
+        data.setdefault(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES)
+        hass.config_entries.async_update_entry(config_entry, data=data, minor_version=5)
     return True
 
 
@@ -504,6 +514,7 @@ async def _handle_sip_forward_service(call: ServiceCall) -> None:
             raise ServiceValidationError("Call forwarding is unavailable")
         await registry.forward_call(call_id=call_id, destination=call.data["destination"],
             on_failure=call.data.get("on_failure", "resume"),
+            ringing_timeout=call.data.get("ringing_timeout"),
             trunk_id=str(call.data.get("trunk_id") or ""),
             expected_state=call.data.get("expected_state", ""),
             expected_sequence=int(call.data.get("expected_sequence") or 0),

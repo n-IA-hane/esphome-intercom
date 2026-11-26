@@ -36,10 +36,14 @@ def normalize_parking_config(value):
             or any(value.casefold().startswith("*8") for value in (access, *slots))):
         raise ValueError("Choose a parking access code and up to 100 distinct slots")
     result = {"access": access, "slots": list(slots)}
-    for name, default in (("timeout", 180), ("return_timeout", 30)):
+    for name, default in (("timeout", 180), ("return_timeout", None)):
         number = value.get(name, default)
-        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or not 1 <= number <= 3600:
-            raise ValueError("Parking and return timeouts must be between 1 and 3600 seconds")
+        if name == "return_timeout" and number is None:
+            result[name] = None
+            continue
+        minimum = 0 if name == "return_timeout" else 1
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or not minimum <= number <= 3600:
+            raise ValueError("Parking residence is 1..3600 seconds; return ringing is 0..3600 or inherited")
         result[name] = number
     for name in ("return_destination", "hold_media"):
         item = value.get(name, "")

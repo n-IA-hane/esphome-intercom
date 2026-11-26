@@ -101,6 +101,19 @@ def test_trunk_rename_does_not_change_identity_or_selection(hass, catalog):
     assert entry_default_trunk(catalog, entry_trunk_configs(catalog)) == "home"
 
 
+async def test_public_named_trunk_destination_resolves_for_an_account(hass, catalog):
+    from custom_components.voip_stack.endpoint_routing import ha_router_decision
+    from custom_components.voip_stack.router import RouteAction, RouteReason
+
+    await async_start_sip_trunk(hass, local_ip="127.0.0.1")
+    try:
+        decision = ha_router_decision(hass, "trunk.work.202", [], source_endpoint_id="caller")
+        assert decision.action is RouteAction.TRUNK and decision.trunk_id == "work"
+        assert decision.target == "202" and decision.reason is RouteReason.EXPLICIT_ROUTE
+    finally:
+        await async_stop_sip_trunk(hass)
+
+
 class Registrar(asyncio.DatagramProtocol):
     """Independent digest oracle with a real UDP REGISTER exchange."""
     def __init__(self):
@@ -533,39 +546,94 @@ async def test_startup_heals_saved_deleted_default_without_selecting_survivor(ha
         await async_stop_sip_trunk(hass)
 
 
-async def test_first_trunk_is_default_without_toggle_second_trunk_offers_choice(hass,catalog,registrar,monkeypatch):
+@pytest.mark.parametrize("stored_empty_default", [False, True])
+@pytest.mark.parametrize("make_default", [False, True])
+async def test_native_first_trunk_offers_default_choice_and_persists_it(
+    hass, catalog, registrar, monkeypatch, stored_empty_default, make_default,
+):
     from custom_components.voip_stack import trunk_flow
+    from homeassistant.helpers import issue_registry as ir
+
     peer,port=registrar
     for record in tuple(catalog.subentries.values()):
         hass.config_entries.async_remove_subentry(catalog,record.subentry_id)
-    hass.config_entries.async_update_entry(catalog,data={'default_trunk_id':''})
+    hass.config_entries.async_update_entry(
+        catalog, data={'default_trunk_id': ''} if stored_empty_default else {},
+    )
     catalog.runtime_data.trunk_configs={}
     catalog.runtime_data.default_trunk_id=''
     monkeypatch.setattr(trunk_flow,'async_advertise_host',AsyncMock(return_value='127.0.0.1'))
     hass.config.components.update({'assist_pipeline','ffmpeg','http','lovelace','media_source','network'})
     prepare_frontend_dependency(hass)
     first=await hass.config_entries.subentries.async_init((catalog.entry_id,'trunk'),context={'source':'user'})
-    assert 'make_default' not in first['data_schema'].schema
+    assert 'make_default' in first['data_schema'].schema
+    assert first['data_schema']({'name': 'First'})['make_default'] is True
     first=await hass.config_entries.subentries.async_configure(first['flow_id'],{
-        'name':'First','trunk_enabled':True,'trunk_register':True})
+        'name':'First','trunk_enabled':True,'trunk_register':True,'make_default':make_default})
     result=await hass.config_entries.subentries.async_configure(first['flow_id'],{
         'trunk_server':'127.0.0.1','trunk_port':port,'trunk_username':'ha','trunk_inbound_default_target':'Kitchen','trunk_password':'test-only'})
     identity=result['data']['trunk_id']
     try:
         await hass.async_block_till_done()
-        assert catalog.data['default_trunk_id']==identity
-        assert catalog.runtime_data.default_trunk_id==identity
+        selected = identity if make_default else ''
+        assert catalog.data['default_trunk_id']==selected
+        assert catalog.runtime_data.default_trunk_id==selected
+        assert entry_default_trunk(catalog, entry_trunk_configs(catalog)) == selected
+        issue = ir.async_get(hass).async_get_issue('voip_stack', 'default_trunk_missing')
+        assert (issue is None) is make_default
         assert sip_trunk(hass,identity).ready
         record=next(s for s in catalog.subentries.values() if s.data['trunk_id']==identity)
         edit=await hass.config_entries.subentries.async_init((catalog.entry_id,'trunk'),
             context={'source':'reconfigure','subentry_id':record.subentry_id})
-        assert 'make_default' not in edit['data_schema'].schema
+        assert 'make_default' in edit['data_schema'].schema
+        assert edit['data_schema']({'name': 'First'})['make_default'] is make_default
         hass.config_entries.subentries.async_abort(edit['flow_id'])
         second=await hass.config_entries.subentries.async_init((catalog.entry_id,'trunk'),context={'source':'user'})
         assert 'make_default' in second['data_schema'].schema
         assert second['data_schema']({'name':'Second'})['make_default'] is False
         hass.config_entries.subentries.async_abort(second['flow_id'])
-        assert catalog.data['default_trunk_id']==identity
+        assert catalog.data['default_trunk_id']==selected
+    finally:
+        await async_stop_sip_trunk(hass)
+
+
+@pytest.mark.parametrize("edited,sole", [("home", True), ("home", False), ("work", False)])
+async def test_native_trunk_uncheck_clears_only_its_own_default(hass, catalog, monkeypatch, edited, sole):
+    from custom_components.voip_stack import peer_snapshot, trunk_flow
+
+    if sole:
+        work = next(item for item in catalog.subentries.values() if item.data['trunk_id'] == 'work')
+        hass.config_entries.async_remove_subentry(catalog, work.subentry_id)
+        catalog.runtime_data.trunk_configs = entry_trunk_configs(catalog)
+    monkeypatch.setattr(trunk_flow, 'async_advertise_host', AsyncMock(return_value='127.0.0.1'))
+    monkeypatch.setattr(peer_snapshot, 'async_advertise_host', AsyncMock(return_value='127.0.0.1'))
+    hass.config.components.update({'assist_pipeline','ffmpeg','http','lovelace','media_source','network'})
+    prepare_frontend_dependency(hass)
+    await async_start_sip_trunk(hass, local_ip='127.0.0.1')
+    record = next(item for item in catalog.subentries.values() if item.data['trunk_id'] == edited)
+    try:
+        form = await hass.config_entries.subentries.async_init(
+            (catalog.entry_id, 'trunk'),
+            context={'source': 'reconfigure', 'subentry_id': record.subentry_id},
+        )
+        assert 'make_default' in form['data_schema'].schema
+        assert form['data_schema']({'name': edited})['make_default'] is (edited == 'home')
+        form = await hass.config_entries.subentries.async_configure(form['flow_id'], {
+            'name': record.title, 'trunk_enabled': True, 'trunk_register': False, 'make_default': False,
+        })
+        result = await hass.config_entries.subentries.async_configure(form['flow_id'], {
+            key: record.data[key] for key in (
+                'trunk_server', 'trunk_allowed_ips', 'trunk_inbound_default_target',
+            )
+        })
+        assert result['type'] == 'abort' and result['reason'] == 'reconfigure_successful', result
+        await hass.async_block_till_done()
+        expected = '' if edited == 'home' else 'home'
+        assert catalog.data['default_trunk_id'] == expected
+        assert catalog.runtime_data.default_trunk_id == expected
+        assert entry_default_trunk(catalog, entry_trunk_configs(catalog)) == expected
+        assert sip_trunk(hass, edited).ready
+        assert catalog.subentries[record.subentry_id].data['trunk_id'] == edited
     finally:
         await async_stop_sip_trunk(hass)
 
@@ -676,7 +744,10 @@ async def test_trunk_rejects_invalid_outbound_media_address(hass, catalog, addre
 
 
 @pytest.mark.parametrize("register", [False, True])
-async def test_native_first_trunk_keeps_client_ready_with_eager_entry_listener(hass, catalog, registrar, monkeypatch, register):
+@pytest.mark.parametrize("make_default", [False, True])
+async def test_native_first_trunk_keeps_client_ready_with_eager_entry_listener(
+    hass, catalog, registrar, monkeypatch, register, make_default,
+):
     from custom_components.voip_stack import trunk_flow
     from custom_components.voip_stack.trunk_runtime import async_reconcile_trunks
 
@@ -694,6 +765,7 @@ async def test_native_first_trunk_keeps_client_ready_with_eager_entry_listener(h
             (catalog.entry_id, "trunk"), context={"source": "user"})
         form = await hass.config_entries.subentries.async_configure(form["flow_id"], {
             "name": "First live trunk", "trunk_enabled": True, "trunk_register": register,
+            "make_default": make_default,
         })
         result = await hass.config_entries.subentries.async_configure(form["flow_id"], {
             "trunk_server": "127.0.0.1",
@@ -707,6 +779,8 @@ async def test_native_first_trunk_keeps_client_ready_with_eager_entry_listener(h
         client = sip_trunk(hass, identity)
         assert client is not None and client.ready
         assert catalog.runtime_data.sip.component(f"pending_trunk:{identity}") is None
+        assert catalog.data["default_trunk_id"] == (identity if make_default else "")
+        assert catalog.runtime_data.default_trunk_id == (identity if make_default else "")
     finally:
         unsubscribe()
         await async_stop_sip_trunk(hass)

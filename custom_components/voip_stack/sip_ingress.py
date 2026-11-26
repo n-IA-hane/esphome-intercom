@@ -118,15 +118,30 @@ class SipIngressPolicy:
         from .core.sip import make_tag
         from .core.sip_auth import parse_digest_challenge
         from .endpoint_lifecycle import call_registry
-        from .runtime_data import endpoint_directory
+        from .runtime_data import endpoint_directory, runtime_data, sip_trunks
         from .sip_listener import SipRequestResult
         from .sip_registrar import REALM
+        from .trunk_policy import authenticated_inbound_trunk
 
+        runtime = runtime_data(self.hass)
+        configs = runtime.trunk_configs if runtime is not None else {}
+        auth = parse_digest_challenge(request.header("Authorization"))
+        local_digest = auth.get("realm") == REALM
         try:
             classified = self.classify(invite)
         except ValueError:
             classified = None
-        if classified is not None and invite.received_via_trunk and classified.received_via_trunk:
+        # A bound peer proves its account before source-address or owned-flow
+        # trust can admit its presented caller. A shared NAT address is not the
+        # peer account, and an explicit local Digest attempt cannot be ignored.
+        bound_source = any(
+            configs.get(identity, {}).get("trunk_inbound_account")
+            and (identity == invite.trunk_id if invite.received_via_trunk else
+                 client.accepts_inbound_source(invite.source_host, invite.source_port, transport))
+            for identity, client in sip_trunks(self.hass).items()
+        )
+        if (classified is not None and invite.received_via_trunk and classified.received_via_trunk
+                and not local_digest and not bound_source):
             return classified
 
         source = owned_local_call_source(invite, call_registry(self.hass), endpoint_directory(self.hass),
@@ -137,22 +152,34 @@ class SipIngressPolicy:
                            caller_route=source.username or source.name)
 
         if classified is not None and classified.received_via_trunk:
-            if parse_digest_challenge(request.header("Authorization")).get("realm") != REALM:
+            if not local_digest and not bound_source:
                 return classified
-        elif classified is None:
+        elif classified is None and not bound_source:
             # A shared signaling address cannot choose a provider. An account
             # on that address can still prove its own identity using Digest.
-            claimed = self.registrar.accounts.get(invite.caller_uri.user.casefold()) if invite.caller_uri else None
+            claimed = self.registrar.accounts.get(str(auth.get("username") or
+                (invite.caller_uri.user if invite.caller_uri else "")).casefold())
             if not self.registrar.enabled or claimed is None or not claimed.enabled:
                 return SipRequestResult(403, "Ambiguous trunk source", to_tag=make_tag())
         account, challenge, tag = self.registrar.authorize_invite(request, addr, transport)
         if account is None:
             return SipRequestResult(401, "Unauthorized", headers=(("WWW-Authenticate", challenge),), to_tag=tag)
+        try:
+            peer_trunk = authenticated_inbound_trunk(configs, account.username)
+        except ValueError:
+            return SipRequestResult(403, "Invalid incoming trunk account", to_tag=make_tag())
+        if peer_trunk:
+            if invite.caller_uri is None:
+                return SipRequestResult(403, "Forbidden", to_tag=make_tag())
+            return replace(invite, received_via_trunk=True, trunk_id=peer_trunk,
+                           identified_source_endpoint_id="", authenticated_username=account.username,
+                           caller_route=invite.caller_uri.user)
         source = endpoint_directory(self.hass).by_username(account.username)
         if (invite.caller_uri is None or invite.caller_uri.user.casefold() != account.username.casefold()
                 or (source is None and not self.registrar.registered_contacts(account.username))):
             return SipRequestResult(403, "Forbidden", to_tag=make_tag())
-        return replace(invite, identified_source_endpoint_id=source.endpoint_id if source is not None else "",
+        return replace(invite, received_via_trunk=False, trunk_id="",
+                       identified_source_endpoint_id=source.endpoint_id if source is not None else "",
                        authenticated_username=account.username, caller_route=account.username)
 
     def identity_for_invite(self, request: SipMessage, initial: SipInitialInvite) -> SipInitialInvite:

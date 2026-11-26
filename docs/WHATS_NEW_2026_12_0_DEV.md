@@ -139,3 +139,28 @@ The Fanvil hardware check and office cutover remain separate steps.
 
 This release does not include another MWW or acoustic AFE tuning pass. The
 current stable release and existing release tags remain available.
+
+## Ringing policy and BLF consolidation
+
+- General settings store a ringing duration, initially 120 seconds. Existing
+  installations receive that stored value only after a successful account
+  migration. Missing account/group values inherit it; explicit zero is unlimited.
+- Existing group 30-second, queue 20-second and parking return 30-second values
+  survive. No-answer destinations no longer require a separate account timeout.
+  Without a fallback, deadline expiry ends explicitly with `no_answer`.
+- Routing and forwarding actions can override the selected attempt's duration.
+  Automation-originated calls inherit the same policy when `answer_timeout` is
+  omitted. An explicit action duration is an override; each later forward has
+  its own resolved budget. A final answer ends ringing before media preparation.
+- Maintained ESP packages declare a configurable 120-second outgoing limit.
+  The P4 phone retains its separate 30-second incoming limit. REFER uses the
+  configured outgoing budget, including unlimited zero.
+- The shared SIP event budget is 2048, with 132 per authenticated principal.
+  Repeated refusals advertise 5/10/20/40/60-second retry delays. Idle leases use
+  timer handles, and renewal avoids a full installation quota scan.
+- BLF lease caps remain 60 seconds by default; Reconfigure can explicitly select
+  up to 3600 seconds. This controls renewal traffic and full-snapshot recovery,
+  independently of SIP registration and phone availability.
+
+See [ringing policy](RINGING_POLICY.md) and
+[notification recovery](NOTIFY_TRANSPORT_RECOVERY.md) for configuration details.

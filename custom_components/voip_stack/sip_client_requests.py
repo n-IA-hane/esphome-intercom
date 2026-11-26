@@ -159,6 +159,7 @@ class SipDialogRequests:
 
         def owned() -> bool:
             return (not self._closing and not self._closed
+                    and not self.fixed_local_identity
                     and self._dialog_is_current(expected_dialog)
                     and self.dialog.peer_supports_from_change
                     and (is_current is None or is_current()))

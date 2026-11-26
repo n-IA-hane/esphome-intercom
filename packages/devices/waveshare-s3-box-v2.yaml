@@ -94,6 +94,7 @@ substitutions:
   firmware_voip_binding:
     voip_stack:
       initial_contact: ${ voip_initial_contact | default('') }
+      calling_timeout: ${ voip_calling_timeout | default('120s') }
       task_stacks_in_psram: true
       audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}
       tx_task_stack_size: ${voip_tx_task_stack_size}

@@ -1632,8 +1632,9 @@ have a native VoIP trigger or a unique outgoing call in its execution; it does
 not fall back to the configured preferred phone.
 
 **Timeouts and failures:** `answer_timeout` is the maximum wait for the called
-party's final answer (1-120 seconds, default 30). Ringing and early media do not
-start TTS. Busy, rejection, transport failure and timeout fail the Call action,
+party's final answer on the initial attempt (0-3600 seconds; omitted inherits
+the account and PBX value, zero is unlimited). A later forward selects its own
+attempt budget. Ringing and early media do not start TTS. Busy, rejection, transport failure and timeout fail the Call action,
 release its resources and stop the sequence. TTS `timeout` covers synthesis and
 transmission (default 120 seconds); failure or cancellation closes the outgoing
 call. Remote hangup stops the active operation and cleans up the session.

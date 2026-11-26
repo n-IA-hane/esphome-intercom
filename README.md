@@ -33,6 +33,10 @@ rules, voicemail, transfers, parking, pickup, ring groups and audio conferences.
 Connect a provider trunk when you want an outside line. Add native HA automations
 when calls should follow presence, office hours, doorbell events or keypad input.
 
+Set a shared ringing duration in Reconfigure, then let accounts and groups
+inherit it or choose explicit overrides. The [ringing policy guide](docs/RINGING_POLICY.md)
+explains the initial 120-second setting, unlimited ringing and no-answer routes.
+
 The house can transfer callers, take messages and keep someone waiting while
 you move to another room. **A decent improvement over shouting "IT'S FOR YOU"
 through three walls.**
@@ -419,6 +423,12 @@ configured HA route; S3 does not need an H.264 decoder for that arrangement.
 Use the [trunk guide](docs/SIP_TRUNK.md) for credentials, line selection and
 external-call access, and the [video compatibility matrix](docs/SIP_VIDEO.md)
 for codecs and endpoint limits.
+
+[Caller identity and calls between PBXs](docs/TRUNK_CALLER_IDENTITY.md) covers
+keeping an extension or public direct number, forcing a generic trunk caller,
+and connecting two HA instances directly or through another SIP PBX. Existing
+SIP accounts, named trunks and native HA range-routing automations own these
+paths.
 
 ## Installation
 

@@ -12,7 +12,7 @@ from .core.codec_policy import CodecPolicy
 from .config_flow import TrunkFormMixin, _disabled_trunk_data
 from .peer_snapshot import async_advertise_host
 from .runtime_data import runtime_data, sip_trunk
-from .trunk_config import CONF_DEFAULT_TRUNK, entry_trunk_configs, trunk_subentries
+from .trunk_config import CONF_DEFAULT_TRUNK, entry_default_trunk, entry_trunk_configs, trunk_subentries
 from .trunk_policy import validate_static_trunk_sources
 from .trunk_runtime import create_trunk_client, trunk_client_config, trunk_has_calls
 
@@ -40,37 +40,32 @@ class TrunkSubentryFlowHandler(TrunkFormMixin, ConfigSubentryFlow):
 
     async def async_step_user(self, user_input=None):
         entry, previous = self._current_entry_data()
+        records = trunk_subentries(entry)
+        suggested_default = not records or entry_default_trunk(entry, entry_trunk_configs(entry)) == self._identity
         errors = {}
         if user_input is not None:
             self._name = str(user_input["name"]).strip()
             if not self._name or len(self._name) > 128:
                 errors["name"] = "invalid_name"
             elif any(item.title.casefold() == self._name.casefold() and item is not self._current
-                     for item in trunk_subentries(entry)):
+                     for item in records):
                 errors["name"] = "duplicate_name"
             else:
                 self._trunk_register = bool(user_input["trunk_register"])
-                self._make_default = bool(user_input.get("make_default", False))
+                self._make_default = bool(user_input.get("make_default", suggested_default))
                 if not user_input.get("trunk_enabled", True):
                     return self._store_entry(_disabled_trunk_data({}, previous))
                 return await self.async_step_trunk()
-        records = trunk_subentries(entry)
-        show_default = bool(records) and (
-            self._current is None or len(records) > 1
-            or entry.data.get(CONF_DEFAULT_TRUNK) != self._identity
-        )
         return self.async_show_form(step_id="user", errors=errors, data_schema=vol.Schema({
             vol.Required("name", default=previous.get("name", "")): TextSelector(),
             vol.Required("trunk_enabled", default=previous.get("trunk_enabled", True)): BooleanSelector(),
             vol.Required("trunk_register", default=previous.get("trunk_register", True)): BooleanSelector(),
-            **({vol.Required("make_default", default=entry.data.get(CONF_DEFAULT_TRUNK) == self._identity): BooleanSelector()}
-               if show_default else {}),
+            vol.Required("make_default", default=suggested_default): BooleanSelector(),
         }))
 
     def _store_entry(self, data):
         entry = self._get_entry()
         data = {**normalized_trunk_config(data), "trunk_id": self._identity, "name": self._name}
-        self._make_default = self._make_default or not trunk_subentries(entry)
         runtime = runtime_data(self.hass)
         if self._candidate is not None and runtime is not None and runtime.sip is not None:
             # Entry listeners may reconcile eagerly while HA persists the result.
@@ -157,9 +152,14 @@ class TrunkSubentryFlowHandler(TrunkFormMixin, ConfigSubentryFlow):
             if entry is not None:
                 from .trunk_runtime import async_reconcile_trunks
 
-                if self._make_default and self._identity in entry_trunk_configs(entry):
+                configs = entry_trunk_configs(entry)
+                if self._identity in configs and (
+                    self._make_default or entry_default_trunk(entry, configs) == self._identity
+                ):
+                    # Persist an empty selection even for a sole trunk; an
+                    # absent key retains the legacy implicit default.
                     self.hass.config_entries.async_update_entry(
-                        entry, data={**entry.data, CONF_DEFAULT_TRUNK: self._identity}
+                        entry, data={**entry.data, CONF_DEFAULT_TRUNK: self._identity if self._make_default else ""}
                     )
 
                 # Finish the validated client's ownership handoff after HA has

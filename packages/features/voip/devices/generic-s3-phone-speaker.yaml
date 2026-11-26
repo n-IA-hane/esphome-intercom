@@ -1,6 +1,7 @@
 # Complete telephone binding and local controls, without a voice/media coordinator.
 voip_stack:
   initial_contact: ${ voip_initial_contact | default('') }
+  calling_timeout: ${ voip_calling_timeout | default('120s') }
   task_stacks_in_psram: true
   buffers_in_psram: true
   audio:

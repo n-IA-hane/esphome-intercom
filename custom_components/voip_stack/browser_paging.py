@@ -19,6 +19,7 @@ from .endpoint_registry import EndpointBusyError
 from .endpoint_session import CleanupStage
 from .ring_group import endpoint_preflight_disposition
 from .roster import RosterEntry
+from .ringing_policy import resolve_ringing_timeout
 from .runtime_data import require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 
@@ -158,6 +159,7 @@ async def async_originate_browser_paging(job, endpoint):
                               caller="Announcement", callee=current.name, route_kind="paging",
                               endpoint_id=current.endpoint_id, dest_endpoint_id=current.endpoint_id,
                               session_device_id=current.device_id, application="browser_paging",
+                              application_ringing_owned=True,
                               announcement_id=job.identity, answer_mode="auto", audio_direction="recvonly")
     try:
         if not registry.claim_endpoint(session.call_id, current.endpoint_id, role="destination"):
@@ -179,7 +181,9 @@ async def async_originate_browser_paging(job, endpoint):
         publish_phone_projection(hass, session, current.endpoint_id, direction="incoming",
                                  peer_name="Announcement", audio_direction="recvonly", answer_mode="auto",
                                  announcement_id=job.identity, event_type="ringing")
-        async with asyncio.timeout(float(job.data["answer_timeout"])):
+        timeout = resolve_ringing_timeout(runtime.transport_config, account=current,
+            override=job.data.get("answer_timeout"))
+        async with asyncio.timeout(timeout):
             await media._while_open(application.accepted.wait())
             await media._while_open(playback.wait_ready())
         application.require_current()

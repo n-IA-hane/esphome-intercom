@@ -10,7 +10,7 @@ rules or mailbox. ESP hardware is optional.
 | --- | --- |
 | Add a second provider or external PBX | Integration menu > Add SIP trunk |
 | Choose which line a phone uses | Phone card > Options > Call routing |
-| Send unanswered calls elsewhere | Enable Ringing timeout and choose an outcome |
+| Send unanswered calls elsewhere | Choose a no-answer outcome; inherit or override the PBX duration |
 | Take messages when nobody answers | Create the phone's mailbox and no-answer rule; configure a voice for spoken menus |
 | Listen to your messages | Voicemail in the HA phone card, or dial `*97` |
 | Continue a conversation on another phone | Park it, then dial its assigned slot |
@@ -70,23 +70,23 @@ picker. This includes ESP mirror cards: the policy is stored in HA.
 ![Phone options and expanded call-routing settings](images/phone-cards/softphone-routing.png)
 
 The screenshot shows the available routing controls before a timeout is enabled.
-Enable **Ringing timeout** to choose how long this phone rings and what happens
-afterwards. The outgoing-line selector chooses a specific trunk or follows the
+Use **Override PBX ringing limit** for a phone-specific duration, or inherit
+the PBX setting. The no-answer outcome can be selected independently. The outgoing-line selector chooses a specific trunk or follows the
 integration default. The Save button becomes available when you edit the rule.
 
 For example, to let Kitchen ring for 20 seconds and then take a message:
 
 1. Enable Kitchen's mailbox as described below.
-2. Enable **Ringing timeout** and enter **20 seconds**.
+2. Enable **Override PBX ringing limit** and enter **20 seconds**.
 3. Choose **Voicemail** under **After timeout**.
 4. Leave the mailbox destination empty to use Kitchen's own mailbox.
 
 Choose **Forward** and another phone name or extension to ring that phone
 instead. Choose **Hang up** to end the attempt. Forwarding every incoming call,
 forwarding when busy/DND and forwarding when unavailable are separate rules.
-Leave rules unset if you do not want them. No ringing timeout means no extra
-PBX application deadline; caller cancellation and SIP/network timeouts still
-apply.
+Leave forwarding rules unset if you do not need them. An unset account duration
+inherits the PBX setting; explicit zero is unlimited. Caller cancellation and
+SIP transaction timers remain active. See [ringing policy](RINGING_POLICY.md).
 
 An automation can override these defaults for its own call. A call-control
 action such as Forward or Send to voicemail takes control; an automation that

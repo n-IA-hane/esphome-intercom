@@ -76,4 +76,5 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
         expected_sequence=int(data.get("expected_sequence") or 0),
         **({"control_endpoint_id": endpoint_id} if call.data.get("expected_state") else {}),
         **({"trunk_id": str(data["trunk_id"])} if data.get("trunk_id") else {}),
+        **({"ringing_timeout": data["ringing_timeout"]} if "ringing_timeout" in data else {}),
     )

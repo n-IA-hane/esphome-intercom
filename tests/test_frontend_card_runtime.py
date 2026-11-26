@@ -610,7 +610,7 @@ await routingCard._setPhoneRouting("outbound_trunk", "work");
 assert.deepEqual(JSON.parse(JSON.stringify(routingRequests.pop())), [
   "voip_stack", "set_phone_settings", {{ device_id: "device-kitchen", outbound_trunk: "work" }},
 ]);
-// Enabling a timeout requires an explicit outcome; disabling sends only zero.
+// Explicit zero is unlimited; disabling the override inherits the PBX limit.
 routingCard._ringingDraft = {{ deviceId: "device-kitchen", enabled: true,
   seconds: "25", action: "", destination: "Renamed bedroom" }};
 await routingCard._saveRingingPolicy();
@@ -641,7 +641,16 @@ routingCard._ringingDraft = {{ deviceId: "device-kitchen", enabled: false,
   seconds: "25", action: "forward", destination: "Renamed bedroom" }};
 await routingCard._saveRingingPolicy();
 assert.deepEqual(JSON.parse(JSON.stringify(routingRequests.at(-1))), [
-  "voip_stack", "set_phone_settings", {{ device_id: "device-kitchen", ringing_timeout: 0 }},
+  "voip_stack", "set_phone_settings", {{ device_id: "device-kitchen", ringing_timeout: null,
+    no_answer_action: "forward", no_answer_to: "Renamed bedroom" }},
+]);
+// Zero must survive the public action and must not clear the saved fallback.
+routingCard._ringingDraft = {{ deviceId: "device-kitchen", enabled: true,
+  seconds: "0", action: "forward", destination: "Renamed bedroom" }};
+await routingCard._saveRingingPolicy();
+assert.deepEqual(JSON.parse(JSON.stringify(routingRequests.at(-1))), [
+  "voip_stack", "set_phone_settings", {{device_id: "device-kitchen", ringing_timeout: 0,
+    no_answer_action: "forward", no_answer_to: "Renamed bedroom"}},
 ]);
 const antiAliasPreference = makeCard();
 // Mailbox timeout controls use the same public settings action, including
