@@ -109,12 +109,12 @@
     }
   },
   "build_baseline": {
-    "esphome": "2026.11.0",
+    "esphome": "2026.11.1",
     "esp_idf": "5.5.6",
     "sendspin": "0.9.3",
     "audio_libs": "4.1.0",
     "micro_decoder": "0.4.0",
-    "esphome_revision": "1feda1bcaa861a5f2e933f2c65d599e44f4b132b",
+    "esphome_revision": "3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee",
     "esp_idf_selection": "esphome_recommended",
     "esp_idf_qualification_reference": {
       "repository": "espressif/esp-idf",
@@ -138,8 +138,8 @@
   ],
   "native_provider_baseline": {
     "distribution": "esphome",
-    "version": "2026.11.0",
-    "revision": "1feda1bcaa861a5f2e933f2c65d599e44f4b132b",
+    "version": "2026.11.1",
+    "revision": "3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee",
     "source_policy": "Install complete official ESPHome and follow its recommended ESP-IDF. Recorded component adaptations and build-local official fixes are explicit temporary exceptions; qualification revisions do not select the framework."
   },
   "retired_local_providers": [

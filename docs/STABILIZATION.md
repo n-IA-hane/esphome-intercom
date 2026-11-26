@@ -25,9 +25,9 @@ package, qualification and archive arguments. Do not substitute a successful
 run for an older commit or a different source channel. Passing software checks
 does not replace the physical audio, display and teardown checks below.
 
-The public firmware profiles use the stable ESPHome 2026.11.0 builder.
+The public firmware profiles use the stable ESPHome 2026.11.1 builder.
 Qualification tooling pins its official source revision,
-`1feda1bcaa861a5f2e933f2c65d599e44f4b132b`, in
+`3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee`, in
 `requirements-firmware-test.txt`. Use a profile's existing YAML in Device
 Builder. The shared packages select the additional components it needs.
 

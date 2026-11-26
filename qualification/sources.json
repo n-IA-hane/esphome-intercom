@@ -37,8 +37,8 @@
   "official_sources": {
     "esphome": {
       "repository": "esphome/esphome",
-      "revision": "1feda1bcaa861a5f2e933f2c65d599e44f4b132b",
-      "version": "2026.11.0"
+      "revision": "3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee",
+      "version": "2026.11.1"
     },
     "home_assistant_development": {
       "repository": "home-assistant/core",

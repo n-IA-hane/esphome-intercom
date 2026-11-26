@@ -10,7 +10,7 @@ import sys
 
 import esphome
 
-ESPHOME_REVISION = "1feda1bcaa861a5f2e933f2c65d599e44f4b132b"
+ESPHOME_REVISION = "3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee"
 
 
 def source_identity() -> dict:
