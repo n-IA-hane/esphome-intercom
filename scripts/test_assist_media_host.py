@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 
 from official_component_fixtures import verified_component_directory
 ROOT = Path(__file__).resolve().parents[1]
-ESPHOME_REVISION = "1feda1bcaa861a5f2e933f2c65d599e44f4b132b"
+ESPHOME_REVISION = "3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee"
 DECODER_SOURCES = (
     "audio_decoder", "audio_reader", "decoder_source", "md_transfer_buffer", "ring_buffer", "types",
 )

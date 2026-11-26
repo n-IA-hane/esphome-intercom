@@ -1,1 +1,1 @@
-esphome @ git+https://github.com/esphome/esphome.git@1feda1bcaa861a5f2e933f2c65d599e44f4b132b
+esphome @ git+https://github.com/esphome/esphome.git@3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee
