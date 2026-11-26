@@ -484,11 +484,11 @@ class EndpointRegistry:
         )
 
     def _replace_runtime(
-        self, endpoint: PhoneEndpoint, **changes: object
+        self, endpoint: PhoneEndpoint, *, active_call_id: str
     ) -> PhoneEndpoint:
-        updated = replace(endpoint, **changes)
+        """Replace a call claim without changing any indexed identity field."""
+        updated = replace(endpoint, active_call_id=active_call_id)
         self._endpoints[_key(endpoint.endpoint_id)] = updated
-        self._rebuild_indexes()
         self._emit(
             EndpointRegistryEvent(
                 EndpointRegistryEventType.UPDATED,

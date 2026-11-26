@@ -167,6 +167,21 @@ def phone_subentry_by_endpoint_id(
     entry: ConfigEntry, endpoint_id: str
 ) -> ConfigSubentry | None:
     wanted = str(endpoint_id or "").strip().casefold()
+    runtime = getattr(entry, "runtime_data", None)
+    registry = getattr(runtime, "endpoints", None)
+    if registry is not None:
+        endpoint = registry.get(endpoint_id)
+        canonical_id = endpoint.endpoint_id if endpoint is not None else endpoint_id
+        subentry_id = registry.subentry_ids.get(canonical_id)
+        subentry = entry.subentries.get(subentry_id)
+        if (
+            subentry is not None
+            and subentry.subentry_type == PHONE_SUBENTRY_TYPE
+            and phone_endpoint_id(subentry).casefold() == wanted
+        ):
+            return subentry
+    # Draft configuration and setup can precede the runtime index. Read the
+    # canonical subentries in that case, including edits awaiting registry sync.
     return next(
         (
             subentry

@@ -391,21 +391,21 @@ def websocket_subscribe_ha_softphone_state(
     @callback
     def forward_projection(change, _context=None):
         if change.get("endpoint_id") == requested_endpoint and readable():
-            state = _ha_softphone_state(hass, requested_endpoint)
+            state = None
             previous_calls = (change.get("previous") or {}).get("calls", ())
             occurrence = change.get("call") or {}
-            if not (change.get("phone") or {}).get("calls") and state["state"] in {"idle", "unavailable"}:
+            if not (change.get("phone") or {}).get("calls"):
                 ended = next((call for call in previous_calls if call["call_id"] == occurrence.get("call_id")),
                              previous_calls[0] if len(previous_calls) == 1 else None)
                 if ended is not None:
-                    # A native SIP participant has no browser runtime cache.
-                    # Scope its complete idle snapshot to the actual prior call
-                    # so the frontend can retain its stale-terminal guards.
-                    state["call_id"] = ended["call_id"]
-                    state["generation"] = ended["generation"]
+                    # Carry only the ended occurrence. The authorized client
+                    # boundary re-reads current ownership before using it.
+                    state = {"state": "idle", "call_id": ended["call_id"],
+                             "generation": ended["generation"]}
                     if occurrence.get("call_id") == ended["call_id"]:
-                        state["sequence"] = occurrence.get("sequence", state["sequence"])
-                        state["revision"] = occurrence.get("revision", state["revision"])
+                        for key in ("sequence", "revision"):
+                            if key in occurrence:
+                                state[key] = occurrence[key]
             emit(state)
     unsubscribers.append(hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, forward_state))
     try:

@@ -8,7 +8,7 @@ import logging
 from homeassistant.core import callback
 from homeassistant.exceptions import ServiceValidationError
 
-from .dialog_info import snapshot_all
+from .dialog_info import snapshot, snapshot_all
 from .endpoint_registry import EndpointRegistryEvent, EndpointRegistryEventType
 from .endpoint_session import SessionPhase
 from .runtime_data import require_runtime_data
@@ -98,60 +98,81 @@ def phone_states(hass, *, dialogs=None):
     entry = config_entry(hass)
     paging = paging_group_memberships(entry) if entry is not None else None
     dialogs = snapshot_all(runtime) if dialogs is None else dialogs
-    result = {}
-    for endpoint in runtime.endpoints.endpoints:
-        states = tuple(
-            item
-            for item in dialogs.get(endpoint.endpoint_id, ())
-            if item.state != "terminated"
+    return {
+        endpoint.endpoint_id: _phone_projection(hass, runtime, endpoint, dialogs, paging)
+        for endpoint in runtime.endpoints.endpoints
+    }
+
+
+def phone_state(hass, endpoint_id, *, dialogs=None):
+    """Project one current endpoint without building the rest of the roster."""
+    runtime = require_runtime_data(hass)
+    endpoint = runtime.endpoints.get(endpoint_id)
+    if endpoint is None:
+        return None
+    from .paging_config import paging_group_memberships
+    from .store import config_entry
+
+    entry = config_entry(hass)
+    paging = paging_group_memberships(entry) if entry is not None else None
+    if dialogs is None:
+        dialogs = {endpoint.endpoint_id: snapshot(runtime, endpoint.endpoint_id)}
+    return _phone_projection(hass, runtime, endpoint, dialogs, paging)
+
+
+def _phone_projection(hass, runtime, endpoint, dialogs, paging):
+    """Use the same detached DTO for single-phone and full-roster readers."""
+    states = tuple(
+        item
+        for item in dialogs.get(endpoint.endpoint_id, ())
+        if item.state != "terminated"
+    )
+    ringing = any(
+        item.state == "early" and item.direction == "recipient" for item in states
+    )
+    confirmed = tuple(item for item in states if item.state == "confirmed")
+    state = (
+        "ringing"
+        if ringing
+        else "held"
+        if confirmed and all(item.held for item in confirmed)
+        else "in_call"
+        if confirmed
+        else "calling"
+        if states
+        else "idle"
+        if endpoint.availability.value == "available"
+        else "unavailable"
+    )
+    calls = []
+    for item in states:
+        value = asdict(item)
+        value["sip_call_id"] = value.pop("call_id")
+        value["call_id"] = value.pop("session_id")
+        value["pickup_available"] = (
+            item.state == "early" and item.direction == "recipient"
         )
-        ringing = any(
-            item.state == "early" and item.direction == "recipient" for item in states
-        )
-        confirmed = tuple(item for item in states if item.state == "confirmed")
-        state = (
-            "ringing"
-            if ringing
-            else "held"
-            if confirmed and all(item.held for item in confirmed)
-            else "in_call"
-            if confirmed
-            else "calling"
-            if states
-            else "idle"
-            if endpoint.availability.value == "available"
-            else "unavailable"
-        )
-        calls = []
-        for item in states:
-            value = asdict(item)
-            value["sip_call_id"] = value.pop("call_id")
-            value["call_id"] = value.pop("session_id")
-            value["pickup_available"] = (
-                item.state == "early" and item.direction == "recipient"
-            )
-            calls.append(value)
-        from .sip_account_identity import ha_phone_device_fields
-        result[endpoint.endpoint_id] = {
-            "schema_version": 1,
-            "endpoint_id": endpoint.endpoint_id,
-            **ha_phone_device_fields(endpoint),
-            'account_username': endpoint.username,
-            "name": endpoint.name,
-            "extension": endpoint.extension,
-            "kind": endpoint.kind.value,
-            "availability": endpoint.availability.value,
-            "dnd": endpoint.dnd,
-            "queues": list(endpoint.queues),
-            "ring_group": endpoint.ring_group,
-            **({"paging_groups": list(paging.get(endpoint.endpoint_id, ()))} if paging is not None else {}),
-            "queue_states": (runtime.queues.phone_summary(endpoint.endpoint_id)
-                             if getattr(runtime, "queues", None) is not None else []),
-            "state": state,
-            "calls": calls,
-            "mailbox": mailbox_state(hass, endpoint.endpoint_id),
-        }
-    return result
+        calls.append(value)
+    from .sip_account_identity import ha_phone_device_fields
+    return {
+        "schema_version": 1,
+        "endpoint_id": endpoint.endpoint_id,
+        **ha_phone_device_fields(endpoint),
+        'account_username': endpoint.username,
+        "name": endpoint.name,
+        "extension": endpoint.extension,
+        "kind": endpoint.kind.value,
+        "availability": endpoint.availability.value,
+        "dnd": endpoint.dnd,
+        "queues": list(endpoint.queues),
+        "ring_group": endpoint.ring_group,
+        **({"paging_groups": list(paging.get(endpoint.endpoint_id, ()))} if paging is not None else {}),
+        "queue_states": (runtime.queues.phone_summary(endpoint.endpoint_id)
+                         if getattr(runtime, "queues", None) is not None else []),
+        "state": state,
+        "calls": calls,
+        "mailbox": mailbox_state(hass, endpoint.endpoint_id),
+    }
 
 
 async def async_get_phone_state(call):
@@ -159,7 +180,7 @@ async def async_get_phone_state(call):
 
     endpoint = resolve_phone(call.hass, call.data["device_id"])
     await async_require_service_endpoint_read(call.hass, call, endpoint)
-    return phone_states(call.hass)[endpoint.endpoint_id]
+    return phone_state(call.hass, endpoint.endpoint_id)
 
 
 class PhoneStateObserver:

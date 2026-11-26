@@ -273,12 +273,12 @@ def _account_browser_media(runtime, registry, endpoint_id, call_id):
 def _account_shared_projection(hass, endpoint):
     if endpoint is None or endpoint.kind is not EndpointKind.SIP_ACCOUNT:
         return None
-    from .phone_state import phone_states
+    from .phone_state import phone_state
     from homeassistant.exceptions import ServiceValidationError
     try:
         # A commit may precede the observer's queued refresh. Read its same
         # pure projection from current legs so a losing browser cannot linger.
-        return phone_states(hass).get(endpoint.endpoint_id)
+        return phone_state(hass, endpoint.endpoint_id)
     except ServiceValidationError:
         return None
 
