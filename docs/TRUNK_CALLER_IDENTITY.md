@@ -150,6 +150,10 @@ No second prefix routing table is introduced. These native automations are
 the range-routing rules, and disabling one disables that rule. For an extension
 plan that must never fall through to a provider, leave the default outgoing
 trunk unset and select trunks explicitly in the relevant automations. A
+trunk's native configuration exposes **Use as the default outgoing trunk**,
+including for a sole trunk; uncheck the currently selected line. The existing
+missing-default warning is still shown, but does not block explicit named
+routes or select another line automatically. A
 disabled automation does not reserve its former range. A bound incoming trunk
 set to `reject` returns 404 for an unresolved destination instead of silently
 using a fallback. If a matching active route decision is requested but never

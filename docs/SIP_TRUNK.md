@@ -29,8 +29,9 @@ such as `192.0.2.45/32`. Choose its **Incoming call handling** and **Fallback
 destination**. Use an IPv6 `/128` for one IPv6 device, or a restricted subnet
 only when all its signaling peers should share that trunk's routing policy.
 This works with a local device without a provider subscription. The first
-trunk added also becomes the outgoing default; check the default when adding
-a provider later.
+trunk proposes becoming the outgoing default. Clear **Use as the default
+outgoing trunk** to keep calls on explicitly selected routes instead; check
+the default when adding a provider later.
 
 A directory contact remains a destination you can dial. Its address or
 display name does not authorize incoming calls. Existing configured trunks
@@ -89,10 +90,11 @@ it; the main integration's Reconfigure flow no longer contains provider settings
 
 The screenshot shows adding an additional line to an existing installation.
 Give the line a name, such as Home or Work, and choose **Register the trunk** if
-the provider requires account registration. The first trunk automatically becomes
-the outgoing default, without a default-selection switch. When adding another
-trunk, the form offers **Use as the default outgoing trunk**. The following step
-asks for trunk details:
+the provider requires account registration. **Use as the default outgoing
+trunk** is initially checked for the first trunk and is editable for every
+line. Unchecking the current default clears that selection; editing a different
+line unchecked leaves the selected default alone. The following step asks for
+trunk details:
 
 - transport: `udp` or `tcp`; `tls` is available for registered trunks
 - server, port and optional domain
