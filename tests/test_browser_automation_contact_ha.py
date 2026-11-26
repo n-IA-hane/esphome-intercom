@@ -24,7 +24,7 @@ from .test_automation_originate_ha import lab as lab, assert_call_resources_rele
 pytestmark = pytest.mark.ha
 
 
-@pytest.mark.parametrize("handled", [False, True])
+@pytest.mark.parametrize("handled", [False, True, "video"])
 async def test_account_calls_automation_contact_then_accepts_an_independent_incoming_call(
     lab, monkeypatch, unused_tcp_port_factory, handled,
 ):
@@ -44,7 +44,7 @@ async def test_account_calls_automation_contact_then_accepts_an_independent_inco
     lab.runtime.transport_config.update(sip_port=port, sip_registrar_enabled=True)
     caller = PhoneEndpoint(endpoint_id="sip:account-caller", name="Account caller",
         username="account-caller", device_id="account-caller-device", kind=EndpointKind.SIP_ACCOUNT,
-        availability="available", capabilities=frozenset({"audio", "dtmf"}))
+        availability="available", capabilities=frozenset({"audio", "dtmf", "video"}))
     next_caller = PhoneEndpoint(endpoint_id="next-caller", name="Next caller",
         device_id="next-caller-device", kind=EndpointKind.BROWSER,
         availability="available", capabilities=frozenset({"audio", "dtmf"}))
@@ -61,6 +61,11 @@ async def test_account_calls_automation_contact_then_accepts_an_independent_inco
     bindings = lab.runtime.ha_bindings = HaCardBindings(lab.hass, entry, lab.runtime, lambda _changed: None)
     await bindings.async_start()
     assert bindings.has_binding(caller.endpoint_id)
+    if handled == "video":
+        from custom_components.voip_stack.const import CONF_SIP_VIDEO, CONF_VIDEO_CAMERA_SEND
+        lab.hass.config_entries.async_update_entry(entry, data={**entry.data,
+            CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
+        lab.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
     contact = RosterEntry("office-announcements", name="Announcements", ha_bridge=True,
         metadata={"virtual_endpoint": "automation", "automation_timeout": 30})
     lab.roster.append(contact)
@@ -94,7 +99,7 @@ async def test_account_calls_automation_contact_then_accepts_an_independent_inco
     try:
         await lab.hass.services.async_call("voip_stack", "call", {
             "device_id": caller.device_id, "destination": contact.name,
-            "media_client_id": "caller-browser-owner",
+            "media_client_id": "caller-browser-owner", "send_video": handled == "video",
         }, blocking=True)
         await asyncio.wait_for(requested.wait(), 2)
         state = _ha_softphone_state(lab.hass, caller.endpoint_id)
@@ -127,6 +132,15 @@ async def test_account_calls_automation_contact_then_accepts_an_independent_inco
             state = _ha_softphone_state(lab.hass, caller.endpoint_id)
             assert state["state"] == "in_call" and state["direction"] == "outgoing"
             assert not state["can_answer"]
+            if handled == "video":
+                client = lab.calls.sip_client_for(call_id)
+                async with asyncio.timeout(2):
+                    while client.dialog is None:
+                        await asyncio.sleep(.01)
+                assert client.video_formats, "The real caller must offer video"
+                assert client.dialog is not None and client.dialog.video_format is None
+                assert "m=video 0 " in lab.calls.resource_for(call_id, "preanswered")["early_answer_sdp"]
+                assert application.media.invite.video_format is None, "Application media must reflect its actual audio-only answer"
         await lab.hass.services.async_call("voip_stack", "hangup", {
             "device_id": caller.device_id, "call_id": call_id,
         }, blocking=True)

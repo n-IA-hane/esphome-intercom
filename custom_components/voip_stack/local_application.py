@@ -16,7 +16,7 @@ from .endpoint_session import CleanupStage, EndpointCallSession, TerminationInte
 from .inbound_answer import async_commit_runtime_answer
 from .local_call_media import ApplicationCallSource, LocalCallMedia
 from .media_ports import RtpPortReservation, take_delayed_offer_ports
-from .core.sdp import build_answer_directional
+from .core.sdp import RemoteMediaTarget, build_answer_directional, parse_video_sdp
 from .sip_runtime import send_final_response
 
 if TYPE_CHECKING:
@@ -216,6 +216,13 @@ class LocalCallApplication:
                 raise ServiceValidationError(
                     "The caller ended before the announcement could start"
                 )
+            if result.response_sent and parse_video_sdp(answer) is None:
+                # This application's new final answer declined video. Retain
+                # the accepted media contract, not the caller's video offer.
+                # Previously answered/retained video keeps its existing owner.
+                media.invite = replace(media.invite, video_format=None,
+                    local_video_format=None, video_answer_format=None,
+                    **RemoteMediaTarget().as_remote_video_fields())
             self.answered = True
             if preanswered is None:
                 registry.attach_media(

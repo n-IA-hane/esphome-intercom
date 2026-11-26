@@ -25,6 +25,7 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
     playback = BrowserPlayback()
     playback_key = f"browser_playback:{call_id}"
     previous_playback = registry.resource_for(call_id, "browser_playback")
+    playback_replaced = False
     media_key = f"softphone_media_endpoint:{endpoint.endpoint_id}:{call_id}"
     descriptor = None
     committed = False
@@ -96,6 +97,7 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
                               stage=CleanupStage.RESERVATION, generation=session.generation)
         if previous_playback is not None:
             session.release_resource(playback_key, value=previous_playback)
+        playback_replaced = True
         registry.own_resource(call_id, playback_key, playback, playback.close, stage=CleanupStage.MEDIA,
                               generation=session.generation)
         session.update_metadata(endpoint_id=endpoint.endpoint_id, dest_endpoint_id=endpoint.endpoint_id,
@@ -162,7 +164,7 @@ async def forward_application_to_browser(runtime, registry, session, invite, end
                 if session.live:
                     session.release_resource(media_key, value=descriptor)
                     session.release_resource(playback_key, value=playback)
-                    if previous_playback is not None:
+                    if playback_replaced and previous_playback is not None:
                         session.add_resource(playback_key, previous_playback, previous_playback.close, stage=CleanupStage.MEDIA)
                     for key, value in previous_metadata.items():
                         if value is None:

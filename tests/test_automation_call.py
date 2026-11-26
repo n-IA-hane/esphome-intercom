@@ -439,6 +439,40 @@ async def test_dtmf_inter_digit_deadline_resets_and_releases(application, monkey
             await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
 
 
+@pytest.mark.parametrize("failure_stage", ["source", "readiness"])
+async def test_browser_forward_preparation_failure_preserves_original_playback(application, monkeypatch, failure_stage):
+    from types import SimpleNamespace
+    from custom_components.voip_stack import browser_application_handoff as handoff
+    from custom_components.voip_stack.endpoint_session import CleanupStage
+    from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
+
+    app, registry, _peer, _released = application
+    await app.answer()
+    playback = BrowserPlayback()
+    key = f"browser_playback:{app.session.call_id}"
+    registry.own_resource(app.session.call_id, key, playback, playback.close, stage=CleanupStage.MEDIA)
+    target = PhoneEndpoint(endpoint_id="target-browser", name="Target", device_id="target-device", kind="browser")
+    runtime = SimpleNamespace(hass=app.hass, local_ip="127.0.0.1")
+    monkeypatch.setattr(handoff, "require_runtime_data", lambda _h: SimpleNamespace(
+        media=SimpleNamespace(owners_for=lambda _kind: {})))
+    monkeypatch.setattr(handoff, "publish_phone_projection", Mock())
+    if failure_stage == "source":
+        monkeypatch.setattr(handoff.LocalMediaBridge, "prepare", AsyncMock(side_effect=RuntimeError("source media witness")))
+    else:
+        # Use the actual reserved UDP socket path before failing admission.
+        monkeypatch.setattr(BrowserPlayback, "wait_ready", AsyncMock(side_effect=RuntimeError("readiness media witness")))
+    try:
+        with pytest.raises(RuntimeError, match=f"{failure_stage} media witness"):
+            await handoff.forward_application_to_browser(runtime, registry, app.session, app.invite,
+                target, app, accepted_decision={"action": "answer_ha", "endpoint_id": target.endpoint_id})
+        assert registry.resource_for(app.session.call_id, "browser_playback") is playback
+        assert sum(resource.name == key for resource in app.session.resources) == 1
+        assert app.media is not None and not app.media.closed.is_set()
+        assert app.session.live
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
 async def test_local_announcement_decodes_negotiated_rtp_dtmf_once(application):
     app, registry, peer, _released = application
     from custom_components.voip_stack.core.media import negotiator
