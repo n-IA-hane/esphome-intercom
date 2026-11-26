@@ -52,7 +52,7 @@ TRUNK_INBOUND_MODE_DTMF = "dtmf"
 # Version from manifest.json
 _MANIFEST = Path(__file__).parent / "manifest.json"
 with open(_MANIFEST, encoding="utf-8") as _f:
-    INTEGRATION_VERSION = json.load(_f).get("version", "0.0.0")
+    INTEGRATION_VERSION = json.load(_f).get("version", "unknown")
 
 # Frontend URL base for serving the Lovelace card
 URL_BASE = "/voip-stack"
