@@ -401,6 +401,7 @@ ha_tests=(
   tests/test_browser_early_media_pcm_ha.py
   tests/test_shared_account_direct_video_ha.py
   tests/test_call_recording_participant_ha.py
+  tests/test_account_paging_ha.py
   tests/test_application_preparation_ha.py
   tests/test_audit_paging_admission_ha.py
   tests/test_audit_queue_transfer_budget_ha.py
