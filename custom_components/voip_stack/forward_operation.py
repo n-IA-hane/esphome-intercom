@@ -10,9 +10,6 @@ from .call_projection import publish_bridge_projection
 from .config import (
     trunk_config as _get_trunk_config,
 )
-from .config import (
-    trunk_identity_uri as _trunk_identity_uri,
-)
 from .const import (
     CONF_SIP_VIDEO,
     CONF_TRUNK_AUTH_USERNAME,
@@ -684,14 +681,7 @@ class ForwardOperation:
             port_reservation=self.reservation,
             roster_entry_override=decision.entry,
             policy=OutboundLegPolicy(
-                local_uri_user=(
-                    str(trunk_cfg.get(CONF_TRUNK_USERNAME) or _ha_peer_name(hass))
-                    if bridge_to_trunk
-                    else invite.routing_caller or _ha_peer_name(hass)
-                ),
-                local_identity_uri=(
-                    _trunk_identity_uri(trunk_cfg) if bridge_to_trunk else ""
-                ),
+                local_uri_user=invite.routing_caller or _ha_peer_name(hass),
                 auth_username=str(trunk_cfg.get(CONF_TRUNK_AUTH_USERNAME) or ""),
                 username=str(trunk_cfg.get(CONF_TRUNK_USERNAME) or ""),
                 password=str(trunk_cfg.get(CONF_TRUNK_PASSWORD) or ""),

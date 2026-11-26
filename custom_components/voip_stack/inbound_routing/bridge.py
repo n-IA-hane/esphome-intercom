@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
 from ..core.sdp import build_answer_directional
-from ..config import trunk_identity_uri as _trunk_identity_uri
+from ..outbound_identity import outbound_identity
 from ..const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
@@ -274,19 +274,20 @@ async def route_sip_bridge(
         return SipInviteResult(487, "Request Terminated", to_tag="")
 
     # Preserve the engine's complete RTP catalog through the SIP writer.
+    identity = outbound_identity(
+        hass, trunk_config, invite=invite, caller_name=runtime.ha_peer_name(hass),
+    ) if bridge_to_trunk else None
     client = SipCallClient(
         max_forwards=max(0, invite.max_forwards - 1) if invite.max_forwards is not None else 70,
         codec_policy=codec_policy,
         local_ip=local_ip,
-        local_name=invite.caller or runtime.ha_peer_name(hass),
+        local_name=identity.name if identity is not None else invite.caller or runtime.ha_peer_name(hass),
         local_uri_user=(
             str(trunk_config.get(CONF_TRUNK_USERNAME) or runtime.ha_peer_name(hass))
             if bridge_to_trunk
             else invite.routing_caller or runtime.ha_peer_name(hass)
         ),
-        local_identity_uri=(
-            _trunk_identity_uri(trunk_config) if bridge_to_trunk else ""
-        ) or inbound_from_uri(invite),
+        local_identity_uri=identity.uri if identity is not None else inbound_from_uri(invite),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,

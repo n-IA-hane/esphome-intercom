@@ -12,6 +12,7 @@ from .codec_settings import effective_codec_policy
 from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .inbound_identity import inbound_from_uri
+from .outbound_identity import outbound_identity
 from .endpoint_routing import (
     EndpointRouteResolver,
     bridge_audio_profile,
@@ -168,7 +169,6 @@ class EndpointDialer:
         member_entry = roster_entry_override or member_entry
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
         if uri is None:
-            from .config import trunk_identity_uri
             from .router import RouteAction
             from .trunk_selection import select_call_trunk
 
@@ -186,8 +186,6 @@ class EndpointDialer:
                         username=str(cfg.get("trunk_username") or ""),
                         auth_username=str(cfg.get("trunk_auth_username") or ""),
                         password=str(cfg.get("trunk_password") or ""),
-                        local_uri_user=str(cfg.get("trunk_username") or ""),
-                        local_identity_uri=trunk_identity_uri(cfg),
                         outbound_proxy=str(cfg.get("trunk_outbound_proxy") or ""))
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
@@ -286,21 +284,26 @@ class EndpointDialer:
                     )
             # These RTP rows are the complete engine plan; the SIP writer
             # numbers them without expanding a second capability catalog.
+            caller_user = policy.local_uri_user or (invite.routing_caller if invite is not None else local_name)
+            identity = None
+            identity_config = {}
+            if policy.use_trunk_flow:
+                from .config import trunk_config
+
+                identity_config = trunk_config(self.hass, policy.trunk_id or None)
+                identity = outbound_identity(
+                    self.hass, identity_config, invite=invite, caller_user=caller_user,
+                    caller_name=local_name, source_call_id=source_call_id,
+                )
             client = SipCallClient(
                 max_forwards=max(0, invite.max_forwards - 1) if invite is not None and invite.max_forwards is not None else 70,
                 **({"call_id": policy.call_id} if policy.call_id else {}),
                 codec_policy=codec_policy,
                 local_ip=self.local_ip,
-                local_name=local_name,
-                local_uri_user=(
-                    policy.local_uri_user
-                    or (
-                        invite.routing_caller
-                        if invite is not None
-                        else local_name
-                    )
-                ),
-                local_identity_uri=policy.local_identity_uri or inbound_from_uri(invite),
+                local_name=identity.name if identity is not None else local_name,
+                local_uri_user=str(identity_config.get("trunk_username") or caller_user),
+                local_identity_uri=(identity.uri if identity is not None
+                                    else policy.local_identity_uri or inbound_from_uri(invite)),
                 local_sip_port=int(self.config["sip_port"]),
                 local_rtp_port=local_audio_port,
                 supported_send_formats=sip_send_formats,

@@ -148,6 +148,7 @@ def _dtmf_timeout_seconds(value: object) -> int:
 
 def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
     """Return entry data with trunk explicitly disabled."""
+    from .outbound_identity import normalized_outbound_identity_config
 
     def legacy_value(key: str, default: Any) -> Any:
         """Replace empty values written by older flows with a safe default."""
@@ -156,6 +157,9 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
 
     data.update(
         {
+            **normalized_outbound_identity_config(existing),
+            "trunk_inbound_account": existing.get("trunk_inbound_account", ""),
+            "trunk_inbound_unknown_target": existing.get("trunk_inbound_unknown_target", "fallback"),
             "trunk_outbound_media_address": existing.get("trunk_outbound_media_address", ""),
             "trunk_media_nat": existing.get("trunk_media_nat") or (
                 "manual" if existing.get("trunk_outbound_media_address") else "auto"
@@ -218,6 +222,7 @@ class TrunkFormMixin:
 
     async def async_step_trunk(self, user_input=None):
         from .inbound_identity_form import did_form_fields, validate_did_form
+        from .trunk_identity_form import trunk_identity_fields, validate_trunk_identity_form
 
         await self.hass.async_add_executor_job(preload_codec_capabilities)
         _current_entry, existing = self._current_entry_data()
@@ -339,17 +344,21 @@ class TrunkFormMixin:
             fields[vol.Optional(CONF_TRUNK_PASSWORD, default=defaults[CONF_TRUNK_PASSWORD])] = TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
             )
-            fields[vol.Required(CONF_TRUNK_ALLOWED_IPS, default=existing.get(CONF_TRUNK_ALLOWED_IPS, []))] = TextSelector(
+            fields[vol.Optional(CONF_TRUNK_ALLOWED_IPS, default=existing.get(CONF_TRUNK_ALLOWED_IPS, []))] = TextSelector(
                 TextSelectorConfig(multiple=True)
             )
             schema = vol.Schema(fields)
+        schema = schema.extend(trunk_identity_fields(_current_entry, existing))
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input = dict(user_input)
             errors.update(validate_did_form(user_input, existing))
+            errors.update(validate_trunk_identity_form(
+                user_input, existing, _current_entry, trunk_id=getattr(self, "_identity", ""),
+            ))
             user_input[CONF_TRUNK_REGISTER] = register
             user_input.setdefault(CONF_TRUNK_EXPIRES, defaults[CONF_TRUNK_EXPIRES])
-            if not register:
+            if not register and not user_input.get("trunk_inbound_account"):
                 try:
                     user_input[CONF_TRUNK_ALLOWED_IPS] = [
                         str(network)
@@ -357,7 +366,11 @@ class TrunkFormMixin:
                     ]
                 except ValueError:
                     errors[CONF_TRUNK_ALLOWED_IPS] = "trunk_allowed_ips_invalid"
+            elif register:
+                user_input[CONF_TRUNK_ALLOWED_IPS] = []
             else:
+                # A peer bound to a SIP account proves Digest on every incoming
+                # call. Source IP ranges are not a second admission path.
                 user_input[CONF_TRUNK_ALLOWED_IPS] = []
             for k in (CONF_TRUNK_PORT, CONF_TRUNK_EXPIRES, CONF_TRUNK_DTMF_TIMEOUT_MS):
                 user_input[k] = int(user_input[k])
@@ -1092,6 +1105,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             return SelectSelector({'options': destinations, 'custom_value': True, 'mode': 'dropdown'})
 
         fields: dict[Any, Any] = {
+            vol.Optional("outbound_caller_id", default=policy.outbound_caller_id): TextSelector(),
+            vol.Optional("outbound_caller_name", default=policy.outbound_caller_name): TextSelector(),
             vol.Required(
                 CONF_PHONE_NAME,
                 default=str(current.get(CONF_PHONE_NAME) or ""),
@@ -1297,6 +1312,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         }
         # Reconfiguring a name/account must preserve separately edited policies.
         policy_data = persisted_phone_policy(current).as_data()
+        for field in ("outbound_caller_id", "outbound_caller_name"):
+            if field in user_input:
+                policy_data[field] = user_input[field]
         if kind is EndpointKind.SIP_ACCOUNT:
             if CONF_PHONE_OFFLINE_POLICY in user_input:
                 if user_input[CONF_PHONE_OFFLINE_POLICY] == OfflinePolicy.FORWARD.value:

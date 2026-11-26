@@ -56,6 +56,8 @@ class PhonePolicy:
     no_answer: PhoneDestination | None = None
     ringing_timeout: float | None = None
     outbound_trunk_id: str = ""
+    outbound_caller_id: str = ""
+    outbound_caller_name: str = ""
 
     def __post_init__(self) -> None:
         for name in ("always", "busy", "unavailable", "no_answer"):
@@ -73,12 +75,19 @@ class PhonePolicy:
         if not isinstance(self.outbound_trunk_id, str):
             raise ValueError("outbound_trunk_id must be text")
         object.__setattr__(self, "outbound_trunk_id", self.outbound_trunk_id.strip())
+        from .outbound_identity import identity_text
+
+        object.__setattr__(self, "outbound_caller_id", identity_text(
+            self.outbound_caller_id, "outbound caller ID", user=True))
+        object.__setattr__(self, "outbound_caller_name", identity_text(
+            self.outbound_caller_name, "outbound caller name"))
 
     @classmethod
     def from_data(cls, data: Mapping | None) -> PhonePolicy:
         if data is None:
             return cls()
-        allowed = {"always", "busy", "unavailable", "no_answer", "ringing_timeout", "outbound_trunk_id"}
+        allowed = {"always", "busy", "unavailable", "no_answer", "ringing_timeout", "outbound_trunk_id",
+                   "outbound_caller_id", "outbound_caller_name"}
         if not isinstance(data, Mapping) or set(data) - allowed:
             raise ValueError("invalid phone policy fields")
         values = dict(data)
@@ -97,6 +106,9 @@ class PhonePolicy:
             values["ringing_timeout"] = self.ringing_timeout
         if self.outbound_trunk_id:
             values["outbound_trunk_id"] = self.outbound_trunk_id
+        for key in ("outbound_caller_id", "outbound_caller_name"):
+            if value := getattr(self, key):
+                values[key] = value
         return values
 
     @property

@@ -127,7 +127,6 @@ async def _async_originate_application_call(
     from .router import RouteAction, RouteReason
     from .endpoint_routing import ha_router_decision
     from .trunk_selection import select_call_trunk
-    from .config import trunk_identity_uri, trunk_leg_identity
 
     trunk_selection = select_call_trunk(hass, requested=str(call.data.get("trunk_id") or ""))
     def resolve_route(target, roster):
@@ -216,8 +215,7 @@ async def _async_originate_application_call(
             uri_override=str(uri),
             policy=OutboundLegPolicy(
                 call_id=routing_call_id if initial and routing_call_id else "",
-                local_uri_user=trunk_leg_identity(cfg, source.extension or source.id) if use_trunk else source.extension or source.id,
-                local_identity_uri=trunk_identity_uri(cfg) if use_trunk else "",
+                local_uri_user=source.id if use_trunk and source.metadata.get("endpoint_kind") == "sip_account" else source.extension or source.id,
                 username=cfg.get("trunk_username", "") if use_trunk else "",
                 auth_username=cfg.get("trunk_auth_username", "") if use_trunk else "",
                 password=cfg.get("trunk_password", "") if use_trunk else "",
