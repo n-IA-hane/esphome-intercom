@@ -647,15 +647,14 @@ async def async_pickup_call(call):
                 call_id=session.call_id,
                 destination=endpoint.username,
                 on_failure="resume",
+                ringing_timeout=call.data.get("answer_timeout"),
                 precondition=CallPrecondition.capture(session),
             )
             task = runtime.sip.task_for(session.call_id, "forward")
             if task is not None:
                 try:
-                    async with asyncio.timeout(
-                        float(call.data.get("answer_timeout", 30))
-                    ):
-                        await asyncio.shield(task)
+                    # The existing forward owner resolves and owns this attempt.
+                    await asyncio.shield(task)
                 except BaseException:
                     from .session_cleanup import async_wait_for_cleanup
 
@@ -695,6 +694,7 @@ async def _pickup_group_phone(call, endpoint, session):
     from .softphone_answer import async_answer_browser_call
     from .softphone_commands import async_resolve_browser_call_command
     from .session_cleanup import async_wait_for_cleanup
+    from .ringing_policy import resolve_ringing_timeout
 
     runtime = require_runtime_data(call.hass)
     registry = runtime.sip
@@ -730,8 +730,10 @@ async def _pickup_group_phone(call, endpoint, session):
     route_member_added = session_member_added = claim_added = False
     controller_before = {}
     missing = object()
+    timeout = resolve_ringing_timeout(runtime.transport_config, account=endpoint,
+        override=call.data.get("answer_timeout"))
     try:
-        async with asyncio.timeout(float(call.data.get("answer_timeout", 30))):
+        async with asyncio.timeout(timeout):
             if endpoint.kind.is_softphone:
                 route = session.artifacts.pending_route
                 if route is None or route["future"].done():
@@ -851,14 +853,11 @@ async def _pickup_group_phone(call, endpoint, session):
                         request_uri=str(attempt.uri),
                         remote_host=attempt.uri.host,
                         remote_sip_port=sip_default_port(attempt.uri),
-                        timeout=float(call.data.get("answer_timeout", 30)),
                     )
                     if status == "ringing":
                         if gate.on_leg_state is not None:
                             gate.on_leg_state(attempt, "remote_ringing")
-                        status = await attempt.client.wait_for_final(
-                            timeout=float(call.data.get("answer_timeout", 30))
-                        )
+                        status = await attempt.client.wait_for_final()
                     return status
 
                 dial_task = session.create_task(

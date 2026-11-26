@@ -131,6 +131,7 @@ async def test_paging_flow_owns_one_service_device_and_keeps_receiver_order(phon
     identity = device.id
     assert device.config_subentry_id == row.subentry_id
     assert row.data["members"] == ["Second", "First"] and row.data["enabled"] is False
+    assert row.data["answer_timeout"] is None
     registry.async_update_device(identity, name_by_user="My announcement")
     form = await lab.hass.config_entries.subentries.async_init((lab.entry.entry_id, "paging"),
         context={"source": "reconfigure", "subentry_id": row.subentry_id})
@@ -141,6 +142,7 @@ async def test_paging_flow_owns_one_service_device_and_keeps_receiver_order(phon
     kept = registry.async_get_device_by_identifier(("voip_stack", "paging:" + row.data["paging_group_id"]), lab.entry.entry_id)
     assert kept.id == identity and kept.name_by_user == "My announcement"
     assert row.data["members"] == ["Second", "First"]
+    assert row.data["answer_timeout"] is None
 
 
 async def test_native_application_entities_follow_existing_owners_without_polling(phone_lab):

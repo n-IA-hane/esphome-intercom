@@ -662,12 +662,11 @@ async def pickup_phone_call(call, endpoint, slot):
                 target=endpoint.username, entry=RosterEntry(endpoint.username,
                     metadata={"local_ha": True, "endpoint_id": endpoint.endpoint_id}))
         task = await registry.forward_call(call_id=session.call_id, destination=endpoint.username,
-            on_failure="resume", **resolved)
+            on_failure="resume", ringing_timeout=call.data.get("answer_timeout"), **resolved)
         outcome = None
         if task is not None:
             try:
-                async with asyncio.timeout(float(call.data.get("answer_timeout", 30))):
-                    outcome = await await_forward_result(task)
+                outcome = await await_forward_result(task)
             except BaseException:
                 if not task.done():
                     task.cancel()

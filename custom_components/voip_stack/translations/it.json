@@ -798,9 +798,14 @@
             "members": "Ordered receivers",
             "answer_timeout": "Tempo per rispondere (secondi)",
             "timeout": "Durata massima (secondi)",
-            "enabled": "Enabled"
+            "enabled": "Enabled",
+            "inherit_ringing_timeout": "Eredita durata squillo del PBX"
           },
-          "description": "Select account devices, then drag receivers into order. Saved unavailable receivers remain editable. Disabling the group preserves its membership."
+          "description": "Select account devices, then drag receivers into order. Saved unavailable receivers remain editable. Disabling the group preserves its membership.",
+          "data_description": {
+            "inherit_ringing_timeout": "Use each destination account and the stored PBX ringing setting. Turn off inheritance to store an explicit answer window, including 0 for unlimited.",
+            "answer_timeout": "Per-recipient answer window when inheritance is disabled. Zero is unlimited; the separate maximum announcement duration still applies."
+          }
         }
       },
       "error": {
@@ -2554,7 +2559,8 @@
           "description": "Usalo al posto del fornitore della sintesi vocale e del messaggio."
         },
         "answer_timeout": {
-          "name": "Tempo per rispondere"
+          "name": "Tempo per rispondere",
+          "description": "Optional per-recipient ringing limit. Omit to inherit the account and PBX; zero is unlimited. The separate total announcement limit still applies."
         },
         "timeout": {
           "name": "Limite di tempo totale"
@@ -3589,7 +3595,8 @@
           "name": "Posizione di parcheggio"
         },
         "answer_timeout": {
-          "name": "Attesa della risposta"
+          "name": "Attesa della risposta",
+          "description": "Optional callback ringing limit. Omit to inherit the recovering account and PBX; zero is unlimited."
         },
         "call_id": {
           "name": "ID chiamata"

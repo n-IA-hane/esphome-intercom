@@ -492,7 +492,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("tts_entity_id"): cv.entity_id, vol.Optional("message"): vol.All(cv.string, vol.Length(min=1, max=4096)),
             vol.Optional("language"): SHORT_TEXT, vol.Optional("options", default=dict): dict,
             vol.Optional("media"): vol.Any(URI_TEXT, dict),
-            vol.Optional("answer_timeout", default=5): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
+            vol.Optional("answer_timeout"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
             vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
             vol.Optional("busy_policy", default="skip"): vol.In(["skip"]), vol.Optional("wait", default=True): cv.boolean}, extra=vol.PREVENT_EXTRA),
         supports_response=SupportsResponse.OPTIONAL)
@@ -552,7 +552,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("expected_generation"): SEQUENCE,
             vol.Optional("leg_id", default=""): SHORT_TEXT,
             vol.Optional("media_client_id", default=""): IDENTIFIER_TEXT,
-            vol.Optional("answer_timeout", default=30): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
+            vol.Optional("answer_timeout"): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
         }, extra=vol.PREVENT_EXTRA), supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "get_phone_state", handler_for("get_phone_state"),
         schema=vol.Schema({vol.Required("device_id"): IDENTIFIER_TEXT}, extra=vol.PREVENT_EXTRA),

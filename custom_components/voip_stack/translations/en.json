@@ -798,9 +798,14 @@
             "members": "Ordered receivers",
             "answer_timeout": "Answer window (seconds)",
             "timeout": "Maximum duration (seconds)",
-            "enabled": "Enabled"
+            "enabled": "Enabled",
+            "inherit_ringing_timeout": "Inherit PBX ringing time"
           },
-          "description": "Select account devices, then drag receivers into order. Saved unavailable receivers remain editable. Disabling the group preserves its membership."
+          "description": "Select account devices, then drag receivers into order. Saved unavailable receivers remain editable. Disabling the group preserves its membership.",
+          "data_description": {
+            "inherit_ringing_timeout": "Use each destination account and the stored PBX ringing setting. Turn off inheritance to store an explicit answer window, including 0 for unlimited.",
+            "answer_timeout": "Per-recipient answer window when inheritance is disabled. Zero is unlimited; the separate maximum announcement duration still applies."
+          }
         }
       },
       "error": {
@@ -2554,7 +2559,8 @@
           "description": "Use instead of a TTS provider and message."
         },
         "answer_timeout": {
-          "name": "Answer window"
+          "name": "Answer window",
+          "description": "Optional per-recipient ringing limit. Omit to inherit the account and PBX; zero is unlimited. The separate total announcement limit still applies."
         },
         "timeout": {
           "name": "Total time limit"
@@ -3589,7 +3595,8 @@
           "name": "Parking slot"
         },
         "answer_timeout": {
-          "name": "Wait for answer"
+          "name": "Wait for answer",
+          "description": "Optional callback ringing limit. Omit to inherit the recovering account and PBX; zero is unlimited."
         },
         "call_id": {
           "name": "Call ID"

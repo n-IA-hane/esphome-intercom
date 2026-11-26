@@ -98,7 +98,10 @@ the same backend state used for SIP dialog notifications and the card.
 Choose **Recovering phone**, then either **Ringing phone** or **Parking slot**.
 The recovering phone must be available. For a SIP or ESPHome phone, the PBX calls
 that phone and connects the caller when it answers. A browser softphone needs
-its active audio connection. **Wait for answer** is 1 to 120 seconds, default 30.
+its active audio connection. **Wait for answer** is optional, from 0 to 3600
+seconds. Omit it to inherit the recovering account's limit or the stored PBX
+limit; `0` explicitly allows unlimited ringing. Ordinary and parked callbacks
+use the existing forward owner, so pickup adds no second timeout.
 
 The fields are `device_id`, either `target_device_id` or `slot`, and optional
 `answer_timeout`. Advanced `call_id`, `expected_generation` and `leg_id` identify

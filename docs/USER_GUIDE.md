@@ -848,9 +848,11 @@ and supported call paths. Recording is optional and off until requested.
 For a single TTS announcement to one or more accounts or saved paging groups,
 choose **VoIP Stack: Announce**. Select up to sixteen targets and either a TTS
 provider plus a message, or an audio file from the media picker. Busy targets
-are skipped. The default answer window is 5 seconds and the total limit is
-120 seconds. A recipient must support and permit the requested auto-answer or
-answer within that window. A closed browser has no speaker for an announcement,
+are skipped. The answer window inherits each account's ringing limit or the
+stored PBX setting unless `answer_timeout` overrides it; `0` is unlimited.
+The separate total job limit is 120 seconds unless configured otherwise.
+A recipient must support and permit the requested auto-answer or answer within
+the applicable window. A closed browser has no speaker for an announcement,
 even when its saved association keeps the account logically available.
 
 This example assumes the existing account `Reception` and a configured TTS

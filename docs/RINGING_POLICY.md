@@ -80,6 +80,18 @@ handles its ringing and no-answer routing. A later forward resolves its own
 budget; the original value is not a second timer spanning the whole automation.
 Synthesis, playback and the Automation contact's inactivity limit are separate.
 
+Pickup uses the same optional `answer_timeout`: omit it to inherit from the
+recovering account and PBX, or use `0` for unlimited. A normal or parked pickup
+passes that override to its existing forward owner; it has no second wait
+deadline. Group pickup applies one resolved limit to its callback.
+
+`voip_stack.announce` also uses `answer_timeout` for each recipient's admission.
+Omission inherits and zero is unlimited on SIP and browser recipients. Its
+existing `timeout` bounds the complete announcement job, including playback,
+and remains independent. Live calls to saved paging groups preserve their
+explicit answer windows; new groups can inherit. Paging admission stays with
+the existing application owner and does not arm another account-policy timer.
+
 ```yaml
 action: voip_stack.call
 data:

@@ -352,11 +352,13 @@ announce:
           - audio/*
     answer_timeout:
       name: Answer window
-      default: 5
+      description: Optional per-recipient ringing limit. Omit to inherit the account and PBX; zero is unlimited.
+        The separate total announcement limit still applies.
       selector:
         number:
-          min: 1
-          max: 120
+          min: 0
+          max: 3600
+          step: 0.1
           unit_of_measurement: s
           mode: box
     timeout:
@@ -2030,11 +2032,12 @@ pickup:
         text: {}
     answer_timeout:
       name: Wait for answer
-      default: 30
+      description: Optional callback ringing limit. Omit to inherit the recovering account and PBX; zero is unlimited.
       selector:
         number:
-          min: 1
-          max: 120
+          min: 0
+          max: 3600
+          step: 0.1
           unit_of_measurement: s
     advanced:
       name: Advanced options

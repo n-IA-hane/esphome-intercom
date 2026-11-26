@@ -3,6 +3,7 @@
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigSubentryFlow
+from homeassistant.data_entry_flow import Required as visible_required
 from homeassistant.helpers.selector import BooleanSelector, NumberSelector, TextSelector
 
 from .endpoint_device import selection_device_refs
@@ -39,6 +40,8 @@ class PagingSubentryFlowHandler(ConfigSubentryFlow):
             try:
                 selected = selected_members(self.hass, entry, user_input.get("members", member_rows(members, device_refs)),
                     device_refs, allow_destinations=False, previous=members)
+                if user_input.get("inherit_ringing_timeout") is True:
+                    values["answer_timeout"] = None
                 data = normalize_paging_group({**values, "members": selected})
                 proposed = RosterEntry(id=f"paging:{data['paging_group_id']}", name=data["name"], extension=data["extension"])
                 existing = [row for row in paging_group_entries(entry)
@@ -58,8 +61,11 @@ class PagingSubentryFlowHandler(ConfigSubentryFlow):
                          else member_rows(members, device_refs)): ordered_members_selector(self.hass, device_refs, (),
                              allow_destinations=False, previous=members),
             vol.Required("enabled", default=values.get("enabled", True)): BooleanSelector(),
-            vol.Required("answer_timeout", default=values.get("answer_timeout", 5)): NumberSelector({
-                "min": 1, "max": 120, "step": 0.1, "unit_of_measurement": "s", "mode": "box"}),
+            vol.Required("inherit_ringing_timeout", default=values.get("inherit_ringing_timeout", values.get("answer_timeout") is None)): BooleanSelector(),
+            visible_required("answer_timeout", default=values.get("answer_timeout") if values.get("answer_timeout") is not None
+                             else entry.data.get("default_ringing_timeout", 0),
+                             visible={"field": "inherit_ringing_timeout", "value": False}): NumberSelector({
+                "min": 0, "max": 3600, "step": 0.1, "unit_of_measurement": "s", "mode": "box"}),
             vol.Required("timeout", default=values.get("timeout", 120)): NumberSelector({
                 "min": 1, "max": 600, "step": 0.1, "unit_of_measurement": "s", "mode": "box"}),
         }))

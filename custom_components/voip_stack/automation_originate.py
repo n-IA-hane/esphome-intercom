@@ -27,6 +27,7 @@ from .pbx_routing import roster_entry_for_target
 from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
 from .phonebook_runtime import registered_roster_entries
 from .runtime_data import require_runtime_data
+from .ringing_policy import resolve_ringing_timeout, wait_for_ringing_result
 from .sip_runtime import enable_reused_tcp_connection, uri_transport
 from .trunk_policy import is_trunk_uri
 from .route_abort import RouteAbortContext, RouteAbortIntent, async_abort_route
@@ -49,7 +50,6 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
             target=attempt.uri.user, target_display_name=destination,
             remote_host=attempt.uri.host, remote_sip_port=sip_default_port(attempt.uri),
             request_uri=str(attempt.uri),
-            **({"timeout": timeout} if answer_mode else {}),
             **({"answer_mode": answer_mode, "audio_direction": audio_direction}
                if answer_mode or audio_direction != "sendrecv" else {}),
         )
@@ -59,11 +59,11 @@ async def _dial_attempt(hass, registry, session, attempt, destination, timeout, 
             publish_bridge_projection(hass, session, event_type="remote_ringing",
                                       direction="outgoing", route_kind="automation")
             if answer_mode:
-                remaining = max(0.0, client.invite_sent_at + timeout - hass.loop.time())
-                result = await client.wait_for_final(timeout=remaining)
+                remaining = (None if timeout is None else
+                    max(0.0, client.invite_sent_at + timeout - hass.loop.time()))
+                result = await wait_for_ringing_result(client, remaining)
             else:
-                # The session's phone policy owns ringing and no-answer routes.
-                # Keep protocol transaction timing inside the SIP client.
+                # The session policy owns ringing; protocol timers stay in SIP.
                 result = await client.wait_for_final()
         if result == "in_call" and session.owner == "automation":
             registry.transition(session.call_id, state=CallState.IN_CALL.value,
@@ -325,9 +325,11 @@ async def _async_originate_application_call(
                 486 if failure_policy == 'busy' else 0,
             ))
 
-        # Paging supplies its existing bounded answer budget. Ordinary calls
-        # use the session policy, including no-answer forwarding and explicit 0.
-        timeout = float(call.data["answer_timeout"]) if answer_mode else None
+        # Paging owns admission, while ordinary calls use the session policy.
+        # Both resolve the same rule/account/PBX configuration without defaults.
+        timeout = (resolve_ringing_timeout(runtime.transport_config,
+            account=runtime.endpoints.get(attempt.endpoint_id),
+            override=session.metadata.get("route_ringing_timeout")) if answer_mode else None)
         while True:
             outcome, route = await _dial_attempt(
                 hass, registry, session, attempt, destination, timeout,
