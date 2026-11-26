@@ -439,6 +439,36 @@ async def test_dtmf_inter_digit_deadline_resets_and_releases(application, monkey
             await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
 
 
+@pytest.mark.parametrize("digits", ["1", "111"])
+async def test_ivr_selection_finishes_on_digit_gap_without_end_key(application, digits):
+    from custom_components.voip_stack.const import SIP_DTMF_EVENT
+
+    app, registry, _peer, _released = application
+    task = asyncio.create_task(app.wait_for_dtmf(service(
+        app, max_digits=32, timeout=2, inter_digit_timeout=0.1, terminator="")))
+    try:
+        async with asyncio.timeout(2):
+            while not app.answered:
+                await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        for digit in digits:
+            app.hass.bus.async_fire(SIP_DTMF_EVENT, {
+                "call_id": app.session.call_id,
+                "generation": app.session.generation,
+                "source_leg": "caller",
+                "digit": digit,
+            })
+            await asyncio.sleep(0)
+            assert not task.done(), "A menu prefix must not consume an extension"
+        async with asyncio.timeout(1):
+            result = await task
+        assert result == {"status": "timeout", "digits": digits}
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
 @pytest.mark.parametrize("failure_stage", ["source", "readiness"])
 async def test_browser_forward_preparation_failure_preserves_original_playback(application, monkeypatch, failure_stage):
     from types import SimpleNamespace

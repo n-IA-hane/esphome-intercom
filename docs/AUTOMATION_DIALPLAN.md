@@ -386,6 +386,37 @@ Use a condition when you need to choose between actions inside an execution.
 For example, a **Choose** block can send local callers to reception and trunk
 callers to a greeting, without duplicating the whole automation.
 
+These condition snippets use the same native conditions as the visual editor.
+For example, check that the triggering call is connected before continuing:
+
+```yaml
+condition: voip_stack.is_call_state
+options:
+  state: in_call
+```
+
+After a single-key wait, or input confirmed with `#`, match a received choice:
+
+```yaml
+condition: voip_stack.is_dtmf_result
+options:
+  status: received
+  digits: "1"
+```
+
+Handle an input wait that expired without any digits:
+
+```yaml
+condition: voip_stack.is_dtmf_result
+options:
+  status: timeout
+  digits: ""
+```
+
+A timeout can also contain partial digits. The complete mixed-menu recipe below
+checks the collected number independently of its completion status, so both
+`#` and an inter-digit timeout can select the same destination.
+
 Phone availability is different from browser media readiness and a no-answer
 timer. In the preview, an enabled browser phone remains logically available
 while its frontend is closed. The availability condition does not prove that
@@ -1329,13 +1360,13 @@ actions:
   - action: voip_stack.tts_say
     data:
       tts_entity_id: tts.piper
-      message: "Welcome. Press one for Reception, two for Support, or enter an extension. Then press hash or wait three seconds."
+      message: "Welcome. Press one for Reception, two for Support, or enter an extension. Pause for three seconds after your selection."
   - action: voip_stack.wait_for_dtmf
     data:
       timeout: 30
       inter_digit_timeout: 3
       max_digits: 32
-      terminator: "#"
+      terminator: ""
     response_variable: selection
   - choose:
       - conditions: "{{ selection.digits == '1' }}"
@@ -1364,19 +1395,19 @@ actions:
 ```
 
 The greeting answers the menu call and completes before input collection.
-`#` ends input without becoming part of the extension. Otherwise, a three-second
-gap after the latest digit ends the wait. The 30-second total limit still
-applies. The action returns both the collected digits and a status; the example
-checks the complete collected digits, so `1#` selects Reception, `2#` selects
-Support, and `timeout` with `667` still forwards to extension `667`. Pressing
-only `#` or entering no digits takes the explicit no-input branch and ends
-after its message.
+A three-second gap after the latest digit ends the wait. No end key is
+required: `1` followed by a pause selects Reception, `2` followed by a pause
+selects Support, and `111` followed by a pause forwards to extension `111`.
+The 30-second total limit still applies. The action returns both the collected
+digits and a status; the example checks the complete digits even when the
+status is `timeout`. Entering no digits takes the explicit no-input branch
+and ends after its message.
 
 The menu waits for completion before comparing choices. It does not route on
-the first digit: `100` remains an extension even though it starts with menu
-choice `1`. Tune `inter_digit_timeout`, `timeout` and `terminator` to your
-callers' needs; an empty terminator disables the end key. Keep the gap long
-enough for the intended users to finish a multi-digit extension.
+the first digit: `111` remains an extension even though it starts with menu
+choice `1`. Tune `inter_digit_timeout` and `timeout` to your callers' needs.
+The empty `terminator` disables the end key; you can optionally configure one.
+Keep the gap long enough for the intended users to finish a multi-digit extension.
 
 Forwarding retains the current logical call and uses the normal destination,
 availability and authorization rules. It does not create a second incoming
