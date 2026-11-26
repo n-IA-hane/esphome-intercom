@@ -2059,7 +2059,7 @@ assert.deepEqual(model.formatListFromMetadata(null), []);
 assert.equal(model.publicDialTarget({{device_id:"opaque-device",endpoint_id:"esphome:opaque"}}),"");
 assert.equal(model.publicDialTarget({{id:"queue:opaque",metadata:{{virtual_endpoint:"queue"}}}}),"");
 assert.equal(model.publicDisplayName({{name:"Kitchen",extension:"201"}}),"Kitchen");
-for (const username of ["Sala riunioni", "réception", "接待", "desk+night"]) {{
+for (const username of ["Meeting room", "réception", "接待", "desk+night"]) {{
   const row = {{id: username, name: "Studio", metadata: {{endpoint_kind: "sip_account", username}}}};
   assert.equal(model.publicDialTarget(row), username);
   assert.equal(model.publicDialTarget(model.targetFromRosterEntry(row)), username);

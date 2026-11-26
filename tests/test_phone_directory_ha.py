@@ -17,7 +17,7 @@ from .test_managed_phones_ha import (
 pytestmark = pytest.mark.ha
 
 
-@pytest.mark.parametrize("username", ["Sala riunioni", "réception", "接待", "desk+night"])
+@pytest.mark.parametrize("username", ["Meeting room", "réception", "接待", "desk+night"])
 async def test_public_account_directory_preserves_literal_dial_identity(phone_lab, username):
     from custom_components.voip_stack.directory_runtime import async_refresh_directory
     from custom_components.voip_stack.roster import dump_roster_json
