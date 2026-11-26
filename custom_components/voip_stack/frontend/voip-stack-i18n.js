@@ -784,7 +784,7 @@ const DE = {
 const IT = {
   "Use default no-answer action": "Usa azione predefinita per mancata risposta",
   "Choose a ringing duration. Zero means unlimited.": "Scegli la durata dello squillo. Zero significa illimitato.",
-  "Choose a no-answer action.": "Scegli un’azione per mancata risposta.",
+  "Choose a no-answer action.": "Scegli un'azione per mancata risposta.",
   "Calling {name}...": "Chiamata a {name}...",
   "In Call: {name}": "In chiamata con {name}",
   "Call with {name} ended.": "Chiamata con {name} terminata.",
