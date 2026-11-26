@@ -420,6 +420,12 @@ Use the [trunk guide](docs/SIP_TRUNK.md) for credentials, line selection and
 external-call access, and the [video compatibility matrix](docs/SIP_VIDEO.md)
 for codecs and endpoint limits.
 
+[Caller identity and calls between PBXs](docs/TRUNK_CALLER_IDENTITY.md) covers
+keeping an extension or public direct number, forcing a generic trunk caller,
+and connecting two HA instances directly or through another SIP PBX. Existing
+SIP accounts, named trunks and native HA range-routing automations own these
+paths.
+
 ## Installation
 
 This development tree requires **Home Assistant 2026.11.1 or newer**.
