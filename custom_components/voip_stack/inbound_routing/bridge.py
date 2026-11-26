@@ -543,7 +543,9 @@ async def route_sip_bridge(
         )
     def failure_response(result: str) -> tuple[int, str, str, str]:
         status, reason, terminal_reason, public_state = sip_failure_response(result)
-        if 300 <= client.last_sip_status_code <= 699:
+        # Redirect and authentication context belongs to the independent
+        # outbound dialog; exporting only its bare status is not transferable.
+        if 400 <= client.last_sip_status_code <= 699 and client.last_sip_status_code not in {401, 407}:
             status = client.last_sip_status_code
             reason = client.last_sip_reason or reason
         return status, reason, terminal_reason, public_state
