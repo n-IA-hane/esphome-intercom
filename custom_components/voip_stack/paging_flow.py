@@ -21,9 +21,7 @@ class PagingSubentryFlowHandler(ConfigSubentryFlow):
 
     async def _form(self, user_input):
         from .phone_config import phone_subentries, phone_endpoint_id
-        from .phonebook_services import _validate_contact_namespace
-        from .paging_config import paging_group_entries
-        from .roster import RosterEntry
+        from .config_validation import entry_route_mappings, route_namespace_conflicts
 
         entry = self._get_entry()
         current = getattr(self, "_current", None)
@@ -43,10 +41,11 @@ class PagingSubentryFlowHandler(ConfigSubentryFlow):
                 if user_input.get("inherit_ringing_timeout") is True:
                     values["answer_timeout"] = None
                 data = normalize_paging_group({**values, "members": selected})
-                proposed = RosterEntry(id=f"paging:{data['paging_group_id']}", name=data["name"], extension=data["extension"])
-                existing = [row for row in paging_group_entries(entry)
-                            if row.metadata["paging_group_id"] != data["paging_group_id"]]
-                _validate_contact_namespace(self.hass, [proposed], existing_manual=existing)
+                existing = entry_route_mappings(entry, entry.data,
+                    exclude_subentry_id=current.subentry_id if current is not None else "")
+                if route_namespace_conflicts(candidate_routes=(
+                        f"paging:{data['paging_group_id']}", data["name"], data["extension"]), existing=existing):
+                    raise ValueError("The paging name or extension belongs to another destination")
             except (ValueError, TypeError, KeyError):
                 errors["base"] = "invalid_paging_group"
             else:
