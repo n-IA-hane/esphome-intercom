@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from .test_dahua_audio_socket import _Browser
+from .test_dahua_audio_socket import _Browser, _owned_sip_client_registry
 from .test_softphone_originate import (
     _Availability, _RouteAction, _call,
     softphone_originate as softphone_originate,
@@ -35,13 +35,15 @@ async def _factory_arguments(module, local_port):
         metadata={"sip_profile": "dahua", "dahua_audio": "pcm"},
         sip_uri="sip:8001@127.0.0.1", display_name="Door",
     )
-    route = SimpleNamespace(
+    route = _load_intercom_module("router").RouteDecision(
         action=_RouteAction.DIRECT, reason=None, entry=entry,
         sip_uri=entry.sip_uri, target="8001",
     )
     module.ha_router_decision = Mock(return_value=route)
     module._async_resolve_browser_destination = AsyncMock(return_value=(route, "8001", None))
-    module._get_transport_config = Mock(return_value={"sip_port": 0, "sip_video": False})
+    configured = _load_intercom_module("duration_config").initialize_duration_config(
+        {"sip_port": 0, "sip_video": False})
+    module._get_transport_config = Mock(return_value=configured)
     module._ha_advertise_host = AsyncMock(return_value="127.0.0.1")
     module._allocate_sip_rtp_port = Mock(return_value=local_port)
     module._sip_uri_transport = lambda _: "UDP"
@@ -122,13 +124,15 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
     transport, _ = await loop.create_datagram_endpoint(Door, local_addr=("127.0.0.1", 0))
     client = sip_client.SipCallClient(**await _factory_arguments(softphone_originate, local_port))
     browser, sessions, runtime = _Browser(), {}, None
+    registry = None
     hass = SimpleNamespace(
         data={"voip_stack": {}}, store={"state": "in_call"},
         bus=SimpleNamespace(async_listen=lambda *_: lambda: None),
     )
-    monkeypatch.setattr(view, "require_runtime_data", lambda _: SimpleNamespace(
+    runtime_state = SimpleNamespace(
         sip=None, media=SimpleNamespace(sessions_for=lambda _: sessions),
-    ))
+    )
+    monkeypatch.setattr(view, "require_runtime_data", lambda _: runtime_state)
     try:
         assert await client.invite(
             target="door", remote_host="127.0.0.1",
@@ -139,7 +143,8 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
         maximum = float(re.search(r"a=maxptime:([^\r\n]+)", offer)[1])
         assert maximum >= 40
         hass.store["call_id"] = client.dialog.call_id
-        registry = SimpleNamespace(resource_for=lambda *_: None, sip_client_for=lambda _: client)
+        registry = _owned_sip_client_registry(client)
+        runtime_state.sip = registry
         monkeypatch.setattr(view, "active_media_call", lambda *_: SimpleNamespace(
             call_id=client.dialog.call_id, registry=registry,
         ))
@@ -188,8 +193,12 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
         await browser.messages.put(None)
         if runtime is not None:
             await asyncio.wait_for(runtime, 2)
-        await client.terminate(timeout=1)
-        await client.close()
+        if registry is not None:
+            await registry.shutdown()
+            assert not registry.sessions
+        else:
+            await client.terminate(timeout=1)
+            await client.close()
         transport.close()
         remote.close()
     assert hass.store["rtp_rx_packets"] == len(durations)

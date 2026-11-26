@@ -199,6 +199,7 @@ class _FakeHass:
         self.config_entries = types.SimpleNamespace(async_entries=lambda _domain: [])
         self.data: dict = {const.DOMAIN: {}}
         self.runtime = types.SimpleNamespace(
+            transport_config=_load_module("duration_config").initialize_duration_config({}),
             trunk_configs={}, default_trunk_id="",
             tasks=set(),
             calls=None,

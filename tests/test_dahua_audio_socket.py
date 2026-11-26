@@ -44,6 +44,16 @@ class _Browser:
         return message
 
 
+def _owned_sip_client_registry(client):
+    """Attach the real client to its production session and generation owner."""
+    registry = _load_intercom_module("pbx_runtime").SipEndpointRuntime()
+    registry.activate()
+    call_id = client.dialog.call_id
+    registry.upsert(call_id, state="in_call", owner="ha_softphone")
+    registry.attach_sip_client(call_id, call_id, client, state="in_call")
+    return registry
+
+
 def test_media_view_uses_the_canonical_codec_and_format_types():
     view = _load_audio_ws_runtime_module()
     assert view.RtpPayloadEncoder is sip_client.RtpPayloadEncoder
@@ -262,15 +272,17 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
     )
     browser = _Browser()
     runtime = None
+    registry = None
     sessions = {}
     hass = SimpleNamespace(
         data={"voip_stack": {}}, store={"state": "in_call"},
         bus=SimpleNamespace(async_listen=lambda *_args: lambda: None),
     )
-    monkeypatch.setattr(view, "require_runtime_data", lambda _: SimpleNamespace(
+    runtime_state = SimpleNamespace(
         sip=None,
         media=SimpleNamespace(sessions_for=lambda _: sessions),
-    ))
+    )
+    monkeypatch.setattr(view, "require_runtime_data", lambda _: runtime_state)
     try:
         assert await client.invite(
             target="door", remote_host="127.0.0.1",
@@ -285,10 +297,8 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         assert b"a=rtpmap:0 PCMU/8000" in requests[0].body
         assert b"b=RS:0\r\nb=RR:0" in requests[0].body
         hass.store["call_id"] = client.dialog.call_id
-        registry = SimpleNamespace(
-            resource_for=lambda *_args: None,
-            sip_client_for=lambda _: client,
-        )
+        registry = _owned_sip_client_registry(client)
+        runtime_state.sip = registry
         monkeypatch.setattr(view, "active_media_call", lambda *_args: SimpleNamespace(
             call_id=client.dialog.call_id, registry=registry,
         ))
@@ -576,6 +586,9 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
             session.update_event.set()
             await asyncio.wait_for(browser.ready.wait(), 1)
             assert browser.json[-1]["type"] == "media_update"
+            assert session.audio_rtcp is None and client.audio_rtcp_socket is None
+            assert not any(resource.name.startswith("audio_rtcp:")
+                           for resource in registry.get_session(session.call_id).resources)
             await send(97, struct.pack("<320h", *([1000] * 320)))
             overlap = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
             assert len(overlap) == expected_bytes
@@ -591,8 +604,12 @@ async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_
         await browser.messages.put(None)
         if runtime is not None:
             await asyncio.wait_for(runtime, 2)
-        await client.terminate(timeout=1)
-        await client.close()
+        if registry is not None:
+            await registry.shutdown()
+            assert not registry.sessions
+        else:
+            await client.terminate(timeout=1)
+            await client.close()
         transport.close()
         remote.close()
         assert client.dialog is None

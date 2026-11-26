@@ -1093,7 +1093,8 @@ async def _run_audio_session(
                 session.recv_format.audio_format.frame_ms
             )
             incoming.reset(session.remote_rtp_host, session.remote_rtp_port)
-            if rtcp is None and session.audio_rtcp_allowed and owner_session is not None:
+            if (rtcp is None and session.audio_rtcp_allowed
+                    and session.audio_rtcp_min_interval > 0 and owner_session is not None):
                 from .audio_rtcp import async_get_or_create
                 client = (owner_registry.sip_client_for(session.call_id)
                     or owner_registry.source_sip_client_for(session.call_id))
