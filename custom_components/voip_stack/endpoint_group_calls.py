@@ -77,6 +77,7 @@ class EndpointGroupCalls:
         policy_endpoint_ids: tuple[str, ...] = (),
         outbound_trunk_id: str = "",
         call_id: str = "",
+        ringing_timeout: float | None = None,
     ) -> str:
         browser_endpoint = browser_phone(self.hass, endpoint_id)
         if browser_endpoint is None:
@@ -164,6 +165,7 @@ class EndpointGroupCalls:
                 origin_media_client_id=str(media_client_id or "").strip(),
                 request_video=bool(request_video),
                 enable_caller_video_send=bool(enable_caller_video_send),
+                ringing_timeout=ringing_timeout,
             ),
         )
         session.own_task(task, name="ring_group")

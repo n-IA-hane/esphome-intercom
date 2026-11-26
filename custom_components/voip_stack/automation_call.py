@@ -243,7 +243,7 @@ class AutomationCall(LocalCallApplication):
 
         return await self.run_operation(call, send, timeout=None)
 
-    async def forward(self, destination: str, *, on_failure: str = "resume", trunk_id: str = "") -> None:
+    async def forward(self, destination: str, *, on_failure: str = "resume", trunk_id: str = "", ringing_timeout: float | None = None) -> None:
         self.require_current()
         if self.outgoing:
             raise ServiceValidationError("Forward is supported for incoming automation calls")
@@ -261,6 +261,7 @@ class AutomationCall(LocalCallApplication):
                 destination=destination,
                 on_failure=on_failure,
                 **({"trunk_id": trunk_id} if trunk_id else {}),
+                **({"ringing_timeout": ringing_timeout} if ringing_timeout is not None else {}),
             )
         except BaseException:
             self.arm_deadline()
@@ -453,6 +454,7 @@ async def async_forward_automation_call(call: ServiceCall) -> bool:
     await application.forward(
         call.data["destination"], on_failure=call.data.get("on_failure", "resume"),
         trunk_id=str(call.data.get("trunk_id") or ""),
+        ringing_timeout=call.data.get("ringing_timeout"),
     )
     return True
 

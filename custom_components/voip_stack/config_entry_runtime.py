@@ -53,7 +53,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
         if key not in {
             CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS,
             EXTERNAL_CALL_BLOCKED_ENDPOINTS, CONF_ESPHOME_PHONE_POLICIES,
-            "default_trunk_id",
+            "default_trunk_id", "default_ringing_timeout", "max_dialog_subscription_expires",
             "esphome_mailboxes", "voicemail", "parking",
             "managed_esphome_phones", "esphome_sip_enrollments",
             "esphome_phone_memberships",
@@ -124,7 +124,10 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
     )
     from .config import entry_transport_config
-    registrar_enabled = bool(entry_transport_config(entry).get(CONF_REGISTRAR_ENABLED))
+    runtime.transport_config["default_ringing_timeout"] = entry.data.get("default_ringing_timeout")
+    transport_config = entry_transport_config(entry)
+    runtime.transport_config["max_dialog_subscription_expires"] = transport_config["max_dialog_subscription_expires"]
+    registrar_enabled = bool(transport_config.get(CONF_REGISTRAR_ENABLED))
     runtime.transport_config[CONF_REGISTRAR_ENABLED] = registrar_enabled
     if registrar := sip_registrar(hass):
         registrar.enabled = registrar_enabled

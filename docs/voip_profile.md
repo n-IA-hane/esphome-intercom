@@ -108,15 +108,16 @@ HA phone remains available without an open card. Call activity is reported
 separately through `Event: dialog`. Publication and subscription timers are
 cancelled when the PBX runtime stops.
 
-SIP event usage is limited to 512 simultaneous owners overall and 132 per
+SIP event usage is limited to 2048 simultaneous owners overall and 132 per
 subscriber. Active subscriptions and notification owners still finishing a
 termination share this budget, including dialog BLF, presence, MWI and REFER
 notifications. For example, 20 phones with 30 separate BLF subscriptions each
 need 600 usages before any MWI or presence subscriptions are counted. A new
 subscription above the limit receives `503 Service Unavailable` with
-`Retry-After: 1`; an existing subscription can still refresh. The limits do not
-grow automatically, and this retry hint is not an adaptive overload backoff.
-Size the monitored keys against the shared budget when planning an office PBX.
+`Retry-After` increasing through 5, 10, 20, 40 and 60 seconds per authenticated
+subscriber. An existing subscription can still refresh. Successful admission
+resets that subscriber's refusal history. Size monitored keys against the shared
+budget when planning an office PBX.
 
 Current ESP video profiles handle compatible in-dialog video changes through
 the existing dialog and media owner. They can add/remove video or update its
@@ -243,3 +244,10 @@ Cards render the state of their owner only:
 
 HA trunk registration status is observability data on the HA softphone snapshot;
 it is not an ESP phone state.
+
+Capacity refusals return SIP 503 with `Retry-After` increasing per authenticated
+subscriber through 5, 10, 20, 40 and 60 seconds. An admitted new usage resets that
+subscriber's refusal history. Refreshes and orderly unsubscribe remain available
+when the shared pool is full; retiring notifications retain their slots until
+cleanup finishes. Refusal bookkeeping is bounded and creates no timer or task
+per rejection. The total covers BLF, presence, MWI, feature and REFER usages.

@@ -157,10 +157,14 @@ class QueueCall(LocalCallApplication):
                     entry = RosterEntry(id=f"queue-attempt:{definition.queue_id}", name=definition.name,
                         ha_bridge=True, metadata={"group_type": "ring", "members": [endpoint.username for endpoint in endpoints if endpoint]})
                     decision = RouteDecision(RouteAction.GROUP, target=definition.name, entry=entry)
+                    from .ringing_policy import resolve_ringing_timeout, cap_ringing_timeout
+                    from .runtime_data import require_runtime_data
+                    budget = resolve_ringing_timeout(require_runtime_data(self.hass).transport_config,
+                        override=policy.ring_timeout)
                     try:
                         task = await registry.forward_call(call_id=self.session.call_id, destination=definition.name,
                             on_failure="resume", _resolved_decision=decision,
-                            _ring_timeout=min(policy.ring_timeout, self.ticket.deadline - now),
+                            _ring_timeout=cap_ringing_timeout(budget, self.ticket.deadline - now),
                             _queue_offer=(self.manager, self.ticket))
                         if task is not None:
                             await asyncio.shield(task)

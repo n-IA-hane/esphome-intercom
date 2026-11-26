@@ -330,7 +330,7 @@ async def _async_resolve_browser_call_route(
                 raise _service_error("The selected phone is unavailable", "phone_unavailable", phone=target)
             target = selected.username or selected.sip_uri_user
             explicit_route = True
-        route = resolve_route(target, contacts)
+        route = replace(resolve_route(target, contacts), ringing_timeout=override.ringing_timeout)
         routing_call_id = session.call_id
     from .inbound_routing.targets import resolve_phone_target
 
@@ -349,7 +349,7 @@ async def _async_resolve_browser_call_route(
         )
     if resolved.decision != route:
         target = resolved.decision.target
-    route = resolved.decision
+    route = replace(resolved.decision, ringing_timeout=route.ringing_timeout)
     if route.reason is RouteReason.TRUNK_UNAVAILABLE:
         raise trunk_selection.unavailable_error()
     policy_endpoint_ids = getattr(resolved, "forwarded_endpoint_ids", ())
@@ -493,6 +493,7 @@ async def _async_dispatch_browser_call_route(
             await _async_prepare_ha_outbound_call(hass, endpoint_id)
             await start_ring_group(
                 route.entry,
+                ringing_timeout=route.ringing_timeout,
                 **({"policy_endpoint_ids": policy_endpoint_ids} if policy_endpoint_ids else {}),
                 **({"outbound_trunk_id": trunk_selection.identity} if trunk_selection.identity else {}),
                 context=getattr(call, "context", None),

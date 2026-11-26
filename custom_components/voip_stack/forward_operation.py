@@ -844,7 +844,8 @@ class ForwardOperation:
             # Keep the source and reservation with the route until the
             # destination answers. A rejected ringing attempt must still
             # be eligible for on_failure: resume.
-            result = await self.client.wait_for_final()
+            from .ringing_policy import wait_for_ringing_result
+            result = await wait_for_ringing_result(self.client, self.plan.ring_timeout)
             if result != "in_call" or self.client.dialog is None:
                 raise RuntimeError(result)
         return result
@@ -1107,7 +1108,7 @@ class ForwardOperation:
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
             _LOGGER.debug("Forward attempt failed call_id=%s destination=%s",
                           self.source.call_id, destination, exc_info=True)
-            reason = (TerminalReason.TIMEOUT.value if isinstance(err, TimeoutError) else
+            reason = (TerminalReason.NO_ANSWER.value if isinstance(err, TimeoutError) else
                       str(err).strip() or TerminalReason.TRANSPORT_UNREACHABLE.value)
             failure_sip_status = self.failure_sip_status or (
                 self.client.last_sip_status_code
@@ -1127,7 +1128,7 @@ class ForwardOperation:
 
                 failure_endpoint = endpoint_directory(self.runtime.hass).get(self.plan.account.endpoint_id)
                 if failure_endpoint is not None:
-                    failure_destination = (failure_endpoint.policy.no_answer if reason == TerminalReason.TIMEOUT.value
+                    failure_destination = (failure_endpoint.policy.no_answer if reason in {TerminalReason.TIMEOUT.value, TerminalReason.NO_ANSWER.value}
                         else phone_failure_destination(failure_endpoint,
                             failure_sip_status or sip_failure_response(reason)[0]))
             if (
@@ -1140,9 +1141,9 @@ class ForwardOperation:
                 failure_endpoint = endpoint_directory(self.runtime.hass).get(
                     str(metadata.get("endpoint_id") or "")
                 )
-                failure_destination = phone_failure_destination(
-                    failure_endpoint, self.client.last_sip_status_code
-                )
+                failure_destination = (failure_endpoint.policy.no_answer
+                    if failure_endpoint is not None and reason == TerminalReason.NO_ANSWER.value
+                    else phone_failure_destination(failure_endpoint, self.client.last_sip_status_code))
             await self.cleanup_failed_route(reason)
             if self.plan.decision.action is RouteAction.GROUP and self.plan.decision.entry is not None:
                 fallback = str(self.plan.decision.entry.metadata.get("fallback_destination") or "")

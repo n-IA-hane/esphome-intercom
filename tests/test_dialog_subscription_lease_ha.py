@@ -35,7 +35,7 @@ async def test_dialog_server_grants_bounded_lease_and_honors_shorter_request(blf
     assert dict(initial.headers)["Subscription-State"] == f"active;expires={granted}"
     assert ElementTree.fromstring(initial.body).attrib["state"] == "full"
     await drained(methods)
-    assert len(methods.subscription_timers) == len(methods.tasks) == 1
+    assert len(methods.subscription_timers) == 1 and not methods.tasks
 
 
 @pytest.mark.parametrize("event,content_type", [("presence", "application/pidf+xml"),
@@ -106,7 +106,7 @@ async def test_many_watches_renew_full_snapshots_without_register_bursts_or_owne
         snapshot = methods.snapshot()
         assert snapshot["subscriptions"] == watches
         assert snapshot["notifiers"] == snapshot["pending_notifications"] == snapshot["task_failures"] == 0
-        assert len(methods.subscription_timers) == len(methods.tasks) == watches
+        assert len(methods.subscription_timers) == watches and not methods.tasks
         timers = dict(methods.subscription_timers)
         refreshed = await register(cycle+1)
         assert refreshed.flow_key == binding.flow_key and refreshed.capability_generation == binding.capability_generation
@@ -121,3 +121,32 @@ async def test_many_watches_renew_full_snapshots_without_register_bursts_or_owne
     await drained(methods)
     assert not methods.subscriptions and not methods.subscription_timers and not methods.notifiers
     assert not methods.tasks
+
+
+async def test_configured_dialog_lease_is_snapshotted_and_uses_no_sleeping_task(blf, lab):
+    methods, notifications, send = blf
+    lab.runtime.transport_config['max_dialog_subscription_expires'] = 600
+    response = await methods.handle(subscribe(expires=3600), ('127.0.0.3', 5060), 'UDP', send)
+    assert response.status == 200 and dict(response.headers)['Expires'] == '600'
+    response.follow_up_scheduler()
+    initial = await asyncio.wait_for(notifications.get(), 1)
+    assert dict(initial.headers)['Subscription-State'] == 'active;expires=600'
+    await drained(methods)
+    subscription = next(iter(methods.subscriptions.values()))
+    timer = methods.subscription_timers[subscription.key]
+    assert isinstance(timer, asyncio.TimerHandle)
+    assert not methods.tasks, 'An idle subscription must not retain a sleeping asyncio task'
+    deadline = subscription.expires_at
+    lab.runtime.transport_config['max_dialog_subscription_expires'] = 3600
+    assert subscription.expires_at == deadline and methods.subscription_timers[subscription.key] is timer
+    response = await methods.handle(subscribe(tag=subscription.to_tag, cseq=2, expires=3600),
+                                    ('127.0.0.3', 5060), 'UDP', send)
+    assert dict(response.headers)['Expires'] == '3600'
+    assert timer.cancelled()
+    response.follow_up_scheduler()
+    await notifications.get()
+    await drained(methods)
+    handles = tuple(methods.subscription_timers.values())
+    await methods.stop()
+    assert all(handle.cancelled() for handle in handles)
+    assert not methods.subscription_timers and not methods.tasks

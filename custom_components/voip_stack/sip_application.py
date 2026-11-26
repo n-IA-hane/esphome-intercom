@@ -15,7 +15,8 @@ from xml.etree import ElementTree
 
 from homeassistant.core import HomeAssistant, callback
 
-from .const import EVENT_SIP_MESSAGE, EVENT_SIP_PRESENCE
+from .const import (EVENT_SIP_MESSAGE, EVENT_SIP_PRESENCE,
+                    CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES)
 from .core import sip, sip_transfer
 from .core.sip_dialog import SubscriptionDialog
 from .core.sip_auth import SipDigestCredentials
@@ -28,8 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 # Sixty-four dialog/presence pairs plus four account MWI usages.
 # Retiring notifiers retain their slot until their transaction is released.
 MAX_EVENT_USAGES_PER_SUBSCRIBER = 132
-MAX_EVENT_USAGES = 512
-MAX_DIALOG_SUBSCRIPTION_EXPIRES = 60
+MAX_EVENT_USAGES = 2048
 
 
 @dataclass(slots=True)
@@ -42,7 +42,7 @@ class SipApplicationMethods:
     subscriptions: dict[str, "SipEventSubscription"] | None = None
     tasks: set[asyncio.Task[object]] | None = None
     publication_timers: dict[str, asyncio.Task[object]] | None = None
-    subscription_timers: dict[str, asyncio.Task[object]] | None = None
+    subscription_timers: dict[str, asyncio.TimerHandle] | None = None
     mailbox_archive: object | None = None
     mailbox_unsubscribe: Callable[[], None] | None = None
     account_unsubscribe: Callable[[], None] | None = None
@@ -55,6 +55,7 @@ class SipApplicationMethods:
     notifiers: dict[int, "SipEventSubscription"] = field(default_factory=dict)
     coalesced_notifications: int = 0
     rejected_subscriptions: int = 0
+    subscription_rejections: dict[str, tuple[float, int]] = field(default_factory=dict)
     task_failures: int = 0
     peak_notifiers: int = 0
     signaling_leases: dict[int, asyncio.Task] = field(default_factory=dict)
@@ -265,6 +266,8 @@ class SipApplicationMethods:
     @callback
     def _accounts_changed(self, usernames):
         """Revoke event owners on credential changes, independently of Contacts."""
+        for username in usernames:
+            self.subscription_rejections.pop(username.casefold(), None)
         owned = {id(item): item for item in self.subscriptions.values()}
         owned.update(self.notifiers)
         for subscription in owned.values():
@@ -340,8 +343,7 @@ class SipApplicationMethods:
             owned.update(self.notifiers)
             if (len(owned) >= MAX_EVENT_USAGES
                     or sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
-                self.rejected_subscriptions += 1
-                return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
+                return self._subscription_capacity_rejection(subscriber)
             tag = secrets.token_hex(8)
             state = SubscriptionDialog.from_request(request, tag)
             key = f"{state.key.call_id}:{state.key.remote_tag}:refer:{sequence.number}"
@@ -353,6 +355,7 @@ class SipApplicationMethods:
         except (ValueError, sip.SipError):
             return SipRequestResult(400, "Bad Request")
         self.subscriptions[key] = subscription
+        self.subscription_rejections.pop(subscriber.casefold(), None)
 
         async def action():
             return await calls.refer_call(target_dialog.call_id, target, source_client=client)
@@ -500,7 +503,11 @@ class SipApplicationMethods:
             ).user
             expires = _publication_expires(request.header("Expires"))
             if event == "dialog":
-                expires = min(expires, MAX_DIALOG_SUBSCRIPTION_EXPIRES)
+                from .runtime_data import runtime_data
+                runtime = runtime_data(self.hass)
+                config = runtime.transport_config if runtime is not None else {}
+                limit = config.get(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES)
+                expires = min(expires, int(limit))
             from .dialog_info import subscription_filter
 
             dialog_filter = subscription_filter(request.header("Event")) if event == "dialog" else ("", "", "")
@@ -528,12 +535,14 @@ class SipApplicationMethods:
         request_to_tag = sip.extract_tag(request.header("To"))
         if (current is not None and request_to_tag != current.to_tag) or (current is None and request_to_tag):
             return SipRequestResult(481, "Call/Transaction Does Not Exist")
-        owned = {id(item): item for item in subscriptions.values()}
-        owned.update(self.notifiers)
-        if current is None and (len(owned) >= MAX_EVENT_USAGES or
-                sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
-            self.rejected_subscriptions += 1
-            return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", "1"),))
+        if current is None:
+            # Refresh/unsubscribe cannot allocate another usage. Avoid walking
+            # the whole installation for every existing phone's renewal.
+            owned = {id(item): item for item in subscriptions.values()}
+            owned.update(self.notifiers)
+            if (len(owned) >= MAX_EVENT_USAGES or
+                    sum(item.subscriber == subscriber for item in owned.values()) >= MAX_EVENT_USAGES_PER_SUBSCRIBER):
+                return self._subscription_capacity_rejection(subscriber)
         to_tag = current.to_tag if current is not None else secrets.token_hex(8)
         try:
             if current is not None:
@@ -579,18 +588,31 @@ class SipApplicationMethods:
             subscription = current
         if expires:
             subscriptions[key] = subscription
-            self._replace_timer(
-                self.subscription_timers,
-                key,
-                self._expire_subscription(key, to_tag, expires),
-                f"voip-sip-subscription-expiry-{key}",
-            )
+            if current is None:
+                self.subscription_rejections.pop(subscriber.casefold(), None)
+            self._cancel_timer(self.subscription_timers, key)
+            self.subscription_timers[key] = asyncio.get_running_loop().call_at(
+                subscription.expires_at, self._expire_subscription, key, to_tag, subscription.expires_at)
         else:
             subscriptions.pop(key, None)
             self._cancel_timer(self.subscription_timers, key)
             self._release_dialog_observers_if_unused()
         result = self._notification_result(subscription, expires=expires, terminated=not expires)
         return replace(result, follow_up_scheduler=lambda: self._schedule_notification(subscription, result))
+
+    def _subscription_capacity_rejection(self, subscriber: str) -> SipRequestResult:
+        """Back off one authenticated principal without allocating timers/tasks."""
+        self.rejected_subscriptions += 1
+        identity = subscriber.casefold()
+        now = asyncio.get_running_loop().time()
+        previous = self.subscription_rejections.pop(identity, None)
+        # An idle refusal history expires lazily. Keep the same bounded owner
+        # even when many authenticated principals encounter a full system.
+        delay = min(60, previous[1] * 2) if previous and now - previous[0] < 300 else 5
+        if len(self.subscription_rejections) >= MAX_EVENT_USAGES:
+            self.subscription_rejections.pop(next(iter(self.subscription_rejections)))
+        self.subscription_rejections[identity] = (now, delay)
+        return SipRequestResult(503, "Service Unavailable", headers=(("Retry-After", str(delay)),))
 
     def _notification_result(
         self,
@@ -935,21 +957,23 @@ class SipApplicationMethods:
         publications.pop(entity_tag, None)
         self._notify_subscribers(target)
 
-    async def _expire_subscription(
-        self, key: str, to_tag: str, expires: int
-    ) -> None:
-        await asyncio.sleep(expires)
+    def _expire_subscription(self, key: str, to_tag: str, deadline: float) -> None:
+        """Expire one lease with a timer handle, without one sleeping task per watch."""
         subscriptions = self.subscriptions
-        if subscriptions is None:
+        if self.stopping or subscriptions is None:
             return
         current = subscriptions.get(key)
-        if current is None or current.to_tag != to_tag:
+        if current is None or current.to_tag != to_tag or current.expires_at != deadline:
             return
-        if current.expires_at > asyncio.get_running_loop().time():
+        loop = asyncio.get_running_loop()
+        if deadline > loop.time():
+            # call_at may run one clock-resolution tick early. Preserve the
+            # lease instead of losing its expiry callback on that boundary.
+            self.subscription_timers[key] = loop.call_at(deadline, self._expire_subscription, key, to_tag, deadline)
             return
         self._end_subscription(current)
-        if current.notify_task is not None:
-            await asyncio.shield(current.notify_task)
+        # The existing notifier owner sends and retires the final NOTIFY.
+        # Its task remains in self.tasks and is awaited/cancelled by stop().
 
     def _schedule_notification(self, subscription, result):
         """Keep one sender and one latest state; terminal updates cannot be lost."""
@@ -1210,7 +1234,7 @@ class SipApplicationMethods:
 
     def _cancel_timer(
         self,
-        store: dict[str, asyncio.Task[object]] | None, key: str
+        store: dict[str, asyncio.Task[object]] | dict[str, asyncio.TimerHandle] | None, key: str
     ) -> None:
         if store is None:
             return
@@ -1242,6 +1266,9 @@ class SipApplicationMethods:
     async def stop(self) -> None:
         """Cancel application transactions and discard expiring state."""
         self.stopping = True
+        for timer in tuple(self.subscription_timers.values()):
+            timer.cancel()
+        self.subscription_timers.clear()
         if self.account_unsubscribe is not None:
             self.account_unsubscribe()
             self.account_unsubscribe = None
@@ -1250,6 +1277,7 @@ class SipApplicationMethods:
             self.response_cache_timer.cancel()
             self.response_cache_timer = None
         self.response_cache.clear()
+        self.subscription_rejections.clear()
 
         if self.mailbox_unsubscribe is not None:
             self.mailbox_unsubscribe()

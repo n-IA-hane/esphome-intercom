@@ -55,7 +55,14 @@ def normalize_group_data(data, *, identity=""):
     else:
         from .dial_plan import RingPolicy
         from dataclasses import asdict
+        inherited = policy.get("overall_timeout") is None and policy.get("ring_timeout") is None
+        configured = policy.get("overall_timeout")
+        if configured is None:
+            configured = policy.get("ring_timeout")
         policy = asdict(RingPolicy.from_metadata(policy))
+        # Persist configuration, not the fork's infinity representation or a
+        # snapshot of the global value. Existing explicit values stay explicit.
+        policy["overall_timeout"] = None if inherited else configured
     fallback = str(data.get("fallback") or "").strip()
     if len(fallback.encode()) > 2048 or any(ord(char) < 32 or ord(char) == 127 for char in fallback):
         raise ValueError("Group fallback exceeds the supported limits")

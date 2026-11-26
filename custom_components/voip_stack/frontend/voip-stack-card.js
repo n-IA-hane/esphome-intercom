@@ -3747,15 +3747,16 @@ class VoipStackCard extends HTMLElement {
     if (saved && this._ringingDraft === saved) {
       const self = entries.find((entry) => entry.metadata?.device_id === deviceId);
       const requested = String(saved.destination || "").trim();
-      const sameTarget = saved.action === "hangup" ||
+      const sameTarget = ["none", "hangup"].includes(saved.action) ||
         (saved.action === "voicemail" && !requested
           ? target === self?.metadata?.endpoint_id
           : requested === target || [destination?.name, destination?.id, destination?.extension,
             destination?.metadata?.extension].some(value => value && this._samePeerName(value, requested)));
-      const confirmed = saved.enabled
-        ? Number(policy.ringing_timeout) === Number(saved.seconds) &&
-          policy.no_answer?.kind === (saved.action === "forward" ? "contact" : saved.action) && sameTarget
-        : policy.ringing_timeout == null;
+      const sameAction = saved.action === "none" ? !policy.no_answer :
+        policy.no_answer?.kind === (saved.action === "forward" ? "contact" : saved.action);
+      const confirmed = (saved.enabled
+        ? policy.ringing_timeout != null && Number(policy.ringing_timeout) === Number(saved.seconds)
+        : policy.ringing_timeout == null) && sameAction && sameTarget;
       if (confirmed) {
         this._ringingDraft = null;
         this._savedRingingDraft = null;
@@ -3764,7 +3765,7 @@ class VoipStackCard extends HTMLElement {
     const draft = this._ringingDraft || {
       enabled: policy.ringing_timeout != null,
       seconds: policy.ringing_timeout ?? "",
-      action: policy.no_answer?.kind === "contact" ? "forward" : (policy.no_answer?.kind || ""),
+      action: policy.no_answer?.kind === "contact" ? "forward" : (policy.no_answer?.kind || "none"),
       destination: destination?.name || target,
     };
     controls.enabled.checked = draft.enabled;
@@ -3774,8 +3775,8 @@ class VoipStackCard extends HTMLElement {
     if (mailboxOption) mailboxOption.disabled = !this._phoneMailbox().available;
     controls.destination.value = draft.destination;
     controls.secondsRow.hidden = !draft.enabled;
-    controls.actionRow.hidden = !draft.enabled;
-    controls.destinationRow.hidden = !draft.enabled || !["forward", "voicemail"].includes(draft.action);
+    controls.actionRow.hidden = false;
+    controls.destinationRow.hidden = !["forward", "voicemail"].includes(draft.action);
     if (controls.actionRow.firstElementChild) {
       controls.actionRow.firstElementChild.textContent = this._t("After timeout");
     }
@@ -3805,22 +3806,25 @@ class VoipStackCard extends HTMLElement {
   async _saveRingingPolicy() {
     const draft = this._ringingDraft;
     if (!draft?.deviceId || this._routingSettingsBusy) return;
-    const data = { device_id: draft.deviceId, ringing_timeout: 0 };
+    const data = { device_id: draft.deviceId, ringing_timeout: null };
     if (draft.enabled) {
       const seconds = Number(draft.seconds);
-      if (!Number.isFinite(seconds) || seconds < 1 || seconds > 3600 ||
-          !["hangup", "forward", "voicemail"].includes(draft.action)) {
-        this._showError("Choose a ringing duration and a no-answer action.");
+      if (draft.seconds === "" || !Number.isFinite(seconds) || seconds < 0 || seconds > 3600) {
+        this._showError("Choose a ringing duration. Zero means unlimited.");
         return;
       }
       data.ringing_timeout = seconds;
-      data.no_answer_action = draft.action;
-      if (["forward", "voicemail"].includes(draft.action)) {
-        data.no_answer_to = String(draft.destination || "").trim();
-        if (!data.no_answer_to && draft.action === "forward") {
-          this._showError("Select a no-answer destination.");
-          return;
-        }
+    }
+    if (!["none", "hangup", "forward", "voicemail"].includes(draft.action)) {
+      this._showError("Choose a no-answer action.");
+      return;
+    }
+    data.no_answer_action = draft.action;
+    if (["forward", "voicemail"].includes(draft.action)) {
+      data.no_answer_to = String(draft.destination || "").trim();
+      if (!data.no_answer_to && draft.action === "forward") {
+        this._showError("Select a no-answer destination.");
+        return;
       }
     }
     this._routingSettingsBusy = true;

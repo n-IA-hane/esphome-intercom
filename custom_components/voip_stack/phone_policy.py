@@ -48,7 +48,7 @@ class PhoneDestination:
 
 @dataclass(frozen=True, slots=True)
 class PhonePolicy:
-    """Unset defaults never introduce a forwarding route or ringing limit."""
+    """Missing limits inherit; zero is unlimited; fallbacks are independent."""
 
     always: PhoneDestination | None = None
     busy: PhoneDestination | None = None
@@ -68,10 +68,8 @@ class PhonePolicy:
         if timeout is not None:
             if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
                 raise ValueError("ringing_timeout must be seconds or null")
-            if not math.isfinite(timeout) or not 1 <= timeout <= 3600:
-                raise ValueError("ringing_timeout must be between 1 and 3600 seconds")
-        if (timeout is None) != (self.no_answer is None):
-            raise ValueError("ringing timeout and no-answer destination must be set together")
+            if not math.isfinite(timeout) or not 0 <= timeout <= 3600:
+                raise ValueError("ringing_timeout must be between 0 and 3600 seconds")
         if not isinstance(self.outbound_trunk_id, str):
             raise ValueError("outbound_trunk_id must be text")
         object.__setattr__(self, "outbound_trunk_id", self.outbound_trunk_id.strip())

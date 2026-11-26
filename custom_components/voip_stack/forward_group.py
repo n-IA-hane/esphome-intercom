@@ -118,7 +118,6 @@ class ForwardGroup:
         if account_plan and self.endpoints.get(account_plan.endpoint_id) is None:
             raise RuntimeError("account disappeared before forwarding")
         try:
-            from .dial_plan import RingPolicy
             from .endpoint_dialing import OutboundLegPolicy
 
             if self.operation.parked_media is not None:
@@ -145,17 +144,7 @@ class ForwardGroup:
                 roster_entries=self.operation.plan.roster_entries,
                 local_name=self.operation.invite.caller
                 or _ha_peer_name(self.operation.runtime.hass),
-                ring_policy=(
-                    RingPolicy(
-                        overall_timeout=self.operation.plan.ring_timeout,
-                        step_timeout=(account_plan.ring_policy.step_timeout if account_plan
-                                      else self.operation.plan.ring_timeout),
-                    )
-                    if self.operation.plan.ring_timeout is not None
-                    else account_plan.ring_policy
-                    if account_plan
-                    else None
-                ),
+                ring_policy=self.operation.plan.ring_policy,
                 source_endpoint_id=str(
                     (
                         self.operation.source.session.metadata
@@ -390,16 +379,12 @@ class ForwardGroup:
                         self.operation.source.call_id, self.generation
                     )
                 ),
-                **(
-                    {"overall_timeout": self.operation.plan.ring_timeout}
-                    if self.operation.plan.ring_timeout is not None
-                    else {
-                        "overall_timeout": account_plan.ring_policy.overall_timeout,
-                        "step_timeout": account_plan.ring_policy.step_timeout,
-                    }
-                    if account_plan
-                    else {}
-                ),
+                overall_timeout=(self.operation.plan.ring_timeout
+                    if self.operation.plan.ring_timeout is not None else float("inf")),
+                **({"strategy": self.operation.plan.ring_policy.strategy,
+                    "step_timeout": self.operation.plan.ring_policy.step_timeout,
+                    "tier_strategies": self.operation.plan.ring_policy.tier_strategies}
+                   if self.operation.plan.ring_policy is not None else {}),
             )
         except asyncio.CancelledError:
             await self.abort(
@@ -698,11 +683,12 @@ class ForwardGroup:
                 handoff.set_result(dict(reroute_decision))
             return
         if winner is None:
-            self.operation.failure_sip_status = fork_result.outcome.status
-            failure = terminal_reason(
+            no_answer = fork_result.outcome.disposition is DialDisposition.TIMEOUT
+            self.operation.failure_sip_status = 480 if no_answer else fork_result.outcome.status
+            failure = (TerminalReason.NO_ANSWER.value if no_answer else terminal_reason(
                 fork_result.outcome.disposition,
                 fork_result.outcome.reason or "transport_unreachable",
-            )
+            ))
             await self.abort(
                 TerminalReason.TRANSPORT_UNREACHABLE.value,
                 cleanup=False,

@@ -7,6 +7,8 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
+    CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES,
+    DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES,
     CONF_ASSIST_ENDPOINT_ENABLED,
     CONF_ASSIST_EXTENSION,
     CONF_ASSIST_PIPELINE,
@@ -61,6 +63,8 @@ def entry_transport_config(entry: ConfigEntry | None = None) -> dict:
     return {
         EXTERNAL_CALL_BLOCKED_ENDPOINTS: tuple(data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())),
         CONF_REGISTRAR_ENABLED: bool(data.get(CONF_REGISTRAR_ENABLED, False)),
+        "default_ringing_timeout": data.get("default_ringing_timeout"),
+        CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES: data.get(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES),
         "sip_port": int(data.get("sip_port", VOIP_STACK_SIP_PORT)),
         "rtp_port": int(data.get("rtp_port", VOIP_STACK_RTP_PORT)),
         "advertise_host": (data.get("advertise_host") or "").strip(),

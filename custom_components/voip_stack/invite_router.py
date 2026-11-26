@@ -289,6 +289,7 @@ async def route_invite(
         if target_resolution.failure is not None:
             return target_resolution.failure
         decision = target_resolution.decision
+        decision = replace(decision, ringing_timeout=automation_route.ringing_timeout)
         trace_call(
             _LOGGER, invite.call_id,
             "Target %s selects %s via %s; action=%s, reason=%s",

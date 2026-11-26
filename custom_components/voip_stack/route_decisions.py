@@ -104,6 +104,8 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             "route_not_decidable",
             call_id=call_id,
         )
+    from .ringing_policy import validate_ringing_timeout
+    ringing_timeout = validate_ringing_timeout(data.get("ringing_timeout"), inherit=True)
     endpoint_id = str(data.get("endpoint_id") or "").strip()
     selected_trunk_id = ""
     if data.get("trunk_id"):
@@ -180,6 +182,12 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
         session = registry.get_session(call_id)
         if session is not None:
             session.update_metadata(outbound_trunk_id=selected_trunk_id)
+    # Each accepted route replaces this attempt's override. Missing means
+    # inherit, so a later unrelated destination cannot retain an old limit.
+    if action in {"default", "answer_ha", "forward", "bridge"}:
+        session = registry.get_session(call_id)
+        if session is not None:
+            session.update_metadata(route_ringing_timeout=ringing_timeout)
     registry.record_route(
         call_id,
         action=action,
@@ -210,6 +218,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             **({"accept_video": bool(data["accept_video"])} if "accept_video" in data else {}),
             **({"on_failure": data["on_failure"]} if "on_failure" in data else {}),
             **({"trunk_id": selected_trunk_id} if selected_trunk_id else {}),
+            **({"ringing_timeout": ringing_timeout} if ringing_timeout is not None else {}),
         }
     )
     invite = route.get("invite")

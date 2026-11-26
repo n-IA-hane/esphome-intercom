@@ -32,8 +32,8 @@ async def registered_phones(trunks, tmp_path, request):
     assert not lab.runtime.rtp_port_pool.get("used")
     lab.runtime.transport_config["rtp_port"] = 12000 + 2 * secrets.randbelow(2000)
     video_names = getattr(request, "param", {}).get("video", ())
+    module_path = Path(os.environ.get("VOIP_TEST_BARESIP_MODULE_PATH", "/usr/lib/baresip/modules"))
     if video_names:
-        module_path = Path(os.environ.get("VOIP_TEST_BARESIP_MODULE_PATH", "/usr/lib/baresip/modules"))
         for module in ("avcodec.so", "fakevideo.so"):
             assert (module_path / module).is_file(), f"Video peer requires {module_path / module}"
         lab.hass.config_entries.async_update_entry(entry,
@@ -84,7 +84,7 @@ audio_player aubridge,nil
 audio_source ausine,{450 + index * 100}
 audio_alert aubridge,nil
 snd_path {config}
-module_path /usr/lib/baresip/modules
+module_path {module_path}
 module stdio.so
 module menu.so
 module g711.so

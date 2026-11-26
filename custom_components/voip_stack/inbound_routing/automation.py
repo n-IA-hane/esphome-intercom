@@ -40,6 +40,7 @@ class AutomationRoute:
     decline_reason: str = ""
     endpoint_id: str = ""
     trunk_id: str = ""
+    ringing_timeout: float | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> AutomationRoute:
@@ -53,6 +54,7 @@ class AutomationRoute:
             decline_reason=str(payload.get("decline_reason") or "").strip(),
             endpoint_id=str(payload.get("endpoint_id") or "").strip(),
             trunk_id=str(payload.get("trunk_id") or "").strip(),
+            ringing_timeout=payload.get("ringing_timeout"),
         )
 
 

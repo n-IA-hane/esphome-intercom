@@ -107,6 +107,7 @@ class ForwardPlan:
     preselected: bool
     ring_timeout: float | None
     on_failure: str
+    ring_policy: Any = None
 
 
 @dataclass(frozen=True, slots=True)

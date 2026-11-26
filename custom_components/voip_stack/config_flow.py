@@ -66,6 +66,8 @@ from .phone_config import (
 from .phone_endpoint import EndpointKind, OfflinePolicy
 from .sip_registrar import generate_password, normalize_username
 from .const import (
+    CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES,
+    DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES,
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
     CONF_ASSIST_ENDPOINT_ENABLED,
     CONF_ASSIST_EXTENSION,
@@ -454,11 +456,15 @@ class TrunkFormMixin:
         return self._store_entry(data)
 
 
+INITIAL_RINGING_TIMEOUT = 120
+
+
+
 class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
     VERSION = 7
-    MINOR_VERSION = 4
+    MINOR_VERSION = 5
     _base_input: dict | None = None
 
     @classmethod
@@ -698,6 +704,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="single_instance_allowed")
         await self.hass.async_add_executor_job(preload_codec_capabilities)
         defaults = {
+            "default_ringing_timeout": existing.get("default_ringing_timeout", INITIAL_RINGING_TIMEOUT),
+            CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES: existing.get(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES),
             "sip_port": existing.get("sip_port", VOIP_STACK_SIP_PORT),
             "rtp_port": existing.get("rtp_port", VOIP_STACK_RTP_PORT),
             "advertise_host": existing.get("advertise_host", ""),
@@ -740,12 +748,27 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     CONF_REGISTRAR_ENABLED, default=defaults[CONF_REGISTRAR_ENABLED]
                 ): BooleanSelector(),
+                vol.Required("default_ringing_timeout", default=defaults["default_ringing_timeout"]): NumberSelector(
+                    NumberSelectorConfig(min=0, max=3600, step=0.1, mode="box", unit_of_measurement="s")),
+                vol.Required(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, default=defaults[CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES]): NumberSelector(
+                    NumberSelectorConfig(min=60, max=3600, step=1, mode="box", unit_of_measurement="s")),
                 **codec_form_fields(existing),
             }
         )
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            from .ringing_policy import validate_ringing_timeout
+            try:
+                user_input["default_ringing_timeout"] = validate_ringing_timeout(
+                    user_input.get("default_ringing_timeout", defaults["default_ringing_timeout"]))
+            except ValueError:
+                errors["default_ringing_timeout"] = "phone_policy_invalid"
+            lease = user_input.get(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, defaults[CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES])
+            if isinstance(lease, bool) or not isinstance(lease, (int, float)) or not 60 <= lease <= 3600 or int(lease) != lease:
+                errors[CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES] = "subscription_expiry_invalid"
+            else:
+                user_input[CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES] = int(lease)
             codec_errors, _inherited = normalize_codec_form(user_input, user_input, existing)
             errors.update(codec_errors)
             # Number selectors hand floats; coerce to int once on the boundary.
@@ -1030,7 +1053,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 candidate = normalize_parking_config({
                     "access": user_input["access"],
                     "slots": str(user_input["slots"]).replace("\n", ",").split(","),
-                    "timeout": user_input["timeout"], "return_timeout": user_input["return_timeout"],
+                    "timeout": user_input["timeout"], "return_timeout": (None if user_input.get("inherit_ringing_timeout")
+                        else user_input.get("return_timeout", current.get("return_timeout"))),
                     "return_destination": user_input.get("return_destination", ""),
                     "hold_media": "" if user_input.get("clear_hold_media") else
                         user_input.get("hold_media", {}).get("media_content_id", current.get("hold_media", "")),
@@ -1051,7 +1075,11 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             vol.Required("access", default=current.get("access", "700")): str,
             vol.Required("slots", default=", ".join(slots)): TextSelector(TextSelectorConfig(multiline=True)),
             vol.Required("timeout", default=current.get("timeout", 180)): NumberSelector(NumberSelectorConfig(min=1, max=3600, mode="box", unit_of_measurement="s")),
-            vol.Required("return_timeout", default=current.get("return_timeout", 30)): NumberSelector(NumberSelectorConfig(min=1, max=3600, mode="box", unit_of_measurement="s")),
+            vol.Required("inherit_ringing_timeout", default=current.get("return_timeout") is None): BooleanSelector(),
+            visible_required("return_timeout",
+                default=current.get("return_timeout") if current.get("return_timeout") is not None else existing.get("default_ringing_timeout", 0),
+                visible={"field": "inherit_ringing_timeout", "value": False}): NumberSelector(
+                    NumberSelectorConfig(min=0, max=3600, mode="box", unit_of_measurement="s")),
             vol.Optional("return_destination", default=current.get("return_destination", "")): SelectSelector(SelectSelectorConfig(options=options, custom_value=True, mode="dropdown")),
             vol.Optional("hold_media"): MediaSelector({"accept": ["audio/*"]}),
             vol.Optional("clear_hold_media", default=False): BooleanSelector(),
@@ -1146,10 +1174,13 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             fields[vol.Optional(field + '_action', default=action(destination))] = SelectSelector({
                 'options': ['none', 'forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
             fields[vol.Optional(field + '_to', default=target(destination))] = destination_selector()
-        fields[vol.Optional('ringing_timeout', default=policy.ringing_timeout or 0)] = NumberSelector({
+        fields[vol.Optional('inherit_ringing_timeout', default=policy.ringing_timeout is None)] = BooleanSelector()
+        fields[visible_required('ringing_timeout',
+                default=policy.ringing_timeout if policy.ringing_timeout is not None else entry.data.get('default_ringing_timeout', 0),
+                visible={'field': 'inherit_ringing_timeout', 'value': False})] = NumberSelector({
             'min': 0, 'max': 3600, 'step': 0.1, 'unit_of_measurement': 's', 'mode': 'box'})
-        fields[vol.Optional('no_answer_action', default=action(policy.no_answer) if policy.no_answer else 'forward')] = SelectSelector({
-            'options': ['forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
+        fields[vol.Optional('no_answer_action', default=action(policy.no_answer))] = SelectSelector({
+            'options': ['none', 'forward', 'voicemail', 'hangup'], 'translation_key': 'phone_forward_action'})
         fields[vol.Optional('no_answer_to', default=target(policy.no_answer))] = destination_selector()
         if not self._suggested_password:
             self._suggested_password = str(
@@ -1363,18 +1394,20 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
                         policy_data.pop(slot, None)
                     else:
                         policy_data[slot] = selected
-            if 'ringing_timeout' in user_input or 'no_answer_action' in user_input or 'no_answer_to' in user_input:
+            if user_input.get('inherit_ringing_timeout') is True:
+                policy_data.pop('ringing_timeout', None)
+            elif 'ringing_timeout' in user_input:
+                from .ringing_policy import validate_ringing_timeout
                 try:
-                    timeout = float(user_input.get('ringing_timeout', policy_data.get('ringing_timeout') or 0))
-                except (TypeError, ValueError):
+                    policy_data['ringing_timeout'] = validate_ringing_timeout(user_input['ringing_timeout'])
+                except ValueError:
                     errors['ringing_timeout'] = 'phone_policy_invalid'
-                    timeout = 0
-                if timeout == 0:
-                    policy_data.pop('ringing_timeout', None)
+            if 'no_answer_action' in user_input or 'no_answer_to' in user_input:
+                selected = destination('no_answer', user_input.get('no_answer_action', 'none'))
+                if selected is None:
                     policy_data.pop('no_answer', None)
                 else:
-                    policy_data['ringing_timeout'] = timeout
-                    policy_data['no_answer'] = destination('no_answer', user_input.get('no_answer_action', 'forward'))
+                    policy_data['no_answer'] = selected
             try:
                 PhonePolicy.from_data(policy_data)
             except (ValueError, TypeError):

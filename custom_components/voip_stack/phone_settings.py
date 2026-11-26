@@ -43,12 +43,11 @@ async def async_set_phone_settings(call: ServiceCall) -> None:
             target = destination.endpoint_id
         updates[slot] = PhoneDestination(DestinationKind.CONTACT, target) if target else None
     if "ringing_timeout" in call.data:
-        timeout = float(call.data["ringing_timeout"])
-        updates["ringing_timeout"] = timeout or None
-    if call.data.get("ringing_timeout") == 0:
-        updates["no_answer"] = None
-    elif "no_answer_action" in call.data:
-        if call.data["no_answer_action"] == "hangup":
+        updates["ringing_timeout"] = call.data["ringing_timeout"]
+    if "no_answer_action" in call.data:
+        if call.data["no_answer_action"] == "none":
+            updates["no_answer"] = None
+        elif call.data["no_answer_action"] == "hangup":
             updates["no_answer"] = PhoneDestination(DestinationKind.HANGUP)
         elif call.data["no_answer_action"] == "voicemail":
             from .mailbox import mailbox_settings

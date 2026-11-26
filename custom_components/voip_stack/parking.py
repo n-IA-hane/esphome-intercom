@@ -170,17 +170,36 @@ class ParkingCall(LocalCallApplication):
         callback = registry.forward_call
         if callback is None:
             raise ParkingError("Call forwarding is unavailable")
+        from .ringing_policy import resolve_ringing_timeout, cap_ringing_timeout
+        config = require_runtime_data(self.hass).transport_config
+        timeout = cap_ringing_timeout(resolve_ringing_timeout(config, account=target),
+            resolve_ringing_timeout({}, override=self.settings.get("return_timeout")))
         await self.stop_music()
-        await callback(call_id=self.session.call_id, destination=destination, on_failure="terminate")
+        forward = await callback(call_id=self.session.call_id, destination=destination,
+            on_failure="terminate", ringing_timeout=timeout if timeout is not None else 0)
         if not self.session.live:
             return
         claim.commit()
+        token = self.session.token
         def expired():
-            if self.session.owner == "router" or self.session.state in {"calling", "connecting", "ringing", "remote_ringing"}:
-                registry.request_termination(self.session.call_id, TerminationIntent("parking_return_timeout"),
-                                             generation=self.session.generation)
-        deadline = CallDeadline(registry, self.session, f"parking_return:{self.session.call_id}", expired)
-        deadline.arm(self.hass.loop, float(self.settings.get("return_timeout", 30)))
+            # Keep the return watchdog for an orphaned handoff. The active
+            # forward worker or phone policy owns no-answer/fallback, including
+            # cancellation cleanup; this backstop must not race either owner.
+            if (not self.session.owns(token) or not self.session.live
+                    or (forward is not None and not forward.done())
+                    or registry.task_for(token.call_id, "forward") not in {None, forward}
+                    or registry.resource_for(token.call_id, "deadline:phone_policy") is not None
+                    or registry.resource_for(token.call_id, "deadline:phone_policy_decision") is not None):
+                return
+            if target is not None and str(self.session.metadata.get("dest_endpoint_id") or "") != target.endpoint_id:
+                return
+            from .call_scope import has_ringing_destination
+            if has_ringing_destination(self.session) or self.session.state in {"calling", "connecting"}:
+                registry.request_termination(token.call_id, TerminationIntent("parking_return_timeout"),
+                                             generation=token.generation)
+        if timeout is not None:
+            deadline = CallDeadline(registry, self.session, f"parking_return:{self.session.call_id}", expired)
+            deadline.arm(self.hass.loop, timeout)
 
 
 async def start_parking_application(hass, session, invite, local_ip, *, slot="", parker="", previous=None, media=None, source_client=None, local_source=None, video_source=None):

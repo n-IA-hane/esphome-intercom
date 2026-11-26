@@ -1250,8 +1250,8 @@ export function buildMainCardSkeleton(cardVersion) {
     routingPanel.appendChild(trunkRow);
     const ringingControls = {};
     for (const [field, label, type] of [
-      ["enabled", "Enable ringing timeout", "checkbox"],
-      ["seconds", "Seconds before no-answer action", "number"],
+      ["enabled", "Override PBX ringing limit", "checkbox"],
+      ["seconds", "Ringing seconds (0 = unlimited)", "number"],
       ["action", "When nobody answers", "select"],
       ["destination", "No-answer destination", "text"],
     ]) {
@@ -1261,7 +1261,7 @@ export function buildMainCardSkeleton(cardVersion) {
       title.textContent = translate(label);
       const input = document.createElement(type === "select" ? "select" : "input");
       if (type === "select") {
-        for (const [value, text] of [["", "Choose an action"], ["hangup", "Hang up"], ["forward", "Forward"], ["voicemail", "Voicemail"]]) {
+        for (const [value, text] of [["none", "Use default no-answer action"], ["hangup", "Hang up"], ["forward", "Forward"], ["voicemail", "Voicemail"]]) {
           const option = document.createElement("option");
           option.value = value;
           option.textContent = translate(text);
@@ -1270,7 +1270,7 @@ export function buildMainCardSkeleton(cardVersion) {
       } else {
         input.type = type;
       }
-      if (type === "number") { input.min = "1"; input.max = "3600"; }
+      if (type === "number") { input.min = "0"; input.max = "3600"; }
       row.appendChild(title);
       row.appendChild(input);
       if (field === "destination") {

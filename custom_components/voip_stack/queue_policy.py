@@ -12,7 +12,7 @@ class QueuePolicy:
     enabled: bool = True
     max_waiting: int = 10
     max_wait: float = 60
-    ring_timeout: float = 20
+    ring_timeout: float | None = None
     no_agent_wait: float = 1
     retry_delay: float = 1
     wrap_up: float = 0
@@ -53,11 +53,13 @@ class QueuePolicy:
         if isinstance(policy.max_waiting, bool) or not isinstance(policy.max_waiting, int) or not 1 <= policy.max_waiting <= 64:
             raise ValueError("max_waiting must be between 1 and 64")
         for name, minimum, maximum in (
-            ("max_wait", 1, 3600), ("ring_timeout", 1, 120),
+            ("max_wait", 1, 3600), ("ring_timeout", 0, 3600),
             ("no_agent_wait", 0, 120), ("retry_delay", 0.1, 120),
             ("wrap_up", 0, 3600),
         ):
             value = getattr(policy, name)
+            if name == "ring_timeout" and value is None:
+                continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= value <= maximum:
                 raise ValueError(f"{name} must be between {minimum} and {maximum}")
         if not isinstance(policy.fallback, str) or len(policy.fallback) > 256:

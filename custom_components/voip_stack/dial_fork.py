@@ -221,7 +221,7 @@ class DialForkController:
         *,
         strategy: ForkStrategy = ForkStrategy.PARALLEL,
         tier_strategies: Mapping[int, ForkStrategy | str] | None = None,
-        overall_timeout: float = 30.0,
+        overall_timeout: float = float("inf"),
         step_timeout: float = 15.0,
     ) -> None:
         self.session = session

@@ -426,7 +426,7 @@ async def test_stopping_script_while_ringing_cancels_call(lab, monkeypatch):
     assert not any(session.live for session in lab.calls.sessions.values())
 
 
-async def test_phone_deadline_cancels_real_sip_invite_before_action_deadline(lab, monkeypatch):
+async def test_phone_deadline_cancels_real_sip_invite_with_inherited_action_budget(lab, monkeypatch):
     from custom_components.voip_stack.phone_policy import PhonePolicy
 
     lab.runtime.endpoints.update("bedroom0", policy=PhonePolicy.from_data({
@@ -435,7 +435,9 @@ async def test_phone_deadline_cancels_real_sip_invite_before_action_deadline(lab
     stream = tts_fixture(monkeypatch, lab)
     phone = lab.phones[0]
     phone.auto_answer = False
-    script = Script(lab.hass, await async_validate_actions_config(lab.hass, cv.SCRIPT_SCHEMA(sequence())), "Wakeup", "automation")
+    actions = sequence()
+    actions[0]["data"].pop("answer_timeout")
+    script = Script(lab.hass, await async_validate_actions_config(lab.hass, cv.SCRIPT_SCHEMA(actions)), "Wakeup", "automation")
     async with asyncio.timeout(3):
         with pytest.raises(ServiceValidationError):
             await script.async_run(context=Context())

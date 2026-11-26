@@ -27,7 +27,7 @@ def test_unconfigured_phone_has_no_timeout_or_routing_work():
             assert configured.before_ringing(busy=busy, unavailable=unavailable) is None
 
 
-@pytest.mark.parametrize("timeout", [0, -1, True, "30", float("nan"), float("inf"), 3601])
+@pytest.mark.parametrize("timeout", [-1, True, "30", float("nan"), float("inf"), 3601])
 def test_reject_invalid_timeout(timeout):
     with pytest.raises(ValueError):
         policy.PhonePolicy.from_data({
@@ -36,8 +36,6 @@ def test_reject_invalid_timeout(timeout):
 
 
 @pytest.mark.parametrize("data", [
-    {"ringing_timeout": 25},
-    {"no_answer": {"kind": "hangup"}},
     {"always": {}},
     {"always": {"kind": "unknown", "target": "Kitchen"}},
     {"always": {"kind": "hangup", "target": "Kitchen"}},
