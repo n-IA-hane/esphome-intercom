@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import secrets
 import socket
 from unittest.mock import AsyncMock
 
@@ -63,10 +64,19 @@ async def test_receive_only_bridge_negotiates_camera_geometry_before_resizing(
     """A receiver-originated real SIP call must resize the opposite RTP path."""
     await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
     lab.runtime.sip = lab.calls = SipEndpointRuntime(allow_dark_sessions=True)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
-        udp.bind(("127.0.0.1", 0))
-        listener_port = udp.getsockname()[1]
-        tcp.bind(("127.0.0.1", listener_port))
+    # Match the laboratory fixtures: both transports need the same free port,
+    # outside the peer media and OS ephemeral ranges.
+    for _ in range(128):
+        listener_port = 10000 + secrets.randbelow(2000)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
+                udp.bind(("127.0.0.1", listener_port))
+                tcp.bind(("127.0.0.1", listener_port))
+        except OSError:
+            continue
+        break
+    else:
+        raise RuntimeError("No free UDP/TCP SIP laboratory port")
     lab.runtime.transport_config.update({
         "sip_port": listener_port, CONF_SIP_VIDEO: True, CONF_VIDEO_TRANSCODING: transcoding,
     })
