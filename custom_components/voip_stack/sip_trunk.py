@@ -353,7 +353,10 @@ class SipTrunkClient:
     async def _start(self) -> None:
         if not self.config.register:
             self.last_sip_event = "STATIC"
-            self.status_reason = "Registration disabled; inbound IP allowlist active"
+            self.status_reason = (
+                "Registration disabled; incoming SIP account authentication active"
+                if self.config.inbound_account else "Registration disabled; inbound IP allowlist active"
+            )
             self.notify_state_change()
             return
         try:
