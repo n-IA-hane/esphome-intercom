@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .ringing_policy import RINGING_TIMEOUT_LIMITS
+
+# Canonical bounds consumed by validation and the blocked-migration Repair.
+QUEUE_DURATION_LIMITS = {
+    "max_wait": (1, 3600),
+    "ring_timeout": RINGING_TIMEOUT_LIMITS,
+    "no_agent_wait": (0, 120),
+    "retry_delay": (0.1, 120),
+    "wrap_up": (0, 3600),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class QueuePolicy:
@@ -55,11 +66,7 @@ class QueuePolicy:
             raise ValueError("enabled must be a boolean")
         if isinstance(policy.max_waiting, bool) or not isinstance(policy.max_waiting, int) or not 1 <= policy.max_waiting <= 64:
             raise ValueError("max_waiting must be between 1 and 64")
-        for name, minimum, maximum in (
-            ("max_wait", 1, 3600), ("ring_timeout", 0, 3600),
-            ("no_agent_wait", 0, 120), ("retry_delay", 0.1, 120),
-            ("wrap_up", 0, 3600),
-        ):
+        for name, (minimum, maximum) in QUEUE_DURATION_LIMITS.items():
             value = getattr(policy, name)
             if name == "ring_timeout" and value is None:
                 continue

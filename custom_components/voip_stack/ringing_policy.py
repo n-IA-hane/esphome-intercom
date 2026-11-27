@@ -8,6 +8,10 @@ from collections.abc import Mapping
 
 
 CONF_DEFAULT_RINGING_TIMEOUT = "default_ringing_timeout"
+# Validation metadata is shared by policy readers and recovery guidance.
+# These are bounds, never configured durations or runtime fallbacks.
+RINGING_TIMEOUT_LIMITS = (0, 3600)
+RING_STEP_TIMEOUT_MINIMUM = 0
 
 
 def validate_ringing_timeout(value, *, inherit: bool = False) -> float | None:
@@ -16,8 +20,9 @@ def validate_ringing_timeout(value, *, inherit: bool = False) -> float | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("Ringing timeout must be a number of seconds")
-    if not math.isfinite(value) or not 0 <= value <= 3600:
-        raise ValueError("Ringing timeout must be between 0 and 3600 seconds; 0 is unlimited")
+    minimum, maximum = RINGING_TIMEOUT_LIMITS
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ValueError(f"Ringing timeout must be between {minimum} and {maximum} seconds; 0 is unlimited")
     return float(value)
 
 

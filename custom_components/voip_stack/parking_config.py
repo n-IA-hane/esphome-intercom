@@ -3,8 +3,11 @@
 import math
 import re
 
+from .ringing_policy import RINGING_TIMEOUT_LIMITS
+
 DEFAULT_SLOTS = tuple(str(number) for number in range(701, 721))
 _ADDRESS = re.compile(r"[A-Za-z0-9*#_-]{1,64}")
+PARKING_DURATION_LIMITS = {"timeout": (1, 3600), "return_timeout": RINGING_TIMEOUT_LIMITS}
 
 
 def parking_settings(hass):
@@ -41,14 +44,16 @@ def parking_addresses(value):
 
 def normalize_parking_config(value):
     result = parking_addresses(value)
-    for name in ("timeout", "return_timeout"):
+    for name, (minimum, maximum) in PARKING_DURATION_LIMITS.items():
         number = value.get(name)
         if name == "return_timeout" and number is None:
             result[name] = None
             continue
-        minimum = 0 if name == "return_timeout" else 1
-        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or not minimum <= number <= 3600:
-            raise ValueError("Parking residence is 1..3600 seconds; return ringing is 0..3600 or inherited")
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or not minimum <= number <= maximum:
+            residence = PARKING_DURATION_LIMITS["timeout"]
+            ringing = PARKING_DURATION_LIMITS["return_timeout"]
+            raise ValueError(f"Parking residence is {residence[0]}..{residence[1]} seconds; "
+                             f"return ringing is {ringing[0]}..{ringing[1]} or inherited")
         result[name] = number
     for name in ("return_destination", "hold_media"):
         item = value.get(name, "")

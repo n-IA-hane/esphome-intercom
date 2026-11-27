@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
 from .dial_fork import ForkStrategy
+from . import ringing_policy
 from .roster import RosterEntry, find_entry
 from .core.sip import parse_sip_uri
 
@@ -37,14 +38,15 @@ class RingPolicy:
             configured = default_timeout
         if timeout_override is not None:
             configured = timeout_override
+        minimum, maximum = ringing_policy.RINGING_TIMEOUT_LIMITS
         if configured is not None and (isinstance(configured, bool)
                 or not isinstance(configured, (int, float)) or not math.isfinite(configured)
-                or not 0 <= configured <= 3600):
-            raise ValueError("ring overall_timeout must be 0 (unlimited) or up to 3600 seconds")
+                or not minimum <= configured <= maximum):
+            raise ValueError(f"ring overall_timeout must be {minimum} (unlimited) or up to {maximum} seconds")
         overall_timeout = float(configured) if configured else float("inf")
         configured_step = raw.get("step_timeout")
         if (isinstance(configured_step, bool) or not isinstance(configured_step, (int, float))
-                or not math.isfinite(configured_step) or configured_step <= 0.0):
+                or not math.isfinite(configured_step) or configured_step <= ringing_policy.RING_STEP_TIMEOUT_MINIMUM):
             raise ValueError("ring step_timeout must be positive and finite")
         step_timeout = float(configured_step)
         if inherited or timeout_override is not None:

@@ -224,8 +224,12 @@ def _repair_number(value, *, integer=False):
 
 
 def _repair_field_constraints(kind, field):
-    """Describe existing validators; these limits never initialize a policy."""
+    """Read the canonical validators' bounds without initializing a policy."""
     from .duration_policy import SERVICE_TIMEOUT_LIMITS
+    from .mailbox_config import MAILBOX_MAX_SECONDS_LIMITS
+    from .parking_config import PARKING_DURATION_LIMITS
+    from .queue_policy import QUEUE_DURATION_LIMITS
+    from .ringing_policy import RINGING_TIMEOUT_LIMITS, RING_STEP_TIMEOUT_MINIMUM
     from .sip_registration_policy import (
         AUDIO_RTCP_INTERVAL_FIELD, AUDIO_RTCP_MIN_INTERVAL,
         LOCAL_REDIRECT_HOPS_FIELD, LOCAL_REDIRECT_MAX_HOPS,
@@ -242,15 +246,19 @@ def _repair_field_constraints(kind, field):
         return policy_field.minimum, policy_field.maximum, True, False
     elif kind == "ring":
         if name == "step_timeout":
-            return 0, None, False, True
-        minimum, maximum = 0, 3600
+            return RING_STEP_TIMEOUT_MINIMUM, None, False, True
+        minimum, maximum = RINGING_TIMEOUT_LIMITS
     elif kind == "queue":
-        minimum, maximum = {"max_wait": (1, 3600), "ring_timeout": (0, 3600),
-            "no_agent_wait": (0, 120), "retry_delay": (0.1, 120), "wrap_up": (0, 3600)}[name]
-    elif kind == "paging" and name == "timeout":
-        minimum, maximum = SERVICE_TIMEOUT_LIMITS["announcement_timeout"]
+        minimum, maximum = QUEUE_DURATION_LIMITS[name]
+    elif kind == "parking":
+        minimum, maximum = PARKING_DURATION_LIMITS[name]
+    elif kind == "mailbox":
+        minimum, maximum = MAILBOX_MAX_SECONDS_LIMITS
+    elif kind == "paging":
+        minimum, maximum = (SERVICE_TIMEOUT_LIMITS["announcement_timeout"]
+                            if name == "timeout" else RINGING_TIMEOUT_LIMITS)
     else:
-        minimum, maximum = (0 if name in {"return_timeout", "answer_timeout"} else 1), 3600
+        raise ValueError("Unknown duration owner")
     return minimum, maximum, False, False
 
 
