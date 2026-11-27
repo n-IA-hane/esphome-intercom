@@ -732,6 +732,41 @@ def test_dashboard_owner_change_clears_the_previous_video_presentation(dashboard
 
 
 @pytest.mark.browser_real
+@pytest.mark.parametrize("completion", ["resolve", "reject"])
+def test_dashboard_pending_media_sync_cannot_outlive_its_account_binding(dashboard_page, completion):
+    """A real browser drains replacement state after deferred old media work."""
+    page = dashboard_page
+    page.set_default_timeout(2000)
+    page.evaluate("""()=>{
+      window.syncWork=[];
+      window.originalEpoch=card._epoch;
+      engine.dashboardSyncOwner=(owner,state)=>new Promise((resolve,reject)=>{
+        syncWork.push({endpoint:owner.endpoint_id,state,resolve,reject});
+      });
+      engine.pushOwner({...ownerState,sequence:2,revision:2});
+    }""")
+    page.wait_for_function("syncWork.length===1")
+    page.evaluate("""()=>{
+      const previous=fixture.phones.find(phone=>phone.endpoint_id==='studio');
+      window.ownerState={...ownerState,endpoint_id:'replacement-account',
+        call_id:'replacement-call',sequence:1,revision:1};
+      engine.push({kind:'delta',revision:1,
+        phones:[{...previous,endpoint_id:'replacement-account',name:'Replacement account'}],
+        removed:['studio']});
+    }""")
+    page.wait_for_function("card._ownerSnapshot?.endpoint_id==='replacement-account'")
+    assert page.evaluate("card._epoch===originalEpoch")
+    assert page.evaluate("syncWork.length") == 1
+    page.evaluate("completion=>syncWork[0][completion](completion==='reject' ? new Error('Retired synchronization failed') : undefined)", completion)
+    page.wait_for_function("syncWork.length===2")
+    assert page.evaluate("syncWork.map(item=>item.endpoint)") == ["studio", "replacement-account"]
+    assert page.evaluate("card._error") == ""
+    assert page.locator("h2").inner_text() == "Replacement account"
+    page.evaluate("syncWork[1].resolve()")
+    page.wait_for_function("card._syncPending===false")
+
+
+@pytest.mark.browser_real
 def test_dashboard_remount_restores_responsive_measurement(dashboard_page):
     page = dashboard_page
     page.evaluate("()=>{card.remove();document.body.append(card);card.style.width='350px'}")
