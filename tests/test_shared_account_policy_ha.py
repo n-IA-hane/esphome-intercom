@@ -53,7 +53,7 @@ async def test_shared_noanswer_retains_caller_for_real_fallback(
         await asyncio.to_thread(caller.command, f"/dial {target}")
         for contact in contacts:
             await asyncio.to_thread(contact.wait_for, "Incoming call", 3)
-        current = next(session for session in runtime.calls.sessions.values() if "casa" in session.endpoint_claims)
+        current = next(session for session in runtime.calls.sessions.values() if runtime.browser_endpoint_id in session.endpoint_claims)
         identity, generation = current.call_id, current.generation
         evidence.update(call_id=identity, generation=generation)
         async with asyncio.timeout(5):
@@ -107,7 +107,7 @@ async def test_public_forward_to_shared_account_uses_its_noanswer_policy(shared_
     runtime.runtime.endpoints.update(original.endpoint_id, device_id="original-phone")
     if forward_source == "no_answer":
         runtime.runtime.endpoints.update(original.endpoint_id, policy=PhonePolicy.from_data({
-            "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": "casa"},
+            "ringing_timeout": 1, "no_answer": {"kind": "contact", "target": runtime.browser_endpoint_id},
         }))
     fallback = runtime.runtime.endpoints.require("transfer_c")
     session = None
@@ -174,7 +174,7 @@ async def test_shared_account_is_still_answerable_after_thirty_seconds(shared_ac
         await asyncio.to_thread(caller.command, f"/dial {target}")
         for contact in contacts:
             await asyncio.to_thread(contact.wait_for, "Incoming call", 3)
-        session = next(session for session in runtime.calls.sessions.values() if "casa" in session.endpoint_claims)
+        session = next(session for session in runtime.calls.sessions.values() if runtime.browser_endpoint_id in session.endpoint_claims)
         token = session.token
         await asyncio.sleep(max(0, started + 31 - asyncio.get_running_loop().time()))
         route = runtime.calls.artifact_for(session.call_id, "pending_route")

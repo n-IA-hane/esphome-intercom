@@ -71,7 +71,7 @@ async def shared_account(canonical_browser, registered_phones, tmp_path):
         assert len(sip_ports) == 2
         assert {sip.parse_sip_uri(contact.contact_uri).port
                 for contact in registrar.registered_contacts(username)} == sip_ports
-        assert runtime.runtime.ha_bindings.has_binding("casa")
+        assert runtime.runtime.ha_bindings.has_binding(runtime.browser_endpoint_id)
         yield runtime, registered_phones[0], peers
     finally:
         for peer in peers:
@@ -151,7 +151,7 @@ async def test_dtmf_trunk_fallback_offers_each_client_after_account_policy(
         fallback = "Unregistered office line"
         lab.runtime.endpoints.register(PhoneEndpoint(
             "away", fallback, EndpointKind.SIP_ACCOUNT, username="away",
-            policy=PhonePolicy.from_data({forward_when: {"kind": "contact", "target": "casa"}}),
+            policy=PhonePolicy.from_data({forward_when: {"kind": "contact", "target": lab.browser_endpoint_id}}),
         ))
     monkeypatch.setattr(lab.hass.config, "location_name", fallback)
     observer = await open_browser_ws(lab, hass_ws_client)
@@ -243,7 +243,7 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
     shared_account, hass_ws_client, record_property, tmp_path, hass_read_only_user,
 ):
     runtime, caller, peers = shared_account
-    runtime.runtime.endpoints.update("casa", name="Home reception")
+    runtime.runtime.endpoints.update(runtime.browser_endpoint_id, name="Home reception")
     observer = await open_browser_ws(runtime, hass_ws_client)
     try:
         target = f'sip:221@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}'
@@ -268,7 +268,7 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         phone = await public_phone(runtime)
         snapshot = await browser_snapshot(observer)
         evidence = {"call_id": session.call_id, "owner": session.owner, "session_state": session.state,
-            "account_claim_retained": "casa" in session.endpoint_claims,
+            "account_claim_retained": runtime.browser_endpoint_id in session.endpoint_claims,
             "account_state": phone["state"], "browser_snapshot_state": snapshot.get("state"),
             "connected_at": snapshot.get("connected_at"),
             "actual_contacts": len(runtime.calls.component("registrar").registered_contacts(runtime.browser_subentry.data["username"])),
@@ -282,14 +282,14 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         (output / "shared-account-sip-winner.json").write_text(json.dumps(evidence, indent=2) + "\n")
         for key, value in evidence.items():
             record_property(key, value)
-        assert "casa" in session.endpoint_claims, evidence
+        assert runtime.browser_endpoint_id in session.endpoint_claims, evidence
         assert phone["state"] == "in_call", evidence
         assert snapshot["state"] == "in_call", evidence
         assert snapshot["can_attach_media"] is False, evidence
         assert snapshot["can_control"] is True, evidence
         assert connected_after <= snapshot["connected_at"] <= time.time(), evidence
         from custom_components.voip_stack.websocket_api import _client_phone_state
-        readonly = _client_phone_state(runtime.hass, SimpleNamespace(user=hass_read_only_user), "casa")
+        readonly = _client_phone_state(runtime.hass, SimpleNamespace(user=hass_read_only_user), runtime.browser_endpoint_id)
         assert readonly["state"] == "in_call" and readonly["can_control"] is False
         assert readonly["connected_at"] == snapshot["connected_at"]
         model = Path(__file__).resolve().parents[1] / "custom_components/voip_stack/frontend/voip-stack-card-model.js"
@@ -302,7 +302,7 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         ha_legs = [leg for leg in session.legs.values() if leg.role == "ha_softphone"]
         assert len(ha_legs) == 1 and ha_legs[0].phase.value == "closed", evidence
         assert runtime.calls.resource_for(call_id, "softphone_media") is None
-        assert runtime.calls.resource_for(call_id, "softphone_media_endpoint:casa") is None
+        assert runtime.calls.resource_for(call_id, f"softphone_media_endpoint:{runtime.browser_endpoint_id}") is None
         assert_no_browser_media_owner(runtime)
         assert caller.read().count("Call established") == 1
         await assert_no_active_calls(peers[1:])
@@ -313,11 +313,11 @@ async def test_sip_winner_preserves_shared_account_claim_and_ha_is_observer_only
         from custom_components.voip_stack.phone_state import phone_states
 
         await asyncio.to_thread(peers[0].command, "/hold")
-        await wait_for(lambda: phone_states(runtime.hass)["casa"]["state"] == "held")
+        await wait_for(lambda: phone_states(runtime.hass)[runtime.browser_endpoint_id]["state"] == "held")
         held = await browser_snapshot(observer)
         assert held["connected_at"] == snapshot["connected_at"]
         await asyncio.to_thread(peers[0].command, "/resume")
-        await wait_for(lambda: phone_states(runtime.hass)["casa"]["state"] == "in_call")
+        await wait_for(lambda: phone_states(runtime.hass)[runtime.browser_endpoint_id]["state"] == "in_call")
         resumed = await browser_snapshot(observer)
         assert resumed["connected_at"] == snapshot["connected_at"]
         assert resumed["can_attach_media"] is False
@@ -353,12 +353,12 @@ async def test_different_account_winner_removes_the_losing_account_projection(
     registrar = lab.calls.component("registrar")
     registrar.update_accounts([replace(account, ring_group="UxGroup") if account.username == "transfer_b" else account
                                for account in registrar.accounts.values()])
-    for identity in ("casa", "transfer_b"):
+    for identity in (lab.browser_endpoint_id, "transfer_b"):
         lab.runtime.endpoints.update(identity, ring_group="UxGroup")
     from homeassistant.config_entries import ConfigSubentry
     from custom_components.voip_stack.group_config import normalize_group_data
     group = normalize_group_data({"kind": "ring", "name": "UxGroup",
-        "members": ["casa", "transfer_b"], "policy": {"step_timeout": 15}})
+        "members": [lab.browser_endpoint_id, "transfer_b"], "policy": {"step_timeout": 15}})
     lab.hass.config_entries.async_add_subentry(entry, ConfigSubentry(
         subentry_type="group", title=group["name"], data=group,
         unique_id="group:ring:" + group["group_id"]))
@@ -376,9 +376,9 @@ async def test_different_account_winner_removes_the_losing_account_projection(
         await asyncio.to_thread(winner.wait_for, "Call established", 3)
         await wait_for(lambda: lab.calls.get_session(call_id).state == "in_call")
         session = lab.calls.get_session(call_id)
-        assert "casa" not in session.endpoint_claims
-        assert phone_states(lab.hass)["casa"]["state"] == "idle"
-        assert snapshot(lab.runtime, "casa") == ()
+        assert lab.browser_endpoint_id not in session.endpoint_claims
+        assert phone_states(lab.hass)[lab.browser_endpoint_id]["state"] == "idle"
+        assert snapshot(lab.runtime, lab.browser_endpoint_id) == ()
         current = await browser_snapshot(observer)
         assert current["state"] == "idle"
         (tmp_path / "different-account-loser.json").write_text(json.dumps(current, indent=2))
@@ -465,7 +465,7 @@ async def test_ha_winner_cancels_both_shared_sip_contacts(shared_account, hass_w
             "call_id": call_id, "media_client_id": "shared-ha-winner"}, blocking=True)
         await asyncio.to_thread(caller.wait_for, "Call established", 3)
         session = runtime.calls.get_session(call_id)
-        assert session is not None and session.generation == generation and "casa" in session.endpoint_claims
+        assert session is not None and session.generation == generation and runtime.browser_endpoint_id in session.endpoint_claims
         snapshot = await browser_snapshot(observer)
         assert snapshot["state"] == "in_call" and snapshot["can_attach_media"] is True
         assert connected_after <= snapshot["connected_at"] <= time.time()
@@ -564,7 +564,7 @@ async def test_ha_winner_acknowledges_and_retires_late_sip_200_without_losing_cl
         assert methods.index("CANCEL") < methods.index("ACK") < methods.index("BYE"), methods
         assert peer.answered.is_set()
         session = runtime.calls.get_session(call_id)
-        assert session is not None and "casa" in session.endpoint_claims
+        assert session is not None and runtime.browser_endpoint_id in session.endpoint_claims
         state = await browser_snapshot(observer)
         assert state["state"] == "in_call" and state["can_attach_media"] is True
         assert caller.read().count("Call established") == 1

@@ -51,7 +51,7 @@ async def test_mixed_account_browser_winner_retains_source_media_and_control(sha
         assert reply['call']['state'] in {'calling', 'connecting', 'remote_ringing', 'ringing', 'in_call'}
         call_id = reply['call']['call_id']
         async with asyncio.timeout(5):
-            while _ha_softphone_state(runtime.hass, 'casa')['state'] != 'ringing':
+            while _ha_softphone_state(runtime.hass, runtime.browser_endpoint_id)['state'] != 'ringing':
                 await asyncio.sleep(.01)
         for handset in handsets:
             await asyncio.to_thread(handset.wait_for, 'Incoming call', 4)

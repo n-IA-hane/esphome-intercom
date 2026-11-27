@@ -40,14 +40,15 @@ class Provider(asyncio.DatagramProtocol):
 @pytest.mark.parametrize(('send_video','failure'),[(False,None),(True,None),(True,'build'),(True,'contract')])
 async def test_direct_trunk_browser_fork_answer_video(shared_account,hass_ws_client,monkeypatch,send_video,failure):
     runtime, _, peers = shared_account
+    endpoint_id = runtime.browser_endpoint_id
     entry=config_entry(runtime.hass)
     settings={'experimental_sip_video':True,'video_camera_send_enabled':True}
     runtime.hass.config_entries.async_update_entry(entry,data={**entry.data,**settings})
     runtime.runtime.transport_config.update(settings)
     # This fixture starts audio-only; expose the enabled capability as a real
     # config refresh does before testing an offered video contract.
-    endpoint = runtime.runtime.endpoints.require('casa')
-    runtime.runtime.endpoints.update('casa', capabilities=endpoint.capabilities | {'video'})
+    endpoint = runtime.runtime.endpoints.require(endpoint_id)
+    runtime.runtime.endpoints.update(endpoint_id, capabilities=endpoint.capabilities | {'video'})
     for endpoint in runtime.calls.component("udp_listener")._dialog_endpoints():
         endpoint.enable_video = True
     cfg=normalized_trunk_config({"trunk_options_interval": 0, 'trunk_enabled':True,'trunk_register':False,
@@ -123,7 +124,7 @@ async def test_direct_trunk_browser_fork_answer_video(shared_account,hass_ws_cli
         assert media['local_video_rtp_port']==video['port']
         assert media['camera_send_authorized'] is send_video
         from custom_components.voip_stack.video_ws_view import _active_video_session
-        resolved = _active_video_session(runtime.hass, 'casa')
+        resolved = _active_video_session(runtime.hass, endpoint_id)
         assert resolved is not None and resolved.can_receive
         assert resolved.can_send is send_video
         assert resolved.rtp_socket is media['video_rtp_socket']
