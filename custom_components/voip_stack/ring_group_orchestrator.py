@@ -360,7 +360,8 @@ async def run_ring_group_call(
         publish_browser=lambda legs: _publish_browser_candidates_ringing(
             hass, registry, legs, invite=invite, callee=entry.display_name,
             route_kind=route_kind, origin_endpoint_id=origin_endpoint_id if ha_origin else "",
-            source_endpoint_id=source_endpoint_id, origin_media_client_id=origin_media_client_id),
+            source_endpoint_id=source_endpoint_id, origin_media_client_id=origin_media_client_id,
+            ring_endpoint_ids=tuple(leg.endpoint_id for leg in browser_legs)),
         on_leg_state=leg_state, overall_timeout=ring_policy.overall_timeout,
     )
 

@@ -84,7 +84,7 @@ class LocalAccountRedirect:
 
     def release_closed_account(self, endpoint_id):
         """Retire a claim only after the account's final physical offer closes."""
-        if not endpoint_id:
+        if not endpoint_id or not self.session.live:
             return
         other_sip = any(attempt.endpoint_id == endpoint_id and not attempt.ports.released
             for attempt in (*self.attempts, *self.redirected_attempts)) or any(
@@ -95,8 +95,10 @@ class LocalAccountRedirect:
         other_browser = any(leg.endpoint_id == endpoint_id for leg in self.browser_legs)
         if not other_sip and not other_browser:
             self.registry.release_endpoint_claim(self.session.call_id, endpoint_id)
-            self.session.update_metadata(**{key: "" for key in ("dest_endpoint_id", "target_endpoint_id")
-                if self.session.metadata.get(key) == endpoint_id})
+            changes = {key: "" for key in ("dest_endpoint_id", "target_endpoint_id")
+                if self.session.metadata.get(key) == endpoint_id}
+            if changes and self.session.live:
+                self.session.update_metadata(**changes)
 
     async def follow(self, outbound, dial_sip):
         endpoint = self.endpoint_registry.get(outbound.endpoint_id)
@@ -209,7 +211,7 @@ class LocalAccountRedirect:
                     if not any(existing.endpoint_id == leg.endpoint_id for existing in self.browser_legs):
                         self.browser_legs.append(leg)
                         route["ring_group_endpoint_ids"] = tuple(item.endpoint_id for item in self.browser_legs)
-                        self.publish_browser(self.browser_legs)
+                        self.publish_browser([leg])
                     # The original outer control candidate accepts the answer;
                     # this branch only holds its admitted offer open.
                     await asyncio.shield(self.route_future)

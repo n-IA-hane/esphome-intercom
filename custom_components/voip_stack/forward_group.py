@@ -233,7 +233,7 @@ class ForwardGroup:
                 callee=self.entry.display_name,
                 route_kind=self.route_kind,
                 ring_endpoint_ids=tuple(
-                    leg.endpoint_id for leg in browser_legs
+                    leg.endpoint_id for leg in self.candidates.browser_legs
                 ),
             )
             for browser_leg in browser_legs:

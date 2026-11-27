@@ -188,6 +188,19 @@ async def test_failed_forward_does_not_resume_an_ineligible_original_receiver(la
 
 
 async def test_cancelling_forwarded_redirect_acknowledges_and_closes_late_answer(lab, monkeypatch):
+    from custom_components.voip_stack.local_redirect import LocalAccountRedirect
+
+    release = LocalAccountRedirect.release_closed_account
+    cleanup_failures = []
+
+    def observed_release(self, endpoint_id):
+        try:
+            return release(self, endpoint_id)
+        except Exception as error:
+            cleanup_failures.append((endpoint_id, str(self.session.phase), str(error)))
+            raise
+
+    monkeypatch.setattr(LocalAccountRedirect, "release_closed_account", observed_release)
     await initial_ha_account(lab)
     port = lab.runtime.transport_config["sip_port"]
     _redirect_phone(monkeypatch, lab.phones[0], [f"<sip:bedroom1@127.0.0.1:{port}>"])
@@ -208,6 +221,7 @@ async def test_cancelling_forwarded_redirect_acknowledges_and_closes_late_answer
             while lab.calls.sessions:
                 await asyncio.sleep(.005)
         assert_call_resources_released(lab)
+        assert not cleanup_failures, cleanup_failures
     finally:
         await caller.close()
         audio.close()
@@ -240,5 +254,84 @@ async def test_failed_redirect_releases_target_while_an_original_group_offer_con
         assert lab.calls.get_session(call_id) is session
     finally:
         await caller.terminate(timeout=1)
+        await caller.close()
+        audio.close()
+
+
+@pytest.mark.parametrize("forwarded", [False, True], ids=["initial-group", "forwarded-group"])
+async def test_redirect_does_not_republish_existing_browser_offers(lab, monkeypatch, forwarded):
+    from homeassistant.core import callback
+    from custom_components.voip_stack.account_runtime import recompute_account_availability
+    from custom_components.voip_stack.automation_routing import automation_event_type
+    from custom_components.voip_stack.const import CALL_EVENT
+    from custom_components.voip_stack.directory_runtime import compose_directory_entries
+    from custom_components.voip_stack.route_decisions import set_pending_route_decision
+
+    await initial_ha_account(lab)
+    declined = await initial_ha_account(lab, "card-a")
+    waiting = await initial_ha_account(lab, "card-b")
+    target = lab.runtime.endpoints.require("bedroom1")
+    await lab.runtime.ha_bindings.async_set_popup_binding("fixture-user", "redirect-target-card", target.endpoint_id, True)
+    registrar = lab.calls.component("registrar")
+    for contact in registrar.registered_contacts(target.username):
+        assert registrar.remove_contact(contact.flow_key)
+    recompute_account_availability(lab.hass)
+    lab.roster[:] = compose_directory_entries(lab.hass, [], registrar.registered_roster_entries())
+    lab.runtime.directory.replace(lab.roster)
+    _add_group(lab, [declined.endpoint_id, waiting.endpoint_id, "bedroom0"])
+    port = lab.runtime.transport_config["sip_port"]
+    _redirect_phone(monkeypatch, lab.phones[0], [f"<sip:bedroom1@127.0.0.1:{port}>"], defer=True)
+    caller, audio = await _source(lab)
+    task = stop = None
+    try:
+        assert await caller.invite(target="default" if forwarded else "Redirect team",
+            remote_host="127.0.0.1", remote_sip_port=port, timeout=3) == "ringing"
+        call_id = caller.dialog_ids.call_id
+        if forwarded:
+            task = await lab.calls.forward_call(call_id=call_id, destination="Redirect team", on_failure="terminate")
+        await asyncio.wait_for(lab.phones[0].invited.wait(), 3)
+        lab.phones[0].last_request = lab.phones[0].invites[-1]
+        async with asyncio.timeout(3):
+            while lab.runtime.softphones.get(waiting.endpoint_id, {}).get("state") != "ringing":
+                await asyncio.sleep(.005)
+        assert lab.runtime.softphones[declined.endpoint_id]["state"] == "ringing"
+        set_pending_route_decision(lab.hass, {"call_id": call_id, "action": "decline", "endpoint_id": declined.endpoint_id})
+        assert lab.runtime.softphones[declined.endpoint_id]["state"] != "ringing"
+        assert not lab.runtime.endpoints.require(declined.endpoint_id).active_call_id
+        await lab.hass.async_block_till_done()
+        events = []
+
+        @callback
+        def capture(event):
+            events.append(dict(event.data))
+
+        stop = lab.hass.bus.async_listen(CALL_EVENT, capture)
+        lab.phones[0].redirect_response()
+        async with asyncio.timeout(3):
+            while lab.runtime.softphones.get(target.endpoint_id, {}).get("state") != "ringing":
+                await asyncio.sleep(.005)
+        await lab.hass.async_block_till_done()
+        assert not [event for event in events if event.get("endpoint_id") == declined.endpoint_id
+            and event.get("state") == "ringing"], events
+        # An existing offer still receives state_changed projections when the
+        # group changes. It must not become a new ringing occurrence.
+        assert not [event for event in events if event.get("endpoint_id") == waiting.endpoint_id
+            and automation_event_type(event) == "ringing"], events
+        assert lab.runtime.softphones[declined.endpoint_id]["state"] != "ringing"
+        assert lab.runtime.softphones[waiting.endpoint_id]["state"] == "ringing"
+        assert lab.runtime.endpoints.require(target.endpoint_id).active_call_id == call_id
+        session = lab.calls.get_session(call_id)
+        assert {waiting.endpoint_id, target.endpoint_id} <= set(session.metadata["ring_endpoint_ids"])
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": waiting.device_id, "call_id": call_id, "media_client_id": "original-waiting-browser",
+        }, blocking=True)
+        assert await caller.wait_for_final(timeout=3) == "in_call"
+        assert lab.calls.get_session(call_id) is session
+    finally:
+        if stop is not None:
+            stop()
+        await caller.terminate(timeout=1)
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
         await caller.close()
         audio.close()

@@ -111,6 +111,7 @@ def publish_browser_candidates_ringing(
     origin_endpoint_id: str,
     source_endpoint_id: str,
     origin_media_client_id: str,
+    ring_endpoint_ids: tuple[str, ...] | None = None,
 ) -> None:
     """Publish one ringing projection for every browser candidate."""
 
@@ -125,7 +126,8 @@ def publish_browser_candidates_ringing(
         route_kind=route_kind,
         endpoint_id=origin_endpoint_id,
         source_endpoint_id=source_endpoint_id,
-        ring_endpoint_ids=tuple(leg.endpoint_id for leg in browser_legs),
+        ring_endpoint_ids=(tuple(leg.endpoint_id for leg in browser_legs)
+            if ring_endpoint_ids is None else ring_endpoint_ids),
         media_client_id=origin_media_client_id,
     )
     for leg in browser_legs:
