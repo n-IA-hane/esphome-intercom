@@ -1277,6 +1277,19 @@
         "caller": "Anruferidentität (öffentliche Nummer, falls gesetzt)",
         "account": "Kontobenutzername (interne PBX-Verbindungen)"
       }
+    },
+    "repair_policy_owner": {
+      "options": {
+        "service": "Aktionszeiten der Telefonanlage",
+        "advanced": "Registrierung und Grenzen der Telefonanlage",
+        "parking": "Geparkte Anrufe",
+        "trunk": "SIP-Trunk",
+        "contact": "Automationskontakt",
+        "mailbox": "Mailbox",
+        "ring": "Rufgruppe",
+        "queue": "Warteschlange",
+        "paging": "Durchsagegruppe"
+      }
     }
   },
   "system_health": {
@@ -1485,23 +1498,23 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "duration_configuration_invalid": {
-      "title": "Die PBX-Konfiguration muss korrigiert werden",
-      "description": "Die Migration der Zeitwerte konnte nicht abgeschlossen werden: {error}. Öffnen Sie diese Reparatur, um ungültige gespeicherte Zeitwerte auch bei nicht geladener PBX zu korrigieren, und wiederholen Sie danach die Migration. Gültige Werte und andere Einstellungen bleiben erhalten. Strukturelle Konfigurationsfehler werden hier angezeigt, können in dieser Reparatur aber nicht bearbeitet werden.",
+      "title": "Gespeicherte Telefonanlagen-Konfiguration korrigieren",
+      "description": "Die Konfiguration der Telefonanlage {entry} konnte nicht aktualisiert werden. Deshalb kann die Integration den Start nicht abschließen. Öffne diese Reparatur, um die betroffenen Einträge und Einstellungen zu sehen. Unterstützte Zahlenwerte lassen sich hier auch bei nicht verfügbarer Integration korrigieren. Gültige Werte und andere Einstellungen bleiben erhalten. Bei beschädigten Datenstrukturen erklärt die Reparatur, wo du die Diagnose findest.",
       "fix_flow": {
         "step": {
           "init": {
-            "title": "Zu korrigierendes Element auswählen",
-            "description": "Wählen Sie das Konfigurationselement mit ungültigen gespeicherten Zeitwerten. Sie können es hier auch bei nicht geladener PBX korrigieren. Werte werden nie stillschweigend verkürzt oder ersetzt.",
+            "title": "Eintrag zur Korrektur auswählen",
+            "description": "{entry}\n\n{saved}\n\nWähle einen Eintrag aus. Auf der nächsten Seite stehen die betroffenen Einstellungen und zulässigen Werte. Korrigiere einen Eintrag nach dem anderen. Nach der letzten Korrektur wird die normale Migration automatisch erneut versucht.",
             "data": {
-              "owner": "Konfigurationselement"
+              "owner": "Konfigurationseintrag"
             }
           },
           "edit_durations": {
             "title": "Gespeicherte Einstellungen korrigieren",
-            "description": "{owner}\n\n{error}\n\nKorrigieren Sie die angezeigten Werte. Zeitangaben sind in Sekunden; Grenzen ohne Einheit sind Anzahlen. Nur die ausgewählten Einstellungen werden geändert. Wiederholen Sie dann die Migration.",
+            "description": "{owner}\n\nZu prüfende Einstellungen:\n{error}\n\nZeitangaben sind Sekunden; Werte ohne Einheit sind Anzahlen. Ein leeres Feld bedeutet, dass der gespeicherte Wert nicht als Zahl angezeigt werden kann. Trage dort einen gültigen Wert ein. Behalte die anderen vorbelegten Werte bei, sofern du sie nicht ändern möchtest. Die Bestätigung speichert nur diesen Eintrag. Danach erscheint entweder der nächste fehlerhafte Eintrag oder die Migration wird automatisch erneut versucht.",
             "sections": {
               "advanced": {
-                "name": "Erweiterte Einstellungen",
+                "name": "Einstellungen dieses Eintrags",
                 "data": {
                   "contact_step_timeout": "Schritt zwischen SIP-Kontaktprioritäten",
                   "media_timeout": "Audiowiedergabe und Sprache",
@@ -1531,38 +1544,63 @@
                   "wrap_up": "Nachbearbeitungszeit des Agenten",
                   "max_seconds": "Aufnahmelimit",
                   "answer_timeout": "Wartezeit auf Antwort",
-                  "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
-                  "registrar_auth_failure_window": "Authentication observation window (seconds)",
-                  "registrar_auth_block_duration": "Authentication block duration (seconds)",
-                  "registrar_min_expires": "Minimum registration lifetime (seconds)",
-                  "registrar_max_expires": "Maximum registration lifetime (seconds)",
-                  "registrar_contact_limit": "Maximum registered Contacts per account",
-                  "audio_rtcp_min_interval": "Minimum audio RTCP interval",
-                  "local_redirect_max_hops": "Maximum local redirect hops",
-                  "trunk_options_interval": "OPTIONS interval (seconds)"
+                  "registrar_auth_failure_threshold": "Fehlgeschlagene Anmeldungen vor der Sperre",
+                  "registrar_auth_failure_window": "Zeitfenster für Anmeldefehler (Sekunden)",
+                  "registrar_auth_block_duration": "Dauer der Anmeldesperre (Sekunden)",
+                  "registrar_min_expires": "Mindestdauer einer Registrierung (Sekunden)",
+                  "registrar_max_expires": "Höchstdauer einer Registrierung (Sekunden)",
+                  "registrar_contact_limit": "Maximale registrierte Kontakte pro Konto",
+                  "audio_rtcp_min_interval": "Mindestintervall für Audio-RTCP",
+                  "local_redirect_max_hops": "Maximale Anzahl lokaler Umleitungen",
+                  "trunk_options_interval": "OPTIONS-Intervall (Sekunden)"
                 },
                 "data_description": {
-                  "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected.",
-                  "trunk_options_interval": "0 disables periodic OPTIONS probes."
+                  "local_redirect_max_hops": "Maximale Anzahl von Umleitungen nach 302-Antworten lokaler Konten. Die Berechtigungen des ursprünglichen Anrufers gelten weiterhin.",
+                  "trunk_options_interval": "0 deaktiviert regelmäßige OPTIONS-Prüfungen. Diese Einstellung betrifft die Erreichbarkeit, nicht die Anmeldung eingehender Anrufe.",
+                  "registrar_auth_failure_threshold": "0 deaktiviert den Fehlerzähler, der eine vorübergehende Sperre auslöst.",
+                  "registrar_auth_block_duration": "0 deaktiviert die vorübergehende Sperre.",
+                  "ivr_interdigit_timeout": "Abstand zwischen Ziffern in Mailbox-Menüs. Dies ist nicht die gesamte Wartezeit der Automationsaktion zum Warten auf DTMF.",
+                  "return_timeout": "0 bedeutet unbegrenztes Klingeln. Ein geerbter Wert wird hier nicht geändert.",
+                  "overall_timeout": "0 bedeutet unbegrenztes Gesamtklingeln. Der Schritt muss weiterhin positiv sein.",
+                  "ring_timeout": "0 bedeutet unbegrenztes Klingeln.",
+                  "answer_timeout": "0 bedeutet unbegrenztes Warten auf eine Antwort."
                 }
               }
             }
           },
           "confirm": {
-            "title": "Migration wiederholen",
-            "description": "{error}\n\nWiederholen Sie die reguläre Migration mit der gespeicherten Konfiguration. Ungültige Zeitwerte können in dieser Reparatur korrigiert werden. Andere strukturelle Fehler müssen vor einem erneuten Versuch behoben werden; diese Reparatur kann sie nicht bearbeiten."
+            "title": "Konfigurationsaktualisierung prüfen und wiederholen",
+            "description": "{entry}\n\n{error}\n\nBestätige, um die normale Migration mit der gespeicherten Konfiguration erneut auszuführen. Besteht der Fehler weiterhin, bleibt die Reparatur offen. Beschädigte Daten werden nicht automatisch ersetzt."
           }
         },
         "error": {
-          "invalid_duration": "Mindestens ein Zeitwert ist ungültig. Korrigieren Sie die oben angegebenen Werte.",
-          "configuration_changed": "Die Konfiguration wurde geändert, während diese Reparatur geöffnet war. Prüfen Sie das aktuelle Element und seine Werte, bevor Sie erneut speichern.",
-          "migration_retry_failed": "Die Migration bleibt blockiert. Prüfen Sie die angegebene Ursache vor einem erneuten Versuch."
+          "invalid_duration": "Prüfe die oben genannten Einstellungen und zulässigen Werte. Für diesen Eintrag wurde nichts gespeichert.",
+          "configuration_changed": "Dieser Eintrag wurde während der Reparatur geändert oder entfernt. Wähle ihn erneut aus der aktualisierten Liste und prüfe die aktuellen Werte. Das alte Formular hat die neuere Konfiguration nicht überschrieben.",
+          "migration_retry_failed": "Die Konfigurationsaktualisierung ist weiterhin blockiert. Ein erfolgreicher Start wurde nicht bestätigt. Befolge vor dem nächsten Versuch die Diagnosehinweise oben.",
+          "save_failed": "Die Korrekturen konnten nicht gespeichert werden. Deine Eingaben bleiben sichtbar. Prüfe vor dem nächsten Versuch die VoIP-Stack-Protokolle.",
+          "saved_owner": "Gespeichert: {owner}. Wähle den nächsten zu korrigierenden Eintrag.",
+          "range_seconds": "{field}: Gib eine Zahl zwischen {minimum} und {maximum} Sekunden ein.",
+          "range_integer_seconds": "{field}: Gib eine ganze Zahl zwischen {minimum} und {maximum} Sekunden ein.",
+          "range_count": "{field}: Gib eine ganze Zahl zwischen {minimum} und {maximum} ein.",
+          "positive_seconds": "{field}: Gib eine positive, endliche Anzahl Sekunden ein. Null ist nicht zulässig.",
+          "expiry_order": "„{minimum}“ muss kleiner oder gleich „{maximum}“ sein. Korrigiere einen oder beide Werte.",
+          "step_order": "„{step}“ darf nicht länger als „{overall}“ sein. Verkürze den Schritt oder erhöhe die gesamte Klingeldauer. Null für die Gesamtdauer bedeutet unbegrenzt.",
+          "structure_invalid": "Ein Teil der gespeicherten Konfiguration hat eine nicht lesbare Struktur. Diese Reparatur kann dafür kein Zahlenfeld sicher bearbeiten. Öffne Einstellungen → System → Protokolle und suche den VoIP-Stack-Migrationsfehler. Bewahre eine Kopie der Konfiguration auf und verwende die Diagnose bei einer Supportanfrage. Alternativ kannst du ein funktionierendes Backup wiederherstellen. Ein erneuter Versuch allein repariert die Datenstruktur nicht.",
+          "ready_to_retry": "Es gibt keine ungültigen bearbeitbaren Zahlenwerte mehr. Bestätige, um die vollständige Migration erneut zu versuchen. Falls sie weiterhin fehlschlägt, prüfe den VoIP-Stack-Migrationsfehler unter Einstellungen → System → Protokolle; ein anderer Konfigurationsteil benötigt möglicherweise eine Korrektur."
         }
       }
     },
     "trunk_dtmf_retired": {
-      "title": "Automatic trunk extension collection was removed",
-      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
+      "title": "Eingehende Anrufe auf {trunk} prüfen",
+      "description": "Das bisherige stille Warten auf Tasteneingaben am Trunk „{trunk}“ wurde entfernt. Eingehende Anrufe werden sofort weitergeleitet. Eine erkannte gewählte Nebenstelle folgt ihrer normalen Route.\n\nWird die gewählte Nummer nicht erkannt, ist „{destination}“ das gespeicherte Eingangsziel.\n\nÖffne Einstellungen → Geräte & Dienste → VoIP Stack, wähle den Trunk „{trunk}“ und bearbeite sein Eingangsziel.\n\nFür ein Sprachmenü mit Tastenauswahl wähle einen Automationskontakt als Ziel. Konfiguriere dessen Automation so, dass sie den Anruf annimmt, die Ansage abspielt und den Anruf weiterleitet oder die gewünschte Aktion ausführt. Das verlinkte Beispiel zeigt die Schritte. Tastenereignisse während des Gesprächs bleiben verfügbar.\n\nDas Ignorieren dieses Migrationshinweises ändert die Route nicht."
+    },
+    "trunk_dtmf_retired_reject": {
+      "title": "Eingehende Anrufe auf {trunk} prüfen",
+      "description": "Das bisherige stille Warten auf Tasteneingaben am Trunk „{trunk}“ wurde entfernt. Eingehende Anrufe werden sofort weitergeleitet. Eine erkannte gewählte Nebenstelle folgt ihrer normalen Route.\n\nWird die gewählte Nummer nicht erkannt, wird der Anruf abgewiesen, weil das gespeicherte Eingangsziel leer ist. Der Anruf wird nicht an das Haustelefon weitergeleitet.\n\nÖffne Einstellungen → Geräte & Dienste → VoIP Stack, wähle den Trunk „{trunk}“ und bearbeite sein Eingangsziel.\n\nFür ein Sprachmenü mit Tastenauswahl wähle einen Automationskontakt als Ziel. Konfiguriere dessen Automation so, dass sie den Anruf annimmt, die Ansage abspielt und den Anruf weiterleitet oder die gewünschte Aktion ausführt. Das verlinkte Beispiel zeigt die Schritte. Tastenereignisse während des Gesprächs bleiben verfügbar.\n\nDas Ignorieren dieses Migrationshinweises ändert die Route nicht."
+    },
+    "trunk_dtmf_retired_ha": {
+      "title": "Eingehende Anrufe auf {trunk} prüfen",
+      "description": "Das bisherige stille Warten auf Tasteneingaben am Trunk „{trunk}“ wurde entfernt. Eingehende Anrufe werden sofort weitergeleitet. Eine erkannte gewählte Nebenstelle folgt ihrer normalen Route.\n\nWird die gewählte Nummer nicht erkannt, führt die bestehende Standardeinstellung zum Home-Assistant-Telefon. In den gespeicherten Daten steht für diesen Hinweis kein Telefonname zur Verfügung. Prüfe das gewünschte Ziel vor der Verwendung dieses Trunks.\n\nÖffne Einstellungen → Geräte & Dienste → VoIP Stack, wähle den Trunk „{trunk}“ und bearbeite sein Eingangsziel.\n\nFür ein Sprachmenü mit Tastenauswahl wähle einen Automationskontakt als Ziel. Konfiguriere dessen Automation so, dass sie den Anruf annimmt, die Ansage abspielt und den Anruf weiterleitet oder die gewünschte Aktion ausführt. Das verlinkte Beispiel zeigt die Schritte. Tastenereignisse während des Gesprächs bleiben verfügbar.\n\nDas Ignorieren dieses Migrationshinweises ändert die Route nicht."
     }
   },
   "exceptions": {

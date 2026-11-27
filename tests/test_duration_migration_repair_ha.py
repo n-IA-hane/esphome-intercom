@@ -193,7 +193,10 @@ async def test_structural_failure_stays_open_without_exposing_or_replacing_raw_s
     entry, setup, manager, initial, issue_id = await blocked_repair(hass, monkeypatch,
         {"parking": ["fixture-secret"], "unrelated": {"password": "fixture-secret"}})
     assert initial["step_id"] == "confirm"
-    assert initial["description_placeholders"] == {"error": "ValueError"}
+    assert initial["description_placeholders"]["entry"] == entry.title
+    assert "structure" in initial["description_placeholders"]["error"]
+    assert "Logs" in initial["description_placeholders"]["error"]
+    assert "ValueError" not in repr(initial)
     before = deepcopy(entry.as_dict())
     result = await manager.async_configure(initial["flow_id"], {})
     assert result["type"] == "form" and result["errors"] == {"base": "migration_retry_failed"}

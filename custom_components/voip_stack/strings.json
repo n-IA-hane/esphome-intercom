@@ -1277,6 +1277,19 @@
         "caller": "Caller identity (public number when configured)",
         "account": "Account username (private inter-PBX calls)"
       }
+    },
+    "repair_policy_owner": {
+      "options": {
+        "service": "PBX action durations",
+        "advanced": "PBX registration and call limits",
+        "parking": "Call parking",
+        "trunk": "SIP trunk",
+        "contact": "Automation contact",
+        "mailbox": "Voicemail",
+        "ring": "Ring group",
+        "queue": "Call queue",
+        "paging": "Announcement group"
+      }
     }
   },
   "system_health": {
@@ -1485,27 +1498,27 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "trunk_dtmf_retired": {
-      "title": "Automatic trunk extension collection was removed",
-      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
+      "title": "Review incoming calls on {trunk}",
+      "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the saved incoming destination is “{destination}”.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
     },
     "duration_configuration_invalid": {
-      "title": "PBX policy configuration needs attention",
-      "description": "The duration migration could not complete: {error}. Open this repair to correct invalid saved durations, even while the PBX is not loaded, then retry the migration. Valid values and unrelated settings are preserved. Structural configuration errors are reported here but cannot be edited in this repair.",
+      "title": "PBX configuration needs a correction",
+      "description": "The PBX configuration for {entry} could not be upgraded, so the integration cannot finish starting. Open this repair to see which item and settings need attention. You can correct the supported numeric settings here even while the integration is unavailable. Valid values and other settings are kept. If the saved structure is damaged, the repair explains how to find the diagnostic details.",
       "fix_flow": {
         "step": {
           "init": {
-            "title": "Select the item to repair",
-            "description": "Choose the configuration item with invalid saved durations. You can correct it here while the PBX is not loaded. Values are never silently shortened or replaced.",
+            "title": "Choose the item to correct",
+            "description": "{entry}\n\n{saved}\n\nChoose an item below. The next screen shows the affected settings and their allowed values. Correct one item at a time; after the last correction the normal migration is retried automatically.",
             "data": {
               "owner": "Configuration item"
             }
           },
           "edit_durations": {
-            "title": "Correct saved policies",
-            "description": "{owner}\n\n{error}\n\nCorrect the saved policy values shown here. Durations use seconds; limits without a unit are counts. Only the selected item's policy fields change. Then retry the migration.",
+            "title": "Correct the saved settings",
+            "description": "{owner}\n\nSettings to check:\n{error}\n\nDurations are in seconds; settings without a unit are counts. A blank box means the saved value cannot be shown as a number: enter a valid value there. Keep the other prefilled values unless you intend to change them. Confirming saves only this item. If another item still needs attention, you will return to the list; otherwise the migration is retried automatically.",
             "sections": {
               "advanced": {
-                "name": "Advanced settings",
+                "name": "Settings for this item",
                 "data": {
                   "contact_step_timeout": "SIP Contact priority step",
                   "media_timeout": "Audio playback and speech",
@@ -1546,23 +1559,48 @@
                   "trunk_options_interval": "OPTIONS interval (seconds)"
                 },
                 "data_description": {
-                  "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected.",
-                  "trunk_options_interval": "0 disables periodic OPTIONS probes."
+                  "local_redirect_max_hops": "Maximum redirects followed after 302 responses from local accounts. The original caller’s permissions still apply.",
+                  "trunk_options_interval": "0 disables periodic OPTIONS probes. This setting controls reachability checks, not incoming-call authentication.",
+                  "registrar_auth_failure_threshold": "0 disables the failure count used for temporary blocking.",
+                  "registrar_auth_block_duration": "0 disables temporary blocking.",
+                  "ivr_interdigit_timeout": "Time between digits in voicemail menus. This is not the total timeout of the automation Wait for DTMF action.",
+                  "return_timeout": "0 means unlimited ringing. An inherited value is not changed by this repair.",
+                  "overall_timeout": "0 means unlimited overall ringing; the step must still be positive.",
+                  "ring_timeout": "0 means unlimited ringing.",
+                  "answer_timeout": "0 means unlimited answer waiting."
                 }
               }
             }
           },
           "confirm": {
-            "title": "Retry the migration",
-            "description": "{error}\n\nRetry the normal migration with the saved configuration. Invalid durations can be corrected in this repair. Other structural errors must be resolved before retrying; this repair cannot edit them."
+            "title": "Check and retry the configuration upgrade",
+            "description": "{entry}\n\n{error}\n\nConfirm to run the normal migration again with the saved configuration. This repair stays open if the problem remains; it does not replace damaged configuration automatically."
           }
         },
         "error": {
-          "invalid_duration": "One or more durations are invalid. Correct the values indicated above.",
-          "configuration_changed": "The configuration changed while this repair was open. Review the current item and values before saving again.",
-          "migration_retry_failed": "The migration remains blocked. Review the reported cause before retrying."
+          "invalid_duration": "Check the named settings and allowed values above. Nothing has been saved for this item.",
+          "configuration_changed": "This item changed or was removed while the repair was open. Choose it again from the updated list and review its current values. Your old form has not overwritten the newer configuration.",
+          "migration_retry_failed": "The configuration upgrade is still blocked. No successful startup has been reported. Follow the diagnostic guidance above before trying again.",
+          "save_failed": "These corrections could not be saved. Your entries remain visible. Check the VoIP Stack logs before trying again.",
+          "saved_owner": "Saved: {owner}. Choose the next item that needs attention.",
+          "range_seconds": "{field}: use a number from {minimum} to {maximum} seconds.",
+          "range_integer_seconds": "{field}: use a whole number from {minimum} to {maximum} seconds.",
+          "range_count": "{field}: use a whole number from {minimum} to {maximum}.",
+          "positive_seconds": "{field}: use a positive, finite number of seconds; zero is not allowed.",
+          "expiry_order": "“{minimum}” must be less than or equal to “{maximum}”. Correct one or both values.",
+          "step_order": "“{step}” cannot be longer than “{overall}”. Shorten the step or increase the total ringing time; zero for the total means unlimited.",
+          "structure_invalid": "Part of the saved configuration has an unreadable structure. There is no numeric field that this repair can safely change. Open Settings → System → Logs and find the VoIP Stack migration error. Keep a copy of the configuration and use those diagnostic details when requesting support; restoring a known working backup is another recovery option. Retrying alone does not repair the damaged structure.",
+          "ready_to_retry": "No invalid editable numeric setting remains. Confirm to retry the complete migration. If it still fails, inspect the VoIP Stack migration error in Settings → System → Logs; another part of the configuration may need attention."
         }
       }
+    },
+    "trunk_dtmf_retired_reject": {
+      "title": "Review incoming calls on {trunk}",
+      "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the call is rejected because the saved incoming destination is empty. It does not fall back to the home phone.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
+    },
+    "trunk_dtmf_retired_ha": {
+      "title": "Review incoming calls on {trunk}",
+      "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the existing default routes it to the Home Assistant phone. No named phone destination is available in the saved configuration for this notice. Verify the intended destination before using this trunk.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
     }
   },
   "exceptions": {

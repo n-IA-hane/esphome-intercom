@@ -1277,6 +1277,19 @@
         "caller": "Identidade do chamador (número público se configurado)",
         "account": "Usuário da conta (ramais privados entre PBXs)"
       }
+    },
+    "repair_policy_owner": {
+      "options": {
+        "service": "Durações das ações da central",
+        "advanced": "Registro e limites da central",
+        "parking": "Estacionamento de chamadas",
+        "trunk": "Tronco SIP",
+        "contact": "Contato de automação",
+        "mailbox": "Caixa postal",
+        "ring": "Grupo de toque",
+        "queue": "Fila de chamadas",
+        "paging": "Grupo de anúncios"
+      }
     }
   },
   "system_health": {
@@ -1485,23 +1498,23 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "duration_configuration_invalid": {
-      "title": "A configuração do PBX precisa de atenção",
-      "description": "A migração das durações não pôde ser concluída: {error}. Abra este reparo para corrigir durações salvas inválidas, mesmo com o PBX descarregado, e tente a migração novamente. Valores válidos e outras configurações são preservados. Erros estruturais de configuração são exibidos aqui, mas não podem ser editados neste reparo.",
+      "title": "Corrija a configuração salva da central",
+      "description": "Não foi possível atualizar a configuração da central {entry}, por isso a integração não consegue concluir a inicialização. Abra este reparo para identificar os itens e ajustes que precisam de atenção. Os valores numéricos compatíveis podem ser corrigidos aqui mesmo com a integração indisponível. Valores válidos e outros ajustes são preservados. Se a estrutura dos dados salvos estiver danificada, o reparo explica onde encontrar o diagnóstico.",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Selecione o item a corrigir",
-            "description": "Escolha o item de configuração com durações salvas inválidas. Você pode corrigi-lo aqui mesmo com o PBX descarregado. Os valores nunca são reduzidos ou substituídos automaticamente.",
+            "description": "{entry}\n\n{saved}\n\nSelecione um item abaixo. A próxima tela mostra os ajustes afetados e os valores permitidos. Corrija um item por vez. Após a última correção, a migração normal será tentada novamente de forma automática.",
             "data": {
               "owner": "Item de configuração"
             }
           },
           "edit_durations": {
-            "title": "Corrigir configurações salvas",
-            "description": "{owner}\n\n{error}\n\nCorrija os valores exibidos. As durações usam segundos; limites sem unidade indicam quantidades. Somente os campos selecionados são alterados. Depois, tente a migração novamente.",
+            "title": "Corrija os ajustes salvos",
+            "description": "{owner}\n\nAjustes a verificar:\n{error}\n\nAs durações estão em segundos; campos sem unidade representam quantidades. Um campo vazio indica que o valor salvo não pode ser exibido como número. Insira nele um valor válido. Mantenha os outros valores preenchidos, a menos que queira alterá-los. A confirmação salva apenas este item. Se houver outro item com problema, você voltará à lista; caso contrário, a migração será tentada novamente automaticamente.",
             "sections": {
               "advanced": {
-                "name": "Configurações avançadas",
+                "name": "Ajustes deste item",
                 "data": {
                   "contact_step_timeout": "Intervalo entre prioridades dos contatos SIP",
                   "media_timeout": "Reprodução de áudio e fala",
@@ -1531,38 +1544,63 @@
                   "wrap_up": "Pausa do agente após a chamada",
                   "max_seconds": "Limite de gravação",
                   "answer_timeout": "Espera por atendimento",
-                  "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
-                  "registrar_auth_failure_window": "Authentication observation window (seconds)",
-                  "registrar_auth_block_duration": "Authentication block duration (seconds)",
-                  "registrar_min_expires": "Minimum registration lifetime (seconds)",
-                  "registrar_max_expires": "Maximum registration lifetime (seconds)",
-                  "registrar_contact_limit": "Maximum registered Contacts per account",
-                  "audio_rtcp_min_interval": "Minimum audio RTCP interval",
-                  "local_redirect_max_hops": "Maximum local redirect hops",
-                  "trunk_options_interval": "OPTIONS interval (seconds)"
+                  "registrar_auth_failure_threshold": "Falhas de autenticação antes do bloqueio",
+                  "registrar_auth_failure_window": "Janela de falhas de autenticação (segundos)",
+                  "registrar_auth_block_duration": "Duração do bloqueio de autenticação (segundos)",
+                  "registrar_min_expires": "Validade mínima do registro (segundos)",
+                  "registrar_max_expires": "Validade máxima do registro (segundos)",
+                  "registrar_contact_limit": "Máximo de contatos registrados por conta",
+                  "audio_rtcp_min_interval": "Intervalo mínimo de RTCP de áudio",
+                  "local_redirect_max_hops": "Número máximo de redirecionamentos locais",
+                  "trunk_options_interval": "Intervalo OPTIONS (segundos)"
                 },
                 "data_description": {
-                  "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected.",
-                  "trunk_options_interval": "0 disables periodic OPTIONS probes."
+                  "local_redirect_max_hops": "Número máximo de redirecionamentos após respostas 302 de contas locais. As permissões do chamador original continuam valendo.",
+                  "trunk_options_interval": "0 desativa as verificações OPTIONS periódicas. Este ajuste verifica a acessibilidade, não a autenticação das chamadas recebidas.",
+                  "registrar_auth_failure_threshold": "0 desativa a contagem de falhas que aciona o bloqueio temporário.",
+                  "registrar_auth_block_duration": "0 desativa o bloqueio temporário.",
+                  "ivr_interdigit_timeout": "Intervalo entre dígitos nos menus da caixa postal. Não é o tempo limite total da ação de automação que aguarda DTMF.",
+                  "return_timeout": "0 significa toque sem limite. Um valor herdado não é alterado por este reparo.",
+                  "overall_timeout": "0 significa toque total sem limite. A etapa deve continuar positiva.",
+                  "ring_timeout": "0 significa toque sem limite.",
+                  "answer_timeout": "0 significa espera pela resposta sem limite."
                 }
               }
             }
           },
           "confirm": {
-            "title": "Tente a migração novamente",
-            "description": "{error}\n\nRepita a migração normal com a configuração salva. Durações inválidas podem ser corrigidas neste reparo. Outros erros estruturais devem ser resolvidos antes de tentar novamente; este reparo não pode editá-los."
+            "title": "Verifique e tente atualizar a configuração novamente",
+            "description": "{entry}\n\n{error}\n\nConfirme para executar novamente a migração normal com a configuração salva. O reparo permanece aberto se o problema continuar. Dados danificados não são substituídos automaticamente."
           }
         },
         "error": {
-          "invalid_duration": "Uma ou mais durações são inválidas. Corrija os valores indicados acima.",
-          "configuration_changed": "A configuração mudou enquanto este reparo estava aberto. Verifique o item e os valores atuais antes de salvar novamente.",
-          "migration_retry_failed": "A migração continua bloqueada. Verifique a causa indicada antes de tentar novamente."
+          "invalid_duration": "Verifique os ajustes indicados e os valores permitidos acima. Nenhuma alteração foi salva para este item.",
+          "configuration_changed": "Este item foi alterado ou removido enquanto o reparo estava aberto. Selecione-o novamente na lista atualizada e verifique os valores atuais. O formulário antigo não sobrescreveu a configuração mais recente.",
+          "migration_retry_failed": "A atualização da configuração continua bloqueada. A inicialização bem-sucedida não foi confirmada. Siga as orientações de diagnóstico acima antes de tentar novamente.",
+          "save_failed": "Não foi possível salvar as correções. Os valores digitados continuam visíveis. Verifique os logs do VoIP Stack antes de tentar novamente.",
+          "saved_owner": "Salvo: {owner}. Selecione o próximo item a corrigir.",
+          "range_seconds": "{field}: insira um número de {minimum} a {maximum} segundos.",
+          "range_integer_seconds": "{field}: insira um número inteiro de {minimum} a {maximum} segundos.",
+          "range_count": "{field}: insira um número inteiro de {minimum} a {maximum}.",
+          "positive_seconds": "{field}: insira um número positivo e finito de segundos. Zero não é permitido.",
+          "expiry_order": "“{minimum}” deve ser menor ou igual a “{maximum}”. Corrija um ou ambos os valores.",
+          "step_order": "“{step}” não pode durar mais que “{overall}”. Reduza a etapa ou aumente o tempo total de toque. Zero no total significa sem limite.",
+          "structure_invalid": "Parte da configuração salva tem uma estrutura que não pode ser lida. Este reparo não dispõe de um campo numérico que possa corrigi-la com segurança. Abra Configurações → Sistema → Logs e procure o erro de migração do VoIP Stack. Guarde uma cópia da configuração e use esses detalhes ao solicitar suporte. Restaurar um backup funcional anterior é outra opção. Tentar novamente, por si só, não corrige a estrutura danificada.",
+          "ready_to_retry": "Não restam valores numéricos editáveis inválidos. Confirme para tentar a migração completa novamente. Se ainda falhar, verifique o erro de migração do VoIP Stack em Configurações → Sistema → Logs; outra parte da configuração pode precisar de atenção."
         }
       }
     },
     "trunk_dtmf_retired": {
-      "title": "Automatic trunk extension collection was removed",
-      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
+      "title": "Verifique as chamadas recebidas em {trunk}",
+      "description": "A antiga espera silenciosa por teclas no tronco “{trunk}” foi removida. As chamadas recebidas agora são encaminhadas imediatamente. Um ramal chamado reconhecido segue sua rota normal.\n\nSe o número chamado não for reconhecido, o destino de entrada salvo é “{destination}”.\n\nAbra Configurações → Dispositivos e serviços → VoIP Stack, selecione o tronco “{trunk}” e edite seu destino de entrada.\n\nPara um menu de voz com seleção por teclas, escolha um contato de Automação como destino. Configure a automação para atender, reproduzir a mensagem e encaminhar a chamada ou executar a ação desejada. O exemplo vinculado mostra a sequência. Os eventos de teclas durante a chamada continuam disponíveis.\n\nIgnorar este aviso de migração não altera a rota."
+    },
+    "trunk_dtmf_retired_reject": {
+      "title": "Verifique as chamadas recebidas em {trunk}",
+      "description": "A antiga espera silenciosa por teclas no tronco “{trunk}” foi removida. As chamadas recebidas agora são encaminhadas imediatamente. Um ramal chamado reconhecido segue sua rota normal.\n\nSe o número chamado não for reconhecido, a chamada será rejeitada porque o destino de entrada salvo está vazio. Ela não será desviada para o telefone de casa.\n\nAbra Configurações → Dispositivos e serviços → VoIP Stack, selecione o tronco “{trunk}” e edite seu destino de entrada.\n\nPara um menu de voz com seleção por teclas, escolha um contato de Automação como destino. Configure a automação para atender, reproduzir a mensagem e encaminhar a chamada ou executar a ação desejada. O exemplo vinculado mostra a sequência. Os eventos de teclas durante a chamada continuam disponíveis.\n\nIgnorar este aviso de migração não altera a rota."
+    },
+    "trunk_dtmf_retired_ha": {
+      "title": "Verifique as chamadas recebidas em {trunk}",
+      "description": "A antiga espera silenciosa por teclas no tronco “{trunk}” foi removida. As chamadas recebidas agora são encaminhadas imediatamente. Um ramal chamado reconhecido segue sua rota normal.\n\nSe o número chamado não for reconhecido, o comportamento padrão existente o encaminha ao telefone do Home Assistant. A configuração salva não fornece um nome de telefone para este aviso. Verifique o destino desejado antes de usar o tronco.\n\nAbra Configurações → Dispositivos e serviços → VoIP Stack, selecione o tronco “{trunk}” e edite seu destino de entrada.\n\nPara um menu de voz com seleção por teclas, escolha um contato de Automação como destino. Configure a automação para atender, reproduzir a mensagem e encaminhar a chamada ou executar a ação desejada. O exemplo vinculado mostra a sequência. Os eventos de teclas durante a chamada continuam disponíveis.\n\nIgnorar este aviso de migração não altera a rota."
     }
   },
   "exceptions": {

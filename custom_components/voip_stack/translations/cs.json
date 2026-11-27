@@ -1277,6 +1277,19 @@
         "caller": "Identita volajícího (veřejné číslo, je-li nastaveno)",
         "account": "Uživatelské jméno účtu (interní linky mezi PBX)"
       }
+    },
+    "repair_policy_owner": {
+      "options": {
+        "service": "Časy akcí ústředny",
+        "advanced": "Registrace a limity ústředny",
+        "parking": "Parkování hovorů",
+        "trunk": "SIP trunk",
+        "contact": "Kontakt automatizace",
+        "mailbox": "Hlasová schránka",
+        "ring": "Vyzváněcí skupina",
+        "queue": "Fronta hovorů",
+        "paging": "Skupina hlášení"
+      }
     }
   },
   "system_health": {
@@ -1485,23 +1498,23 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "duration_configuration_invalid": {
-      "title": "Konfigurace PBX vyžaduje opravu",
-      "description": "Migraci časových hodnot se nepodařilo dokončit: {error}. Otevřete tuto opravu, opravte neplatné uložené doby i při nenačtené ústředně a poté migraci zopakujte. Platné hodnoty a ostatní nastavení se zachovají. Chyby struktury konfigurace jsou zde uvedeny, ale touto opravou je nelze upravit.",
+      "title": "Opravte uloženou konfiguraci ústředny",
+      "description": "Konfiguraci ústředny {entry} se nepodařilo aktualizovat, proto integrace nemůže dokončit spuštění. Otevřete tuto opravu a zjistěte, které položky a nastavení vyžadují pozornost. Podporované číselné hodnoty lze opravit zde, i když integrace není dostupná. Platné hodnoty a ostatní nastavení zůstanou zachovány. Pokud je poškozená struktura uložených dat, oprava vysvětlí, kde najít diagnostiku.",
       "fix_flow": {
         "step": {
           "init": {
             "title": "Vyberte položku k opravě",
-            "description": "Vyberte položku konfigurace s neplatnými uloženými dobami. Zde ji můžete opravit i při nenačtené ústředně. Hodnoty se nikdy automaticky nezkracují ani nenahrazují.",
+            "description": "{entry}\n\n{saved}\n\nVyberte položku níže. Další obrazovka zobrazí dotčená nastavení a povolené hodnoty. Opravujte položky postupně. Po poslední opravě se běžná migrace automaticky spustí znovu.",
             "data": {
               "owner": "Položka konfigurace"
             }
           },
           "edit_durations": {
-            "title": "Opravit uložené nastavení",
-            "description": "{owner}\n\n{error}\n\nOpravte zobrazené hodnoty. Doby jsou v sekundách; limity bez jednotky označují počty. Změní se pouze vybrané nastavení. Potom opakujte migraci.",
+            "title": "Opravte uložená nastavení",
+            "description": "{owner}\n\nNastavení ke kontrole:\n{error}\n\nČasy jsou v sekundách; pole bez jednotky vyjadřují počty. Prázdné pole znamená, že uloženou hodnotu nelze zobrazit jako číslo. Zadejte do něj platnou hodnotu. Ostatní předvyplněné hodnoty ponechte, pokud je nechcete změnit. Potvrzení uloží pouze tuto položku. Pokud zbývá další chyba, vrátíte se do seznamu; jinak se migrace automaticky zopakuje.",
             "sections": {
               "advanced": {
-                "name": "Pokročilé nastavení",
+                "name": "Nastavení této položky",
                 "data": {
                   "contact_step_timeout": "Krok mezi prioritami kontaktů SIP",
                   "media_timeout": "Přehrávání zvuku a řeč",
@@ -1531,38 +1544,63 @@
                   "wrap_up": "Pauza operátora po hovoru",
                   "max_seconds": "Limit nahrávání",
                   "answer_timeout": "Čekání na přijetí",
-                  "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
-                  "registrar_auth_failure_window": "Authentication observation window (seconds)",
-                  "registrar_auth_block_duration": "Authentication block duration (seconds)",
-                  "registrar_min_expires": "Minimum registration lifetime (seconds)",
-                  "registrar_max_expires": "Maximum registration lifetime (seconds)",
-                  "registrar_contact_limit": "Maximum registered Contacts per account",
-                  "audio_rtcp_min_interval": "Minimum audio RTCP interval",
-                  "local_redirect_max_hops": "Maximum local redirect hops",
-                  "trunk_options_interval": "OPTIONS interval (seconds)"
+                  "registrar_auth_failure_threshold": "Neúspěšná ověření před zablokováním",
+                  "registrar_auth_failure_window": "Časové okno chyb ověření (sekundy)",
+                  "registrar_auth_block_duration": "Doba blokování ověření (sekundy)",
+                  "registrar_min_expires": "Minimální platnost registrace (sekundy)",
+                  "registrar_max_expires": "Maximální platnost registrace (sekundy)",
+                  "registrar_contact_limit": "Maximální počet registrovaných kontaktů na účet",
+                  "audio_rtcp_min_interval": "Minimální interval zvukového RTCP",
+                  "local_redirect_max_hops": "Maximální počet místních přesměrování",
+                  "trunk_options_interval": "Interval OPTIONS (sekundy)"
                 },
                 "data_description": {
-                  "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected.",
-                  "trunk_options_interval": "0 disables periodic OPTIONS probes."
+                  "local_redirect_max_hops": "Maximální počet přesměrování podle odpovědí 302 místních účtů. Oprávnění původního volajícího zůstávají v platnosti.",
+                  "trunk_options_interval": "0 vypne pravidelné kontroly OPTIONS. Toto nastavení ověřuje dosažitelnost, nikoli oprávnění příchozích hovorů.",
+                  "registrar_auth_failure_threshold": "0 vypne počítání chyb, které spouští dočasné zablokování.",
+                  "registrar_auth_block_duration": "0 vypne dočasné zablokování.",
+                  "ivr_interdigit_timeout": "Interval mezi číslicemi v nabídkách hlasové schránky. Nejde o celkový časový limit akce automatizace čekající na DTMF.",
+                  "return_timeout": "0 znamená neomezené vyzvánění. Zděděná hodnota se touto opravou nemění.",
+                  "overall_timeout": "0 znamená neomezené celkové vyzvánění. Krok musí zůstat kladný.",
+                  "ring_timeout": "0 znamená neomezené vyzvánění.",
+                  "answer_timeout": "0 znamená neomezené čekání na odpověď."
                 }
               }
             }
           },
           "confirm": {
-            "title": "Zopakujte migraci",
-            "description": "{error}\n\nZopakujte běžnou migraci s uloženou konfigurací. Neplatné doby lze opravit v této opravě. Ostatní chyby struktury je nutné odstranit před dalším pokusem; tato oprava je nemůže upravit."
+            "title": "Zkontrolujte a zopakujte aktualizaci konfigurace",
+            "description": "{entry}\n\n{error}\n\nPotvrzením znovu spustíte běžnou migraci s uloženou konfigurací. Pokud problém přetrvá, oprava zůstane otevřená. Poškozená data se nenahrazují automaticky."
           }
         },
         "error": {
-          "invalid_duration": "Jedna nebo více dob je neplatná. Opravte výše uvedené hodnoty.",
-          "configuration_changed": "Konfigurace se během otevření této opravy změnila. Před dalším uložením zkontrolujte aktuální položku a její hodnoty.",
-          "migration_retry_failed": "Migrace je stále blokována. Před dalším pokusem zkontrolujte uvedenou příčinu."
+          "invalid_duration": "Zkontrolujte výše uvedená nastavení a povolené hodnoty. Pro tuto položku nebylo nic uloženo.",
+          "configuration_changed": "Tato položka byla během opravy změněna nebo odstraněna. Vyberte ji znovu z aktualizovaného seznamu a zkontrolujte aktuální hodnoty. Starý formulář nepřepsal novější konfiguraci.",
+          "migration_retry_failed": "Aktualizace konfigurace je stále blokována. Úspěšné spuštění nebylo potvrzeno. Před dalším pokusem postupujte podle diagnostických pokynů výše.",
+          "save_failed": "Opravy se nepodařilo uložit. Zadané hodnoty zůstávají zobrazené. Před dalším pokusem zkontrolujte protokoly VoIP Stack.",
+          "saved_owner": "Uloženo: {owner}. Vyberte další položku k opravě.",
+          "range_seconds": "{field}: zadejte číslo od {minimum} do {maximum} sekund.",
+          "range_integer_seconds": "{field}: zadejte celé číslo od {minimum} do {maximum} sekund.",
+          "range_count": "{field}: zadejte celé číslo od {minimum} do {maximum}.",
+          "positive_seconds": "{field}: zadejte kladný a konečný počet sekund. Nula není povolena.",
+          "expiry_order": "„{minimum}“ musí být menší nebo rovno „{maximum}“. Opravte jednu nebo obě hodnoty.",
+          "step_order": "„{step}“ nesmí být delší než „{overall}“. Zkraťte krok nebo prodlužte celkové vyzvánění. Nula u celkové doby znamená bez omezení.",
+          "structure_invalid": "Část uložené konfigurace má nečitelnou strukturu. Tato oprava nemůže bezpečně změnit žádné číselné pole, které by ji opravilo. Otevřete Nastavení → Systém → Protokoly a vyhledejte chybu migrace VoIP Stack. Uchovejte kopii konfigurace a předejte diagnostické údaje při žádosti o podporu. Další možností je obnovení funkční zálohy. Samotné opakování poškozenou strukturu neopraví.",
+          "ready_to_retry": "Nezbývají žádné neplatné upravitelné číselné hodnoty. Potvrďte opakování celé migrace. Pokud znovu selže, zkontrolujte chybu migrace VoIP Stack v Nastavení → Systém → Protokoly; pozornost může vyžadovat jiná část konfigurace."
         }
       }
     },
     "trunk_dtmf_retired": {
-      "title": "Automatic trunk extension collection was removed",
-      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
+      "title": "Zkontrolujte příchozí hovory na {trunk}",
+      "description": "Původní tiché čekání na stisk kláves na trunku „{trunk}“ bylo odstraněno. Příchozí hovory se nyní směrují okamžitě. Rozpoznaná volaná linka používá svou běžnou trasu.\n\nPokud volané číslo není rozpoznáno, uloženým příchozím cílem je „{destination}“.\n\nOtevřete Nastavení → Zařízení a služby → VoIP Stack, vyberte trunk „{trunk}“ a upravte jeho příchozí cíl.\n\nPro hlasovou nabídku ovládanou klávesami vyberte jako cíl kontakt Automatizace. Jeho automatizace má hovor přijmout, přehrát výzvu a přesměrovat hovor nebo provést požadovanou akci. Postup najdete v odkazovaném příkladu. Události stisku kláves během hovoru zůstávají dostupné.\n\nIgnorování tohoto upozornění na migraci nemění směrování."
+    },
+    "trunk_dtmf_retired_reject": {
+      "title": "Zkontrolujte příchozí hovory na {trunk}",
+      "description": "Původní tiché čekání na stisk kláves na trunku „{trunk}“ bylo odstraněno. Příchozí hovory se nyní směrují okamžitě. Rozpoznaná volaná linka používá svou běžnou trasu.\n\nPokud volané číslo není rozpoznáno, hovor je odmítnut, protože uložený příchozí cíl je prázdný. Hovor se nepřesměruje na domácí telefon.\n\nOtevřete Nastavení → Zařízení a služby → VoIP Stack, vyberte trunk „{trunk}“ a upravte jeho příchozí cíl.\n\nPro hlasovou nabídku ovládanou klávesami vyberte jako cíl kontakt Automatizace. Jeho automatizace má hovor přijmout, přehrát výzvu a přesměrovat hovor nebo provést požadovanou akci. Postup najdete v odkazovaném příkladu. Události stisku kláves během hovoru zůstávají dostupné.\n\nIgnorování tohoto upozornění na migraci nemění směrování."
+    },
+    "trunk_dtmf_retired_ha": {
+      "title": "Zkontrolujte příchozí hovory na {trunk}",
+      "description": "Původní tiché čekání na stisk kláves na trunku „{trunk}“ bylo odstraněno. Příchozí hovory se nyní směrují okamžitě. Rozpoznaná volaná linka používá svou běžnou trasu.\n\nPokud volané číslo není rozpoznáno, stávající výchozí nastavení jej směruje na telefon Home Assistant. V uložené konfiguraci není pro toto upozornění dostupný název telefonu. Před použitím trunku ověřte požadovaný cíl.\n\nOtevřete Nastavení → Zařízení a služby → VoIP Stack, vyberte trunk „{trunk}“ a upravte jeho příchozí cíl.\n\nPro hlasovou nabídku ovládanou klávesami vyberte jako cíl kontakt Automatizace. Jeho automatizace má hovor přijmout, přehrát výzvu a přesměrovat hovor nebo provést požadovanou akci. Postup najdete v odkazovaném příkladu. Události stisku kláves během hovoru zůstávají dostupné.\n\nIgnorování tohoto upozornění na migraci nemění směrování."
     }
   },
   "exceptions": {

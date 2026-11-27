@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from builtins import BaseExceptionGroup
+from collections.abc import Mapping
 from inspect import signature
 import logging
 import math
@@ -209,30 +210,155 @@ class AccountMigrationRetryRepairFlow(AccountMigrationRepairFlow):
         return await self.async_step_confirm(user_input)
 
 
+def _repair_number(value, *, integer=False):
+    """Return a safe numeric display value; never reflect arbitrary saved text."""
+    if isinstance(value, bool):
+        return None
+    try:
+        if integer:
+            number = int(value)
+            return number if number == float(value) and math.isfinite(number) else None
+        return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _repair_field_constraints(kind, field):
+    """Describe existing validators; these limits never initialize a policy."""
+    from .duration_policy import SERVICE_TIMEOUT_LIMITS
+    from .sip_registration_policy import (
+        AUDIO_RTCP_INTERVAL_FIELD, AUDIO_RTCP_MIN_INTERVAL,
+        LOCAL_REDIRECT_HOPS_FIELD, LOCAL_REDIRECT_MAX_HOPS,
+        REGISTRAR_POLICY_FIELDS, TRUNK_OPTIONS_FIELD,
+    )
+
+    name = field.path[-1]
+    if kind in {"service", "contact"}:
+        minimum, maximum = SERVICE_TIMEOUT_LIMITS[field.name]
+    elif kind in {"advanced", "trunk"}:
+        policy_field = (TRUNK_OPTIONS_FIELD if kind == "trunk" else
+            AUDIO_RTCP_INTERVAL_FIELD if name == AUDIO_RTCP_MIN_INTERVAL else
+            LOCAL_REDIRECT_HOPS_FIELD if name == LOCAL_REDIRECT_MAX_HOPS else REGISTRAR_POLICY_FIELDS[name])
+        return policy_field.minimum, policy_field.maximum, True, False
+    elif kind == "ring":
+        if name == "step_timeout":
+            return 0, None, False, True
+        minimum, maximum = 0, 3600
+    elif kind == "queue":
+        minimum, maximum = {"max_wait": (1, 3600), "ring_timeout": (0, 3600),
+            "no_agent_wait": (0, 120), "retry_delay": (0.1, 120), "wrap_up": (0, 3600)}[name]
+    elif kind == "paging" and name == "timeout":
+        minimum, maximum = SERVICE_TIMEOUT_LIMITS["announcement_timeout"]
+    else:
+        minimum, maximum = (0 if name in {"return_timeout", "answer_timeout"} else 1), 3600
+    return minimum, maximum, False, False
+
+
 class DurationMigrationRepairFlow(ConfirmRepairFlow):
     """Correct saved duration fields even when migration prevents PBX setup."""
 
     def __init__(self, entry_id: str) -> None:
         self.entry_id = entry_id
         self._selected = None
+        self._messages = {}
+        self._owner_names = {}
+        self._saved = ""
+
+    async def _async_load_messages(self):
+        from homeassistant.helpers.translation import async_get_translations
+
+        if self._messages:
+            return
+        prefix = f"component.{DOMAIN}.issues.duration_configuration_invalid."
+        translated = await async_get_translations(self.hass, self.hass.config.language, "issues", {DOMAIN})
+        self._messages = {key.removeprefix(prefix): text for key, text in translated.items() if key.startswith(prefix)}
+        prefix = f"component.{DOMAIN}.selector.repair_policy_owner.options."
+        translated = await async_get_translations(self.hass, self.hass.config.language, "selector", {DOMAIN})
+        self._owner_names = {key.removeprefix(prefix): text for key, text in translated.items() if key.startswith(prefix)}
+
+    def _message(self, key, **values):
+        return self._messages["fix_flow.error." + key].format(**values)
+
+    def _field_name(self, field):
+        return self._messages["fix_flow.step.edit_durations.sections.advanced.data." + field.name]
+
+    def _owner_name(self, entry, owner):
+        """Use configured names, never the repair model's internal path label."""
+        row = entry.subentries.get(owner.subentry_id) if owner.subentry_id else None
+        if row is not None:
+            name = row.title
+        elif owner.kind in {"service", "advanced", "parking", "trunk"}:
+            name = entry.title
+        elif owner.path[:1] == ("sip_accounts",):
+            account = entry.data["sip_accounts"][owner.path[1]]
+            name = account.get("display_name") or account.get("name") or account.get("username") or entry.title
+        else:
+            name = owner.data.get("name") or owner.data.get("id") or (
+                owner.path[-1] if owner.kind == "mailbox" else entry.title)
+        return f"{self._owner_names[owner.kind]} · {name}"
+
+    def _field_guidance(self, field, constraints):
+        minimum, maximum, integer, exclusive = constraints
+        key = ("positive_seconds" if exclusive else "range_count" if not field.unit
+               else "range_integer_seconds" if integer else "range_seconds")
+        return self._message(key, field=self._field_name(field), minimum=minimum, maximum=maximum)
+
+    def _explain_values(self, owner, values):
+        from .duration_repair import _at_path
+
+        problems = []
+        numbers = {}
+        for field in owner.fields:
+            value = values.get(field.name, _at_path(owner.data, field.path))
+            constraints = _repair_field_constraints(owner.kind, field)
+            minimum, maximum, integer, exclusive = constraints
+            number = _repair_number(value, integer=integer)
+            numbers[field.name] = number
+            if (number is None or number < minimum or (exclusive and number == minimum)
+                    or (maximum is not None and number > maximum)):
+                problems.append(self._field_guidance(field, constraints))
+        if not problems and owner.kind == "advanced":
+            minimum, maximum = numbers.get("registrar_min_expires"), numbers.get("registrar_max_expires")
+            if minimum is not None and maximum is not None and minimum > maximum:
+                labels = {field.name: self._field_name(field) for field in owner.fields}
+                problems.append(self._message("expiry_order", minimum=labels["registrar_min_expires"],
+                    maximum=labels["registrar_max_expires"]))
+        if not problems and owner.kind == "ring":
+            def effective(key):
+                return "nested_" + key if "nested_" + key in numbers else key
+            step = effective("step_timeout")
+            overall = effective("overall_timeout")
+            if overall not in numbers:
+                overall = effective("ring_timeout")
+            if numbers.get(overall) and numbers.get(step) is not None and numbers[step] > numbers[overall]:
+                labels = {field.name: self._field_name(field) for field in owner.fields}
+                problems.append(self._message("step_order", step=labels[step], overall=labels[overall]))
+        if not problems:
+            problems = [self._field_guidance(field, _repair_field_constraints(owner.kind, field))
+                        for field in owner.fields]
+        return "\n".join("- " + message for message in problems)
 
     async def async_step_init(self, user_input=None):
         from .duration_repair import duration_repair_owners
 
+        await self._async_load_messages()
         entry = self.hass.config_entries.async_get_entry(self.entry_id)
         if entry is None:
             return self.async_create_entry(data={})
         owners = duration_repair_owners(entry)
         if not owners:
             return await self.async_step_confirm()
+        errors = {}
         if user_input is not None:
             self._selected = next((owner for owner in owners if owner.identity == user_input.get("owner")), None)
             if self._selected is not None:
                 return await self.async_step_edit_durations()
-        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+            errors["base"] = "configuration_changed"
+        return self.async_show_form(step_id="init", errors=errors, data_schema=vol.Schema({
             vol.Required("owner", default=owners[0].identity): SelectSelector(SelectSelectorConfig(
-                options=[{"value": owner.identity, "label": owner.title} for owner in owners], mode="dropdown")),
-        }))
+                options=[{"value": owner.identity, "label": self._owner_name(entry, owner)} for owner in owners], mode="dropdown")),
+        }), description_placeholders={"entry": entry.title,
+            "saved": self._message("saved_owner", owner=self._saved) if self._saved else ""})
 
     async def async_step_edit_durations(self, user_input=None):
         from .duration_repair import _at_path, duration_repair_owners, duration_repair_update
@@ -243,20 +369,21 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
         if self._selected is None:
             return await self.async_step_init()
         errors = {}
-        detail = self._selected.error()
-        values = user_input.get("advanced", user_input) if user_input is not None else {}
+        supplied = user_input.get("advanced", user_input) if user_input is not None else {}
+        values = dict(supplied) if isinstance(supplied, Mapping) else {}
         if user_input is not None:
             try:
-                row, data = duration_repair_update(entry, self._selected, values)
+                row, data = duration_repair_update(entry, self._selected, supplied)
             except RuntimeError:
                 self._selected = None
                 result = await self.async_step_init()
                 if result["type"] == "form":
                     result["errors"] = {"base": "configuration_changed"}
                 return result
-            except (ValueError, TypeError, KeyError, OverflowError) as error:
+            except (ValueError, TypeError, KeyError, OverflowError):
                 errors["base"] = "invalid_duration"
-                detail = str(error)
+                _LOGGER.debug("Invalid PBX repair input entry=%s owner=%s", self.entry_id,
+                    self._selected.identity, exc_info=True)
             else:
                 try:
                     if row is None:
@@ -264,8 +391,10 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
                     else:
                         self.hass.config_entries.async_update_subentry(entry, row, data=data)
                 except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError):
-                    errors["base"] = "migration_retry_failed"
+                    errors["base"] = "save_failed"
+                    _LOGGER.debug("Cannot save PBX policy repair entry=%s", self.entry_id, exc_info=True)
                 else:
+                    self._saved = self._owner_name(entry, self._selected)
                     self._selected = None
                     if duration_repair_owners(entry):
                         return await self.async_step_init()
@@ -273,30 +402,31 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
         schema = {}
         for field in self._selected.fields:
             value = values.get(field.name, _at_path(self._selected.data, field.path))
-            try:
-                numeric = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-            except OverflowError:
-                numeric = False
-            required = vol.Required(field.name, **({"default": value} if numeric else {}))
-            schema[required] = NumberSelector(NumberSelectorConfig(mode="box", step="any",
+            integer = _repair_field_constraints(self._selected.kind, field)[2]
+            numeric = _repair_number(value, integer=integer)
+            required = vol.Required(field.name, **({"default": numeric} if numeric is not None else {}))
+            schema[required] = NumberSelector(NumberSelectorConfig(mode="box", step=1 if integer else "any",
                 **({"unit_of_measurement": field.unit} if field.unit else {})))
         return self.async_show_form(step_id="edit_durations", errors=errors, data_schema=vol.Schema({
-                vol.Optional("advanced"): section(vol.Schema(schema), {"collapsed": True}),
-            }), description_placeholders={"owner": self._selected.title, "error": detail})
+                vol.Optional("advanced"): section(vol.Schema(schema), {"collapsed": False}),
+            }), description_placeholders={"owner": self._owner_name(entry, self._selected),
+                "error": self._explain_values(self._selected, values)})
 
     def _diagnostic(self, entry):
-        """Expose only controlled duration errors or a failure class, never data."""
+        """Explain a structural blocker without exposing exception text or data."""
         from .duration_config import duration_migration_plan
 
         try:
             duration_migration_plan(entry)
-        except (ValueError, TypeError, KeyError, OSError, RuntimeError, OverflowError) as error:
-            return type(error).__name__
-        return ""
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError, OverflowError):
+            _LOGGER.warning("PBX migration structure needs review entry=%s", self.entry_id, exc_info=True)
+            return self._message("structure_invalid")
+        return self._message("ready_to_retry")
 
     async def async_step_confirm(self, user_input=None):
         from .duration_repair import duration_repair_owners
 
+        await self._async_load_messages()
         entry = self.hass.config_entries.async_get_entry(self.entry_id)
         if entry is None:
             return self.async_create_entry(data={})
@@ -304,7 +434,7 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
             return await self.async_step_init()
         if user_input is None:
             return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}),
-                description_placeholders={"error": self._diagnostic(entry)})
+                description_placeholders={"entry": entry.title, "error": self._diagnostic(entry)})
         try:
             if entry.state is ConfigEntryState.MIGRATION_ERROR:
                 await self.hass.config_entries.async_retry_migration(self.entry_id)
@@ -312,8 +442,8 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
                 from . import async_migrate_entry
 
                 await async_migrate_entry(self.hass, entry)
-        except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError):
-            pass
+        except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError, OverflowError):
+            _LOGGER.debug("PBX migration retry failed entry=%s", self.entry_id, exc_info=True)
         else:
             from .duration_config import duration_migration_plan
             try:
@@ -325,7 +455,8 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
                     await self.hass.config_entries.async_reload(self.entry_id)
                 return self.async_create_entry(data={})
         return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}),
-            errors={"base": "migration_retry_failed"}, description_placeholders={"error": self._diagnostic(entry)})
+            errors={"base": "migration_retry_failed"},
+            description_placeholders={"entry": entry.title, "error": self._diagnostic(entry)})
 
 
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
@@ -860,12 +991,29 @@ def async_sync_pbx_configuration_issues(hass: HomeAssistant) -> None:
 
 def async_report_trunk_menu_retired(hass, entry, record) -> None:
     """Keep a native migration notice until the owner dismisses it."""
+    from .trunk_policy import inbound_trunk_destination
+
+    destination = inbound_trunk_destination(record.data)
+    key = "trunk_dtmf_retired" if destination else "trunk_dtmf_retired_reject"
+    label = destination
+    for row in entry.subentries.values():
+        if row.subentry_type not in {"phone", "group", "contact", "paging"}:
+            continue
+        identities = {row.subentry_id, str(row.unique_id or ""), row.title,
+            *(str(row.data.get(name) or "") for name in ("endpoint_id", "id", "username", "name", "extension"))}
+        default = (row.subentry_type == "phone" and (row.unique_id in {"default", "phone:default"}
+                   or row.data.get("endpoint_id") == "default"))
+        if destination and (default if destination == "HA" else destination in identities):
+            label = row.title
+            break
+    if destination == "HA" and label == "HA":
+        key = "trunk_dtmf_retired_ha"
     ownership = {"config_entry_id": entry.entry_id}
     if "config_subentry_id" in signature(ir.async_create_issue).parameters:
         ownership["config_subentry_id"] = record.subentry_id
     ir.async_create_issue(hass, DOMAIN, "trunk_dtmf_retired_" + record.subentry_id,
         **ownership, is_fixable=False, is_persistent=True, severity=ir.IssueSeverity.WARNING,
-        translation_key="trunk_dtmf_retired", translation_placeholders={
+        translation_key=key, translation_placeholders={
             "trunk": record.title,
-            "destination": str(record.data.get("trunk_inbound_default_target") or "No destination configured"),
+            "destination": label,
         }, learn_more_url="https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu")

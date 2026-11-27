@@ -1277,6 +1277,19 @@
         "caller": "Identità del chiamante (numero pubblico se configurato)",
         "account": "Username dell'account (interni tra centralini)"
       }
+    },
+    "repair_policy_owner": {
+      "options": {
+        "service": "Durate delle azioni del centralino",
+        "advanced": "Registrazione e limiti del centralino",
+        "parking": "Parcheggio chiamate",
+        "trunk": "Trunk SIP",
+        "contact": "Contatto Automazione",
+        "mailbox": "Segreteria telefonica",
+        "ring": "Gruppo di squillo",
+        "queue": "Coda di chiamata",
+        "paging": "Gruppo annunci"
+      }
     }
   },
   "system_health": {
@@ -1485,23 +1498,23 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "duration_configuration_invalid": {
-      "title": "La configurazione delle regole del PBX richiede attenzione",
-      "description": "La migrazione delle durate non è stata completata: {error}. Apri questa riparazione per correggere le durate salvate non valide anche se il centralino non è caricato, poi riprova la migrazione. I valori validi e le altre impostazioni vengono conservati. Gli errori nella struttura della configurazione vengono segnalati qui ma non sono modificabili da questa riparazione.",
+      "title": "La configurazione del centralino richiede una correzione",
+      "description": "Non è stato possibile aggiornare la configurazione del centralino {entry}, quindi l’integrazione non può completare l’avvio. Apri questa riparazione per vedere quale elemento e quali impostazioni richiedono attenzione. Puoi correggere qui i valori numerici supportati anche se l’integrazione non è disponibile. I valori validi e le altre impostazioni vengono conservati. Se è danneggiata la struttura dei dati salvati, la riparazione indica dove trovare i dettagli diagnostici.",
       "fix_flow": {
         "step": {
           "init": {
-            "title": "Scegli l'elemento da correggere",
-            "description": "Scegli l'elemento di configurazione con durate salvate non valide. Puoi correggerlo qui anche se il centralino non è caricato. I valori non vengono mai ridotti o sostituiti automaticamente.",
+            "title": "Scegli l’elemento da correggere",
+            "description": "{entry}\n\n{saved}\n\nScegli un elemento qui sotto. Nella schermata successiva trovi le impostazioni da controllare e i valori ammessi. Correggi un elemento alla volta: dopo l’ultima correzione viene riprovata automaticamente la migrazione ordinaria.",
             "data": {
               "owner": "Elemento di configurazione"
             }
           },
           "edit_durations": {
-            "title": "Correggi le regole salvate",
-            "description": "{owner}\n\n{error}\n\nCorreggi i valori salvati mostrati qui. Le durate sono in secondi; i limiti senza unità indicano quantità. Cambiano solo i campi della regola selezionata. Poi riprova la migrazione.",
+            "title": "Correggi le impostazioni salvate",
+            "description": "{owner}\n\nImpostazioni da controllare:\n{error}\n\nLe durate sono in secondi; i campi senza unità indicano quantità. Un campo vuoto significa che il valore salvato non può essere mostrato come numero: inserisci lì un valore valido. Conserva gli altri valori precompilati, salvo modifiche volute. Quando confermi, vengono salvate solo le impostazioni di questo elemento. Se altri elementi richiedono attenzione torni all’elenco; altrimenti viene riprovata automaticamente la migrazione.",
             "sections": {
               "advanced": {
-                "name": "Impostazioni avanzate",
+                "name": "Impostazioni di questo elemento",
                 "data": {
                   "contact_step_timeout": "Passo tra priorità dei contatti SIP",
                   "media_timeout": "Riproduzione audio e sintesi vocale",
@@ -1542,27 +1555,52 @@
                   "trunk_options_interval": "Intervallo OPTIONS (secondi)"
                 },
                 "data_description": {
-                  "local_redirect_max_hops": "Limite degli inoltri verso account locali verificati. Gli inoltri remoti dei trunk restano rifiutati.",
-                  "trunk_options_interval": "0 disabilita le richieste OPTIONS periodiche."
+                  "local_redirect_max_hops": "Numero massimo di inoltri seguendo le risposte 302 degli account locali. Restano validi i permessi del chiamante originario.",
+                  "trunk_options_interval": "0 disabilita le richieste OPTIONS periodiche. Questa impostazione controlla la raggiungibilità, non l’autenticazione delle chiamate.",
+                  "registrar_auth_failure_threshold": "0 disabilita il conteggio che attiva il blocco temporaneo.",
+                  "registrar_auth_block_duration": "0 disabilita il blocco temporaneo.",
+                  "ivr_interdigit_timeout": "Intervallo tra cifre nei menu della segreteria telefonica. Non è il timeout totale dell’azione Attendi DTMF delle automazioni.",
+                  "return_timeout": "0 significa squillo senza limite. Un valore ereditato non viene modificato da questa riparazione.",
+                  "overall_timeout": "0 significa squillo complessivo senza limite; il passo resta positivo.",
+                  "ring_timeout": "0 significa squillo senza limite.",
+                  "answer_timeout": "0 significa attesa della risposta senza limite."
                 }
               }
             }
           },
           "confirm": {
-            "title": "Riprova la migrazione",
-            "description": "{error}\n\nRiprova la migrazione ordinaria con la configurazione salvata. Le durate non valide possono essere corrette in questa riparazione. Gli altri errori di struttura devono essere risolti prima di riprovare; questa riparazione non può modificarli."
+            "title": "Controlla e riprova l’aggiornamento della configurazione",
+            "description": "{entry}\n\n{error}\n\nConferma per riprovare la migrazione ordinaria con la configurazione salvata. Se il problema rimane, la riparazione resta aperta: non sostituisce automaticamente i dati danneggiati."
           }
         },
         "error": {
-          "invalid_duration": "Una o più durate non sono valide. Correggi i valori indicati sopra.",
-          "configuration_changed": "La configurazione è cambiata mentre la riparazione era aperta. Controlla l'elemento e i valori attuali prima di salvare di nuovo.",
-          "migration_retry_failed": "La migrazione è ancora bloccata. Controlla la causa indicata prima di riprovare."
+          "invalid_duration": "Controlla le impostazioni nominate e i valori ammessi indicati sopra. Per questo elemento non è stata salvata alcuna modifica.",
+          "configuration_changed": "Questo elemento è cambiato o è stato rimosso mentre la riparazione era aperta. Selezionalo di nuovo dall’elenco aggiornato e controlla i valori attuali. Il vecchio modulo non ha sovrascritto la configurazione più recente.",
+          "migration_retry_failed": "L’aggiornamento della configurazione è ancora bloccato. L’avvio non è stato confermato. Segui le indicazioni diagnostiche qui sopra prima di riprovare.",
+          "save_failed": "Non è stato possibile salvare queste correzioni. I valori inseriti restano visibili. Controlla i log di VoIP Stack prima di riprovare.",
+          "saved_owner": "Salvato: {owner}. Scegli il prossimo elemento da correggere.",
+          "range_seconds": "{field}: inserisci un numero da {minimum} a {maximum} secondi.",
+          "range_integer_seconds": "{field}: inserisci un numero intero da {minimum} a {maximum} secondi.",
+          "range_count": "{field}: inserisci un numero intero da {minimum} a {maximum}.",
+          "positive_seconds": "{field}: inserisci un numero di secondi positivo e finito; lo zero non è ammesso.",
+          "expiry_order": "“{minimum}” deve essere minore o uguale a “{maximum}”. Correggi uno o entrambi i valori.",
+          "step_order": "“{step}” non può durare più di “{overall}”. Riduci il passo o aumenta lo squillo complessivo; zero per lo squillo complessivo significa senza limite.",
+          "structure_invalid": "Una parte della configurazione salvata ha una struttura non leggibile. Questa riparazione non dispone di un campo numerico che possa correggerla in sicurezza. Apri Impostazioni → Sistema → Registri e cerca l’errore di migrazione di VoIP Stack. Conserva una copia della configurazione e usa quei dettagli dei log per chiedere assistenza; puoi anche recuperare un backup precedente funzionante. Riprovare da solo non corregge la struttura danneggiata.",
+          "ready_to_retry": "Non restano valori numerici modificabili non validi. Conferma per riprovare la migrazione completa. Se fallisce ancora, controlla l’errore di migrazione di VoIP Stack in Impostazioni → Sistema → Registri: un’altra parte della configurazione può richiedere attenzione."
         }
       }
     },
     "trunk_dtmf_retired": {
-      "title": "Automatic trunk extension collection was removed",
-      "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
+      "title": "Controlla le chiamate in ingresso su {trunk}",
+      "description": "La vecchia attesa silenziosa dei tasti sul trunk “{trunk}” è stata rimossa. Le chiamate in ingresso vengono instradate subito: se l’interno chiamato è riconosciuto, segue il suo percorso ordinario.\n\nSe il numero chiamato non è riconosciuto, la destinazione d’ingresso salvata è “{destination}”.\n\nPer controllare o cambiare la scelta, apri Impostazioni → Dispositivi e servizi → VoIP Stack, seleziona il trunk “{trunk}” e modifica la sua destinazione d’ingresso.\n\nSe chi chiama deve ascoltare un menu e scegliere con i tasti, seleziona come destinazione un contatto Automazione e configura l’automazione per rispondere, riprodurre il messaggio e inoltrare la chiamata o eseguire l’azione desiderata. L’esempio collegato mostra la sequenza. Gli eventi dei tasti durante la chiamata restano disponibili.\n\nQuesto avviso descrive la migrazione: ignorarlo non cambia l’instradamento."
+    },
+    "trunk_dtmf_retired_reject": {
+      "title": "Controlla le chiamate in ingresso su {trunk}",
+      "description": "La vecchia attesa silenziosa dei tasti sul trunk “{trunk}” è stata rimossa. Le chiamate in ingresso vengono instradate subito: se l’interno chiamato è riconosciuto, segue il suo percorso ordinario.\n\nSe il numero chiamato non è riconosciuto, la chiamata viene rifiutata perché la destinazione d’ingresso salvata è vuota. Non viene deviata al telefono di casa.\n\nPer controllare o cambiare la scelta, apri Impostazioni → Dispositivi e servizi → VoIP Stack, seleziona il trunk “{trunk}” e modifica la sua destinazione d’ingresso.\n\nSe chi chiama deve ascoltare un menu e scegliere con i tasti, seleziona come destinazione un contatto Automazione e configura l’automazione per rispondere, riprodurre il messaggio e inoltrare la chiamata o eseguire l’azione desiderata. L’esempio collegato mostra la sequenza. Gli eventi dei tasti durante la chiamata restano disponibili.\n\nQuesto avviso descrive la migrazione: ignorarlo non cambia l’instradamento."
+    },
+    "trunk_dtmf_retired_ha": {
+      "title": "Controlla le chiamate in ingresso su {trunk}",
+      "description": "La vecchia attesa silenziosa dei tasti sul trunk “{trunk}” è stata rimossa. Le chiamate in ingresso vengono instradate subito: se l’interno chiamato è riconosciuto, segue il suo percorso ordinario.\n\nSe il numero chiamato non è riconosciuto, il comportamento predefinito esistente lo indirizza al telefono Home Assistant. Nella configurazione salvata non è disponibile il nome di un telefono da mostrare in questo avviso. Verifica la destinazione desiderata prima di usare il trunk.\n\nPer controllare o cambiare la scelta, apri Impostazioni → Dispositivi e servizi → VoIP Stack, seleziona il trunk “{trunk}” e modifica la sua destinazione d’ingresso.\n\nSe chi chiama deve ascoltare un menu e scegliere con i tasti, seleziona come destinazione un contatto Automazione e configura l’automazione per rispondere, riprodurre il messaggio e inoltrare la chiamata o eseguire l’azione desiderata. L’esempio collegato mostra la sequenza. Gli eventi dei tasti durante la chiamata restano disponibili.\n\nQuesto avviso descrive la migrazione: ignorarlo non cambia l’instradamento."
     }
   },
   "exceptions": {

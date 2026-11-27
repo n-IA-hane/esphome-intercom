@@ -35,7 +35,8 @@ async def test_legacy_menu_migration_keeps_destination_and_persistent_repair(has
     issue = issues[("voip_stack", "trunk_dtmf_retired_" + record.subentry_id)]
     assert issue.is_persistent
     assert issue.config_entry_id == entry.entry_id
-    assert issue.translation_placeholders["destination"] == (destination or "No destination configured")
+    assert issue.translation_placeholders["destination"] == destination
+    assert issue.translation_key == ("trunk_dtmf_retired" if destination else "trunk_dtmf_retired_reject")
     before = deepcopy(dict(record.data))
     assert await async_migrate_entry(hass, entry)
     assert dict(record.data) == before
