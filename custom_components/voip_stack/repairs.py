@@ -245,7 +245,7 @@ class TrunkMigrationSourceRepairFlow(RepairsFlow):
         choices = [{"value": "legacy", "label": entry.title},
                    *({"value": row.subentry_id, "label": row.title} for row in conflicts)]
         errors = {}
-        if user_input is not None:
+        if user_input is not None and "line" in user_input:
             if snapshot != self._snapshot or user_input.get("line") not in {row["value"] for row in choices}:
                 errors["base"] = "configuration_changed"
             else:
@@ -368,7 +368,7 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
         return self._messages["fix_flow.error." + key].format(**values)
 
     def _field_name(self, field):
-        return self._messages["fix_flow.step.edit_durations.sections.advanced.data." + field.name]
+        return self._messages["fix_flow.step.edit_durations.data." + field.name]
 
     def _owner_name(self, entry, owner):
         """Use configured names, never the repair model's internal path label."""
@@ -437,7 +437,7 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
         if not owners:
             return await self.async_step_confirm()
         errors = {}
-        if user_input is not None:
+        if user_input is not None and "owner" in user_input:
             self._selected = next((owner for owner in owners if owner.identity == user_input.get("owner")), None)
             if self._selected is not None:
                 return await self.async_step_edit_durations()
@@ -496,7 +496,7 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
             schema[required] = NumberSelector(NumberSelectorConfig(mode="box", step=1 if integer else "any",
                 **({"unit_of_measurement": field.unit} if field.unit else {})))
         return self.async_show_form(step_id="edit_durations", errors=errors, data_schema=vol.Schema({
-                vol.Optional("advanced"): section(vol.Schema(schema), {"collapsed": False}),
+                vol.Optional("advanced"): section(vol.Schema(schema), {"collapsed": True}),
             }), description_placeholders={"owner": self._owner_name(entry, self._selected),
                 "error": self._explain_values(self._selected, values)})
 

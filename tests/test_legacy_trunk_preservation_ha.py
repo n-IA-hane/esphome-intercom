@@ -131,6 +131,7 @@ async def test_invalid_legacy_probe_is_correctable_in_native_repair(hass, monkey
     manager = repairs_flow_manager(hass)
     initial = await manager.async_init("voip_stack", context={"issue_id": issue_id})
     assert initial["step_id"] == "init"
+    assert not initial.get("errors")
     form = await manager.async_configure(initial["flow_id"], {"owner": owner_choice(initial)})
     assert form["step_id"] == "edit_durations"
     assert "fixture-secret" not in repr(form)
@@ -202,6 +203,7 @@ async def test_existing_native_probe_survives_early_legacy_move_until_repair(has
     manager = repairs_flow_manager(hass)
     initial = await manager.async_init("voip_stack", context={"issue_id": issue_id})
     assert initial["step_id"] == "init"
+    assert not initial.get("errors")
     form = await manager.async_configure(initial["flow_id"], {"owner": owner_choice(initial)})
     assert form["step_id"] == "edit_durations"
     assert "fixture-secret" not in repr(form)
@@ -289,6 +291,7 @@ async def test_overlapping_legacy_sources_are_preserved_and_repairable(hass, mon
     initial = await manager.async_init("voip_stack", context={"issue_id": issue_id})
     assert initial["step_id"] == "init"
     assert "secret" not in repr(initial)
+    assert not initial.get("errors")
     result = await manager.async_configure(initial["flow_id"], {
         "line": "legacy" if disable == "legacy" else native.subentry_id})
     assert result["type"] == "create_entry"
