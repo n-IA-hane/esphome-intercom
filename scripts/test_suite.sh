@@ -399,6 +399,8 @@ ha_tests=(
   tests/test_sdp_attribute_isolation_ha.py
   tests/test_trunk_retirement_ha.py
   tests/test_trunk_migration_recovery_ha.py
+  tests/test_legacy_trunk_preservation_ha.py
+  tests/test_trunk_notice_storage_ha.py
   tests/test_trunk_legacy_policy_ha.py
   tests/test_browser_early_media_pcm_ha.py
   tests/test_shared_account_direct_video_ha.py
@@ -438,6 +440,7 @@ ha_tests=(
   tests/test_duration_public_configuration_ha.py
   tests/test_duration_semantic_bridge_ha.py
   tests/test_advanced_policy_repair_ha.py
+  tests/test_repair_policy_messages_ha.py
   tests/test_migration_preflight_recovery_ha.py
   tests/test_duration_runtime_requirements_ha.py
   tests/test_parking_policy_cutover_ha.py
