@@ -1500,7 +1500,7 @@
     },
     "trunk_dtmf_retired": {
       "title": "Review incoming calls on {trunk}",
-      "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the saved incoming destination is “{destination}”.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
+      "description": "The old silent keypad collection on \"{trunk}\" has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the saved incoming destination is \"{destination}\".\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk \"{trunk}\" and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
     },
     "duration_configuration_invalid": {
       "title": "PBX configuration needs a correction",
@@ -1560,7 +1560,7 @@
                   "trunk_options_interval": "OPTIONS interval (seconds)"
                 },
                 "data_description": {
-                  "local_redirect_max_hops": "Maximum redirects followed after 302 responses from local accounts. The original caller’s permissions still apply.",
+                  "local_redirect_max_hops": "Maximum redirects followed after 302 responses from local accounts. The original caller's permissions still apply.",
                   "trunk_options_interval": "0 disables periodic OPTIONS probes. This setting controls reachability checks, not incoming-call authentication.",
                   "registrar_auth_failure_threshold": "0 disables the failure count used for temporary blocking.",
                   "registrar_auth_block_duration": "0 disables temporary blocking.",
@@ -1588,8 +1588,8 @@
           "range_integer_seconds": "{field}: use a whole number from {minimum} to {maximum} seconds.",
           "range_count": "{field}: use a whole number from {minimum} to {maximum}.",
           "positive_seconds": "{field}: use a positive, finite number of seconds; zero is not allowed.",
-          "expiry_order": "“{minimum}” must be less than or equal to “{maximum}”. Correct one or both values.",
-          "step_order": "“{step}” cannot be longer than “{overall}”. Shorten the step or increase the total ringing time; zero for the total means unlimited.",
+          "expiry_order": "\"{minimum}\" must be less than or equal to \"{maximum}\". Correct one or both values.",
+          "step_order": "\"{step}\" cannot be longer than \"{overall}\". Shorten the step or increase the total ringing time; zero for the total means unlimited.",
           "structure_invalid": "Part of the saved configuration has an unreadable structure. There is no numeric field that this repair can safely change. Open Settings → System → Logs and find the VoIP Stack migration error. Keep a copy of the configuration and use those diagnostic details when requesting support; restoring a known working backup is another recovery option. Retrying alone does not repair the damaged structure.",
           "ready_to_retry": "No invalid editable numeric setting remains. Confirm to retry the complete migration. If it still fails, inspect the VoIP Stack migration error in Settings → System → Logs; another part of the configuration may need attention."
         }
@@ -1597,11 +1597,11 @@
     },
     "trunk_dtmf_retired_reject": {
       "title": "Review incoming calls on {trunk}",
-      "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the call is rejected because the saved incoming destination is empty. It does not fall back to the home phone.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
+      "description": "The old silent keypad collection on \"{trunk}\" has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the call is rejected because the saved incoming destination is empty. It does not fall back to the home phone.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk \"{trunk}\" and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
     },
     "trunk_dtmf_retired_ha": {
       "title": "Review incoming calls on {trunk}",
-      "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the existing default routes it to the Home Assistant phone. No named phone destination is available in the saved configuration for this notice. Verify the intended destination before using this trunk.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
+      "description": "The old silent keypad collection on \"{trunk}\" has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the existing default routes it to the Home Assistant phone. No named phone destination is available in the saved configuration for this notice. Verify the intended destination before using this trunk.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk \"{trunk}\" and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
     },
     "trunk_migration_source_conflict": {
       "title": "Resolve overlapping trunk sources",
