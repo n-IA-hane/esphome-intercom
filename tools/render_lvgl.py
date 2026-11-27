@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -1041,7 +1042,10 @@ def main():
                 archive.mkdir(exist_ok=True)
                 shutil.move(stale, archive / stale.name)
         with (args.output / "run.log").open("w") as stream:
-            ran = subprocess.run([str(executable)], stdout=stream, stderr=subprocess.STDOUT, timeout=30, cwd=args.output)
+            ran = subprocess.run(
+                [str(executable)], stdout=stream, stderr=subprocess.STDOUT, timeout=30, cwd=args.output,
+                env={**os.environ, "ESPHOME_SNAPSHOT_DIR": str(captures)},
+            )
         if ran.returncode:
             result.update(status="failed", phase="host_runtime", returncode=ran.returncode)
             (args.output / "RESULTS.json").write_text(json.dumps(result, indent=2) + "\n")
