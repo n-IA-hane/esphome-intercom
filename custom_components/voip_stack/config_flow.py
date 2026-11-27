@@ -160,6 +160,7 @@ def _port_selector():
 def _trunk_target_choices(hass, entry, existing):
     """Return available trunk destinations and the configured default."""
     from .runtime_data import runtime_data, preferred_browser_phone
+    from .trunk_policy import inbound_trunk_destination
 
     runtime = runtime_data(hass)
     names = set()
@@ -170,8 +171,9 @@ def _trunk_target_choices(hass, entry, existing):
         if name:
             names.add(name)
         names.update(_group_route_values(item.get("ring_group"), item.get("conference_group")))
-    selected = str(existing.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "").strip()
-    if CONF_TRUNK_INBOUND_DEFAULT_TARGET not in existing:
+    selected = inbound_trunk_destination(existing, default="")
+    if (CONF_TRUNK_INBOUND_DEFAULT_TARGET not in existing
+            and existing.get("trunk_inbound_unknown_target") != "reject"):
         preferred = preferred_browser_phone(hass) if runtime is not None else None
         selected = preferred.name if preferred is not None else ""
     elif selected.casefold() == "ha" and selected not in names:
@@ -186,6 +188,7 @@ def _trunk_target_choices(hass, entry, existing):
 def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
     """Return entry data with trunk explicitly disabled."""
     from .outbound_identity import normalized_outbound_identity_config
+    from .trunk_policy import inbound_trunk_destination
 
     def legacy_value(key: str, default: Any) -> Any:
         """Replace empty values written by older flows with a safe default."""
@@ -214,9 +217,7 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
             CONF_TRUNK_PASSWORD: legacy_value(CONF_TRUNK_PASSWORD, ""),
             CONF_TRUNK_EXPIRES: int(legacy_value(CONF_TRUNK_EXPIRES, 300)),
             CONF_TRUNK_OUTBOUND_PROXY: legacy_value(CONF_TRUNK_OUTBOUND_PROXY, ""),
-            CONF_TRUNK_INBOUND_DEFAULT_TARGET: str(
-                existing.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "HA") or ""
-            ).strip(),
+            CONF_TRUNK_INBOUND_DEFAULT_TARGET: inbound_trunk_destination(existing),
             CONF_AUTOMATION_ROUTING_ENABLED: legacy_value(
                 CONF_AUTOMATION_ROUTING_ENABLED, False
             ),
@@ -258,7 +259,8 @@ class TrunkFormMixin:
         _current_entry, existing = self._current_entry_data()
         target_choices, target_default = _trunk_target_choices(self.hass, _current_entry, existing)
         from .trunk_destination_selector import trunk_destination_projection, trunk_destination_value
-        if CONF_TRUNK_INBOUND_DEFAULT_TARGET not in existing:
+        if (CONF_TRUNK_INBOUND_DEFAULT_TARGET not in existing
+                and existing.get("trunk_inbound_unknown_target") != "reject"):
             from .runtime_data import preferred_browser_phone, runtime_data
             preferred = preferred_browser_phone(self.hass) if runtime_data(self.hass) is not None else None
             if preferred is not None:
@@ -376,7 +378,7 @@ class TrunkFormMixin:
                 errors["advanced"] = "advanced_policy_invalid"
             try:
                 user_input[CONF_TRUNK_INBOUND_DEFAULT_TARGET] = trunk_destination_value(
-                    user_input.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, existing.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "")),
+                    user_input.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, target_default),
                     target_references)
             except ValueError:
                 errors[CONF_TRUNK_INBOUND_DEFAULT_TARGET] = "trunk_destination_invalid"

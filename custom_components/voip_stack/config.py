@@ -34,7 +34,7 @@ from .const import (
     VOIP_STACK_SIP_PORT,
 )
 from .runtime_data import runtime_data
-from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, inbound_trunk_destination
 
 
 def entry_assist_config(entry: ConfigEntry | None = None) -> dict:
@@ -119,9 +119,7 @@ def normalized_trunk_config(data) -> dict:
         CONF_TRUNK_OUTBOUND_PROXY: str(
             data.get(CONF_TRUNK_OUTBOUND_PROXY) or ""
         ).strip(),
-        CONF_TRUNK_INBOUND_DEFAULT_TARGET: str(
-            data.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET, "HA") or ""
-        ).strip(),
+        CONF_TRUNK_INBOUND_DEFAULT_TARGET: inbound_trunk_destination(data),
         CONF_AUTOMATION_ROUTING_ENABLED: bool(
             data.get(CONF_AUTOMATION_ROUTING_ENABLED, False)
         ),

@@ -78,9 +78,11 @@ def duration_migration_plan(entry) -> tuple[dict, list[tuple[object, dict]]]:
     from .queue_config import initial_queue_policy
     from .roster import parse_roster_json
 
-    from .trunk_config import LEGACY_TRUNK_MENU_KEYS
-    data = initialize_duration_config(entry.data)
-    data = {key: value for key, value in data.items() if key not in LEGACY_TRUNK_MENU_KEYS}
+    from .trunk_config import legacy_trunk_collects_digits, migrated_trunk_routing_data
+    legacy_trunk_collects_digits(entry.data)
+    if "trunk_enabled" in entry.data:
+        normalized_trunk_config(entry.data)
+    data = migrated_trunk_routing_data(initialize_duration_config(entry.data))
     normalize_parking_config(data["parking"])
     # Existing contacts used this initial value before a stored default existed.
     # Changing a PBX default must not rewrite a saved per-contact policy.
@@ -132,10 +134,8 @@ def duration_migration_plan(entry) -> tuple[dict, list[tuple[object, dict]]]:
             from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD
             proposed.setdefault(TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD.default)
             TRUNK_OPTIONS_FIELD.validate(proposed[TRUNK_OPTIONS_INTERVAL])
-            raw_timeout = previous.get("trunk_dtmf_timeout_ms")
-            if raw_timeout not in (None, ""):
-                int(raw_timeout)
-            proposed = {key: value for key, value in proposed.items() if key not in LEGACY_TRUNK_MENU_KEYS}
+            legacy_trunk_collects_digits(previous)
+            proposed = migrated_trunk_routing_data(proposed)
             normalized_trunk_config(proposed)
         else:
             continue
@@ -146,13 +146,18 @@ def duration_migration_plan(entry) -> tuple[dict, list[tuple[object, dict]]]:
 
 def migrate_duration_policies(hass, entry) -> None:
     """Apply an idempotent plan; advance the schema only after all writes succeed."""
-    data, updates = duration_migration_plan(entry)
+    # Validate every owner before the first write, including collector fields
+    # which can fail before the duration phase on installations still at 7.5.
+    duration_migration_plan(entry)
     from .trunk_config import LEGACY_TRUNK_MENU_KEYS, migrate_trunk_menus
-    if LEGACY_TRUNK_MENU_KEYS.intersection(entry.data) or any(
+    if "trunk_enabled" in entry.data or LEGACY_TRUNK_MENU_KEYS.intersection(entry.data) or any(
             row.subentry_type == "trunk" and LEGACY_TRUNK_MENU_KEYS.intersection(row.data)
             for row in entry.subentries.values()):
         # Preserve the existing owner and per-trunk notices after preflight.
         migrate_trunk_menus(hass, entry)
+    # Moving a residual parent trunk changes both the parent and subentry set.
+    # Replan from that result instead of restoring the stale pre-move snapshot.
+    data, updates = duration_migration_plan(entry)
     for record, proposed in updates:
         hass.config_entries.async_update_subentry(entry, record, data=proposed)
     hass.config_entries.async_update_entry(entry, data=data, minor_version=7)

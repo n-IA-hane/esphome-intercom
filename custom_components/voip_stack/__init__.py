@@ -242,9 +242,6 @@ async def async_migrate_entry(
         from .const import CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES
         data.setdefault(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=5)
-    if config_entry.version == 7 and config_entry.minor_version < 6:
-        from .trunk_config import migrate_trunk_menus
-        migrate_trunk_menus(hass, config_entry)
     if config_entry.version == 7 and config_entry.minor_version <= 7:
         return async_ensure_duration_policies(hass, config_entry)
     return True
@@ -257,7 +254,7 @@ def async_ensure_duration_policies(hass, entry) -> bool:
     issue_id = "duration_configuration_invalid_" + entry.entry_id
     try:
         data, updates = duration_migration_plan(entry)
-        if entry.minor_version < 7 or data != entry.data or updates:
+        if entry.minor_version < 7 or data != entry.data or updates or "trunk_enabled" in entry.data:
             migrate_duration_policies(hass, entry)
         final_data, final_updates = duration_migration_plan(entry)
         if final_data != entry.data or final_updates:

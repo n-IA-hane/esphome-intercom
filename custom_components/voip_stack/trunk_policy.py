@@ -5,6 +5,16 @@ from __future__ import annotations
 import ipaddress
 
 
+def inbound_trunk_destination(config, *, default="HA") -> str:
+    """Retain the saved unknown-number decision across older trunk schemas."""
+    policy = config.get("trunk_inbound_unknown_target", "fallback")
+    if policy not in {"fallback", "reject"}:
+        raise ValueError("Invalid legacy trunk unknown-number policy")
+    if policy == "reject":
+        return ""
+    return str(config.get("trunk_inbound_default_target", default) or "").strip()
+
+
 def authenticated_inbound_trunk(configs, username: str) -> str:
     """Resolve an existing account's explicit peer binding after Digest succeeds."""
     principal = str(username or "").casefold()

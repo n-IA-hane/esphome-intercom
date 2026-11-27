@@ -89,6 +89,32 @@ LEGACY_TRUNK_MENU_KEYS = frozenset({
 })
 
 
+def legacy_trunk_collects_digits(data) -> bool:
+    """Read retired collector settings only while validating an upgrade."""
+    mode = str(data.get("trunk_inbound_mode") or "").strip().lower()
+    raw_timeout = data.get("trunk_dtmf_timeout_ms")
+    if isinstance(raw_timeout, bool):
+        raise ValueError("Invalid legacy trunk digit interval")
+    try:
+        timeout = 3000 if raw_timeout in (None, "") else int(raw_timeout)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError("Invalid legacy trunk digit interval") from error
+    if mode not in {"direct", "dtmf"}:
+        mode = "dtmf" if data.get("trunk_dtmf_enabled", False) and timeout > 0 else "direct"
+    return mode == "dtmf" and timeout > 0
+
+
+def migrated_trunk_routing_data(data) -> dict:
+    """Translate legacy reject to the existing empty-destination contract."""
+    from .trunk_policy import inbound_trunk_destination
+
+    result = {key: value for key, value in data.items() if key not in LEGACY_TRUNK_MENU_KEYS}
+    if "trunk_inbound_unknown_target" in result:
+        result["trunk_inbound_default_target"] = inbound_trunk_destination(result)
+        result.pop("trunk_inbound_unknown_target")
+    return result
+
+
 def migrate_trunk_menus(hass, entry) -> None:
     """Retire automatic collection without rewriting destinations or identities."""
     from .repairs import async_report_trunk_menu_retired
@@ -96,18 +122,13 @@ def migrate_trunk_menus(hass, entry) -> None:
     migrate_legacy_trunk(hass, entry)
     for record in trunk_subentries(entry):
         data = dict(record.data)
-        mode = str(data.get("trunk_inbound_mode") or "").strip().lower()
-        raw_timeout = data.get("trunk_dtmf_timeout_ms")
-        timeout = 3000 if raw_timeout in (None, "") else int(raw_timeout)
-        if mode not in {"direct", "dtmf"}:
-            mode = "dtmf" if data.get("trunk_dtmf_enabled", False) and timeout > 0 else "direct"
         # Match the retired normalizer: an explicit DTMF mode determined the
         # effective flag, including persisted records with a stale false flag.
-        enabled = mode == "dtmf" and timeout > 0
-        if enabled:
+        if legacy_trunk_collects_digits(data):
             async_report_trunk_menu_retired(hass, entry, record)
-        if LEGACY_TRUNK_MENU_KEYS.intersection(data):
-            hass.config_entries.async_update_subentry(entry, record,
-                data={key: value for key, value in data.items() if key not in LEGACY_TRUNK_MENU_KEYS})
-    data = {key: value for key, value in entry.data.items() if key not in LEGACY_TRUNK_MENU_KEYS}
-    hass.config_entries.async_update_entry(entry, data=data, minor_version=6)
+        proposed = migrated_trunk_routing_data(data)
+        if proposed != data:
+            hass.config_entries.async_update_subentry(entry, record, data=proposed)
+    data = migrated_trunk_routing_data(entry.data)
+    if data != entry.data:
+        hass.config_entries.async_update_entry(entry, data=data)
