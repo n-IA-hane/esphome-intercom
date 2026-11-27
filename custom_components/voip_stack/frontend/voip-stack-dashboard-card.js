@@ -194,14 +194,30 @@ class VoipStackDashboardCard extends HTMLElement {
 
   _syncOwner() {
     const owner = this._owner(); const state = this._ownerSnapshot;
-    if (!this.isConnected || !owner?.softphone || !state || this._syncPending) return;
+    const binding = this._ownerBinding;
+    if (!this.isConnected || !owner?.softphone || !state || !binding || this._syncPending) return;
     const key = JSON.stringify([state, voipStackEngine.active, voipStackEngine.callId, voipStackEngine.endpointId]);
     if (key === this._syncKey) return;
-    this._syncKey = key; this._syncPending = true;
     const epoch = this._epoch;
-    Promise.resolve().then(() => voipStackEngine.dashboardSyncOwner(owner, state)).catch((error) => {
-      if (epoch === this._epoch) { this._syncKey = ""; this._error = error?.message || String(error); this._render(); }
-    }).finally(() => { this._syncPending = false; });
+    const operation = { binding, epoch, state };
+    this._syncKey = key; this._syncPending = operation;
+    const current = () => this.isConnected && epoch === this._epoch &&
+      this._ownerBinding === binding && this._ownerSnapshot === state;
+    let failed = false;
+    Promise.resolve().then(() => {
+      if (current()) return voipStackEngine.dashboardSyncOwner(owner, state);
+    }).catch((error) => {
+      failed = true;
+      if (current()) { this._error = error?.message || String(error); this._render(); }
+    }).finally(() => {
+      if (this._syncPending !== operation) return;
+      this._syncPending = false;
+      // A replacement binding or authoritative snapshot may arrive during
+      // pending media work. Drain it without retrying a current failure forever.
+      if (!failed || this._ownerBinding !== binding || this._ownerSnapshot !== state || epoch !== this._epoch) {
+        this._syncOwner();
+      }
+    });
   }
 
   _measure() {
