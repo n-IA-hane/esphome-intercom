@@ -38,6 +38,26 @@ def clear_removed_trunk_default(hass, entry, configs) -> None:
         )
 
 
+def _legacy_trunk_is_empty(data) -> bool:
+    """Recognize only the disabled, unconfigured form left by old versions."""
+    from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL, TRUNK_OPTIONS_FIELD
+
+    if data.get("trunk_enabled") or legacy_trunk_collects_digits(data):
+        return False
+    defaults = {**normalized_trunk_config({}),
+                TRUNK_OPTIONS_INTERVAL: TRUNK_OPTIONS_FIELD.default,
+                "trunk_inbound_unknown_target": "fallback"}
+    # Unknown or nondefault settings are evidence of a configured line. The
+    # retired, inactive collector fields cannot describe a live destination.
+    return all(
+        key in LEGACY_TRUNK_MENU_KEYS or (
+            key in defaults and (value is None or value == "" or value == defaults[key])
+        )
+        for key, value in data.items()
+        if key.startswith("trunk_") and key != PENDING_TRUNK_MENU_NOTICES
+    )
+
+
 def migrate_legacy_trunk(hass, entry) -> None:
     """Move the former parent-entry trunk into a stable native record once."""
     from uuid import uuid4
@@ -45,6 +65,14 @@ def migrate_legacy_trunk(hass, entry) -> None:
     from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL
 
     if "trunk_enabled" not in entry.data:
+        return
+
+    parent = {key: value for key, value in entry.data.items()
+              if not key.startswith("trunk_") or key == PENDING_TRUNK_MENU_NOTICES}
+    if _legacy_trunk_is_empty(entry.data):
+        # Do this before choosing a native record: an empty parent must neither
+        # create a phantom line nor replace an already configured provider.
+        hass.config_entries.async_update_entry(entry, data=parent)
         return
 
     # The old 6.2 ownership move runs before the current policy preflight.
@@ -82,7 +110,6 @@ def migrate_legacy_trunk(hass, entry) -> None:
         ))
     else:
         hass.config_entries.async_update_subentry(entry, current, data=data)
-    parent = {key: value for key, value in entry.data.items() if not key.startswith("trunk_")}
     if config["trunk_enabled"] or current is not None or CONF_DEFAULT_TRUNK not in entry.data:
         parent[CONF_DEFAULT_TRUNK] = identity
     hass.config_entries.async_update_entry(entry, data=parent)
