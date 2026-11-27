@@ -385,6 +385,9 @@ export class VoipStackVideo extends EventTarget {
         /;direction=(sendrecv|sendonly|recvonly|inactive)(?=;|$)/g, "") };
     };
     const sameContract = this._negotiated && ["send", "receive"].every((direction) =>
+      // Only an ongoing direction owns resources that must remain compatible.
+      // Newly enabled/disabled directions use their own setup/cleanup below.
+      !this._negotiated[`can_${direction}`] || !negotiated[`can_${direction}`] ||
       JSON.stringify(codecContract(direction, this._negotiated)) ===
       JSON.stringify(codecContract(direction, negotiated)));
     const directionChanged = this._negotiated && (
