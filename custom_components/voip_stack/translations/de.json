@@ -11,10 +11,10 @@
           "assist_intents": "Assist-Intents aktivieren",
           "assist_endpoint_enabled": "Sprachassistent einbinden",
           "debug_mode": "Detaillierte SIP- und Mediendiagnose",
-          "media_capture": "Nehmen Sie den Ton privater Anrufe zur Diagnose auf",
-          "experimental_sip_video": "Aktivieren Sie SIP-Video für das Home Assistant-Softphone",
-          "sip_registrar_enabled": "Aktivieren Sie lokale SIP-Konten",
-          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk",
+          "media_capture": "Ton privater Anrufe zur Diagnose aufzeichnen",
+          "experimental_sip_video": "SIP-Video für das Home Assistant-Softphone aktivieren",
+          "sip_registrar_enabled": "Lokale SIP-Konten aktivieren",
+          "trunk_enabled": "Optionalen SIP-Trunk aktivieren",
           "audio_codecs": "Audio codec preference",
           "video_codecs": "Video codec preference",
           "default_ringing_timeout": "Standard-Klingeldauer",
@@ -23,8 +23,8 @@
         "data_description": {
           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
           "rtp_port": "Basis-RTP-UDP-Port für HA-Medien und Relays.",
-          "advertise_host": "Optionale Überschreibung in ESP-Telefonbüchern veröffentlicht. Verwenden Sie diese Option, wenn sich HA hinter Routing, NAT, LXC, VPN oder mehreren Subnetzen befindet und die automatisch angekündigte Adresse für ESP-Geräte nicht erreichbar ist.",
-          "assist_intents": "Registrieren Sie optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen (\"Hey Jarvis, rufen Sie Kitchen an\"). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
+          "advertise_host": "Optionale Überschreibung in ESP-Telefonbüchern veröffentlicht. Nützlich, wenn sich HA hinter Routing, NAT, LXC, VPN oder mehreren Subnetzen befindet und die automatisch angekündigte Adresse für ESP-Geräte nicht erreichbar ist.",
+          "assist_intents": "Optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen registrieren (z. B. \"Hey Jarvis, Kitchen anrufen\"). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
           "assist_endpoint_enabled": "Fügt eine SIP-Nebenstelle hinzu, die direkt von einer Home Assistant Assist-Pipeline bedient wird. Es ist keine separate VoIP-Integration oder ein SIP-Listener erforderlich.",
           "debug_mode": "Ergänzt Details zu SIP, RTP und Medien. Für das Anrufrouting auf der Integrationsseite von VoIP Stack die Debug-Protokollierung aktivieren.",
           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
@@ -87,21 +87,21 @@
         "title": "SIP-Video",
         "description": "Video ist optional und hängt vom Gerät, der Verbindung und dem konfigurierten Codec ab. Unterstützte S3-Profile mit Display empfangen JPEG; P4-Profile können JPEG oder H.264 verwenden. Video im Browser und über SIP erfordert weiterhin kompatible Gegenstellen; ein reines Kameraprofil fügt keinen Videoempfang hinzu.",
         "data": {
-          "video_transcoding_enabled": "Aktivieren Sie die Videotranskodierung",
+          "video_transcoding_enabled": "Videotranskodierung aktivieren",
           "video_camera_send_enabled": "Browser-Kameraübertragung zulassen"
         },
         "data_description": {
-          "video_transcoding_enabled": "Erlauben Sie VoIP Stack, die FFmpeg-Binärdatei von Home Assistant zu verwenden, wenn zwei ausgehandelte Videoabschnitte keine direkte Codec-Übereinstimmung haben. Direktes H.264, VP8 und JPEG bleiben bevorzugt. Der begrenzte Fallback kann Legacy-Videos für das HA-Softphone und H.264 oder JPEG zwischen HA-eigenen SIP-Strecken konvertieren. Beim Browser-JPEG-Versand kann auch ein begrenzter RFC 2435-Normalisierer verwendet werden. Bei einem Fehler bleibt kompatibles Audio aktiv.",
-          "video_camera_send_enabled": "Stellen Sie auf der Karte die Option \"Kamera senden\" bereit. Jedes logische Home Assistant-Telefon behält seine Wahl; Die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist niemals Kamerazugriff erforderlich."
+          "video_transcoding_enabled": "VoIP Stack kann die FFmpeg-Binärdatei von Home Assistant verwenden, wenn zwei ausgehandelte Videoabschnitte keine direkte Codec-Übereinstimmung haben. Direktes H.264, VP8 und JPEG bleiben bevorzugt. Der begrenzte Fallback kann Legacy-Videos für das HA-Softphone und H.264 oder JPEG zwischen HA-eigenen SIP-Strecken konvertieren. Beim Browser-JPEG-Versand kann auch ein begrenzter RFC 2435-Normalisierer verwendet werden. Bei einem Fehler bleibt kompatibles Audio aktiv.",
+          "video_camera_send_enabled": "Auf der Karte die Option \"Kamera senden\" bereitstellen. Jedes logische Home Assistant-Telefon behält seine Wahl; die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist niemals Kamerazugriff erforderlich."
         }
       },
       "assist": {
         "title": "Sprachassistent-Nebenstelle",
-        "description": "Wählen Sie die SIP-Nebenstelle und die Home Assistant Assist-Pipeline aus, die für Telefonanrufe verwendet werden. Wenn erweiterte Anrufdetails aktiviert sind, startet VoIP Stack das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Konfigurieren Sie das Telefonverhalten in den Anweisungen oder dem Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren. Beispielanweisungen: \"Wenn Sie eine Nachricht erhalten, die mit Eingehender SIP-Anruf von beginnt, behandeln Sie sie als Live-Telefonanruf. Begrüßen Sie den Anrufer einmal, agieren Sie wie eine prägnante Empfangsdame und wiederholen Sie seinen Namen nicht in jeder Antwort.\" Freundliche Stimmung: \"Seien Sie bei SIP-Anrufen fröhlich und informell, bleiben Sie dabei prägnant und hilfsbereit.\" Schreckliche Stimmung: \"Hallo. Es ist mir scheißegal, also fick dich bitte selbst.\"",
+        "description": "SIP-Nebenstelle und Home Assistant Assist-Pipeline für Telefonanrufe auswählen. Wenn erweiterte Anrufdetails aktiviert sind, startet VoIP Stack das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Das Telefonverhalten lässt sich in den Anweisungen oder im Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren festlegen. Beispielanweisungen: \"Nachrichten, die mit Eingehender SIP-Anruf von beginnen, als Live-Telefonanruf behandeln. Den Anrufer einmal begrüßen, wie eine prägnante Empfangskraft agieren und den Namen nicht in jeder Antwort wiederholen.\" Freundliche Stimmung: \"Bei SIP-Anrufen fröhlich und informell, zugleich prägnant und hilfsbereit bleiben.\" Negativbeispiel: \"Hallo. Kein Interesse - viel Glück auf eigene Faust.\"",
         "data": {
           "assist_extension": "Sprachassistent-Nebenstelle",
           "assist_pipeline": "Pipeline für Sprachassistenten",
-          "assist_advanced_call_context": "Geben Sie dem Assistenten erweiterte Anrufdetails"
+          "assist_advanced_call_context": "Erweiterte Anrufdetails für den Assistenten bereitstellen"
         },
         "data_description": {
           "assist_extension": "Numerische Nebenstelle mit 1 bis 255 Ziffern, eindeutig für Konten, Kontakte und Gruppen.",
@@ -123,7 +123,7 @@
           "trunk_register_expires": "REGISTER-Ablaufzeit",
           "trunk_outbound_proxy": "Ausgehender Proxy",
           "trunk_inbound_default_target": "Fallback-Ziel",
-          "automation_routing_enabled": "Erlauben Sie Automatisierungen, das eingehende Ziel auszuwählen",
+          "automation_routing_enabled": "Automatisierungen die Auswahl des eingehenden Ziels erlauben",
           "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen",
           "trunk_audio_codecs": "Audio codec preference",
           "trunk_video_codecs": "Video codec preference",
@@ -186,7 +186,7 @@
       },
       "voicemail": {
         "title": "Mailbox-Stimme",
-        "description": "Wählen Sie die Home Assistant TTS-Entität für das gemeinsame Telefonmenü.",
+        "description": "Home Assistant-TTS-Entität für das gemeinsame Telefonmenü auswählen.",
         "data": {
           "tts_entity_id": "TTS-Entität"
         }
@@ -199,7 +199,7 @@
       },
       "voicemail_voice": {
         "title": "Mailbox-Stimme",
-        "description": "Wählen Sie die Stimme für die Ansagen des Telefonmenüs.",
+        "description": "Stimme für die Ansagen des Telefonmenüs auswählen.",
         "data": {
           "voice": "Stimme"
         }
@@ -245,7 +245,7 @@
           "private_key": "Pfad zum privaten PEM-Schlüssel",
           "tls": "Implizites TLS (LDAPS)"
         },
-        "description": "Das Standardverzeichnis erlaubt aktivierten Telefonkonten den Zugriff, auch wenn die Telefone offline sind. Bei einer einfachen Bind-Anmeldung ohne TLS werden Zugangsdaten über das Netzwerk übertragen. Für StartTLS am normalen Listener geben Sie ein Zertifikat und einen Schlüssel an; die Option TLS aktiviert stattdessen implizites LDAPS. Ein vorübergehender Listener-Ausfall lässt das Verzeichnis auf den Telefonen unverändert.",
+        "description": "Das Standardverzeichnis erlaubt aktivierten Telefonkonten den Zugriff, auch wenn die Telefone offline sind. Bei einer einfachen Bind-Anmeldung ohne TLS werden Zugangsdaten über das Netzwerk übertragen. Für StartTLS am normalen Listener sind ein Zertifikat und ein Schlüssel erforderlich; die Option TLS aktiviert stattdessen implizites LDAPS. Ein vorübergehender Listener-Ausfall lässt das Verzeichnis auf den Telefonen unverändert.",
         "title": "LDAP-Verzeichnis"
       },
       "phone_provisioning": {
@@ -263,11 +263,11 @@
       },
       "phone_discovered": {
         "title": "Discovered phone: {name}",
-        "description": "Ein Telefon hat sich unter {host} (MAC {mac}) gemeldet. Du kannst es als entdeckt belassen oder ignorieren. Aktiviere zur Verwaltung die Provisionierung und schließe die Einrichtung ab."
+        "description": "Ein Telefon hat sich unter {host} (MAC {mac}) gemeldet. Das Telefon kann als entdeckt belassen oder ignoriert werden. Für die Verwaltung die Provisionierung aktivieren und die Einrichtung abschließen."
       },
       "phone_user": {
         "title": "Physical phone",
-        "description": "Wähle das Telefonmodell. Du kannst das erste SIP-Konto jetzt oder später zuordnen.",
+        "description": "Telefonmodell auswählen. Das erste SIP-Konto kann jetzt oder später zugeordnet werden.",
         "data": {
           "name": "Name",
           "mac": "MAC address",
@@ -340,7 +340,7 @@
           }
         },
         "data_description": {
-          "keys": "Neue Tasten erscheinen am Ende der Liste. Ziehen Sie die Tasten an die gewünschte Position."
+          "keys": "Neue Tasten erscheinen am Ende der Liste. Tasten per Drag-and-drop an die gewünschte Position ziehen."
         }
       },
       "phone_account": {
@@ -353,19 +353,19 @@
           "password": "SIP-Passwort",
           "enabled": "Aktiviert",
           "dnd": "Bitte nicht stören",
-          "ring_group": "Ringgruppe",
+          "ring_group": "Rufgruppen",
           "conference_group": "Konferenzgruppe",
           "conference_ring": "Bei Telefonkonferenzen klingeln",
           "video_enabled": "Videoverhandlung zulassen",
           "voicemail_enabled": "Mailbox aktivieren",
           "physical_bindings": "Zugeordnete physische Telefone",
-          "auto_answer": "Automatische Annahme im Browser",
+          "auto_answer": "Automatische Rufannahme im Browser",
           "send_video": "Video aus dem Browser senden",
           "audio_codecs": "Audio codec preference",
           "audio_codecs_inherit": "Use integration audio codecs",
           "video_codecs": "Video codec preference",
           "video_codecs_inherit": "Use integration video codecs",
-          "queues": "Queues",
+          "queues": "Warteschlangen",
           "forward_action": "Always route calls",
           "forward_to": "Always destination",
           "busy_action": "When busy",
@@ -400,18 +400,18 @@
       "trunk_username_required": "Trunk-Benutzername ist erforderlich.",
       "trunk_password_required": "Trunk-Passwort ist erforderlich.",
       "trunk_allowed_ips_invalid": "Mindestens eine gültige IP oder ein CIDR-Netz eingeben. Uneingeschränkte /0-Netze sind nicht erlaubt.",
-      "voicemail_tts_unavailable": "Wählen Sie eine verfügbare TTS-Entität.",
+      "voicemail_tts_unavailable": "Verfügbare TTS-Entität auswählen.",
       "voicemail_language_unsupported": "Diese Sprache wird nicht von den Ansagen und dem gewählten TTS unterstützt.",
-      "voicemail_route_conflict": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Voicemail-Adresse (*97, *98, mailbox, mailbox.*, voicemail.* oder *60 mit Nebenstelle). Benennen Sie dieses Ziel vor dem Aktivieren um.",
-      "voicemail_voice_unavailable": "Wählen Sie eine Stimme, die die gewählte TTS-Engine und Sprache unterstützt.",
+      "voicemail_route_conflict": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Voicemail-Adresse (*97, *98, mailbox, mailbox.*, voicemail.* oder *60 mit Nebenstelle). Dieses Ziel vor dem Aktivieren umbenennen.",
+      "voicemail_voice_unavailable": "Eine Stimme auswählen, die von der gewählten TTS-Engine und Sprache unterstützt wird.",
       "parking_configuration_invalid": "Wähle unterschiedliche Parkcodes und Zeiten zwischen 0 und 3600 Sekunden; 0 bedeutet unbegrenzt.",
       "parking_route_conflict": "Ein Parkcode wird bereits von einem Telefon, Kontakt, Assist-Anschluss oder einer Gruppe verwendet.",
       "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
       "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
       "trunk_media_address_invalid": "Eine erreichbare Unicast-IPv4-Adresse eingeben oder das Feld leer lassen.",
       "parking_slots_in_use": "Hole die Anrufe aus den zu entfernenden Parkpositionen zurück oder beende sie zuerst.",
-      "phone_service_base_dn_invalid": "Geben Sie einen gültigen LDAP-Basis-DN ein.",
-      "phone_service_certificate_required": "Geben Sie für TLS sowohl das Zertifikat als auch den privaten Schlüssel an.",
+      "phone_service_base_dn_invalid": "Ein gültiger LDAP-Basis-DN ist erforderlich.",
+      "phone_service_certificate_required": "Für TLS sind sowohl ein Zertifikat als auch der private Schlüssel erforderlich.",
       "phone_service_configuration": "Ungültige LDAP-Konfiguration.",
       "trunk_media_nat_invalid": "Choose auto, direct or manual.",
       "trunk_did_invalid": "Invalid called-number source or prefix rules.",
@@ -430,7 +430,7 @@
       "invalid_phone_bindings": "Check the line and key positions and their references.",
       "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
       "invalid_phone_key": "Each key needs a unique position and an included line.",
-      "phone_key_line_required": "Richten Sie auf diesem Telefon ein SIP-Konto ein, bevor Sie eine Taste hinzufügen. Wenn mehrere Konten eingerichtet sind, wählen Sie das Konto für die Taste.",
+      "phone_key_line_required": "Auf diesem Telefon vor dem Hinzufügen einer Taste ein SIP-Konto einrichten. Bei mehreren eingerichteten Konten das gewünschte Konto für die Taste auswählen.",
       "invalid_phone_transport": "Choose UDP, TCP or TLS.",
       "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
       "phone_profile_not_ready": "This profile is not ready for provisioning. Choose another profile.",
@@ -438,8 +438,8 @@
       "phone_line_unsupported": "The line position exceeds this profile projection or is duplicated.",
       "phone_sip_account_required": "Bind each line to an existing SIP account.",
       "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
-      "phone_queue_membership_required": "The selected line must belong to that queue.",
-      "invalid_phone_key_target": "Für die Kurzwahl wählen Sie ein anrufbares Ziel aus dem Telefonbuch oder geben eine unterstützte Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie ein Telefon. Für Warteschlangen- oder Parktasten wählen Sie die entsprechende Funktion.",
+      "phone_queue_membership_required": "Die ausgewählte Leitung muss Mitglied dieser Warteschlange sein.",
+      "invalid_phone_key_target": "Für die Kurzwahl ein anrufbares Ziel aus dem Telefonbuch auswählen oder eine unterstützte Rufnummer eingeben. Für die Telefonstatusanzeige (BLF) ein Telefon auswählen. Für Warteschlangen- oder Parktasten die entsprechende Funktion auswählen.",
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
       "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -492,14 +492,14 @@
       "step": {
         "user": {
           "title": "SIP-Konto hinzufügen",
-          "description": "Erstellen Sie ein weiteres Home Assistant-Browser-Softphone oder ein Standard-SIP-Konto. Jedes Telefon nutzt denselben SIP-Listener und RTP-Pool.",
+          "description": "Weiteres Home Assistant-Browser-Softphone oder Standard-SIP-Konto erstellen. Jedes Telefon nutzt denselben SIP-Listener und RTP-Pool.",
           "data": {
             "kind": "Telefontyp"
           }
         },
         "sip_account": {
           "title": "Standard-SIP-Konto",
-          "description": "Erstellen Sie Anmeldeinformationen für jedes Standard-SIP/RTP-Telefon oder Softphone. Es wird kein herstellerspezifisches Verhalten verwendet.",
+          "description": "Anmeldeinformationen für jedes Standard-SIP/RTP-Telefon oder Softphone erstellen. Es wird kein herstellerspezifisches Verhalten verwendet.",
           "data": {
             "name": "Name",
             "extension": "Nebenstelle",
@@ -507,19 +507,19 @@
             "password": "SIP-Passwort",
             "enabled": "Aktiviert",
             "dnd": "Bitte nicht stören",
-            "ring_group": "Ringgruppe",
+            "ring_group": "Rufgruppen",
             "conference_group": "Konferenzgruppe",
             "conference_ring": "Bei Telefonkonferenzen klingeln",
             "video_enabled": "Videoverhandlung zulassen",
             "voicemail_enabled": "Mailbox aktivieren",
             "physical_bindings": "Zugeordnete physische Telefone",
-            "auto_answer": "Automatische Annahme im Browser",
+            "auto_answer": "Automatische Rufannahme im Browser",
             "send_video": "Video aus dem Browser senden",
             "audio_codecs": "Audio codec preference",
             "audio_codecs_inherit": "Use integration audio codecs",
             "video_codecs": "Video codec preference",
             "video_codecs_inherit": "Use integration video codecs",
-            "queues": "Queues",
+            "queues": "Warteschlangen",
             "forward_action": "Always route calls",
             "forward_to": "Always destination",
             "busy_action": "When busy",
@@ -535,14 +535,14 @@
           },
           "data_description": {
             "voicemail_enabled": "Beim Deaktivieren werden Nachrichten, Dateien, PIN und Mailbox-Einstellungen dauerhaft gelöscht. Erneutes Aktivieren erstellt eine leere Mailbox.",
-            "auto_answer": "Automatische Antwort, wenn ein angeschlossener Browser über eine Mikrofonberechtigung verfügt.",
-            "send_video": "Senden Sie standardmäßig eine angeschlossene Browserkamera, wenn Video ausgehandelt wird und die Erlaubnis verfügbar ist.",
+            "auto_answer": "Nimmt eingehende Anrufe automatisch an, wenn ein verbundener Browser die Mikrofonberechtigung besitzt.",
+            "send_video": "Angeschlossene Browserkamera standardmäßig senden, wenn Video ausgehandelt und die Berechtigung verfügbar ist.",
             "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
             "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
             "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
             "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
-            "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
-            "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
+            "ring_group": "Vorhandene Rufgruppen auswählen oder Namen eingeben. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge.",
+            "queues": "Vorhandene Warteschlangen auswählen oder Namen eingeben. Die Warteschlangenverwaltung verwaltet den Status und die Reihenfolge ihrer Mitglieder.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
             "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
@@ -558,7 +558,7 @@
         "reconfigure": {
           "title": "Telefon neu konfigurieren",
           "data": {
-            "queues": "Queues",
+            "queues": "Warteschlangen",
             "forward_action": "Always route calls",
             "forward_to": "Always destination",
             "busy_action": "When busy",
@@ -573,8 +573,8 @@
             "outbound_caller_name": "Ausgehender Anrufername"
           },
           "data_description": {
-            "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
-            "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
+            "ring_group": "Vorhandene Rufgruppen auswählen oder Namen eingeben. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge.",
+            "queues": "Vorhandene Warteschlangen auswählen oder Namen eingeben. Die Warteschlangenverwaltung verwaltet den Status und die Reihenfolge ihrer Mitglieder.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
             "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
@@ -594,13 +594,13 @@
         "phone_password_required": "Ein SIP-Passwort ist erforderlich.",
         "phone_forward_target_required": "Für die Weiterleitungsrichtlinie ist ein Weiterleitungsziel erforderlich.",
         "phone_alias_conflict": "Der Name, die Durchwahl oder der Benutzername wird bereits von einem anderen Telefon verwendet.",
-        "mailbox_removal_failed": "Die Mailbox konnte nicht gelöscht werden. Stellen Sie den Zugriff auf das Medienverzeichnis wieder her und versuchen Sie es erneut.",
+        "mailbox_removal_failed": "Die Mailbox konnte nicht gelöscht werden. Zugriff auf das Medienverzeichnis wiederherstellen und den Vorgang erneut versuchen.",
         "phone_not_found": "Das physische Telefon existiert nicht mehr.",
         "phone_line_occupied": "Diese physische Leitung ist bereits einem anderen Konto zugeordnet.",
         "phone_line_has_keys": "Tasten dieser Leitung vor dem Entfernen der Zuordnung neu zuweisen oder entfernen.",
         "invalid_phone_configuration": "Check the phone configuration and selected references.",
         "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
-        "phone_groups_invalid": "Choose valid group names within the supported length.",
+        "phone_groups_invalid": "Gültige Gruppennamen innerhalb der zulässigen Länge eingeben.",
         "phone_policy_invalid": "Choose a valid action and ringing time.",
         "phone_forward_loop": "Choose a destination outside this account forwarding chain.",
         "phone_mailbox_required": "Choose an account with voicemail enabled."
@@ -691,7 +691,7 @@
             "trunk_register_expires": "REGISTER-Ablaufzeit",
             "trunk_outbound_proxy": "Ausgehender Proxy",
             "trunk_inbound_default_target": "Fallback-Ziel",
-            "automation_routing_enabled": "Erlauben Sie Automatisierungen, das eingehende Ziel auszuwählen",
+            "automation_routing_enabled": "Automatisierungen die Auswahl des eingehenden Ziels erlauben",
             "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen",
             "trunk_audio_codecs": "Audio codec preference",
             "trunk_video_codecs": "Video codec preference",
@@ -754,7 +754,7 @@
         "invalid_name": "Gib einen Namen mit 1 bis 128 Zeichen ein.",
         "duplicate_name": "Wähle einen anderen Trunk-Namen.",
         "advertise_ip_unknown": "Konfiguriere vor dem Hinzufügen dieses Trunks die angekündigte SIP-Adresse.",
-        "trunk_in_use": "Beende Anrufe über diesen Trunk, bevor du seine Verbindungseinstellungen änderst.",
+        "trunk_in_use": "Zum Ändern der Verbindungseinstellungen zunächst alle Anrufe über diesen Trunk beenden.",
         "trunk_registration_failed": "Registrierung fehlgeschlagen. Prüfe Server, Transport und Zugangsdaten. Die gespeicherte Konfiguration wurde nicht geändert.",
         "trunk_validation_failed": "Prüfe die Verbindungseinstellungen und erlaubten Quellnetze. Statische Trunks mit demselben Transport dürfen keine überlappenden Quellnetze haben.",
         "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
@@ -773,69 +773,69 @@
       }
     },
     "group": {
-      "entry_type": "Rufgruppen- oder Warteschlangenkonfiguration",
+      "entry_type": "Konfiguration einer Rufgruppe oder Warteschlange",
       "initiate_flow": {
-        "user": "Add ring group or queue",
+        "user": "Rufgruppe oder Warteschlange hinzufügen",
         "reconfigure": "Rufgruppe oder Warteschlange bearbeiten"
       },
-      "title": "Ring group or queue",
+      "title": "Rufgruppe oder Warteschlange",
       "step": {
         "user": {
-          "title": "Group type",
+          "title": "Gruppentyp",
           "data": {
-            "kind": "Type"
+            "kind": "Typ"
           }
         },
         "group": {
-          "title": "Configure group",
-          "description": "Add members to one list and drag them into order. Phone settings display membership from this group.",
+          "title": "Gruppe konfigurieren",
+          "description": "Mitglieder zu einer Liste hinzufügen und per Drag-and-drop in die gewünschte Reihenfolge bringen. Die Telefoneinstellungen zeigen die Mitgliedschaft in dieser Gruppe an.",
           "data": {
             "name": "Name",
-            "extension": "Extension",
-            "members": "Ordered members",
-            "enabled": "Enabled",
-            "keep_empty": "Keep this group when empty",
-            "max_waiting": "Maximum waiting callers",
-            "max_wait": "Maximum wait (seconds)",
-            "ring_timeout": "Ring time per attempt (seconds)",
-            "no_agent_wait": "Wait without agents (seconds)",
-            "retry_delay": "Retry delay (seconds)",
-            "wrap_up": "Pause after a call (seconds)",
-            "fallback": "Fallback destination",
-            "hold_media": "Hold audio",
+            "extension": "Nebenstelle",
+            "members": "Mitglieder in Reihenfolge",
+            "enabled": "Aktiviert",
+            "keep_empty": "Gruppe auch ohne Mitglieder behalten",
+            "max_waiting": "Maximale Anzahl wartender Anrufer",
+            "max_wait": "Maximale Wartezeit (Sekunden)",
+            "ring_timeout": "Klingeldauer je Versuch (Sekunden)",
+            "no_agent_wait": "Wartezeit ohne Agenten (Sekunden)",
+            "retry_delay": "Pause zwischen Versuchen (Sekunden)",
+            "wrap_up": "Nachbearbeitungszeit nach einem Gespräch (Sekunden)",
+            "fallback": "Ausweichziel",
+            "hold_media": "Wartemusik",
             "strategy": "Verteilstrategie",
             "auto_pause_after": "Nach unbeantworteten Anrufversuchen pausieren (0 deaktiviert)",
-            "fallback_full": "Ersatzziel bei voller Warteschlange",
-            "fallback_timeout": "Ersatzziel nach maximaler Wartezeit",
-            "fallback_no_agents": "Ersatzziel ohne verfügbare Mitarbeiter",
-            "fallback_disabled": "Ersatzziel bei deaktivierter Warteschlange",
-            "fallback_removed": "Ersatzziel bei entfernter Warteschlange",
-            "overall_timeout": "Overall ringing limit",
-            "step_timeout": "Ringing time per step",
-            "clear_hold_media": "Remove saved hold audio",
+            "fallback_full": "Ausweichziel bei voller Warteschlange",
+            "fallback_timeout": "Ausweichziel nach maximaler Wartezeit",
+            "fallback_no_agents": "Ausweichziel ohne verfügbare Agenten",
+            "fallback_disabled": "Ausweichziel bei deaktivierter Warteschlange",
+            "fallback_removed": "Ausweichziel bei entfernter Warteschlange",
+            "overall_timeout": "Maximale Klingeldauer",
+            "step_timeout": "Klingeldauer je Stufe",
+            "clear_hold_media": "Gespeicherte Wartemusik entfernen",
             "inherit_ringing_timeout": "Klingeldauer der Telefonanlage übernehmen"
           },
           "data_description": {
             "auto_pause_after": "Bei 0 deaktiviert. Mit 3 wird nach drei unbeantworteten Versuchen mit Klingeln pausiert; besetzte oder nicht erreichbare Telefone und Abbrüche zählen nicht.",
-            "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
-            "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
+            "fallback": "Telefonbuchziel auswählen oder eine Telefonnummer bzw. SIP-Adresse eingeben. Ohne Angabe wird der Anruf beendet, sofern kein spezielles Ausweichziel festgelegt ist.",
+            "ring_timeout": "Zeit in Sekunden bis zur Aktion bei Nichtannahme, wenn keine übergeordnete Klingeldauer übernommen wird. 0 bedeutet unbegrenzt. Das Ausweichziel bei Nichtannahme lässt sich unabhängig konfigurieren. Die maximale Wartezeit der Warteschlange begrenzt weiterhin die Gesamtdauer.",
             "max_wait": "Gesamte Wartezeit einschließlich Klingeln und Pausen zwischen Versuchen. Der letzte Versuch kann kürzer sein, um diese Grenze einzuhalten. Null bedeutet unbegrenzt.",
             "retry_delay": "Pause vor dem nächsten Versuch für denselben wartenden Anruf. Eine geänderte Agentenverfügbarkeit kann eine frühere Prüfung auslösen.",
             "fallback_timeout": "Ziel nach Ablauf der maximalen Wartezeit. Ein Mailboxziel zeichnet direkt auf; ein Telefonziel verwendet die normalen Klingelregeln dieses Telefons. Leer verwendet das gemeinsame Ausweichziel.",
-            "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
-            "strategy": "Parallel rings eligible members together. Sequential follows the member list. Queue distribution follows its selected strategy and uses the same ordered list.",
-            "overall_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
-            "step_timeout": "Maximum time before advancing to the next member or priority tier. The default is 15 seconds and cannot exceed the overall limit.",
-            "hold_media": "Choose audio from Home Assistant Media for waiting callers.",
+            "members": "Telefonkonten auswählen. Eine Rufgruppe akzeptiert zusätzlich Telefonbuchziele, Telefonnummern oder SIP-Adressen. Nicht verfügbare gespeicherte Mitglieder lassen sich entfernen oder in derselben Zeile ersetzen.",
+            "strategy": "Beim parallelen Klingeln werden alle verfügbaren Mitglieder gleichzeitig angerufen. Beim sequenziellen Klingeln werden die Mitglieder in der Listenreihenfolge angerufen. Die Warteschlange verteilt Anrufe entsprechend ihrer gewählten Strategie und verwendet dieselbe Reihenfolge.",
+            "overall_timeout": "Zeit in Sekunden bis zur Aktion bei Nichtannahme, wenn keine übergeordnete Klingeldauer übernommen wird. 0 bedeutet unbegrenzt. Das Ausweichziel bei Nichtannahme lässt sich unabhängig konfigurieren.",
+            "step_timeout": "Maximale Zeit, bevor zum nächsten Mitglied oder zur nächsten Prioritätsstufe gewechselt wird. Der Standardwert beträgt 15 Sekunden und darf die maximale Klingeldauer nicht überschreiten.",
+            "hold_media": "Audiodatei aus den Home-Assistant-Medien für wartende Anrufer auswählen.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited."
           }
         }
       },
       "error": {
-        "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
+        "invalid_group": "Der Name oder die Nebenstelle ist bereits vergeben oder die ausgewählten Telefone bzw. Einstellungen sind ungültig."
       },
       "abort": {
-        "reconfigure_successful": "Group updated"
+        "reconfigure_successful": "Gruppe aktualisiert"
       }
     },
     "paging": {
@@ -881,7 +881,7 @@
       "step": {
         "user": {
           "title": "Physical phone",
-          "description": "Wähle das Telefonmodell. Du kannst das erste SIP-Konto jetzt oder später zuordnen.",
+          "description": "Telefonmodell auswählen. Das erste SIP-Konto kann jetzt oder später zugeordnet werden.",
           "data": {
             "name": "Name",
             "mac": "MAC address",
@@ -954,7 +954,7 @@
             }
           },
           "data_description": {
-            "keys": "Neue Tasten erscheinen am Ende der Liste. Ziehen Sie die Tasten an die gewünschte Position."
+            "keys": "Neue Tasten erscheinen am Ende der Liste. Tasten per Drag-and-drop an die gewünschte Position ziehen."
           }
         },
         "account": {
@@ -967,19 +967,19 @@
             "password": "SIP-Passwort",
             "enabled": "Aktiviert",
             "dnd": "Bitte nicht stören",
-            "ring_group": "Ringgruppe",
+            "ring_group": "Rufgruppen",
             "conference_group": "Konferenzgruppe",
             "conference_ring": "Bei Telefonkonferenzen klingeln",
             "video_enabled": "Videoverhandlung zulassen",
             "voicemail_enabled": "Mailbox aktivieren",
             "physical_bindings": "Zugeordnete physische Telefone",
-            "auto_answer": "Automatische Annahme im Browser",
+            "auto_answer": "Automatische Rufannahme im Browser",
             "send_video": "Video aus dem Browser senden",
             "audio_codecs": "Audio codec preference",
             "audio_codecs_inherit": "Use integration audio codecs",
             "video_codecs": "Video codec preference",
             "video_codecs_inherit": "Use integration video codecs",
-            "queues": "Queues",
+            "queues": "Warteschlangen",
             "forward_action": "Always route calls",
             "forward_to": "Always destination",
             "busy_action": "When busy",
@@ -1020,7 +1020,7 @@
         "invalid_phone_bindings": "Check the line and key positions and their references.",
         "invalid_phone_line": "Each line needs a unique position and an existing SIP account.",
         "invalid_phone_key": "Each key needs a unique position and an included line.",
-        "phone_key_line_required": "Richten Sie auf diesem Telefon ein SIP-Konto ein, bevor Sie eine Taste hinzufügen. Wenn mehrere Konten eingerichtet sind, wählen Sie das Konto für die Taste.",
+        "phone_key_line_required": "Auf diesem Telefon vor dem Hinzufügen einer Taste ein SIP-Konto einrichten. Bei mehreren eingerichteten Konten das gewünschte Konto für die Taste auswählen.",
         "invalid_phone_transport": "Choose UDP, TCP or TLS.",
         "phone_mac_exists": "This MAC address already belongs to a configured physical phone.",
         "phone_catalog_unavailable": "The verified phone profile catalog is unavailable. Try again later.",
@@ -1029,8 +1029,8 @@
         "phone_line_unsupported": "The line position exceeds this profile projection or is duplicated.",
         "phone_sip_account_required": "Bind each line to an existing SIP account.",
         "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
-        "phone_queue_membership_required": "The selected line must belong to that queue.",
-        "invalid_phone_key_target": "Für die Kurzwahl wählen Sie ein anrufbares Ziel aus dem Telefonbuch oder geben eine unterstützte Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie ein Telefon. Für Warteschlangen- oder Parktasten wählen Sie die entsprechende Funktion.",
+        "phone_queue_membership_required": "Die ausgewählte Leitung muss Mitglied dieser Warteschlange sein.",
+        "invalid_phone_key_target": "Für die Kurzwahl ein anrufbares Ziel aus dem Telefonbuch auswählen oder eine unterstützte Rufnummer eingeben. Für die Telefonstatusanzeige (BLF) ein Telefon auswählen. Für Warteschlangen- oder Parktasten die entsprechende Funktion auswählen.",
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
         "phone_key_label_too_long": "The key label exceeds the profile byte limit. Shorten it.",
@@ -1145,8 +1145,8 @@
     },
     "group_kind": {
       "options": {
-        "ring": "Ring group",
-        "queue": "Call queue"
+        "ring": "Rufgruppe",
+        "queue": "Warteschlange"
       }
     },
     "trunk_did_source": {
@@ -1162,7 +1162,7 @@
       "options": {
         "ring_all": "Alle Telefone anrufen",
         "round_robin": "Reihum mit gespeicherter Position",
-        "longest_idle": "Am längsten freies Telefon",
+        "longest_idle": "Am längsten frei",
         "ordered": "Festgelegte Reihenfolge mit Eskalation"
       }
     },
@@ -1200,7 +1200,7 @@
         },
         "target": {
           "name": "Anderes Ziel im Telefonbuch oder Rufnummer",
-          "description": "Für die Kurzwahl wählen Sie einen Telefonbucheintrag oder geben eine Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie oben das Telefon. Zum Parken geben Sie die Parkposition ein."
+          "description": "Für die Kurzwahl einen Telefonbucheintrag auswählen oder eine Rufnummer eingeben. Für die Telefonstatusanzeige (BLF) das Telefon oben auswählen. Zum Parken die Parkposition eingeben."
         },
         "label": {
           "name": "Tastenbeschriftung (optional)"
@@ -1243,17 +1243,17 @@
     "group_members": {
       "fields": {
         "device": {
-          "name": "Account device"
+          "name": "Telefonkonto"
         },
         "destination": {
-          "name": "Directory or manual destination"
+          "name": "Telefonbuch- oder manuelles Ziel"
         }
       }
     },
     "ring_strategy": {
       "options": {
         "parallel": "Parallel",
-        "sequential": "Sequential"
+        "sequential": "Nacheinander"
       }
     },
     "call_match": {
@@ -1343,7 +1343,7 @@
     },
     "account_migration_failed": {
       "title": "SIP-Kontomigration erneut versuchen",
-      "description": "Die Migration wurde nicht abgeschlossen. Fehler: {error_type}. Quelle: {source}. Prüfe das Integrationsprotokoll und behebe die gemeldete Ursache, bevor du es erneut versuchst. Dieser Fehler weist keinen Kontokonflikt nach.",
+      "description": "Die Migration wurde nicht abgeschlossen. Fehler: {error_type}. Quelle: {source}. Das Integrationsprotokoll prüfen und die gemeldete Ursache beheben, bevor ein neuer Versuch erfolgt. Dieser Fehler weist keinen Kontokonflikt nach.",
       "fix_flow": {
         "step": {
           "confirm": {
@@ -1389,15 +1389,15 @@
     },
     "esphome_actions_incomplete": {
       "title": "Die ESPHome-Telefonsteuerung ist unvollständig",
-      "description": "Bei {phone} fehlen die ESPHome-Anrufsteuerungsaktionen: {actions}. Aktualisieren Sie das VoIP-Telefonpaket und die Firmware."
+      "description": "Bei {phone} fehlen die ESPHome-Anrufsteuerungsaktionen: {actions}. Das VoIP-Telefonpaket und die Firmware aktualisieren."
     },
     "media_capture_enabled": {
       "title": "Die private Medienerfassung ist aktiviert",
-      "description": "VoIP Stack speichert private Anrufmedien für die Diagnose. Deaktivieren Sie die Medienerfassung, wenn die Fehlerbehebung abgeschlossen ist."
+      "description": "VoIP Stack speichert private Anrufmedien für die Diagnose. Die Medienerfassung nach Abschluss der Fehlerbehebung deaktivieren."
     },
     "default_trunk_missing": {
       "title": "Standardleitung für ausgehende SIP-Anrufe auswählen",
-      "description": "Es ist kein vorhandener Trunk als Standard ausgewählt. Öffne VoIP Stack, konfiguriere die gewünschte Leitung neu und aktiviere \"Als Standard für ausgehende Anrufe verwenden\". Alternativ kannst du eine Leitung in den Telefonoptionen oder in der Anrufaktion auswählen. Beim Löschen einer Leitung wird niemals automatisch ein anderer Anbieter ausgewählt."
+      "description": "Es ist kein vorhandener Trunk als Standard ausgewählt. Unter VoIP Stack die gewünschte Leitung neu konfigurieren und \"Als Standard für ausgehende Anrufe verwenden\" aktivieren. Alternativ lässt sich eine Leitung in den Telefonoptionen oder in der Anrufaktion auswählen. Beim Löschen einer Leitung wird niemals automatisch ein anderer Anbieter ausgewählt."
     },
     "duplicate_extensions": {
       "title": "Doppelte Nebenstellennummern",
@@ -1412,7 +1412,7 @@
       "description": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Mailbox-Adresse. Benenne das betreffende Ziel um; bestehende Routen bleiben unverändert."
     },
     "phone_service_unavailable": {
-      "description": "Der Listener {service} auf Port {port} konnte nicht gestartet werden. Prüfen Sie Adresse, Port und Zertifikatspfade in den Einstellungen des LDAP-Verzeichnisses und speichern Sie diese, um es erneut zu versuchen. SIP läuft weiter und die Telefone behalten ihr bisheriges Verzeichnis.",
+      "description": "Der Listener {service} auf Port {port} konnte nicht gestartet werden. Adresse, Port und Zertifikatspfade in den Einstellungen des LDAP-Verzeichnisses prüfen und speichern, um einen erneuten Start zu versuchen. SIP läuft weiter und die Telefone behalten ihr bisheriges Verzeichnis.",
       "title": "LDAP-Verzeichnis nicht verfügbar"
     },
     "esphome_account_firmware": {
@@ -1432,8 +1432,8 @@
       "description": "Das ESPHome-Telefon {phone} kann nicht wiederhergestellt werden, weil sein Feld {field} ({value}) bereits von einem anderen Telefon verwendet wird. Andere Telefone bleiben erreichbar. Öffne die Geräteseite, um den Namen oder die für die Anrufweiterleitung verwendete Identität zu prüfen. Kennungen und Zugangsdaten wurden nicht geändert."
     },
     "group_membership_conflict": {
-      "title": "Group membership needs a configuration change",
-      "description": "These existing phone declarations overlap another configured destination: {groups}. Open VoIP Stack and correct the affected phone or group settings. Their existing declarations are retained until conversion can finish."
+      "title": "Gruppenmitgliedschaft erfordert eine Konfigurationsänderung",
+      "description": "Diese bestehenden Telefonzuordnungen überschneiden sich mit einem anderen konfigurierten Ziel: {groups}. VoIP Stack öffnen und die betroffenen Telefon- oder Gruppeneinstellungen korrigieren. Die bisherigen Zuordnungen bleiben erhalten, bis die Umstellung abgeschlossen werden kann."
     },
     "managed_record_invalid": {
       "title": "Saved phone account needs recovery",
@@ -1448,8 +1448,8 @@
               "name": "Account name",
               "username": "SIP username",
               "password": "Replacement SIP password",
-              "queues": "Queues",
-              "ring_group": "Ringgruppe",
+              "queues": "Warteschlangen",
+              "ring_group": "Rufgruppen",
               "extension": "Nebenstelle",
               "conference_group": "Konferenzgruppe",
               "conference_ring": "Bei Telefonkonferenzen klingeln"
@@ -1500,7 +1500,7 @@
     },
     "duration_configuration_invalid": {
       "title": "Gespeicherte Telefonanlagen-Konfiguration korrigieren",
-      "description": "Die Konfiguration der Telefonanlage {entry} konnte nicht aktualisiert werden. Deshalb kann die Integration den Start nicht abschließen. Öffne diese Reparatur, um die betroffenen Einträge und Einstellungen zu sehen. Unterstützte Zahlenwerte lassen sich hier auch bei nicht verfügbarer Integration korrigieren. Gültige Werte und andere Einstellungen bleiben erhalten. Bei beschädigten Datenstrukturen erklärt die Reparatur, wo du die Diagnose findest.",
+      "description": "Die Konfiguration der Telefonanlage {entry} konnte nicht aktualisiert werden. Deshalb kann die Integration den Start nicht abschließen. Diese Reparatur öffnen, um die betroffenen Einträge und Einstellungen anzuzeigen. Unterstützte Zahlenwerte lassen sich auch bei nicht verfügbarer Integration korrigieren. Gültige Werte und andere Einstellungen bleiben erhalten. Bei beschädigten Datenstrukturen zeigt die Reparatur, wo die Diagnose zu finden ist.",
       "fix_flow": {
         "step": {
           "init": {
@@ -1512,7 +1512,7 @@
           },
           "edit_durations": {
             "title": "Gespeicherte Einstellungen korrigieren",
-            "description": "{owner}\n\nZu prüfende Einstellungen:\n{error}\n\nZeitangaben sind Sekunden; Werte ohne Einheit sind Anzahlen. Ein leeres Feld bedeutet, dass der gespeicherte Wert nicht als Zahl angezeigt werden kann. Trage dort einen gültigen Wert ein. Behalte die anderen vorbelegten Werte bei, sofern du sie nicht ändern möchtest. Die Bestätigung speichert nur diesen Eintrag. Danach erscheint entweder der nächste fehlerhafte Eintrag oder die Migration wird automatisch erneut versucht.",
+            "description": "{owner}\n\nZu prüfende Einstellungen:\n{error}\n\nZeitangaben sind Sekunden; Werte ohne Einheit sind Anzahlen. Ein leeres Feld bedeutet, dass der gespeicherte Wert nicht als Zahl angezeigt werden kann. Dort einen gültigen Wert eintragen. Die anderen vorbelegten Werte unverändert lassen, sofern keine Anpassung erforderlich ist. Die Bestätigung speichert nur diesen Eintrag. Anschließend erscheint entweder der nächste fehlerhafte Eintrag oder die Migration wird automatisch erneut versucht.",
             "data": {
               "advanced": "Einstellungen dieses Eintrags",
               "contact_step_timeout": "Schritt zwischen SIP-Kontaktprioritäten",
@@ -1574,7 +1574,7 @@
           "invalid_duration": "Prüfe die oben genannten Einstellungen und zulässigen Werte. Für diesen Eintrag wurde nichts gespeichert.",
           "configuration_changed": "Dieser Eintrag wurde während der Reparatur geändert oder entfernt. Wähle ihn erneut aus der aktualisierten Liste und prüfe die aktuellen Werte. Das alte Formular hat die neuere Konfiguration nicht überschrieben.",
           "migration_retry_failed": "Die Konfigurationsaktualisierung ist weiterhin blockiert. Ein erfolgreicher Start wurde nicht bestätigt. Befolge vor dem nächsten Versuch die Diagnosehinweise oben.",
-          "save_failed": "Die Korrekturen konnten nicht gespeichert werden. Deine Eingaben bleiben sichtbar. Prüfe vor dem nächsten Versuch die VoIP-Stack-Protokolle.",
+          "save_failed": "Die Korrekturen konnten nicht gespeichert werden. Die Eingaben bleiben sichtbar. Vor dem nächsten Versuch die VoIP-Stack-Protokolle prüfen.",
           "saved_owner": "Gespeichert: {owner}. Wähle den nächsten zu korrigierenden Eintrag.",
           "range_seconds": "{field}: Gib eine Zahl zwischen {minimum} und {maximum} Sekunden ein.",
           "range_integer_seconds": "{field}: Gib eine ganze Zahl zwischen {minimum} und {maximum} Sekunden ein.",
@@ -1582,7 +1582,7 @@
           "positive_seconds": "{field}: Gib eine positive, endliche Anzahl Sekunden ein. Null ist nicht zulässig.",
           "expiry_order": "\"{minimum}\" muss kleiner oder gleich \"{maximum}\" sein. Korrigiere einen oder beide Werte.",
           "step_order": "\"{step}\" darf nicht länger als \"{overall}\" sein. Verkürze den Schritt oder erhöhe die gesamte Klingeldauer. Null für die Gesamtdauer bedeutet unbegrenzt.",
-          "structure_invalid": "Ein Teil der gespeicherten Konfiguration hat eine nicht lesbare Struktur. Diese Reparatur kann dafür kein Zahlenfeld sicher bearbeiten. Öffne Einstellungen → System → Protokolle und suche den VoIP-Stack-Migrationsfehler. Bewahre eine Kopie der Konfiguration auf und verwende die Diagnose bei einer Supportanfrage. Alternativ kannst du ein funktionierendes Backup wiederherstellen. Ein erneuter Versuch allein repariert die Datenstruktur nicht.",
+          "structure_invalid": "Ein Teil der gespeicherten Konfiguration hat eine nicht lesbare Struktur. Diese Reparatur kann dafür kein Zahlenfeld sicher bearbeiten. Unter Einstellungen → System → Protokolle nach dem VoIP-Stack-Migrationsfehler suchen. Eine Kopie der Konfiguration aufbewahren und die Diagnose bei einer Supportanfrage verwenden. Alternativ ein funktionierendes Backup wiederherstellen. Ein erneuter Versuch allein repariert die Datenstruktur nicht.",
           "ready_to_retry": "Es gibt keine ungültigen bearbeitbaren Zahlenwerte mehr. Bestätige, um die vollständige Migration erneut zu versuchen. Falls sie weiterhin fehlschlägt, prüfe den VoIP-Stack-Migrationsfehler unter Einstellungen → System → Protokolle; ein anderer Konfigurationsteil benötigt möglicherweise eine Korrektur."
         }
       }
@@ -1606,7 +1606,7 @@
         "step": {
           "init": {
             "title": "Zu deaktivierende Leitung wählen",
-            "description": "{entry}\n\nBeide aktivierten Leitungen können Anrufe aus derselben Quelle annehmen. Wähle eine zu deaktivierende Leitung. Die Bestätigung erhält ihre Einstellungen, importiert beide Definitionen und versucht den Start erneut. Später kannst du die Leitungen unter Geräte & Dienste bearbeiten.",
+            "description": "{entry}\n\nBeide aktivierten Leitungen können Anrufe aus derselben Quelle annehmen. Eine zu deaktivierende Leitung auswählen. Die Bestätigung erhält deren Einstellungen, importiert beide Definitionen und versucht den Start erneut. Anschließend lassen sich die Leitungen unter Geräte & Dienste bearbeiten.",
             "data": {
               "line": "Zu deaktivierende Leitung"
             }
@@ -1711,7 +1711,7 @@
       "message": "Dieses Telefon hat den Rufgruppenanruf bereits abgelehnt."
     },
     "ring_group_phone_required": {
-      "message": "Beantworten Sie den Rufgruppenanruf von einem seiner klingelnden Telefone aus."
+      "message": "Den Rufgruppenanruf von einem der klingelnden Telefone aus annehmen."
     },
     "route_destination_required": {
       "message": "Die angeforderte Routenaktion erfordert ein Ziel."
@@ -1735,7 +1735,7 @@
       "message": "Für das Ziel {destination} ist ein registrierter SIP-Trunk erforderlich."
     },
     "esphome_action_missing": {
-      "message": "{phone} stellt die erforderliche ESPHome-Aktion {action} nicht zur Verfügung. Aktualisieren Sie das VoIP-Telefonpaket und die Firmware."
+      "message": "{phone} stellt die erforderliche ESPHome-Aktion {action} nicht zur Verfügung. Das VoIP-Telefonpaket und die Firmware aktualisieren."
     },
     "esphome_route_missing": {
       "message": "{phone} stellt keine ESPHome-Anrufsteuerungsroute zur Verfügung."
@@ -1750,7 +1750,7 @@
       "message": "{phone} unterstützt den Vorgang {operation} nicht."
     },
     "phone_selection_required": {
-      "message": "Wählen Sie das Telefon aus, das diese Aktion ausführen soll."
+      "message": "Das Telefon auswählen, das diese Aktion ausführen soll."
     },
     "phone_unavailable": {
       "message": "{phone} ist derzeit nicht verfügbar."
@@ -1791,14 +1791,14 @@
         "name": "Anrufstatus",
         "state": {
           "offline": "Offline",
-          "idle": "Leerlauf",
-          "calling": "Berufung",
-          "remote_ringing": "Fernklingeln",
-          "ringing": "Klingeln",
-          "connecting": "Verbinden",
-          "in_call": "Im Anruf",
+          "idle": "Frei",
+          "calling": "Wählt",
+          "remote_ringing": "Klingelt beim Gegenüber",
+          "ringing": "Klingelt",
+          "connecting": "Verbindet",
+          "in_call": "Im Gespräch",
           "held": "Gehalten",
-          "terminating": "Beenden"
+          "terminating": "Wird beendet"
         }
       },
       "physical_phone_provisioning": {
@@ -1830,10 +1830,10 @@
         "name": "Registered SIP contacts"
       },
       "queue_waiting": {
-        "name": "Waiting callers"
+        "name": "Wartende Anrufer"
       },
       "queue_available_agents": {
-        "name": "Available agents"
+        "name": "Verfügbare Agenten"
       },
       "phone_endpoint_media_processing": {
         "name": "Medienverarbeitung",
@@ -1855,7 +1855,7 @@
         "name": "Bei Telefonkonferenzen klingeln"
       },
       "phone_endpoint_auto_answer": {
-        "name": "Automatische Antwort"
+        "name": "Automatische Rufannahme"
       },
       "phone_endpoint_send_video": {
         "name": "Video senden"
@@ -1872,7 +1872,7 @@
         "name": "Nebenstelle"
       },
       "phone_endpoint_ring_group": {
-        "name": "Ringgruppen"
+        "name": "Rufgruppen"
       },
       "phone_endpoint_conference_group": {
         "name": "Konferenzgruppen"
@@ -1891,11 +1891,11 @@
     },
     "select": {
       "queue_agent_state": {
-        "name": "{phone} queue state",
+        "name": "Warteschlangenstatus von {phone}",
         "state": {
-          "available": "Available",
-          "paused": "Paused",
-          "logged_out": "Logged out of queue"
+          "available": "Verfügbar",
+          "paused": "Pausiert",
+          "logged_out": "Abgemeldet"
         }
       }
     },
@@ -2561,7 +2561,7 @@
   "services": {
     "set_phone_memberships": {
       "name": "Gruppenmitgliedschaften eines Telefons festlegen",
-      "description": "Change a phone's ring groups, queues or memberships in existing paging groups. Paging membership requires an administrator.",
+      "description": "Ändert die Rufgruppen- und Warteschlangenzugehörigkeit eines Telefons sowie die Mitgliedschaft in vorhandenen Durchsagegruppen. Für Durchsagegruppen sind Administratorrechte erforderlich.",
       "fields": {
         "phone": {
           "name": "Telefon"
@@ -2570,21 +2570,21 @@
           "name": "Gruppentyp"
         },
         "value": {
-          "name": "Groups",
-          "description": "Choose groups matching the selected group type. Empty removes this account from that type of group."
+          "name": "Gruppen",
+          "description": "Gruppen des ausgewählten Typs auswählen. Bei leerer Auswahl wird dieses Konto aus allen Gruppen dieses Typs entfernt."
         }
       }
     },
     "set_phone_queues": {
       "name": "Warteschlangen eines Telefons festlegen",
-      "description": "Choose the native queues for this SIP account.",
+      "description": "Native Warteschlangen für dieses SIP-Konto auswählen.",
       "fields": {
         "phone": {
           "name": "Telefon"
         },
         "queues": {
-          "name": "Queues",
-          "description": "Choose the queues for this account, or clear the selection to leave all queues."
+          "name": "Warteschlangen",
+          "description": "Warteschlangen für dieses Konto auswählen. Auswahl aufheben, um das Konto aus allen Warteschlangen zu entfernen."
         }
       }
     },
@@ -2627,7 +2627,7 @@
         },
         "cursor": {
           "name": "Cursor für die nächste Seite",
-          "description": "Verwenden Sie next_cursor aus der vorherigen Antwort und behalten Sie dieselbe Warteschlange und denselben Zeitraum bei."
+          "description": "next_cursor aus der vorherigen Antwort verwenden und dieselbe Warteschlange sowie denselben Zeitraum beibehalten."
         }
       }
     },
@@ -2680,7 +2680,7 @@
         },
         "ring_timeout": {
           "name": "Klingeldauer pro Versuch",
-          "description": "Seconds per offer; 0 removes that limit and YAML null inherits the PBX. The queue maximum wait still applies. Omit to retain the stored value."
+          "description": "Sekunden pro Rufversuch; 0 hebt diese Begrenzung auf und YAML null übernimmt den Wert der Telefonanlage. Die maximale Wartezeit der Warteschlange gilt weiterhin. Weglassen, um den gespeicherten Wert beizubehalten."
         },
         "no_agent_wait": {
           "name": "Wartezeit ohne Agenten"
@@ -2695,7 +2695,7 @@
           "name": "Ausweichziel"
         },
         "hold_media": {
-          "name": "Hold audio"
+          "name": "Wartemusik"
         },
         "strategy": {
           "name": "Verteilstrategie"
@@ -2785,11 +2785,11 @@
         },
         "call_id": {
           "name": "Anruf-ID",
-          "description": "Wählen Sie einen bestimmten Anruf aus, wenn mehrere Anrufe klingeln."
+          "description": "Bei mehreren klingelnden Anrufen eine bestimmte Anruf-ID auswählen."
         },
         "accept_video": {
           "name": "Video annehmen",
-          "description": "Nimmt angebotenes Video auf einem Browsertelefon an. Schalten Sie diese Option für einen reinen Audioanruf aus. Die Einstellung für die eigene Kamera ist davon unabhängig."
+          "description": "Angebotenes Video auf einem Browsertelefon annehmen. Für reine Audioanrufe deaktivieren. Die Einstellung der eigenen Kamera bleibt davon unabhängig."
         }
       },
       "sections": {
@@ -3179,15 +3179,15 @@
         },
         "conference_group": {
           "name": "Optionale Konferenzgruppe",
-          "description": "Fügt den Kontakt einer oder mehreren VoIP-Konferenzgruppen hinzu. Trennen Sie mehrere Gruppennamen durch Kommas."
+          "description": "Fügt den Kontakt einer oder mehreren VoIP-Konferenzgruppen hinzu. Mehrere Gruppennamen durch Kommas trennen."
         },
         "conference_ring": {
           "name": "Bei Konferenzbeginn klingeln",
           "description": "Lässt diesen Kontakt klingeln, wenn ein anderer Teilnehmer die Konferenz seiner Gruppe startet. Bei ausgeschalteter Option kann der Kontakt der Konferenz weiterhin manuell beitreten."
         },
         "ring_group": {
-          "name": "Optional Ring Group",
-          "description": "Set this public destination membership in native ring groups. The group editor owns the saved ordered members."
+          "name": "Optionale Rufgruppen",
+          "description": "Fügt dieses öffentliche Ziel den nativen Rufgruppen hinzu. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge."
         }
       }
     },
@@ -3202,7 +3202,7 @@
     },
     "set_contacts": {
       "name": "Telefonbuchkontakte festlegen",
-      "description": "Replace manual contacts through the administrator JSON import. Explicit ring_group fields update native group membership.",
+      "description": "Ersetzt manuelle Kontakte über den administrativen JSON-Import. Explizite Felder `ring_group` aktualisieren die native Rufgruppenmitgliedschaft.",
       "fields": {
         "roster_json": {
           "name": "Telefonbuch im JSON-Format"
@@ -3257,7 +3257,7 @@
           "description": "Optionales Home-Assistant-Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
         },
         "auto_answer": {
-          "name": "Automatische Antwort"
+          "name": "Automatische Rufannahme"
         }
       }
     },
@@ -3283,7 +3283,7 @@
         },
         "forward_to": {
           "name": "Immer weiterleiten an",
-          "description": "Telefonbuchname, Nebenstelle oder SIP-Adresse. Lassen Sie das Feld leer, um die Weiterleitung auszuschalten."
+          "description": "Telefonbuchname, Nebenstelle oder SIP-Adresse. Feld leer lassen, um die Weiterleitung auszuschalten."
         },
         "outbound_trunk": {
           "name": "Bevorzugter ausgehender SIP-Trunk",
@@ -3313,7 +3313,7 @@
     },
     "set_ha_softphone_settings": {
       "name": "Home-Assistant-Telefon konfigurieren",
-      "description": "Set persistent account preferences. Ring membership updates the same native group records used by the group editor.",
+      "description": "Legt dauerhafte Kontoeinstellungen fest. Änderungen an Rufgruppenmitgliedschaften aktualisieren dieselben nativen Gruppendatensätze wie der Gruppen-Editor.",
       "fields": {
         "device_id": {
           "name": "Telefon",
@@ -3324,20 +3324,20 @@
           "description": "Optionale Nebenstellennummer, die das Home-Assistant-Softphone veröffentlicht."
         },
         "ring_group": {
-          "name": "Ring Group",
-          "description": "Ring groups assigned to this account. Group editors own the saved ordered member lists."
+          "name": "Rufgruppen",
+          "description": "Rufgruppen, denen dieses Konto zugeordnet ist. Die Gruppen-Editoren verwalten die gespeicherten Mitgliederlisten und deren Reihenfolge."
         },
         "conference_group": {
           "name": "Konferenzgruppe",
-          "description": "Optionale Mitgliedschaft des Home-Assistant-Softphones in Konferenzräumen. Trennen Sie mehrere Gruppen durch Kommas."
+          "description": "Optionale Mitgliedschaft des Home-Assistant-Softphones in Konferenzräumen. Mehrere Gruppen durch Kommas trennen."
         },
         "conference_ring": {
           "name": "Bei Konferenz klingeln",
           "description": "Lässt das Home-Assistant-Softphone klingeln, wenn ein anderer Teilnehmer die ausgewählte Konferenzgruppe startet oder ihr beitritt."
         },
         "auto_answer": {
-          "name": "Automatische Antwort",
-          "description": "Nimmt eingehende Anrufe auf diesem logischen Telefon automatisch an, wenn ein verbundener Browser das Mikrofon verwenden darf."
+          "name": "Automatische Rufannahme",
+          "description": "Nimmt eingehende Anrufe auf diesem logischen Telefon automatisch an, wenn ein verbundener Browser auf das Mikrofon zugreifen darf."
         },
         "send_video": {
           "name": "Video senden",
@@ -3373,15 +3373,15 @@
         },
         "conference_group": {
           "name": "Optionale Konferenzgruppe",
-          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Konferenzgruppen hinzu. Trennen Sie mehrere Gruppen durch Kommas."
+          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Konferenzgruppen hinzu. Mehrere Gruppennamen durch Kommas trennen."
         },
         "conference_ring": {
           "name": "Bei Konferenzbeginn klingeln",
           "description": "Lässt diesen registrierten SIP-Endpunkt klingeln, wenn ein anderer Teilnehmer die Konferenz seiner Gruppe startet. Bei ausgeschalteter Option kann der Endpunkt der Konferenz weiterhin manuell beitreten."
         },
         "ring_group": {
-          "name": "Optionale Rufgruppe",
-          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Rufgruppen hinzu. Trennen Sie mehrere Gruppen durch Kommas."
+          "name": "Optionale Rufgruppen",
+          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Rufgruppen hinzu. Mehrere Gruppennamen durch Kommas trennen."
         }
       }
     },
@@ -3427,7 +3427,7 @@
     },
     "capture_sip": {
       "name": "SIP-Signalisierung mitschneiden",
-      "description": "Diagnoseaktion für Administratoren. Starten Sie den Mitschnitt vor dem Testanruf. Beim Beenden erhalten Sie eine temporäre Download-URL für eine in Wireshark lesbare PCAP-Datei. Erfasst werden die SIP-Nachrichten dieser Integration. RTP-Audio und Pakete der Netzwerkschicht sind ausgenommen. Authentifizierungsdaten werden entfernt, Telefonnummern und Adressen bleiben sichtbar. Der Mitschnitt stoppt nach der gewählten Dauer oder bei 4 MiB und wird 15 Minuten nach dem Ende gelöscht. Ein erneuter Start ersetzt den vorherigen Mitschnitt.",
+      "description": "Diagnoseaktion für Administratoren. Den Mitschnitt vor dem Testanruf starten. Nach dem Beenden wird eine temporäre Download-URL für eine in Wireshark lesbare PCAP-Datei bereitgestellt. Erfasst werden die SIP-Nachrichten dieser Integration. RTP-Audio und Pakete der Netzwerkschicht sind ausgenommen. Authentifizierungsdaten werden entfernt, Telefonnummern und Adressen bleiben sichtbar. Der Mitschnitt stoppt nach der gewählten Dauer oder bei 4 MiB und wird 15 Minuten nach dem Ende gelöscht. Ein erneuter Start ersetzt den vorherigen Mitschnitt.",
       "fields": {
         "operation": {
           "name": "Vorgang"
@@ -3455,11 +3455,11 @@
         },
         "expected_generation": {
           "name": "Anrufgeneration",
-          "description": "Nur bei einer expliziten call_id erforderlich. Verwenden Sie die von der Aktion \"Anruf\" zurückgegebene Generation."
+          "description": "Nur bei einer expliziten call_id erforderlich. Die von der Aktion \"Anruf\" zurückgegebene Generation verwenden."
         },
         "device_id": {
           "name": "Telefon für die manuelle Ausführung",
-          "description": "Wählen Sie beim manuellen Testen das Telefon mit dem Automationsanruf aus."
+          "description": "Beim manuellen Testen das Telefon mit dem Automationsanruf auswählen."
         }
       },
       "sections": {
@@ -3500,7 +3500,7 @@
         },
         "device_id": {
           "name": "Telefon für die manuelle Ausführung",
-          "description": "Wählen Sie das Telefon mit dem Automationsanruf, wenn Sie diese Aktion ohne VoIP-Auslöser testen."
+          "description": "Das Telefon mit dem Automationsanruf auswählen, wenn diese Aktion ohne VoIP-Auslöser getestet wird."
         }
       },
       "sections": {
@@ -3562,7 +3562,7 @@
         },
         "device_id": {
           "name": "Telefon für die manuelle Ausführung",
-          "description": "Wählen Sie das Telefon mit dem Automationsanruf, wenn Sie diese Aktion ohne VoIP-Auslöser testen."
+          "description": "Das Telefon mit dem Automationsanruf auswählen, wenn diese Aktion ohne VoIP-Auslöser getestet wird."
         },
         "inter_digit_timeout": {
           "name": "Time between digits",
@@ -3610,7 +3610,7 @@
       "fields": {
         "mailbox": {
           "name": "Anrufbeantworter",
-          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Geben Sie andernfalls auch die Nachrichten-ID an."
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Andernfalls zusätzlich die Nachrichten-ID angeben."
         },
         "message_id": {
           "name": "Nachrichten-ID",
@@ -3620,15 +3620,15 @@
     },
     "transcribe_voicemail": {
       "name": "Voicemail transkribieren",
-      "description": "Wandelt die gespeicherte Nachricht aus dem Auslöser \"Voicemail empfangen\" in Text um. Alternativ können Mailbox und Nachrichten-ID explizit gewählt werden. Wählen Sie eine bestehende Entität für Spracherkennung in Home Assistant. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
+      "description": "Wandelt die gespeicherte Nachricht aus dem Auslöser \"Voicemail empfangen\" in Text um. Alternativ können Mailbox und Nachrichten-ID explizit gewählt werden. Eine bestehende Entität für Spracherkennung in Home Assistant auswählen. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
       "fields": {
         "mailbox": {
           "name": "Anrufbeantworter",
-          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Geben Sie andernfalls auch die Nachrichten-ID an."
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Andernfalls zusätzlich die Nachrichten-ID angeben."
         },
         "message_id": {
           "name": "Nachrichten-ID",
-          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Wählen Sie die gespeicherte Nachricht anhand ihrer Nachrichten-ID aus."
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Die gespeicherte Nachricht anhand ihrer Nachrichten-ID auswählen."
         },
         "stt_entity_id": {
           "name": "Entität für Spracherkennung"
@@ -3644,7 +3644,7 @@
     },
     "send_to_voicemail": {
       "name": "Anruf an die Mailbox weiterleiten",
-      "description": "Übergibt den aktuellen Anruf der Automation an eine aktivierte Telefonmailbox. Die Mailbox übernimmt die Aufnahme und beendet den Anruf nach der Nachricht. Fügen Sie diese Aktion nach einer etwaigen Begrüßung oder Sprachausgabe ein. Fügen Sie anschließend keine Aktion zum Auflegen hinzu.",
+      "description": "Übergibt den aktuellen Anruf der Automation an eine aktivierte Telefonmailbox. Die Mailbox übernimmt die Aufnahme und beendet den Anruf nach der Nachricht. Diese Aktion nach einer etwaigen Begrüßung oder Sprachausgabe einfügen. Anschließend keine Aktion zum Auflegen hinzufügen.",
       "fields": {
         "mailbox": {
           "name": "Zielmailbox"
@@ -3680,7 +3680,7 @@
         },
         "slot": {
           "name": "Parkplatz",
-          "description": "Lassen Sie das Feld leer, um den ersten freien konfigurierten Parkplatz zu verwenden."
+          "description": "Feld leer lassen, um den ersten freien konfigurierten Parkplatz zu verwenden."
         },
         "call_id": {
           "name": "Anruf-ID",
@@ -3836,13 +3836,13 @@
         },
         "include_url": {
           "name": "Private Bereitstellungs-URL mit ausgeben",
-          "description": "Die URL enthält Zugangsdaten für das Gerät. Behandeln Sie sie vertraulich."
+          "description": "Die URL enthält Zugangsdaten für das Gerät und ist vertraulich zu behandeln."
         }
       }
     },
     "refresh_phone_profiles": {
       "name": "Katalog der unterstützten Telefonmodelle aktualisieren",
-      "description": "Lädt den aktuellen Modellkatalog herunter. Um die neue Anleitung auf einem bereits eingerichteten Telefon zu verwenden, öffnen Sie dessen Einstellungen und aktualisieren Sie die Anleitung für das Modell."
+      "description": "Lädt den aktuellen Modellkatalog herunter. Zum Verwenden der neuen Anleitung auf einem bereits eingerichteten Telefon dessen Einstellungen öffnen und die Anleitung für das Modell aktualisieren."
     },
     "reload_card_associations": {
       "name": "Kartenzuordnungen neu einlesen",
@@ -3850,7 +3850,7 @@
     },
     "rotate_phone_provisioning_token": {
       "name": "Zugangsdaten für die Telefonbereitstellung erneuern",
-      "description": "Macht die bisherige private Download-URL ungültig. Richten Sie die neue URL ein, bevor das Telefon die Konfiguration erneut herunterlädt.",
+      "description": "Macht die bisherige private Download-URL ungültig. Vor dem erneuten Herunterladen der Konfiguration die neue URL einrichten.",
       "fields": {
         "device_id": {
           "name": "Tischtelefon"
