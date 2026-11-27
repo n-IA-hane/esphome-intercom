@@ -166,3 +166,50 @@ def test_legacy_probe_and_advanced_policy_are_distinct_repair_owners(hass):
         data={**entry.data, "trunk_inbound_default_target": "Changed"})
     with pytest.raises(RuntimeError, match="configuration_changed"):
         duration_repair_update(entry, trunk, {"trunk_options_interval": 19})
+
+
+async def test_existing_native_probe_survives_early_legacy_move_until_repair(hass, monkeypatch):
+    from custom_components import voip_stack
+
+    parent = legacy_data(default_trunk_id="provider")
+    parent.pop("trunk_options_interval")
+    entry = MockConfigEntry(domain="voip_stack", version=6, minor_version=2, data=parent)
+    entry.add_to_hass(hass)
+    row = ConfigSubentry(subentry_type="trunk", title="Office provider", unique_id="trunk:provider",
+        data={"trunk_id": "provider", "trunk_options_interval": -1,
+              "trunk_enabled": False, "trunk_server": "provider.example"})
+    hass.config_entries.async_add_subentry(entry, row)
+    identity = (row.subentry_id, row.unique_id, row.title)
+    setup = AsyncMock(return_value=True)
+    monkeypatch.setattr(voip_stack, "async_setup_entry", setup)
+    hass.config.components.add("voip_stack")
+    assert await hass.config_entries.async_setup(entry.entry_id) is False
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+    issue_id = "duration_configuration_invalid_" + entry.entry_id
+    issue = ir.async_get(hass).async_get_issue("voip_stack", issue_id)
+    assert issue and issue.is_fixable
+    assert row.data["trunk_options_interval"] == -1
+    assert row.data["trunk_enabled"] is False
+    assert row.data["trunk_password"] == " fixture-secret "
+    assert (row.subentry_id, row.unique_id, row.title) == identity
+    assert entry.data["default_trunk_id"] == "provider"
+    assert len(entry.subentries) == 1
+    hass.data.setdefault("repairs", {})
+    async_setup(hass)
+    manager = repairs_flow_manager(hass)
+    initial = await manager.async_init("voip_stack", context={"issue_id": issue_id})
+    assert initial["step_id"] == "init"
+    form = await manager.async_configure(initial["flow_id"], {"owner": owner_choice(initial)})
+    assert form["step_id"] == "edit_durations"
+    assert "fixture-secret" not in repr(form)
+    fields = next(iter(form["data_schema"].schema.values())).schema.schema
+    assert {key.schema for key in fields} == {"trunk_options_interval"}
+    result = await edit_durations(manager, form["flow_id"], {"trunk_options_interval": 0})
+    assert result["type"] == "create_entry"
+    assert entry.state is ConfigEntryState.LOADED
+    setup.assert_awaited_once()
+    assert assert_preserved(entry, probe=0) is row
+    assert (row.subentry_id, row.unique_id, row.title) == identity
+    before = deepcopy(entry.as_dict())
+    assert await voip_stack.async_migrate_entry(hass, entry)
+    assert entry.as_dict() == before

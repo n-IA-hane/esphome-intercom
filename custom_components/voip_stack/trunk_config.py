@@ -46,17 +46,31 @@ def migrate_legacy_trunk(hass, entry) -> None:
 
     if "trunk_enabled" not in entry.data:
         return
-    configs = entry_trunk_configs(entry)
-    selected = entry_default_trunk(entry, configs)
-    current = next((item for item in trunk_subentries(entry)
-                    if str(item.data.get("trunk_id") or item.subentry_id) == selected), None)
+
     # The old 6.2 ownership move runs before the current policy preflight.
     # Preserve a saved probe value verbatim so that preflight can report an
-    # invalid choice through Repairs instead of aborting this earlier step.
-    config = normalized_trunk_config({key: value for key, value in entry.data.items()
-                                      if key != TRUNK_OPTIONS_INTERVAL})
-    if TRUNK_OPTIONS_INTERVAL in entry.data:
-        config[TRUNK_OPTIONS_INTERVAL] = entry.data[TRUNK_OPTIONS_INTERVAL]
+    # invalid choice through Repairs instead of aborting this earlier step,
+    # including a native record already present after an interrupted move.
+    def migration_config(data):
+        config = normalized_trunk_config({key: value for key, value in data.items()
+                                          if key != TRUNK_OPTIONS_INTERVAL})
+        if TRUNK_OPTIONS_INTERVAL in data:
+            config[TRUNK_OPTIONS_INTERVAL] = data[TRUNK_OPTIONS_INTERVAL]
+        return config
+
+    records = trunk_subentries(entry)
+    configs = {str(item.data.get("trunk_id") or item.subentry_id): migration_config(item.data)
+               for item in records}
+    if len(configs) != len(records):
+        raise ValueError("Trunk identities must be unique")
+    validate_static_trunk_sources(configs)
+    selected = entry_default_trunk(entry, configs)
+    current = next((item for item in records
+                    if str(item.data.get("trunk_id") or item.subentry_id) == selected), None)
+    config = migration_config(entry.data)
+    if current is not None and TRUNK_OPTIONS_INTERVAL in current.data:
+        # A parent saved by the old schema may not know this newer field.
+        config.setdefault(TRUNK_OPTIONS_INTERVAL, current.data[TRUNK_OPTIONS_INTERVAL])
     identity = selected if current is not None else uuid4().hex
     title = current.title if current is not None else "SIP trunk"
     data = {**config, **{key: value for key, value in entry.data.items()
