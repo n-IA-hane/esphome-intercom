@@ -93,7 +93,7 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     probe.bind(("127.0.0.1", 0))
     local_port = probe.getsockname()[1]
-    probe.close()
+    probe.setblocking(False)
     requests = []
 
     class Door(asyncio.DatagramProtocol):
@@ -123,6 +123,7 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
 
     transport, _ = await loop.create_datagram_endpoint(Door, local_addr=("127.0.0.1", 0))
     client = sip_client.SipCallClient(**await _factory_arguments(softphone_originate, local_port))
+    client.audio_rtp_socket, probe = probe, None
     browser, sessions, runtime = _Browser(), {}, None
     registry = None
     hass = SimpleNamespace(
@@ -154,6 +155,8 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
         assert session.recv_format.max_frame_ms == maximum
         if remote_max:
             assert session.send_format.max_frame_ms == remote_max
+        # Match the HTTP handler transfer after validating the media contract.
+        client.audio_rtp_socket = None
         runtime = asyncio.create_task(view._run_audio_session(hass, browser, session, endpoint_id="default"))
         await asyncio.wait_for(browser.ready.wait(), 1)
         native = []
@@ -190,6 +193,8 @@ async def test_dahua_factory_sip_to_browser_accepts_receive_packetization(
         assert [(right.timestamp - left.timestamp) & 0xFFFFFFFF
                 for left, right in zip(outgoing, outgoing[1:])] == [320] * 3
     finally:
+        if probe is not None:
+            probe.close()
         await browser.messages.put(None)
         if runtime is not None:
             await asyncio.wait_for(runtime, 2)
