@@ -353,19 +353,19 @@
           "password": "SIP-Passwort",
           "enabled": "Aktiviert",
           "dnd": "Bitte nicht stören",
-          "ring_group": "Ringgruppe",
+          "ring_group": "Rufgruppen",
           "conference_group": "Konferenzgruppe",
           "conference_ring": "Bei Telefonkonferenzen klingeln",
           "video_enabled": "Videoverhandlung zulassen",
           "voicemail_enabled": "Mailbox aktivieren",
           "physical_bindings": "Zugeordnete physische Telefone",
-          "auto_answer": "Automatische Annahme im Browser",
+          "auto_answer": "Automatische Rufannahme im Browser",
           "send_video": "Video aus dem Browser senden",
           "audio_codecs": "Audio codec preference",
           "audio_codecs_inherit": "Use integration audio codecs",
           "video_codecs": "Video codec preference",
           "video_codecs_inherit": "Use integration video codecs",
-          "queues": "Queues",
+          "queues": "Warteschlangen",
           "forward_action": "Always route calls",
           "forward_to": "Always destination",
           "busy_action": "When busy",
@@ -438,7 +438,7 @@
       "phone_line_unsupported": "The line position exceeds this profile projection or is duplicated.",
       "phone_sip_account_required": "Bind each line to an existing SIP account.",
       "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
-      "phone_queue_membership_required": "The selected line must belong to that queue.",
+      "phone_queue_membership_required": "Die ausgewählte Leitung muss Mitglied dieser Warteschlange sein.",
       "invalid_phone_key_target": "Für die Kurzwahl wählen Sie ein anrufbares Ziel aus dem Telefonbuch oder geben eine unterstützte Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie ein Telefon. Für Warteschlangen- oder Parktasten wählen Sie die entsprechende Funktion.",
       "invalid_parking_target": "Enter a valid parking destination.",
       "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
@@ -507,19 +507,19 @@
             "password": "SIP-Passwort",
             "enabled": "Aktiviert",
             "dnd": "Bitte nicht stören",
-            "ring_group": "Ringgruppe",
+            "ring_group": "Rufgruppen",
             "conference_group": "Konferenzgruppe",
             "conference_ring": "Bei Telefonkonferenzen klingeln",
             "video_enabled": "Videoverhandlung zulassen",
             "voicemail_enabled": "Mailbox aktivieren",
             "physical_bindings": "Zugeordnete physische Telefone",
-            "auto_answer": "Automatische Annahme im Browser",
+            "auto_answer": "Automatische Rufannahme im Browser",
             "send_video": "Video aus dem Browser senden",
             "audio_codecs": "Audio codec preference",
             "audio_codecs_inherit": "Use integration audio codecs",
             "video_codecs": "Video codec preference",
             "video_codecs_inherit": "Use integration video codecs",
-            "queues": "Queues",
+            "queues": "Warteschlangen",
             "forward_action": "Always route calls",
             "forward_to": "Always destination",
             "busy_action": "When busy",
@@ -535,14 +535,14 @@
           },
           "data_description": {
             "voicemail_enabled": "Beim Deaktivieren werden Nachrichten, Dateien, PIN und Mailbox-Einstellungen dauerhaft gelöscht. Erneutes Aktivieren erstellt eine leere Mailbox.",
-            "auto_answer": "Automatische Antwort, wenn ein angeschlossener Browser über eine Mikrofonberechtigung verfügt.",
+            "auto_answer": "Nimmt eingehende Anrufe automatisch an, wenn ein verbundener Browser die Mikrofonberechtigung besitzt.",
             "send_video": "Senden Sie standardmäßig eine angeschlossene Browserkamera, wenn Video ausgehandelt wird und die Erlaubnis verfügbar ist.",
             "audio_codecs": "Drag rows into preference order. Disable a row to exclude that codec while keeping its position. Keep at least one enabled audio codec. A call requires a codec supported by both endpoints.",
             "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
             "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
             "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
-            "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
-            "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
+            "ring_group": "Wählen Sie vorhandene Rufgruppen aus oder geben Sie Namen ein. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge.",
+            "queues": "Wählen Sie vorhandene Warteschlangen aus oder geben Sie Namen ein. Die Warteschlangenverwaltung verwaltet den Status und die Reihenfolge ihrer Mitglieder.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
             "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
@@ -558,7 +558,7 @@
         "reconfigure": {
           "title": "Telefon neu konfigurieren",
           "data": {
-            "queues": "Queues",
+            "queues": "Warteschlangen",
             "forward_action": "Always route calls",
             "forward_to": "Always destination",
             "busy_action": "When busy",
@@ -573,8 +573,8 @@
             "outbound_caller_name": "Ausgehender Anrufername"
           },
           "data_description": {
-            "ring_group": "Choose existing ring groups or enter names. The native group owns its ordered members.",
-            "queues": "Choose existing queues or enter names. Queue state and order remain with the native queue.",
+            "ring_group": "Wählen Sie vorhandene Rufgruppen aus oder geben Sie Namen ein. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge.",
+            "queues": "Wählen Sie vorhandene Warteschlangen aus oder geben Sie Namen ein. Die Warteschlangenverwaltung verwaltet den Status und die Reihenfolge ihrer Mitglieder.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
             "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
@@ -600,7 +600,7 @@
         "phone_line_has_keys": "Tasten dieser Leitung vor dem Entfernen der Zuordnung neu zuweisen oder entfernen.",
         "invalid_phone_configuration": "Check the phone configuration and selected references.",
         "codecs_invalid": "Select supported codecs once each and keep at least one enabled audio codec.",
-        "phone_groups_invalid": "Choose valid group names within the supported length.",
+        "phone_groups_invalid": "Bitte geben Sie gültige Gruppennamen innerhalb der zulässigen Länge an.",
         "phone_policy_invalid": "Choose a valid action and ringing time.",
         "phone_forward_loop": "Choose a destination outside this account forwarding chain.",
         "phone_mailbox_required": "Choose an account with voicemail enabled."
@@ -773,69 +773,69 @@
       }
     },
     "group": {
-      "entry_type": "Rufgruppen- oder Warteschlangenkonfiguration",
+      "entry_type": "Konfiguration einer Rufgruppe oder Warteschlange",
       "initiate_flow": {
-        "user": "Add ring group or queue",
+        "user": "Rufgruppe oder Warteschlange hinzufügen",
         "reconfigure": "Rufgruppe oder Warteschlange bearbeiten"
       },
-      "title": "Ring group or queue",
+      "title": "Rufgruppe oder Warteschlange",
       "step": {
         "user": {
-          "title": "Group type",
+          "title": "Gruppentyp",
           "data": {
-            "kind": "Type"
+            "kind": "Typ"
           }
         },
         "group": {
-          "title": "Configure group",
-          "description": "Add members to one list and drag them into order. Phone settings display membership from this group.",
+          "title": "Gruppe konfigurieren",
+          "description": "Fügen Sie die Mitglieder zu einer Liste hinzu und ziehen Sie sie in die gewünschte Reihenfolge. Die Telefoneinstellungen zeigen die Mitgliedschaft in dieser Gruppe an.",
           "data": {
             "name": "Name",
-            "extension": "Extension",
-            "members": "Ordered members",
-            "enabled": "Enabled",
-            "keep_empty": "Keep this group when empty",
-            "max_waiting": "Maximum waiting callers",
-            "max_wait": "Maximum wait (seconds)",
-            "ring_timeout": "Ring time per attempt (seconds)",
-            "no_agent_wait": "Wait without agents (seconds)",
-            "retry_delay": "Retry delay (seconds)",
-            "wrap_up": "Pause after a call (seconds)",
-            "fallback": "Fallback destination",
-            "hold_media": "Hold audio",
+            "extension": "Nebenstelle",
+            "members": "Mitglieder in Reihenfolge",
+            "enabled": "Aktiviert",
+            "keep_empty": "Gruppe auch ohne Mitglieder behalten",
+            "max_waiting": "Maximale Anzahl wartender Anrufer",
+            "max_wait": "Maximale Wartezeit (Sekunden)",
+            "ring_timeout": "Klingeldauer je Versuch (Sekunden)",
+            "no_agent_wait": "Wartezeit ohne Agenten (Sekunden)",
+            "retry_delay": "Pause zwischen Versuchen (Sekunden)",
+            "wrap_up": "Nachbearbeitungszeit nach einem Gespräch (Sekunden)",
+            "fallback": "Ausweichziel",
+            "hold_media": "Wartemusik",
             "strategy": "Verteilstrategie",
             "auto_pause_after": "Nach unbeantworteten Anrufversuchen pausieren (0 deaktiviert)",
-            "fallback_full": "Ersatzziel bei voller Warteschlange",
-            "fallback_timeout": "Ersatzziel nach maximaler Wartezeit",
-            "fallback_no_agents": "Ersatzziel ohne verfügbare Mitarbeiter",
-            "fallback_disabled": "Ersatzziel bei deaktivierter Warteschlange",
-            "fallback_removed": "Ersatzziel bei entfernter Warteschlange",
-            "overall_timeout": "Overall ringing limit",
-            "step_timeout": "Ringing time per step",
-            "clear_hold_media": "Remove saved hold audio",
+            "fallback_full": "Ausweichziel bei voller Warteschlange",
+            "fallback_timeout": "Ausweichziel nach maximaler Wartezeit",
+            "fallback_no_agents": "Ausweichziel ohne verfügbare Agenten",
+            "fallback_disabled": "Ausweichziel bei deaktivierter Warteschlange",
+            "fallback_removed": "Ausweichziel bei entfernter Warteschlange",
+            "overall_timeout": "Maximale Klingeldauer",
+            "step_timeout": "Klingeldauer je Stufe",
+            "clear_hold_media": "Gespeicherte Wartemusik entfernen",
             "inherit_ringing_timeout": "Klingeldauer der Telefonanlage übernehmen"
           },
           "data_description": {
             "auto_pause_after": "Bei 0 deaktiviert. Mit 3 wird nach drei unbeantworteten Versuchen mit Klingeln pausiert; besetzte oder nicht erreichbare Telefone und Abbrüche zählen nicht.",
-            "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
-            "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
+            "fallback": "Wählen Sie ein Telefonbuchziel aus oder geben Sie eine Telefonnummer bzw. SIP-Adresse ein. Ohne Angabe wird der Anruf beendet, sofern kein spezielles Ausweichziel festgelegt ist.",
+            "ring_timeout": "Zeit in Sekunden bis zur Aktion bei Nichtannahme, wenn keine übergeordnete Klingeldauer übernommen wird. 0 bedeutet unbegrenzt. Das Ausweichziel bei Nichtannahme lässt sich unabhängig konfigurieren. Die maximale Wartezeit der Warteschlange begrenzt weiterhin die Gesamtdauer.",
             "max_wait": "Gesamte Wartezeit einschließlich Klingeln und Pausen zwischen Versuchen. Der letzte Versuch kann kürzer sein, um diese Grenze einzuhalten. Null bedeutet unbegrenzt.",
             "retry_delay": "Pause vor dem nächsten Versuch für denselben wartenden Anruf. Eine geänderte Agentenverfügbarkeit kann eine frühere Prüfung auslösen.",
             "fallback_timeout": "Ziel nach Ablauf der maximalen Wartezeit. Ein Mailboxziel zeichnet direkt auf; ein Telefonziel verwendet die normalen Klingelregeln dieses Telefons. Leer verwendet das gemeinsame Ausweichziel.",
-            "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
-            "strategy": "Parallel rings eligible members together. Sequential follows the member list. Queue distribution follows its selected strategy and uses the same ordered list.",
-            "overall_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
-            "step_timeout": "Maximum time before advancing to the next member or priority tier. The default is 15 seconds and cannot exceed the overall limit.",
-            "hold_media": "Choose audio from Home Assistant Media for waiting callers.",
+            "members": "Wählen Sie Telefonkonten aus. Eine Rufgruppe akzeptiert zusätzlich Telefonbuchziele, Telefonnummern oder SIP-Adressen. Nicht verfügbare gespeicherte Mitglieder können Sie entfernen oder in derselben Zeile ersetzen.",
+            "strategy": "Bei parallelem Klingeln werden alle verfügbaren Mitglieder gleichzeitig angerufen. Bei nacheinander werden die Mitglieder in Listenreihenfolge angerufen. Die Warteschlange verteilt Anrufe entsprechend ihrer gewählten Strategie und verwendet dieselbe Reihenfolge.",
+            "overall_timeout": "Zeit in Sekunden bis zur Aktion bei Nichtannahme, wenn keine übergeordnete Klingeldauer übernommen wird. 0 bedeutet unbegrenzt. Das Ausweichziel bei Nichtannahme lässt sich unabhängig konfigurieren.",
+            "step_timeout": "Maximale Zeit, bevor zum nächsten Mitglied oder zur nächsten Prioritätsstufe gewechselt wird. Der Standardwert beträgt 15 Sekunden und darf die maximale Klingeldauer nicht überschreiten.",
+            "hold_media": "Wählen Sie eine Audiodatei aus den Home-Assistant-Medien für wartende Anrufer aus.",
             "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited."
           }
         }
       },
       "error": {
-        "invalid_group": "The name or extension conflicts, or the selected phones or settings are invalid."
+        "invalid_group": "Der Name oder die Nebenstelle ist bereits vergeben oder die ausgewählten Telefone bzw. Einstellungen sind ungültig."
       },
       "abort": {
-        "reconfigure_successful": "Group updated"
+        "reconfigure_successful": "Gruppe aktualisiert"
       }
     },
     "paging": {
@@ -967,19 +967,19 @@
             "password": "SIP-Passwort",
             "enabled": "Aktiviert",
             "dnd": "Bitte nicht stören",
-            "ring_group": "Ringgruppe",
+            "ring_group": "Rufgruppen",
             "conference_group": "Konferenzgruppe",
             "conference_ring": "Bei Telefonkonferenzen klingeln",
             "video_enabled": "Videoverhandlung zulassen",
             "voicemail_enabled": "Mailbox aktivieren",
             "physical_bindings": "Zugeordnete physische Telefone",
-            "auto_answer": "Automatische Annahme im Browser",
+            "auto_answer": "Automatische Rufannahme im Browser",
             "send_video": "Video aus dem Browser senden",
             "audio_codecs": "Audio codec preference",
             "audio_codecs_inherit": "Use integration audio codecs",
             "video_codecs": "Video codec preference",
             "video_codecs_inherit": "Use integration video codecs",
-            "queues": "Queues",
+            "queues": "Warteschlangen",
             "forward_action": "Always route calls",
             "forward_to": "Always destination",
             "busy_action": "When busy",
@@ -1029,7 +1029,7 @@
         "phone_line_unsupported": "The line position exceeds this profile projection or is duplicated.",
         "phone_sip_account_required": "Bind each line to an existing SIP account.",
         "phone_key_unsupported": "This position or key function is unsupported by the selected profile.",
-        "phone_queue_membership_required": "The selected line must belong to that queue.",
+        "phone_queue_membership_required": "Die ausgewählte Leitung muss Mitglied dieser Warteschlange sein.",
         "invalid_phone_key_target": "Für die Kurzwahl wählen Sie ein anrufbares Ziel aus dem Telefonbuch oder geben eine unterstützte Rufnummer ein. Für die Telefonstatusanzeige (BLF) wählen Sie ein Telefon. Für Warteschlangen- oder Parktasten wählen Sie die entsprechende Funktion.",
         "invalid_parking_target": "Enter a valid parking destination.",
         "phone_key_target_too_long": "No complete dial target fits this key. Choose a shorter extension.",
@@ -1145,8 +1145,8 @@
     },
     "group_kind": {
       "options": {
-        "ring": "Ring group",
-        "queue": "Call queue"
+        "ring": "Rufgruppe",
+        "queue": "Warteschlange"
       }
     },
     "trunk_did_source": {
@@ -1162,7 +1162,7 @@
       "options": {
         "ring_all": "Alle Telefone anrufen",
         "round_robin": "Reihum mit gespeicherter Position",
-        "longest_idle": "Am längsten freies Telefon",
+        "longest_idle": "Am längsten untätig",
         "ordered": "Festgelegte Reihenfolge mit Eskalation"
       }
     },
@@ -1243,17 +1243,17 @@
     "group_members": {
       "fields": {
         "device": {
-          "name": "Account device"
+          "name": "Telefonkonto"
         },
         "destination": {
-          "name": "Directory or manual destination"
+          "name": "Telefonbuch- oder manuelles Ziel"
         }
       }
     },
     "ring_strategy": {
       "options": {
         "parallel": "Parallel",
-        "sequential": "Sequential"
+        "sequential": "Nacheinander"
       }
     },
     "call_match": {
@@ -1432,8 +1432,8 @@
       "description": "Das ESPHome-Telefon {phone} kann nicht wiederhergestellt werden, weil sein Feld {field} ({value}) bereits von einem anderen Telefon verwendet wird. Andere Telefone bleiben erreichbar. Öffne die Geräteseite, um den Namen oder die für die Anrufweiterleitung verwendete Identität zu prüfen. Kennungen und Zugangsdaten wurden nicht geändert."
     },
     "group_membership_conflict": {
-      "title": "Group membership needs a configuration change",
-      "description": "These existing phone declarations overlap another configured destination: {groups}. Open VoIP Stack and correct the affected phone or group settings. Their existing declarations are retained until conversion can finish."
+      "title": "Gruppenmitgliedschaft erfordert eine Konfigurationsänderung",
+      "description": "Diese bestehenden Telefonzuordnungen überschneiden sich mit einem anderen konfigurierten Ziel: {groups}. Öffnen Sie VoIP Stack und korrigieren Sie die betroffenen Telefon- oder Gruppeneinstellungen. Die bisherigen Zuordnungen bleiben erhalten, bis die Umstellung abgeschlossen werden kann."
     },
     "managed_record_invalid": {
       "title": "Saved phone account needs recovery",
@@ -1448,8 +1448,8 @@
               "name": "Account name",
               "username": "SIP username",
               "password": "Replacement SIP password",
-              "queues": "Queues",
-              "ring_group": "Ringgruppe",
+              "queues": "Warteschlangen",
+              "ring_group": "Rufgruppen",
               "extension": "Nebenstelle",
               "conference_group": "Konferenzgruppe",
               "conference_ring": "Bei Telefonkonferenzen klingeln"
@@ -1791,14 +1791,14 @@
         "name": "Anrufstatus",
         "state": {
           "offline": "Offline",
-          "idle": "Leerlauf",
-          "calling": "Berufung",
-          "remote_ringing": "Fernklingeln",
-          "ringing": "Klingeln",
-          "connecting": "Verbinden",
-          "in_call": "Im Anruf",
+          "idle": "Frei",
+          "calling": "Wählt",
+          "remote_ringing": "Klingelt beim Gegenüber",
+          "ringing": "Klingelt",
+          "connecting": "Verbindet",
+          "in_call": "Im Gespräch",
           "held": "Gehalten",
-          "terminating": "Beenden"
+          "terminating": "Wird beendet"
         }
       },
       "physical_phone_provisioning": {
@@ -1830,10 +1830,10 @@
         "name": "Registered SIP contacts"
       },
       "queue_waiting": {
-        "name": "Waiting callers"
+        "name": "Wartende Anrufer"
       },
       "queue_available_agents": {
-        "name": "Available agents"
+        "name": "Verfügbare Agenten"
       },
       "phone_endpoint_media_processing": {
         "name": "Medienverarbeitung",
@@ -1855,7 +1855,7 @@
         "name": "Bei Telefonkonferenzen klingeln"
       },
       "phone_endpoint_auto_answer": {
-        "name": "Automatische Antwort"
+        "name": "Automatische Rufannahme"
       },
       "phone_endpoint_send_video": {
         "name": "Video senden"
@@ -1872,7 +1872,7 @@
         "name": "Nebenstelle"
       },
       "phone_endpoint_ring_group": {
-        "name": "Ringgruppen"
+        "name": "Rufgruppen"
       },
       "phone_endpoint_conference_group": {
         "name": "Konferenzgruppen"
@@ -1891,11 +1891,11 @@
     },
     "select": {
       "queue_agent_state": {
-        "name": "{phone} queue state",
+        "name": "Warteschlangenstatus von {phone}",
         "state": {
-          "available": "Available",
-          "paused": "Paused",
-          "logged_out": "Logged out of queue"
+          "available": "Verfügbar",
+          "paused": "Pausiert",
+          "logged_out": "Abgemeldet"
         }
       }
     },
@@ -2561,7 +2561,7 @@
   "services": {
     "set_phone_memberships": {
       "name": "Gruppenmitgliedschaften eines Telefons festlegen",
-      "description": "Change a phone's ring groups, queues or memberships in existing paging groups. Paging membership requires an administrator.",
+      "description": "Ändert die Rufgruppen- und Warteschlangenzugehörigkeit eines Telefons sowie die Mitgliedschaft in vorhandenen Durchsagegruppen. Für Durchsagegruppen sind Administratorrechte erforderlich.",
       "fields": {
         "phone": {
           "name": "Telefon"
@@ -2570,21 +2570,21 @@
           "name": "Gruppentyp"
         },
         "value": {
-          "name": "Groups",
-          "description": "Choose groups matching the selected group type. Empty removes this account from that type of group."
+          "name": "Gruppen",
+          "description": "Wählen Sie Gruppen des ausgewählten Typs aus. Bei leerer Auswahl wird dieses Konto aus allen Gruppen dieses Typs entfernt."
         }
       }
     },
     "set_phone_queues": {
       "name": "Warteschlangen eines Telefons festlegen",
-      "description": "Choose the native queues for this SIP account.",
+      "description": "Wählen Sie die nativen Warteschlangen für dieses SIP-Konto aus.",
       "fields": {
         "phone": {
           "name": "Telefon"
         },
         "queues": {
-          "name": "Queues",
-          "description": "Choose the queues for this account, or clear the selection to leave all queues."
+          "name": "Warteschlangen",
+          "description": "Wählen Sie die Warteschlangen für dieses Konto aus. Heben Sie die Auswahl auf, um das Konto aus allen Warteschlangen zu entfernen."
         }
       }
     },
@@ -2680,7 +2680,7 @@
         },
         "ring_timeout": {
           "name": "Klingeldauer pro Versuch",
-          "description": "Seconds per offer; 0 removes that limit and YAML null inherits the PBX. The queue maximum wait still applies. Omit to retain the stored value."
+          "description": "Sekunden pro Rufversuch; 0 hebt diese Begrenzung auf und YAML null übernimmt den Wert der Telefonanlage. Die maximale Wartezeit der Warteschlange gilt weiterhin. Weglassen, um den gespeicherten Wert beizubehalten."
         },
         "no_agent_wait": {
           "name": "Wartezeit ohne Agenten"
@@ -2695,7 +2695,7 @@
           "name": "Ausweichziel"
         },
         "hold_media": {
-          "name": "Hold audio"
+          "name": "Wartemusik"
         },
         "strategy": {
           "name": "Verteilstrategie"
@@ -3186,8 +3186,8 @@
           "description": "Lässt diesen Kontakt klingeln, wenn ein anderer Teilnehmer die Konferenz seiner Gruppe startet. Bei ausgeschalteter Option kann der Kontakt der Konferenz weiterhin manuell beitreten."
         },
         "ring_group": {
-          "name": "Optional Ring Group",
-          "description": "Set this public destination membership in native ring groups. The group editor owns the saved ordered members."
+          "name": "Optionale Rufgruppen",
+          "description": "Fügt dieses öffentliche Ziel den nativen Rufgruppen hinzu. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge."
         }
       }
     },
@@ -3202,7 +3202,7 @@
     },
     "set_contacts": {
       "name": "Telefonbuchkontakte festlegen",
-      "description": "Replace manual contacts through the administrator JSON import. Explicit ring_group fields update native group membership.",
+      "description": "Ersetzt manuelle Kontakte über den administrativen JSON-Import. Explizite Felder `ring_group` aktualisieren die native Rufgruppenmitgliedschaft.",
       "fields": {
         "roster_json": {
           "name": "Telefonbuch im JSON-Format"
@@ -3257,7 +3257,7 @@
           "description": "Optionales Home-Assistant-Telefon. Ohne Auswahl wird das bevorzugte oder das einzige kompatible Telefon verwendet."
         },
         "auto_answer": {
-          "name": "Automatische Antwort"
+          "name": "Automatische Rufannahme"
         }
       }
     },
@@ -3313,7 +3313,7 @@
     },
     "set_ha_softphone_settings": {
       "name": "Home-Assistant-Telefon konfigurieren",
-      "description": "Set persistent account preferences. Ring membership updates the same native group records used by the group editor.",
+      "description": "Legt dauerhafte Kontoeinstellungen fest. Änderungen an Rufgruppenmitgliedschaften aktualisieren dieselben nativen Gruppendatensätze wie der Gruppen-Editor.",
       "fields": {
         "device_id": {
           "name": "Telefon",
@@ -3324,8 +3324,8 @@
           "description": "Optionale Nebenstellennummer, die das Home-Assistant-Softphone veröffentlicht."
         },
         "ring_group": {
-          "name": "Ring Group",
-          "description": "Ring groups assigned to this account. Group editors own the saved ordered member lists."
+          "name": "Rufgruppen",
+          "description": "Rufgruppen, denen dieses Konto zugeordnet ist. Die Gruppen-Editoren verwalten die gespeicherten Mitgliederlisten und deren Reihenfolge."
         },
         "conference_group": {
           "name": "Konferenzgruppe",
@@ -3336,8 +3336,8 @@
           "description": "Lässt das Home-Assistant-Softphone klingeln, wenn ein anderer Teilnehmer die ausgewählte Konferenzgruppe startet oder ihr beitritt."
         },
         "auto_answer": {
-          "name": "Automatische Antwort",
-          "description": "Nimmt eingehende Anrufe auf diesem logischen Telefon automatisch an, wenn ein verbundener Browser das Mikrofon verwenden darf."
+          "name": "Automatische Rufannahme",
+          "description": "Nimmt eingehende Anrufe auf diesem logischen Telefon automatisch an, wenn ein verbundener Browser auf das Mikrofon zugreifen darf."
         },
         "send_video": {
           "name": "Video senden",
@@ -3380,7 +3380,7 @@
           "description": "Lässt diesen registrierten SIP-Endpunkt klingeln, wenn ein anderer Teilnehmer die Konferenz seiner Gruppe startet. Bei ausgeschalteter Option kann der Endpunkt der Konferenz weiterhin manuell beitreten."
         },
         "ring_group": {
-          "name": "Optionale Rufgruppe",
+          "name": "Optionale Rufgruppen",
           "description": "Fügt das registrierte SIP-Konto einer oder mehreren Rufgruppen hinzu. Trennen Sie mehrere Gruppen durch Kommas."
         }
       }
