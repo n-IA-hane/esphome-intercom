@@ -198,7 +198,9 @@ def duration_repair_owners(entry, *, invalid_only: bool = True) -> list[Duration
                               and not (key in inherited and data["ring_policy"][key] is None))
         if not fields:
             return
-        identity = repr((subentry_id, path))
+        # Advanced PBX policy and a residual parent trunk share the root path,
+        # but an edit must retain the specific policy owner selected by the user.
+        identity = repr((kind, subentry_id, path))
         # Native IDs are stable; a legacy account's list index is not. Retain
         # the containing account so reordering equal mailbox policies cannot
         # redirect a submitted edit to another owner.
@@ -211,6 +213,8 @@ def duration_repair_owners(entry, *, invalid_only: bool = True) -> list[Duration
 
     add("service", entry.data, ("service_timeouts",), None, "PBX / service_timeouts")
     add("advanced", entry.data, (), None, "PBX / advanced")
+    if "trunk_enabled" in entry.data:
+        add("trunk", entry.data, (), None, "PBX / legacy trunk")
     add("parking", entry.data, ("parking",), None, "PBX / parking")
     contacts = entry.data.get(CONF_PHONEBOOK_CONTACTS)
     if isinstance(contacts, list):

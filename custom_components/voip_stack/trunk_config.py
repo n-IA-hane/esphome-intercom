@@ -42,6 +42,7 @@ def migrate_legacy_trunk(hass, entry) -> None:
     """Move the former parent-entry trunk into a stable native record once."""
     from uuid import uuid4
     from homeassistant.config_entries import ConfigSubentry
+    from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL
 
     if "trunk_enabled" not in entry.data:
         return
@@ -49,22 +50,27 @@ def migrate_legacy_trunk(hass, entry) -> None:
     selected = entry_default_trunk(entry, configs)
     current = next((item for item in trunk_subentries(entry)
                     if str(item.data.get("trunk_id") or item.subentry_id) == selected), None)
-    config = normalized_trunk_config(entry.data)
-    if config["trunk_enabled"] or current is not None:
-        identity = selected if current is not None else uuid4().hex
-        title = current.title if current is not None else "SIP trunk"
-        data = {**config, **{key: value for key, value in entry.data.items()
-                           if key in LEGACY_TRUNK_MENU_KEYS}, "trunk_id": identity, "name": title}
-        if current is None:
-            hass.config_entries.async_add_subentry(entry, ConfigSubentry(
-                subentry_type=TRUNK_SUBENTRY_TYPE, title=title, data=data, unique_id=f"trunk:{identity}",
-            ))
-        else:
-            hass.config_entries.async_update_subentry(entry, current, data=data)
-        selected = identity
+    # The old 6.2 ownership move runs before the current policy preflight.
+    # Preserve a saved probe value verbatim so that preflight can report an
+    # invalid choice through Repairs instead of aborting this earlier step.
+    config = normalized_trunk_config({key: value for key, value in entry.data.items()
+                                      if key != TRUNK_OPTIONS_INTERVAL})
+    if TRUNK_OPTIONS_INTERVAL in entry.data:
+        config[TRUNK_OPTIONS_INTERVAL] = entry.data[TRUNK_OPTIONS_INTERVAL]
+    identity = selected if current is not None else uuid4().hex
+    title = current.title if current is not None else "SIP trunk"
+    data = {**config, **{key: value for key, value in entry.data.items()
+                       if key in LEGACY_TRUNK_MENU_KEYS}, "trunk_id": identity, "name": title}
+    # Disabled is saved configuration, not permission to discard the line.
+    if current is None:
+        hass.config_entries.async_add_subentry(entry, ConfigSubentry(
+            subentry_type=TRUNK_SUBENTRY_TYPE, title=title, data=data, unique_id=f"trunk:{identity}",
+        ))
+    else:
+        hass.config_entries.async_update_subentry(entry, current, data=data)
     parent = {key: value for key, value in entry.data.items() if not key.startswith("trunk_")}
-    if selected:
-        parent[CONF_DEFAULT_TRUNK] = selected
+    if config["trunk_enabled"] or current is not None or CONF_DEFAULT_TRUNK not in entry.data:
+        parent[CONF_DEFAULT_TRUNK] = identity
     hass.config_entries.async_update_entry(entry, data=parent)
 
 
