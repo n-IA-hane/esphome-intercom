@@ -288,6 +288,36 @@ jobs:
           scripts/build_sip_test_peer.sh "$RUNNER_TEMP/sip-peer"
           echo "$RUNNER_TEMP/sip-peer/bin" >> "$GITHUB_PATH"
           echo "VOIP_TEST_BARESIP_MODULE_PATH=$RUNNER_TEMP/sip-peer/lib/baresip/modules" >> "$GITHUB_ENV"
+      - name: Prepare actual Asterisk test runtime from official Ubuntu packages
+        run: |
+          asterisk_root="$RUNNER_TEMP/asterisk-runtime"
+          asterisk_packages="$RUNNER_TEMP/asterisk-packages"
+          asterisk_evidence="$GITHUB_WORKSPACE/test-results/asterisk-runtime"
+          mkdir -p "$asterisk_root" "$asterisk_packages/partial" "$asterisk_evidence"
+          # APT verifies the configured official Ubuntu indexes and package hashes.
+          # Download and extract only: the fixture owns every Asterisk process.
+          sudo apt-get -y --download-only --reinstall --no-install-recommends \
+            -o "Dir::Cache::archives=$asterisk_packages/" install asterisk asterisk-modules
+          apt-cache policy asterisk asterisk-modules > "$asterisk_evidence/apt-policy.txt"
+          for package in "$asterisk_packages"/*.deb; do
+            dpkg-deb --field "$package" Package Version Architecture Source >> "$asterisk_evidence/packages.txt"
+            dpkg-deb --extract "$package" "$asterisk_root"
+          done
+          sha256sum "$asterisk_packages"/*.deb > "$asterisk_evidence/package-sha256.txt"
+          # Ubuntu's multiarch module directory is exposed at the fixture's
+          # existing extracted-runtime path without changing package contents.
+          if [[ ! -d "$asterisk_root/usr/lib/asterisk/modules" ]]; then
+            module_file=$(find "$asterisk_root/usr/lib" -name chan_pjsip.so -print -quit)
+            test -n "$module_file"
+            mkdir -p "$asterisk_root/usr/lib/asterisk"
+            ln -s "$(dirname "$module_file")" "$asterisk_root/usr/lib/asterisk/modules"
+          fi
+          test -f "$asterisk_root/usr/lib/asterisk/modules/chan_pjsip.so"
+          LD_LIBRARY_PATH="$asterisk_root/usr/lib:$asterisk_root/usr/lib/x86_64-linux-gnu" \
+            "$asterisk_root/usr/sbin/asterisk" -V | tee "$asterisk_evidence/version.txt"
+          find "$asterisk_root/usr/sbin/asterisk" "$asterisk_root/usr/lib" -type f -print0 \
+            | sort -z | xargs -0 sha256sum > "$asterisk_evidence/runtime-sha256.txt"
+          echo "VOIP_TEST_ASTERISK_ROOT=$asterisk_root" >> "$GITHUB_ENV"
       - name: Install Home Assistant test dependencies
         run: |
           python -m pip install uv==0.13.7
@@ -313,6 +343,7 @@ jobs:
           path: |
             test-results/home-assistant.xml
             test-results/call-smoke.xml
+            test-results/asterisk-runtime/
           if-no-files-found: error
 
   browser-presentation:
