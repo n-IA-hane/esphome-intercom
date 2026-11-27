@@ -1,6 +1,7 @@
 """Real H.264 WebSocket decoding and presentation lifecycle in Chromium."""
 
 import asyncio
+from contextlib import AsyncExitStack
 import json
 from pathlib import Path
 import shutil
@@ -45,6 +46,7 @@ async def exercise(output):
     sockets = []
     camera_packets = []
     hello = {
+        "media_generation": 0,
         "can_receive": True,
         "can_send": False,
         "camera_allowed": False,
@@ -84,13 +86,23 @@ async def exercise(output):
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     results = []
+
+    async def close_sockets():
+        for socket in sockets:
+            if not socket.closed:
+                await socket.close()
+
     try:
-        async with async_playwright() as p:
+        # Cancel the owning coroutine before pytest's outer 30 s alarm can
+        # cancel Playwright's reader too, leaving cleanup unable to complete.
+        async with asyncio.timeout(20), async_playwright() as p, AsyncExitStack() as resources:
+            resources.push_async_callback(close_sockets)
             browser = await p.chromium.launch(
                 executable_path=shutil.which("chromium"),
                 headless=True,
                 args=["--no-sandbox"],
             )
+            resources.push_async_callback(browser.close)
             page = await browser.new_page(viewport={"width": 500, "height": 500})
             await page.goto(f"http://127.0.0.1:{port}/")
             await page.evaluate("""async()=>{
@@ -133,7 +145,23 @@ async def exercise(output):
                 }
             )
             generation = await page.evaluate("v._generation")
+            # An identical update in the same media generation retains the
+            # real decoder and displayed frame. Wait for actual payload adoption.
+            await page.evaluate("""()=>{
+              window.previousNegotiation=v._negotiated;
+              window.previousDecoder=v._receiver._decoder;
+            }""")
             await sockets[-1].send_json({"type": "media_update", **hello})
+            await page.wait_for_function("v._negotiated!==previousNegotiation && v.active")
+            assert await page.evaluate("v._generation") == generation
+            assert await page.evaluate("v._receiver._decoder===previousDecoder && v.visible")
+            assert await page.evaluate(
+                "Array.from(e.videoCanvas.getContext('2d').getImageData(80,60,1,1).data)"
+            ) == pixel
+            results.append({"case": "identical generation retains decoder and frame", "pixel": pixel})
+            # The production WS owner advances media_generation for a new
+            # receiver generation, even when its codec mapping stays the same.
+            await sockets[-1].send_json({"type": "media_update", **hello, "media_generation": 1})
             await page.wait_for_function(
                 "(g)=>v._generation>g && v.active", arg=generation
             )
@@ -196,7 +224,6 @@ async def exercise(output):
             assert await page.evaluate("document.querySelectorAll('video').length") == 0
             results.append({"case": "real fallback DOM camera/JPEG worker/WebSocket", "pixel": pixel,
                             "packets": len(camera_packets), "tracks_ended": True})
-            await browser.close()
     finally:
         await runner.cleanup()
     (output / "video-browser-results.json").write_text(json.dumps(results, indent=2))
