@@ -73,7 +73,13 @@ Repair is saved, so an interrupted save does not lose that guidance. An account
 conflict remains a Home Assistant Repair with a retry action; successful completion
 clears a stale retry notice. Repair descriptions omit credential values and
 raw exception text. Resolve a reported conflict and retry without recreating
-your phones. These migration corrections do not themselves establish a
+your phones.
+
+![Advanced duration fields in the native Home Assistant Repair](images/advanced-policy-repair.png)
+
+*An example from Home Assistant Repairs: expand the saved settings, correct the invalid audio duration and keep the other prefilled values.*
+
+These migration corrections do not themselves establish a
 successful upgrade of your installation.
 
 Legacy provider migration keeps that line's credentials, routing and enabled
