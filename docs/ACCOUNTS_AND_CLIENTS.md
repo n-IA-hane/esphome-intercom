@@ -5,6 +5,14 @@ mailbox, queue memberships and current calls. Physical phones and Home Assistant
 cards are clients of that account. A second card or another registered handset
 does not create another extension or queue agent.
 
+Several SIP registrations can coexist on the account: a desk phone, softphone
+and manually configured ESP line each retain their own Contact. An HA card
+uses HA authentication rather than sending SIP REGISTER. A managed ESP's
+automatically provisioned HA line is also a real SIP registration; its ESP
+mirror controls that physical phone and uses its microphone and speaker.
+To share a user-created account with an ESP, configure a manual line with that
+account's credentials. See [managed and manual ESP accounts](ESP_REGISTRATION.md).
+
 The account device and the physical phone device have different purposes:
 
 | Device | Configuration |
@@ -32,9 +40,11 @@ and Italian entity names. A custom entity name takes precedence.
 
 ## Upgrade existing HA phones
 
-Existing HA/browser phone records are converted to SIP accounts in place. Endpoint IDs, subentry IDs, device IDs, entity
-identities, extensions, names, routing rules and mailbox references are retained.
-An identifier beginning with `browser:` remains a valid opaque account ID.
+Existing HA/browser phone records are converted to SIP accounts in place.
+Their HA subentry IDs, device IDs, entity registry records and entity IDs,
+extensions, names, routing rules and mailbox references are retained. Internal
+phone keys and registry unique IDs can be mapped to the SIP account identity;
+saved legacy references continue to identify that original account.
 A softphone named `Casa` gets the SIP username `Casa`. A softphone named
 `Piano Terra` keeps its display name and gets the login `Piano Terra` if it
 had no SIP credentials. VoIP Stack creates a password when one is
@@ -47,6 +57,13 @@ new accounts without an explicit login still derive it from their name.
 An account routing conflict is reported in Home Assistant Repairs. Correct the
 conflicting configuration, then confirm its retry action to ask HA to repeat
 the migration. A retry does not invent replacement credentials.
+
+Migration also handles an installation with empty legacy parent settings.
+A blocked migration can be retried after correcting its reported problem; a
+completed migration leaves no stale retry Repair. Repair guidance identifies the affected configuration
+without including passwords or raw exception text. If a genuine conflict
+remains, correct it before retrying; deleting and recreating an account would
+discard the identity that migration is intended to preserve.
 
 Account snapshots and updates contain only calls belonging to the selected
 account. Global diagnostics require their administrative interface; enabling

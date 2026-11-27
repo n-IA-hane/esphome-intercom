@@ -91,6 +91,12 @@ time per ring attempt, 1 second without any available online agents before fallb
 audio are empty by default. Configure them on the queue device or with
 `voip_stack.configure_queue`.
 
+Set **Maximum wait** (`max_wait`) to `0` to remove the caller's total waiting
+deadline. The 60-second initial value and existing saved positive limits are
+preserved. Zero does not remove admission limits, no-agent fallback, retry
+delays, per-offer ringing policy, or operator eligibility checks. In particular,
+an unlimited maximum wait does not override a configured no-agent exit.
+
 These timers belong to the queue. An unanswered 20-second offer releases the
 phones, then the same caller can be offered again after the retry delay. Their
 cards can briefly return to idle between offers while the caller keeps the

@@ -18,6 +18,7 @@ rules or mailbox. ESP hardware is optional.
 | Answer a different phone that is still ringing | Dial `pickup.<phone>` or `*8` followed by its extension |
 | Save a conversation | Enable recording controls or use Start recording in an automation |
 | Change routing according to presence or time | Use native VoIP triggers and actions in an HA automation |
+| Play a welcome message and collect a choice or extension | Route to an Automation contact and use its native call trigger |
 
 ## Add and choose telephone lines
 
@@ -50,6 +51,21 @@ Incoming routing is independent. For example, set line A's fallback destination
 to Kitchen and line B's to Office. Calls whose called number already matches a
 phonebook destination use that match first. Choose the real phone name in the
 picker, including the phone named after your HA instance.
+
+A new trunk proposes the preferred HA account as its fallback destination.
+Keeping it rings that account immediately after the normal routing decision.
+The selector offers VoIP Stack devices and their entities, and accepts manual
+names, extensions or SIP URIs. Existing configured targets are preserved.
+Incoming calls have no automatic greeting or trunk-wide keypad collector.
+
+For a menu, create an **Automation contact** named `Welcome`, choose it in that
+trunk's destination selector and add **VoIP call received** filtered to its
+native device or call-event entity. Add **Speak to the caller** or **Play audio
+to the caller**, then **Wait for keypad input**, and forward the result in the
+same execution. The [complete Welcome recipe](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+collects `1`, `2` or a full extension, waits for a pause between digits and can
+optionally accept `#`. All actions act on that same call. Technical settings
+remain in the relevant form's collapsed **Advanced** sections.
 
 Each line also has its own permitted audio and video codecs. An empty video
 list makes that trunk audio-only. **Send Camera** only controls your camera:
@@ -181,6 +197,12 @@ HA must carry the audio. Direct device-to-device calls that bypass HA cannot
 use this recorder, and conference recording is not supported. The recording
 finished event supplies the saved file for further automation. See
 [conversation recording](CALL_RECORDING.md).
+
+Parking residence, queue maximum wait, recording duration and voicemail message
+duration each accept explicit `0` for no deadline of that kind. Their finite
+initial values and existing settings remain unchanged. Caller hangup, storage
+quota, queue exits and the finite limits for input and media preparation still
+apply. See [duration settings](RINGING_POLICY.md#unlimited-duration-outside-ringing).
 
 ## Keep ordinary call automations simple
 

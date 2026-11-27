@@ -22,14 +22,19 @@ The initial settings are:
 | --- | --- | --- |
 | Access number | `700` | Transfer a call here to use the first free slot. |
 | Slots | `701` through `720` | Call the occupied slot to retrieve its caller. |
-| Parking timeout | 180 seconds | How long the caller can remain parked. |
+| Parking timeout | 180 seconds | How long the caller can remain parked; `0` disables the residence deadline. |
 | Return ringing timeout | Inherit | Inherit the destination account/PBX duration, or override it; zero is unlimited. Existing explicit 30-second values remain. |
 | Return destination | The phone that parked the call | Optional alternate contact. |
 | Hold audio | None | Optional media selected through Home Assistant. |
 
 Configured slot numbers must not conflict with existing phones, contacts or
 groups. If hold audio cannot be read, the caller remains connected in silence;
-the ordinary return timeout still applies.
+the configured residence deadline still applies when it is positive.
+
+Unlimited residence does not disconnect the caller or free the slot. The call
+remains parked until retrieval, caller hangup or another explicit termination.
+The separate return-ringing policy applies only when a return attempt starts.
+Existing positive settings remain unchanged after an upgrade.
 
 ## One example, without an extra transfer
 

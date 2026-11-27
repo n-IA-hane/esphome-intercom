@@ -880,7 +880,9 @@ picker (`device_id` in YAML). `enabled` defaults to false for a new mailbox;
 turning it on does not enable call forwarding. Omitted fields retain their
 current values, and renaming the phone preserves the mailbox identity.
 
-`max_seconds` limits each message, from 1 to 3600 seconds (default 180).
+`max_seconds` limits each message, from 1 to 3600 seconds (initially 180), or
+accepts explicit `0` for no message-duration deadline. Hangup, storage quota
+and write-failure handling still apply; this does not change mailbox input waits.
 `greeting_media` uses Home Assistant's Media picker and must identify a
 `media-source://` item. `clear_greeting: true` removes that selection. A missing
 or unavailable greeting falls back to the recording tone. Messages are stored
@@ -980,13 +982,17 @@ examples and the current development verification boundary.
 ## Conversation recording
 
 `voip_stack.start_recording` records the selected phone's established call,
-with an optional `max_seconds` limit (1 through 3600). `voip_stack.stop_recording`
+with an optional `max_seconds` limit (1 through 3600), or explicit
+`0` for no recording-duration deadline. `voip_stack.stop_recording`
 finishes that recording without hanging up. Both accept `device_id`, optional
 `call_id` and `expected_generation`; native call triggers supply call identity.
 `voip_stack.get_recording` takes `device_id` and `recording_id` and returns the
 saved file's `file_path` and `media_source_id`, without copying it. The normal
 HA event `voip_stack.recording_finished` identifies completed or partial files.
 See [Record a conversation](CALL_RECORDING.md) for examples and media scope.
+
+Omitting `max_seconds` inherits the configured PBX recording duration, initially
+3600 seconds. Changing that configuration applies to new recordings.
 
 `voip_stack.delete_recording` accepts the same `device_id` and `recording_id`
 and removes the recording together with its metadata.
@@ -1044,3 +1050,9 @@ zero is unlimited, and a positive value is the selected attempt's limit. Queue
 maximum wait remains an enclosing caller-wait budget. Parking return values
 override account/PBX ringing values, including zero for unlimited.
 See [ringing policy and migration](RINGING_POLICY.md).
+
+Queue `max_wait` separately accepts `0` for no total caller-wait deadline.
+Parking residence also accepts `0`; configure it under **Reconfigure > Call
+parking**. Existing positive values and finite form prefills remain unchanged.
+These settings leave queue no-agent exits, retry timing, storage quotas and
+other bounded operations intact.

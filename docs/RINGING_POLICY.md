@@ -125,3 +125,17 @@ P4 phone, the previous incoming `ringing_timeout: 30s` stays an incoming limit;
 the outgoing budget now comes from the separate package substitution, initially
 120 seconds. REFER attempts use that same outgoing configuration. See the
 firmware README for incoming/outgoing compatibility warnings and SIP cleanup.
+
+## Unlimited duration outside ringing
+
+The preview accepts explicit `0` for parking residence, queue maximum wait,
+conversation recording duration and voicemail message duration. These are
+independent settings: unlimited ringing does not make a queue's total wait
+unlimited, and unlimited parking residence does not change return ringing.
+New forms retain their finite prefills, and saved positive values are preserved.
+
+Zero removes the selected deadline. It does not remove storage quotas, caller
+hangup, queue eligibility or no-agent exits. Other bounded operations, including
+digit collection, TTS/media preparation and retry timing, retain their finite
+constraints. See [parking](CALL_PARKING.md), [queues](GROUPS_AND_QUEUES.md),
+[recording](CALL_RECORDING.md) and [voicemail](VOICEMAIL.md).

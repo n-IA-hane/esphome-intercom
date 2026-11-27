@@ -1372,6 +1372,19 @@ Before adding the automation:
 4. Replace `tts.piper` below with a working TTS entity from your installation.
    Keep one controlling automation for this contact.
 
+An Automation contact has a native HA device and **Call** event entity. In the
+**VoIP call received** trigger, choose the `Welcome` device under **Automation
+contact device**, or its **Automation contact call event** entity. Either
+selection follows the existing contact identity rather than its display name.
+Select one method.
+The manual **Destination** filter remains available and is used in the portable
+YAML below; leave it unset when using the device or event selector.
+
+To produce the greeting in the visual editor, add **Speak to the caller** and
+select the provider and message. To use a recorded greeting instead, replace
+that action with **Play audio to the caller** and choose an HA media item. Both
+answer this call and finish playback before the next action collects digits.
+
 ```yaml
 alias: VoIP - Welcome extension menu
 mode: parallel
@@ -1429,7 +1442,8 @@ and ends after its message.
 The menu waits for completion before comparing choices. It does not route on
 the first digit: `111` remains an extension even though it starts with menu
 choice `1`. Tune `inter_digit_timeout` and `timeout` to your callers' needs.
-The empty `terminator` disables the end key; you can optionally configure one.
+The empty `terminator` disables the end key; set `terminator: "#"` if callers
+should also be able to confirm immediately with the hash key.
 Keep the gap long enough for the intended users to finish a multi-digit extension.
 
 Forwarding retains the current logical call and uses the normal destination,
@@ -1447,10 +1461,12 @@ Keep the greeting, **Wait for keypad input** and forwarding decision in the
 same automation. The wait returns the caller's digits to that execution;
 you do not need a separate DTMF event automation or a Call-ID template.
 
-For calls from your provider, first select `Welcome` with the native
-`voip_stack.route_requested` trigger filtered to `ingress: trunk` and the
-`voip_stack.select_inbound_destination` action. The menu above then runs when
-that call reaches Welcome. A menu can forward to a phonebook name, an
+For calls from your provider, select `Welcome` as the trunk's incoming
+destination. The menu then runs when that call reaches Welcome, without a
+second routing automation. If only some numbers or schedules need a menu,
+use a DID rule or the native `voip_stack.route_requested` trigger filtered to
+`ingress: trunk` and the `voip_stack.select_inbound_destination` action instead.
+A menu can forward to a phonebook name, an
 extension or a ring group. For example, use destination `"1"` if that is your
 home ring group's actual name or extension.
 

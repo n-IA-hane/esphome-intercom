@@ -28,6 +28,14 @@ Create SIP accounts for rooms or people, then use an account from a tablet,
 a Companion session or a registered handset. Several clients can share the
 same account and extension. ESP hardware and an external PBX are optional.
 
+In the preview, an HA card and registered clients can share that account too.
+Each SIP client keeps its own registration; the first to answer gets the call.
+Managed ESPHome phones receive their HA credentials through the native API and
+then use ordinary SIP REGISTER. A manually configured ESP line can instead join
+an existing shared account or register with another compatible PBX. See
+[accounts and clients](docs/ACCOUNTS_AND_CLIENTS.md) and
+[ESP registration](docs/ESP_REGISTRATION.md).
+
 This is also where the ordinary PBX jobs live: forwarding, unanswered-call
 rules, voicemail, transfers, parking, pickup, ring groups and audio conferences.
 Connect a provider trunk when you want an outside line. Add native HA automations
@@ -142,6 +150,8 @@ and [audio guide](docs/ESPRESSIF_COMPONENTS.md) cover presentation and audio cho
 
 ## Cards, dashboard and call popups
 
+Look how great it turned out. I personally love it.
+
 The phone is the identity you call; the card is how you control it. Choose the
 phone by name in the visual editor. A browser phone uses that browser's
 microphone, speaker and camera. An ESP mirror controls the physical phone,
@@ -214,6 +224,10 @@ See the [Dashboard demo at the top of this page](#voip-stack-for-home-assistant-
 for incoming, active and held calls, presence, voicemail and Do Not Disturb.
 The [card guide](docs/USER_GUIDE.md#choose-a-card-view) includes configuration
 examples for both card types.
+
+The screenshots show their stated demonstrations and recorded devices. They
+illustrate the interface; they do not establish qualification of every preview
+firmware, call route or handset.
 
 ### Receive calls over another HA view
 
@@ -415,6 +429,15 @@ firmware alongside the normal HA-managed setup.
 choose a phone's preferred outgoing line, select one for an action, and control
 which phones may make external calls. Registered and static authorized trunks
 have separate setup choices. Internal calling does not require a provider.
+
+Select a trunk's incoming destination from native VoIP Stack devices, their
+entities or a manually entered route. A new trunk proposes the preferred HA
+account. Keep it for ordinary incoming ringing, choose a different destination,
+or route to an Automation contact named `Welcome` for a greeting and keypad
+menu. The [Welcome recipe](docs/AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu)
+collects `1`, `2` or a full extension, waits for a pause between digits and can
+optionally accept `#`, all within the same call. Trunks have no automatic digit
+collector; technical controls stay in the relevant **Advanced** sections.
 
 <img src="docs/images/pbx-add-trunk-menu-dark.png" width="640" alt="Add a named SIP trunk from the Home Assistant integration menu"/>
 

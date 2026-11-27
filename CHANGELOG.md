@@ -2,6 +2,30 @@
 
 ## 2026.12.0-dev
 
+- Handle empty legacy parent settings during migration and preserve pending
+  retired-trunk-menu notices until their native Repair is saved. Preserve the
+  existing account, subentry, device and entity
+  identities, credentials, mailbox and card references. Clear completed retry
+  Repairs and keep credential values and raw exceptions out of Repair guidance.
+- Preserve each legacy provider's settings and enabled state when creating
+  named trunk entries. Keep an explicit default or no-default choice, and do
+  not merge a separate existing provider into the migrated line.
+- Offer native VoIP Stack devices and entities in the incoming trunk destination
+  selector, alongside manually entered routes. Propose the preferred HA account
+  for a new trunk and preserve existing explicit destinations. Ordinary incoming
+  calls route without automatic digit collection.
+- Give Automation contacts their own native HA device and call-event entity.
+  Select either in the call-received trigger, then play TTS or recorded audio,
+  collect menu choices or a full extension, and forward that same call. The
+  Welcome recipe waits for a pause between digits and optionally accepts `#`.
+- Accept explicit zero for unlimited parking residence, queue maximum wait,
+  conversation recording duration and voicemail message duration. Keep finite
+  initial values and saved positive limits. Other input, preparation, no-agent
+  and retry waits retain their finite constraints; storage quotas still apply.
+- Expand the PBX and upgrade guides with shared SIP registrations, managed ESP
+  provisioning, direct incoming routing and explicit Welcome menus. Preserve
+  the earlier hardware evidence separately from acceptance of this candidate.
+
 - Keep legacy incoming-trunk aliases attached to the original account after
   login migration. Deleting that account no longer rings another account
   selected in a Home Assistant card.

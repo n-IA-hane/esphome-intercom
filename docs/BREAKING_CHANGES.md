@@ -65,6 +65,31 @@ release behavior. For the current preview, use this explicit Automation menu.
 The older firmware migration sections below describe earlier transitions.
 For the current preview's component choices, use the maintained board recipe.
 
+Account migration preserves the original account records and their HA subentry,
+device and entity IDs, SIP logins and passwords, extensions, mailbox references, cards,
+popup associations and routing preferences. It accepts empty legacy parent
+settings. Pending retired-trunk-menu notices are retained until their native
+Repair is saved, so an interrupted save does not lose that guidance. An account
+conflict remains a Home Assistant Repair with a retry action; successful completion
+clears a stale retry notice. Repair descriptions omit credential values and
+raw exception text. Resolve a reported conflict and retry without recreating
+your phones. These migration corrections do not themselves establish a
+successful upgrade of your installation.
+
+Legacy provider migration keeps that line's credentials, routing and enabled
+state. A disabled line remains disabled. A separate configured provider remains
+separate; migration does not overwrite it with the legacy line. An explicit
+default selection, including an explicit no-default choice, is retained.
+Review the named trunks and outgoing default after upgrading, especially when
+several providers coexist.
+
+The preview also accepts explicit `0` for four duration settings: parking
+residence, a queue's `max_wait`, conversation recording `max_seconds` and
+voicemail message `max_seconds`. Zero removes only that duration deadline.
+The finite initial values and existing positive values are preserved. Input,
+TTS/media preparation, no-agent waits, retry delays and SIP transaction limits
+retain their own finite constraints. Storage quotas and hangup still apply.
+
 The current packages select HTTP and Micro Wake Word directly from the official
 ESPHome commits containing their merged lifecycle fixes. Their local runtime
 copies have been removed. A custom YAML still sourcing `audio_http` or

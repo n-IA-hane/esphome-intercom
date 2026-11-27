@@ -52,7 +52,12 @@ polling or starting a substitute browser.
 recording and can return its file reference while the call continues. Stopping
 again on the same live call returns `status: not_recording`; it does not select
 an older recording. Hangup and media handoff stop recording automatically.
-The maximum duration is 3600 seconds, or a shorter `max_seconds` value.
+Omitting `max_seconds` uses the configured PBX recording limit, initially 3600
+seconds. Set a positive duration up to 3600, or
+explicitly set `0` to record without a duration deadline. Zero does not disable
+the recorder's storage quota or error handling. Stop recording, hangup or a
+media handoff still finalizes the recording. Existing positive limits and the
+finite action-editor prefill remain unchanged.
 
 ## Process the saved file
 

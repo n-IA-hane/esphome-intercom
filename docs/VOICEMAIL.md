@@ -33,6 +33,11 @@ advanced options, including PIN, greeting and recording limit. Select its phone
 with the device picker. The recording limit defaults to 180 seconds. A greeting
 uses HA's media picker; without one, the caller hears a recording tone.
 
+Set the message duration to `0` for no duration deadline. The caller's hangup
+still finishes the message; storage quota, write failures and explicit call
+termination still apply. This setting changes recording time, not the mailbox
+menu's input or transcription waits. Existing positive limits are preserved.
+
 ![Configure a phone mailbox using named GUI fields](images/voicemail-settings-action.png)
 
 In this action, select the phone in **Phone mailbox**, enable the optional
@@ -50,8 +55,9 @@ Enabling a mailbox does not enable forwarding. In the phone card's
 **Options > Call routing** section,
 enable a ringing timeout and select the voicemail destination if unanswered
 calls should go there. Leave the destination empty for this phone's own mailbox,
-or choose another phone with an enabled mailbox. Leaving the timeout unset keeps the existing unlimited
-application-level ringing behavior. An accepted call-control action from an
+or choose another phone with an enabled mailbox. An unset ringing duration
+inherits the PBX limit, initially 120 seconds; an explicit zero is unlimited.
+See [ringing policy](RINGING_POLICY.md). An accepted call-control action from an
 automation takes precedence over the phone's configured fallback.
 
 ## Access from a telephone

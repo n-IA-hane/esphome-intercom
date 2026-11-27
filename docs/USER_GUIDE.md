@@ -380,6 +380,20 @@ This is a Device selection, rather than an entity ID such as `sensor.*`.
 The picker presents the phone's readable name, just like other Home Assistant
 selectors.
 
+Incoming trunk destinations use their own selector. It lists VoIP Stack
+devices and their entities, and also accepts a manually entered account name,
+extension, group or SIP URI. A new trunk proposes the preferred HA account.
+Ordinary incoming calls go straight to the resolved destination; an interactive
+menu requires an explicitly selected Automation contact. See
+[incoming trunk routing](SIP_TRUNK.md#route-incoming-calls-to-a-particular-phone).
+
+An Automation contact has a native device and call-event entity. In **VoIP call
+received**, choose **Automation contact device** or **Automation contact call
+event**, or retain a manual **Destination** filter. Use one destination selector.
+Its speech, media, keypad and forwarding actions follow that execution's call.
+The [Welcome menu](AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu) shows the full
+sequence. Less common settings remain under collapsed **Advanced** sections.
+
 <details>
 <summary>For advanced users: identifiers in saved YAML</summary>
 

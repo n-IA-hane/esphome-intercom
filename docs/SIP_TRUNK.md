@@ -116,6 +116,11 @@ line or editing incoming routing does not replace its connection.
 An existing single trunk is migrated to a named **SIP trunk** entry, retaining
 its credentials, incoming routing and default selection.
 
+A disabled legacy line remains disabled. When another provider is already
+configured, it remains a separate line with its own settings. Migration retains
+an explicit default, including an explicit no-default choice, rather than
+silently selecting or overwriting another provider.
+
 For UDP registrations whose SIP response reports an address or port translated
 by NAT, the trunk sends periodic SIP OPTIONS on the registered socket. This
 maintains the signaling mapping between REGISTER refreshes without changing
@@ -170,11 +175,14 @@ See [RFC 3261, section 18.1.1](https://www.rfc-editor.org/rfc/rfc3261.html#secti
 ### Route incoming calls to a particular phone
 
 Select the receiving phone under **Fallback destination**, for example
-`Bedroom`, and select direct incoming routing. The selector lists configured
-phones and contacts; a group, extension or other dial-plan destination can also
-be entered. Select the actual Home Assistant phone by its name, rather than
-entering the legacy `HA` alias. This is
-independent of the outgoing default trunk. A called destination that already
+`Bedroom`. The selector includes native VoIP Stack devices and their entities,
+as well as configured phone and contact names. You can also enter a group,
+extension, account name or SIP URI manually. Select the actual Home Assistant
+account by its displayed name, rather than entering the legacy `HA` alias. A
+new trunk proposes the preferred HA account when one is configured. Keep that
+selection for ordinary incoming calls to HA, or choose another destination.
+Existing saved destinations, including an explicitly empty one, are preserved.
+This is independent of the outgoing default trunk. A called destination that already
 matches the phonebook takes precedence over this fallback target.
 
 Deleting the default trunk clears that selection immediately and does not
@@ -344,6 +352,11 @@ trunk's incoming destination, and add the [complete keypad-menu automation](AUTO
 Its greeting answers that call, its input action collects the extension, and
 its forward action chooses the destination. Ordinary direct calls have no
 menu or digit-collection delay.
+
+The trunk and its Automation contact are separate native HA service devices.
+Choose the destination in the trunk form, then handle that contact's call in
+an automation if needed. Less common transport and timing controls stay in
+the forms' collapsed **Advanced** sections; a greeting does not require them.
 
 Routing events distinguish the original called address from the number used
 for DID routing. `called_extension`, `target_route` and `dialed_target` preserve
