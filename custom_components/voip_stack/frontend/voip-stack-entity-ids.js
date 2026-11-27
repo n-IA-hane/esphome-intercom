@@ -51,7 +51,8 @@ export class VoipEntityIds {
     const changedCatalog = catalogs.get(connection) !== this._catalog;
     const refresh = force || differentConnection || hass.entities !== this._registry || removed ||
       changedCatalog;
-    this._wasPresent = present;
+    // Presence from the previous connection cannot remove the new catalog.
+    this._wasPresent = !differentConnection && present;
     if (!refresh) return this._pending;
     this._connection = connection;
     this._registry = hass.entities;
