@@ -107,6 +107,13 @@ PBX. If that policy is off, the phone can ring without playing automatically;
 a SIP 180 response proves ringing, not delivery. Use the phone's scoped trusted
 paging policy rather than enabling ordinary automatic answer for every call.
 
+On Snom phones, check **Advanced > Behavior > Intercom Policy**. For example,
+`idle` permits tagged announcements while the phone is on its idle screen;
+`off` leaves the announcement ringing until it is answered. Ordinary automatic
+answer is a separate setting. The phone may also play its own short acoustic
+indication before the message. See the manufacturer's
+[Intercom Policy reference](https://service.snom.com/plugins/viewsource/viewpagesrc.action?pageId=234343610).
+
 For ESP phones, use firmware containing the paging feature. The managed HA
 account authorizes this path; manually configured SIP accounts require
 `allow_paging_auto_answer: true` on the intended account. Another registered

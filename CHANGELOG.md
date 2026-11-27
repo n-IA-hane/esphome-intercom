@@ -2,6 +2,13 @@
 
 ## 2026.12.0-dev
 
+- Start a Welcome menu once when the call reaches that Automation contact.
+  Forwarding to a ringing phone no longer starts the IVR again; a call sent
+  back to Welcome can enter the menu again.
+- Keep the other camera running when one party switches Send video off or on,
+  without an unnecessary camera restart on the opposite side.
+- Show readable field names in native Home Assistant Repairs, keep advanced
+  settings collapsed initially and open the form without a spurious error.
 - Handle empty legacy parent settings during migration and preserve pending
   retired-trunk-menu notices until their native Repair is saved. Preserve the
   existing account, subentry, device and entity
