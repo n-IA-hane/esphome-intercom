@@ -251,10 +251,12 @@ def async_ensure_duration_policies(hass, entry) -> bool:
     """Verify 7.7 content even when a saved numeric version already matches."""
     from homeassistant.helpers import issue_registry as ir
     from .duration_config import duration_migration_plan, migrate_duration_policies
+    from .trunk_config import pending_trunk_menu_notices
     issue_id = "duration_configuration_invalid_" + entry.entry_id
     try:
         data, updates = duration_migration_plan(entry)
-        if entry.minor_version < 7 or data != entry.data or updates or "trunk_enabled" in entry.data:
+        if (entry.minor_version < 7 or data != entry.data or updates
+                or "trunk_enabled" in entry.data or pending_trunk_menu_notices(entry)):
             migrate_duration_policies(hass, entry)
         final_data, final_updates = duration_migration_plan(entry)
         if final_data != entry.data or final_updates:
@@ -263,7 +265,7 @@ def async_ensure_duration_policies(hass, entry) -> bool:
         ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id,
             is_fixable=True, is_persistent=True, data={"entry_id": entry.entry_id},
             severity=ir.IssueSeverity.ERROR, translation_key="duration_configuration_invalid",
-            translation_placeholders={"error": type(error).__name__})
+            translation_placeholders={"entry": entry.title})
         _LOGGER.error("Cannot initialize PBX duration policies: %s", type(error).__name__)
         return False
     ir.async_delete_issue(hass, DOMAIN, issue_id)

@@ -82,7 +82,8 @@ async def test_residual_parent_trunk_converges_once_without_resurrecting_legacy_
     assert row.data["trunk_inbound_default_target"] == "Welcome"
     assert row.data["trunk_options_interval"] == 30
     assert entry.data["default_trunk_id"] == row.data["trunk_id"]
-    assert not any(key.startswith("trunk_") for key in entry.data)
+    assert {key for key in entry.data if key.startswith("trunk_")} == {"trunk_menu_retirement_pending"}
+    assert entry.data["trunk_menu_retirement_pending"] == [row.subentry_id]
     assert entry.data["unrelated"] == "preserved"
     assert ir.async_get(hass).async_get_issue("voip_stack", "trunk_dtmf_retired_" + row.subentry_id)
     before = deepcopy(entry.as_dict())
@@ -115,7 +116,7 @@ async def test_interrupted_retirement_recreates_notice_from_saved_journal(hass, 
     # retry must recover the notice even if only the config entry was flushed.
     ir.async_delete_issue(hass, "voip_stack", issue_id)
     assert await async_migrate_entry(hass, entry)
-    assert "trunk_menu_retirement_pending" not in entry.data
+    assert entry.data["trunk_menu_retirement_pending"] == [row.subentry_id]
     assert ir.async_get(hass).async_get_issue("voip_stack", issue_id)
 
 

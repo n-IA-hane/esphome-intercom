@@ -97,7 +97,7 @@ PENDING_TRUNK_MENU_NOTICES = "trunk_menu_retirement_pending"
 
 
 def pending_trunk_menu_notices(entry) -> list[str]:
-    """Validate the retry journal without exposing arbitrary stored values."""
+    """Read the durable retirement journal without arbitrary stored values."""
     pending = entry.data.get(PENDING_TRUNK_MENU_NOTICES, [])
     if not isinstance(pending, list) or any(not isinstance(item, str) or not item for item in pending):
         raise ValueError("Invalid pending trunk menu notice")
@@ -131,7 +131,7 @@ def migrated_trunk_routing_data(data) -> dict:
 
 
 def migrate_trunk_menus(hass, entry) -> None:
-    """Retire automatic collection without rewriting destinations or identities."""
+    """Retire collection and replay durable notices through their native owner."""
     from .repairs import async_report_trunk_menu_retired
 
     pending = pending_trunk_menu_notices(entry)
@@ -149,6 +149,8 @@ def migrate_trunk_menus(hass, entry) -> None:
         # Match the retired normalizer: an explicit DTMF mode determined the
         # effective flag, including persisted records with a stale false flag.
         if record.subentry_id in pending:
+            # Native get-or-create preserves dismissed_version. Replaying the
+            # same issue repairs a lost write without undoing the owner's Ignore.
             async_report_trunk_menu_retired(hass, entry, record)
         proposed = migrated_trunk_routing_data(data)
         if proposed != data:

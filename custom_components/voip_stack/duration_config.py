@@ -79,7 +79,7 @@ def duration_migration_plan(entry) -> tuple[dict, list[tuple[object, dict]]]:
     from .roster import parse_roster_json
 
     from .trunk_config import (
-        PENDING_TRUNK_MENU_NOTICES, legacy_trunk_collects_digits,
+        legacy_trunk_collects_digits,
         migrated_trunk_routing_data, pending_trunk_menu_notices,
     )
     pending_trunk_menu_notices(entry)
@@ -87,7 +87,8 @@ def duration_migration_plan(entry) -> tuple[dict, list[tuple[object, dict]]]:
     if "trunk_enabled" in entry.data:
         normalized_trunk_config(entry.data)
     data = migrated_trunk_routing_data(initialize_duration_config(entry.data))
-    data.pop(PENDING_TRUNK_MENU_NOTICES, None)
+    # The issue registry saves independently from config entries. Retain the
+    # journal after 7.7 so setup can restore a notice lost before its disk write.
     normalize_parking_config(data["parking"])
     # Existing contacts used this initial value before a stored default existed.
     # Changing a PBX default must not rewrite a saved per-contact policy.
