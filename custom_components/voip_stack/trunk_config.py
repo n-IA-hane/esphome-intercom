@@ -118,6 +118,87 @@ def pending_trunk_menu_notices(entry) -> list[str]:
     return list(dict.fromkeys(pending))
 
 
+def trunk_menu_notice_id(subentry_id: str) -> str:
+    """Keep the native issue identity shared by publication and completion."""
+    return "trunk_dtmf_retired_" + subentry_id
+
+
+def replay_trunk_menu_notices(hass, entry) -> None:
+    """Recover missing notices without repeating a completed policy migration."""
+    from homeassistant.helpers import issue_registry as ir
+    from .const import DOMAIN
+    from .repairs import async_report_trunk_menu_retired
+
+    pending = set(pending_trunk_menu_notices(entry))
+    if not pending:
+        return
+    registry = ir.async_get(hass)
+    for record in trunk_subentries(entry):
+        if record.subentry_id in pending and registry.async_get_issue(
+                DOMAIN, trunk_menu_notice_id(record.subentry_id)) is None:
+            async_report_trunk_menu_retired(hass, entry, record)
+
+
+async def async_complete_trunk_menu_notices(hass, entry) -> None:
+    """Acknowledge only native issue records actually present in storage.
+
+    The IssueRegistry's public creation event is emitted before its delayed
+    save. Reading its in-memory Store would also include unsaved writes.
+    Inspect only the committed file, read-only, using the native issue's own
+    serialization for comparison. An unreadable or unfamiliar storage format
+    conservatively leaves recovery pending; this never writes HA's registry.
+    """
+    from homeassistant.exceptions import HomeAssistantError
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.helpers.storage import STORAGE_DIR
+    from homeassistant.util.json import load_json
+    from .const import DOMAIN
+
+    if PENDING_TRUNK_MENU_NOTICES not in entry.data:
+        return
+    pending = set(pending_trunk_menu_notices(entry))
+    records = {row.subentry_id for row in trunk_subentries(entry)}
+    completed = pending - records
+    if pending & records:
+        try:
+            saved = await hass.async_add_executor_job(
+                load_json, hass.config.path(STORAGE_DIR, ir.STORAGE_KEY))
+        except (HomeAssistantError, OSError, ValueError, TypeError):
+            return
+        if (not isinstance(saved, dict)
+                or saved.get("version") != ir.STORAGE_VERSION_MAJOR
+                or saved.get("minor_version") != ir.STORAGE_VERSION_MINOR
+                or saved.get("key") != ir.STORAGE_KEY
+                or not isinstance(saved.get("data"), dict)
+                or not isinstance(saved["data"].get("issues"), list)):
+            return
+        registry = ir.async_get(hass)
+        persisted = {row.get("issue_id"): row for row in saved["data"]["issues"]
+                     if isinstance(row, dict) and isinstance(row.get("issue_id"), str)
+                     and row.get("domain") == DOMAIN and row.get("config_entry_id") == entry.entry_id}
+        for subentry_id in pending & records:
+            issue = registry.async_get_issue(DOMAIN, trunk_menu_notice_id(subentry_id))
+            if (issue is not None and issue.is_persistent
+                    and issue.config_entry_id == entry.entry_id
+                    and issue.to_json() == persisted.get(issue.issue_id)):
+                completed.add(subentry_id)
+    # Configuration may have changed during file IO. Remove only notices
+    # confirmed in this snapshot, retaining any newly appended journal entry.
+    if hass.config_entries.async_get_entry(entry.entry_id) is not entry:
+        return
+    current = pending_trunk_menu_notices(entry)
+    remaining = [identity for identity in current if identity not in completed]
+    if remaining == current and current:
+        return
+    data = dict(entry.data)
+    if remaining:
+        data[PENDING_TRUNK_MENU_NOTICES] = remaining
+    else:
+        data.pop(PENDING_TRUNK_MENU_NOTICES, None)
+    if data != entry.data:
+        hass.config_entries.async_update_entry(entry, data=data)
+
+
 def legacy_trunk_collects_digits(data) -> bool:
     """Read retired collector settings only while validating an upgrade."""
     mode = str(data.get("trunk_inbound_mode") or "").strip().lower()

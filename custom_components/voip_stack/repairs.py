@@ -991,6 +991,7 @@ def async_sync_pbx_configuration_issues(hass: HomeAssistant) -> None:
 
 def async_report_trunk_menu_retired(hass, entry, record) -> None:
     """Keep a native migration notice until the owner dismisses it."""
+    from .trunk_config import trunk_menu_notice_id
     from .trunk_policy import inbound_trunk_destination
 
     destination = inbound_trunk_destination(record.data)
@@ -1011,7 +1012,7 @@ def async_report_trunk_menu_retired(hass, entry, record) -> None:
     ownership = {"config_entry_id": entry.entry_id}
     if "config_subentry_id" in signature(ir.async_create_issue).parameters:
         ownership["config_subentry_id"] = record.subentry_id
-    ir.async_create_issue(hass, DOMAIN, "trunk_dtmf_retired_" + record.subentry_id,
+    ir.async_create_issue(hass, DOMAIN, trunk_menu_notice_id(record.subentry_id),
         **ownership, is_fixable=False, is_persistent=True, severity=ir.IssueSeverity.WARNING,
         translation_key=key, translation_placeholders={
             "trunk": record.title,

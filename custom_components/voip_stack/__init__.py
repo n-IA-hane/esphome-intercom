@@ -243,7 +243,10 @@ async def async_migrate_entry(
         data.setdefault(CONF_MAX_DIALOG_SUBSCRIPTION_EXPIRES, DEFAULT_MAX_DIALOG_SUBSCRIPTION_EXPIRES)
         hass.config_entries.async_update_entry(config_entry, data=data, minor_version=5)
     if config_entry.version == 7 and config_entry.minor_version <= 7:
-        return async_ensure_duration_policies(hass, config_entry)
+        if not async_ensure_duration_policies(hass, config_entry):
+            return False
+        from .trunk_config import async_complete_trunk_menu_notices
+        await async_complete_trunk_menu_notices(hass, config_entry)
     return True
 
 
@@ -251,13 +254,14 @@ def async_ensure_duration_policies(hass, entry) -> bool:
     """Verify 7.7 content even when a saved numeric version already matches."""
     from homeassistant.helpers import issue_registry as ir
     from .duration_config import duration_migration_plan, migrate_duration_policies
-    from .trunk_config import pending_trunk_menu_notices
+    from .trunk_config import replay_trunk_menu_notices
     issue_id = "duration_configuration_invalid_" + entry.entry_id
     try:
         data, updates = duration_migration_plan(entry)
         if (entry.minor_version < 7 or data != entry.data or updates
-                or "trunk_enabled" in entry.data or pending_trunk_menu_notices(entry)):
+                or "trunk_enabled" in entry.data):
             migrate_duration_policies(hass, entry)
+        replay_trunk_menu_notices(hass, entry)
         final_data, final_updates = duration_migration_plan(entry)
         if final_data != entry.data or final_updates:
             raise ValueError("Duration migration did not establish its stored postconditions")
@@ -791,6 +795,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
 
     if not async_ensure_duration_policies(hass, entry):
         raise ConfigEntryError("Correct the saved duration policy through Repairs")
+    from .trunk_config import async_complete_trunk_menu_notices
+    await async_complete_trunk_menu_notices(hass, entry)
     previous_runtime = _runtime_data(hass)
     previous_entry_runtime = getattr(entry, "runtime_data", None)
     if isinstance(previous_entry_runtime, VoipStackRuntime):
