@@ -1372,7 +1372,7 @@ class VoipStackCard extends HTMLElement {
       if (snap.state && snap.state !== "idle") {
         return terminalPeerLabel(snap) || "Unknown";
       }
-      return this._getSoftphoneTargetDevice()?.name || "No endpoint";
+      return this._getSoftphoneTargetDevice()?.name || this._t("No endpoint");
     }
     if (!this._hass || !this._destinationEntityId) return this._getHaName();
     const entity = this._hass.states[this._destinationEntityId];
@@ -3368,7 +3368,7 @@ class VoipStackCard extends HTMLElement {
           for (const device of available) {
             const option = document.createElement("option");
             option.value = device.deviceId;
-            option.textContent = device.label +
+            option.textContent = this._t(device.label) +
               (device.deviceId === active[kind] ? " - " + this._t("active") : "");
             options.push(option);
           }
@@ -3969,9 +3969,9 @@ class VoipStackCard extends HTMLElement {
         offline: "Offline", dnd: "Do not disturb", busy: "Busy", reserved: "Reserved", wrap_up: "Wrap-up"};
       if (reasons.length) label.textContent += ` · ${this._t(reasonLabels[reasons[0]] || reasons[0])}`;
       label.title = [reasons.join(", "), queue.pause_reason,
-        queue.wrap_up_remaining > 0 ? `Wrap-up: ${Math.ceil(queue.wrap_up_remaining)}s` : "",
-        queue.reserved_queue_id ? `Reserved: ${queue.reserved_queue_id}` : "",
-        queue.consecutive_misses > 0 ? `Unanswered: ${queue.consecutive_misses}` : ""].filter(Boolean).join(" · ");
+        queue.wrap_up_remaining > 0 ? `${this._t("Wrap-up")}: ${Math.ceil(queue.wrap_up_remaining)}s` : "",
+        queue.reserved_queue_id ? `${this._t("Reserved")}: ${queue.reserved_queue_id}` : "",
+        queue.consecutive_misses > 0 ? `${this._t("Unanswered")}: ${queue.consecutive_misses}` : ""].filter(Boolean).join(" · ");
       const select = document.createElement("select");
       select.setAttribute("aria-label", String(queue.name || ""));
       for (const [state, text] of [["available", "Available"], ["paused", "Paused"], ["logged_out", "Logged out"]]) {

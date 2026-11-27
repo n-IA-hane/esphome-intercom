@@ -251,7 +251,7 @@ class VoipStackDashboardCard extends HTMLElement {
       : this._t("Select the calling phone in the card editor.");
     e.ownerName.hidden = !e.ownerName.textContent;
     const notice = this._error || this._store.error || (!this._store.ready ? this._t("Waiting for phone state") : "");
-    e.notice.textContent = notice; e.notice.hidden = !notice;
+    e.notice.textContent = this._t(notice); e.notice.hidden = !notice;
     e.notice.classList.toggle("error", !!(this._error || this._store.error));
     const sections = dashboardSections(this._store.phones, this._roster, this._config.device_id);
     this._ensurePhoneView();
