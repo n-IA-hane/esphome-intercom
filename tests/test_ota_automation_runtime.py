@@ -82,7 +82,8 @@ std::exit(ok && !id(invalid_stop) &&
           ((scenario && std::strcmp(scenario,"before_begin")==0) || id(input_stops)>0) ? 0 : 42);
 '''
     document = {
-        'esphome': {'name': 'ota-host-regression', 'includes': ['<cstdio>', '<cstdlib>', '<cstring>', '<thread>', '<chrono>'],
+        'esphome': {'name': 'ota-host-regression', 'build_path': str(work.resolve() / 'build'),
+                    'includes': ['<cstdio>', '<cstdlib>', '<cstring>', '<thread>', '<chrono>'],
                     'on_boot': {'priority': -100, 'then': [{'lambda': Lambda(setup)}, {'delay': '500ms'}, {'lambda': Lambda(check)}]}},
         'host': {}, 'logger': {'level': 'ERROR', 'boot_log_level': 'ERROR'},
         'globals': [{'id': name, 'type': kind, 'initial_value': initial} for name, kind, initial in (
