@@ -303,6 +303,28 @@ def _events(events, session, kind):
     return [event for event in events if event.get("session_id") == session["session_id"] and event.get("kind") == kind]
 
 
+def _validate_initial_invite(dialog, invites):
+    """Retain RFC 3261 Digest retry transactions before the answered dialog."""
+    previous = -1
+    for sequence in dict.fromkeys(row["sip.CSeq.seq"] for row in invites):
+        require(sequence.isdecimal() and int(sequence) > previous,
+                "Initial INVITE authentication did not advance CSeq")
+        previous = int(sequence)
+        statuses = {int(row["sip.Status-Code"]) for row in dialog
+                    if row["sip.CSeq.method"] == "INVITE" and row["sip.CSeq.seq"] == sequence
+                    and row["sip.Status-Code"] and int(row["sip.Status-Code"]) >= 200}
+        accepted = any(200 <= status < 300 for status in statuses)
+        require(not (accepted and statuses.intersection({401, 407})),
+                "Authenticated INVITE reused the challenged transaction CSeq")
+        require(any(row["sip.Method"] == "ACK" and row["sip.CSeq.seq"] == sequence for row in dialog),
+                "Missing ACK for the initial INVITE transaction")
+        if accepted:
+            return
+        require(statuses and statuses <= {401, 407},
+                "Initial INVITE did not establish a dialog or request authentication")
+    raise MeasurementError("Missing captured established SIP transaction")
+
+
 def _validate_sip(session, report, endpoints, signaling_hosts):
     packets = report["wire"]["sip"]
     call_ids = session["sip_call_ids"]
@@ -318,11 +340,7 @@ def _validate_sip(session, report, endpoints, signaling_hosts):
         invites = [row for row in dialog if row["sip.Method"] == "INVITE"]
         require(invites and invites[0]["sip.r-uri"] == session["request_uris"][call_id],
                 "Captured INVITE Request-URI differs from the intended route")
-        initial_cseq = invites[0]["sip.CSeq.seq"]
-        require(any(row["sip.Status-Code"] == "200" and row["sip.CSeq.method"] == "INVITE"
-                    and row["sip.CSeq.seq"] == initial_cseq for row in dialog)
-                and any(row["sip.Method"] == "ACK" and row["sip.CSeq.seq"] == initial_cseq for row in dialog),
-                "Missing captured established SIP transaction")
+        _validate_initial_invite(dialog, invites)
         byes = [row for row in dialog if row["sip.Method"] == "BYE"]
         require(byes and len({(row["ip.src"], row["sip.CSeq.seq"]) for row in byes}) == 1,
                 "Missing or repeated terminal SIP owner")
