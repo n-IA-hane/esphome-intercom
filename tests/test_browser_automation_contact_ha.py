@@ -11,12 +11,14 @@ from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.voip_stack import endpoint_runtime, invite_router, peer_snapshot, softphone_originate
 from custom_components.voip_stack.automation_call import automation_call
+from custom_components.voip_stack.config_entry_runtime import async_refresh_directory
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.ha_bindings import HaCardBindings
 from custom_components.voip_stack.local_softphone_runtime import async_setup_local_softphone_bridge
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
+from custom_components.voip_stack.store import store_manual_roster_entries
 from custom_components.voip_stack.websocket_api import CALL_EVENT, HA_SOFTPHONE_STATE_EVENT, _ha_softphone_state
 
 from .test_automation_originate_ha import lab as lab, assert_call_resources_released
@@ -68,6 +70,7 @@ async def test_account_calls_automation_contact_then_accepts_an_independent_inco
         lab.runtime.transport_config.update({CONF_SIP_VIDEO: True, CONF_VIDEO_CAMERA_SEND: True})
     contact = RosterEntry("office-announcements", name="Announcements", ha_bridge=True,
         metadata={"virtual_endpoint": "automation", "automation_timeout": 30})
+    store_manual_roster_entries(lab.hass, [contact])
     lab.roster.append(contact)
     lab.runtime.directory.replace(lab.roster)
     lab.hass.states.async_set("sensor.voip_phonebook", "ready", {"roster_json": dump_roster_json(lab.roster)})
@@ -97,6 +100,9 @@ async def test_account_calls_automation_contact_then_accepts_an_independent_inco
 
     unsubs = [lab.hass.bus.async_listen(kind, observe) for kind in (CALL_EVENT, HA_SOFTPHONE_STATE_EVENT)]
     try:
+        # Registration changes rebuild the directory from saved contacts. Finish
+        # that real refresh so this test cannot depend on task scheduling.
+        await async_refresh_directory(lab.hass)
         await lab.hass.services.async_call("voip_stack", "call", {
             "device_id": caller.device_id, "destination": contact.name,
             "media_client_id": "caller-browser-owner", "send_video": handled == "video",
