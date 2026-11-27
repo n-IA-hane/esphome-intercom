@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 import re
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
@@ -75,10 +75,28 @@ class LocalAccountRedirect:
     entries: list[RosterEntry]
     source_endpoint_id: str
     route_future: asyncio.Future
+    attempts: list[OutboundLeg]
     browser_legs: list[BrowserLeg]
     publish_browser: Callable[[list[BrowserLeg]], None]
     on_leg_state: Callable[[OutboundLeg, str], None] | None
     overall_timeout: float
+    redirected_attempts: list[OutboundLeg] = field(default_factory=list)
+
+    def release_closed_account(self, endpoint_id):
+        """Retire a claim only after the account's final physical offer closes."""
+        if not endpoint_id:
+            return
+        other_sip = any(attempt.endpoint_id == endpoint_id and not attempt.ports.released
+            for attempt in (*self.attempts, *self.redirected_attempts)) or any(
+            leg.endpoint_id == endpoint_id and leg.dialog is not None
+            and (getattr(leg.dialog, "_invite_transaction_active", False)
+                or getattr(leg.dialog, "dialog", None) is not None)
+            for leg in self.session.legs.values())
+        other_browser = any(leg.endpoint_id == endpoint_id for leg in self.browser_legs)
+        if not other_sip and not other_browser:
+            self.registry.release_endpoint_claim(self.session.call_id, endpoint_id)
+            self.session.update_metadata(**{key: "" for key in ("dest_endpoint_id", "target_endpoint_id")
+                if self.session.metadata.get(key) == endpoint_id})
 
     async def follow(self, outbound, dial_sip):
         endpoint = self.endpoint_registry.get(outbound.endpoint_id)
@@ -150,14 +168,7 @@ class LocalAccountRedirect:
             self.on_leg_state(outbound, "closed")
         # Retire the old account only after its final physical branch closes.
         # Other original SIP Contacts and the existing HA offer remain eligible.
-        other_sip = any(leg.endpoint_id == outbound.endpoint_id and leg.dialog is not None
-            and (getattr(leg.dialog, "_invite_transaction_active", False) or getattr(leg.dialog, "dialog", None) is not None)
-            for leg in self.session.legs.values())
-        other_browser = any(leg.endpoint_id == outbound.endpoint_id for leg in self.browser_legs)
-        if not other_sip and not other_browser:
-            self.registry.release_endpoint_claim(self.session.call_id, outbound.endpoint_id)
-            self.session.update_metadata(**{key: "" for key in ("dest_endpoint_id", "target_endpoint_id")
-                if self.session.metadata.get(key) == outbound.endpoint_id})
+        self.release_closed_account(outbound.endpoint_id)
         prepared = GroupCandidates()
         transferred = None
         try:
@@ -173,6 +184,7 @@ class LocalAccountRedirect:
                     roster_entries=self.entries, local_name=self.invite.caller,
                     ring_policy=policy, source_endpoint_id=self.source_endpoint_id,
                     outbound_context={"invite": self.invite})
+                self.redirected_attempts.extend(prepared.attempts[first_attempt:])
                 for attempt in prepared.attempts[first_attempt:]:
                     attempt.redirect_path = (*path, endpoint_id)
                     sip_tiers[attempt.candidate_id] = (tiers[preference], attempt.tier)
@@ -224,5 +236,15 @@ class LocalAccountRedirect:
                 outbound.candidate_id, outbound.tier, outbound.order = candidate_id, tier, order
             return result.outcome
         finally:
+            retired = [attempt for attempt in prepared.attempts if attempt is not transferred]
             await asyncio.gather(*(async_close_outbound_leg(attempt, bye_or_cancel=True)
-                for attempt in prepared.attempts if attempt is not transferred))
+                for attempt in retired))
+            for attempt in retired:
+                if self.on_leg_state is not None:
+                    self.on_leg_state(attempt, "closed")
+            # The outer fork cannot enumerate claims made by this inner fork.
+            # Keep pending original Contacts, accepted media and published HA
+            # offers; release failed or never-started redirect destinations.
+            for endpoint_id in {item.endpoint_id for item in (*retired, *prepared.browser_legs)}:
+                if transferred is None or endpoint_id != transferred.endpoint_id:
+                    self.release_closed_account(endpoint_id)

@@ -355,7 +355,8 @@ async def run_ring_group_call(
         preparation=GroupCandidateRuntime(registry, endpoint_registry,
             _browser_leg_for_member, _prepare_outbound_leg, _logical_endpoint_for_member),
         invite=invite, peers=peers, entries=roster_entries,
-        source_endpoint_id=source_endpoint_id, route_future=route_future, browser_legs=browser_legs,
+        source_endpoint_id=source_endpoint_id, route_future=route_future,
+        attempts=attempts, browser_legs=browser_legs,
         publish_browser=lambda legs: _publish_browser_candidates_ringing(
             hass, registry, legs, invite=invite, callee=entry.display_name,
             route_kind=route_kind, origin_endpoint_id=origin_endpoint_id if ha_origin else "",

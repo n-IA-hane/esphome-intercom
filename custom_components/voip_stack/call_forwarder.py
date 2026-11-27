@@ -6,7 +6,6 @@ import asyncio
 import logging
 from contextvars import copy_context
 from dataclasses import replace
-from functools import partial
 
 from homeassistant.exceptions import ServiceValidationError
 
@@ -31,6 +30,7 @@ from .fsm import (
 from .groups import GROUP_TYPE_RING
 from .peer_snapshot import async_build_peer_snapshot as _async_build_peer_snapshot
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
+from .ring_group import endpoint_preflight_disposition
 from .route_abort import (
     RouteAbortContext,
     RouteAbortIntent,
@@ -946,6 +946,35 @@ class _ForwardAdmission:
     ):
         application = source.application
         local_source = source.local
+
+        def resume_browser():
+            from .account_runtime import account_has_ha_binding
+            from .endpoint_registry import EndpointBusyError
+
+            endpoint = (
+                browser_phone(self.runtime.hass, source.receiver_endpoint_id)
+                if source.receiver_endpoint_id else None
+            )
+            if endpoint is None or (
+                not endpoint.kind.is_softphone
+                and not account_has_ha_binding(self.runtime.hass, endpoint.endpoint_id)
+            ) or endpoint_preflight_disposition(
+                endpoint, call_id=self.request.call_id, browser=True,
+            ) is not None:
+                return False
+            try:
+                self.runtime.defer_invite_to_softphone(
+                    source.invite,
+                    route_kind=original_route_kind,
+                    endpoint_id=endpoint.endpoint_id,
+                    endpoint_device_id=receiver_device_id,
+                    callee=original_callee,
+                    last_sip_event="ROUTE_RESUME",
+                )
+            except EndpointBusyError:
+                return False
+            return True
+
         forward_abort = RouteAbortContext(
             self.runtime.hass,
             self.registry,
@@ -970,16 +999,8 @@ class _ForwardAdmission:
             ),
             publish_resume=application.resume
             if application
-            else partial(
-                self.runtime.publish_pending_ringing,
-                source.invite,
-                route_kind=original_route_kind,
-                endpoint_id=source.receiver_endpoint_id,
-                endpoint_device_id=receiver_device_id,
-                callee=original_callee,
-                last_sip_event="ROUTE_RESUME",
-            )
-            if (application is not None or ha_claimed)
+            else resume_browser
+            if ha_claimed
             else None,
         )
         if source.native_destination is not None:

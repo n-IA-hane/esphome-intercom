@@ -60,9 +60,15 @@ class OwnedSipSource:
             return existing
         if session.owner != "ha_softphone" or session.state != "in_call":
             return None
+        # A physical SIP peer also supports HA as an account capability. The
+        # committed phone identity, not that capability, selects this card.
+        card_owner = str(session.metadata.get("endpoint_id") or "")
+        if endpoint_id and card_owner and endpoint_id != card_owner:
+            raise RuntimeError("The card no longer owns this SIP call")
         if not endpoint_id:
             candidates = [key for key in session.endpoint_claims
-                if (endpoint := runtime.endpoints.get(key)) is not None and endpoint.supports_ha_client]
+                if (not card_owner or key == card_owner)
+                and (endpoint := runtime.endpoints.get(key)) is not None and endpoint.supports_ha_client]
             if not candidates:
                 return None
             if len(candidates) > 1:

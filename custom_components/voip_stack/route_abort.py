@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 import contextlib
 import inspect
 from dataclasses import dataclass
@@ -38,7 +38,7 @@ class RouteAbortContext:
     resume_callee: str = ""
     resume_route_kind: str = ""
     transition_resume: bool = False
-    publish_resume: Callable[[], None] | None = None
+    publish_resume: Callable[[], bool | None | Awaitable[bool | None]] | None = None
     resume_owner: str = "ha_softphone"
     resume_state: str = "ringing"
 
@@ -92,8 +92,14 @@ async def async_abort_route(
             if context.publish_resume is not None:
                 result = context.publish_resume()
                 if inspect.isawaitable(result):
-                    await result
-            return True
+                    result = await result
+                if result is not False:
+                    return True
+                # A released receiver may now be busy or unavailable. The
+                # original source still needs the same terminal cleanup.
+                action = "terminate"
+            else:
+                return True
         if action == "cleanup":
             return False
 

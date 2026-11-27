@@ -13,7 +13,7 @@ from .const import (
     CONF_VIDEO_TRANSCODING,
     DOMAIN,
 )
-from .dial_fork import DialDisposition, terminal_reason
+from .dial_fork import DialDisposition, DialOutcome, terminal_reason
 from .forward_plan import TransferResult, source_dialog_is_answered
 from .fsm import (
     CallState,
@@ -129,15 +129,16 @@ class ForwardGroup:
                         prepared_audio_owner=self.operation)
                 return self.operation.runtime.prepare_outbound_leg(**kwargs)
 
+            self.preparation = GroupCandidateRuntime(
+                registry=registry,
+                endpoint_registry=self.endpoints,
+                browser_leg_for_member=self.operation.runtime.browser_leg_for_member,
+                prepare_outbound_leg=prepare_candidate,
+                logical_endpoint_for_member=self.operation.runtime.route_resolver.logical_endpoint,
+            )
             await async_prepare_group_candidates(
                 self.candidates,
-                GroupCandidateRuntime(
-                    registry=registry,
-                    endpoint_registry=self.endpoints,
-                    browser_leg_for_member=self.operation.runtime.browser_leg_for_member,
-                    prepare_outbound_leg=prepare_candidate,
-                    logical_endpoint_for_member=self.operation.runtime.route_resolver.logical_endpoint,
-                ),
+                self.preparation,
                 invite=self.operation.invite,
                 members=members,
                 peers=self.operation.plan.peers,
@@ -219,7 +220,11 @@ class ForwardGroup:
                 "declined_endpoint_ids": set(),
             },
         )
-        if self.candidates.browser_legs:
+        self.publish_browser_candidates(self.candidates.browser_legs)
+
+    def publish_browser_candidates(self, browser_legs):
+        invite = self.operation.invite
+        if browser_legs:
             self.operation.registry.upsert(
                 self.operation.source.call_id,
                 state=CallState.RINGING.value,
@@ -228,10 +233,10 @@ class ForwardGroup:
                 callee=self.entry.display_name,
                 route_kind=self.route_kind,
                 ring_endpoint_ids=tuple(
-                    leg.endpoint_id for leg in self.candidates.browser_legs
+                    leg.endpoint_id for leg in browser_legs
                 ),
             )
-            for browser_leg in self.candidates.browser_legs:
+            for browser_leg in browser_legs:
                 self.operation.runtime.publish_pending_ringing(
                     invite,
                     route_kind=self.route_kind,
@@ -344,6 +349,35 @@ class ForwardGroup:
         )
         for browser_leg in self.candidates.browser_legs:
             self.offer_start(browser_leg.endpoint_id, rang=True)
+        from .local_redirect import LocalAccountRedirect
+
+        redirect = LocalAccountRedirect(
+            hass=self.operation.runtime.hass, config=self.operation.runtime.config,
+            local_ip=self.operation.runtime.local_ip, session=self.session,
+            registry=self.operation.registry, endpoint_registry=self.endpoints,
+            preparation=self.preparation, invite=self.operation.invite,
+            peers=self.operation.plan.peers, entries=self.operation.plan.roster_entries,
+            source_endpoint_id=str(self.session.metadata.get("source_endpoint_id") or ""),
+            route_future=self.route_future, attempts=self.candidates.attempts,
+            browser_legs=self.candidates.browser_legs,
+            publish_browser=self.publish_browser_candidates, on_leg_state=self.leg_state,
+            overall_timeout=(self.operation.plan.ring_timeout
+                if self.operation.plan.ring_timeout is not None else float("inf")),
+        )
+
+        async def follow_redirect(outbound, dial_sip):
+            async def dial_redirected(candidate):
+                # The forwarding operation still owns retained source media.
+                # Redirected Contacts use the same socket preparation as its
+                # initial candidates before they send an INVITE.
+                if self.operation.retained_media is not None:
+                    candidate.client.local_rtp_port = self.operation.retained_media.reservation.ports[1]
+                if await self.operation._prepare_parked_socket(candidate) is False:
+                    return DialOutcome(DialDisposition.MEDIA_INCOMPATIBLE, 488)
+                return await dial_sip(candidate)
+
+            return await redirect.follow(outbound, dial_redirected)
+
         (
             fork_candidates,
             candidate_payloads,
@@ -362,6 +396,7 @@ class ForwardGroup:
             and self.operation.source.local is None
             else self.publish_ringing,
             on_leg_state=self.leg_state,
+            follow_redirect=follow_redirect,
         )
         fork_result = None
         pickup_gate = winner = None
