@@ -1245,7 +1245,9 @@ def test_video_handset_and_each_runtime_icon_keep_independent_native_hit_targets
     assert page.evaluate("videoLayout()") == {"fit": "contain", "position": "50% 50%"}
 
 
-def test_audio_and_video_call_controls_keep_receive_intent_and_camera_privacy_separate(popup_page):
+def test_audio_and_video_call_controls_keep_receive_intent_and_camera_privacy_separate(popup_page, tmp_path):
+    import json
+
     page = popup_page
     observed = page.evaluate("""async()=>{
       await import('/voip-stack-card.js');
@@ -1253,38 +1255,69 @@ def test_audio_and_video_call_controls_keep_receive_intent_and_camera_privacy_se
       const Card=customElements.get('voip-stack-card');
       const view=document.createElement('div');view.attachShadow({mode:'open'});
       view._observeLayout=()=>{};view._attachEventHandlers=()=>Card.prototype._attachEventHandlers.call(view);
-      const controls=[];view._startCall=(destination,options)=>controls.push(options);
-      buildMainCardSkeleton.call(view,'explicit-video-intent');
-      view._els.callBtn.click();view._els.videoCallBtn.click();
+      const controls=[];view._startCall=(destination='',options={})=>controls.push({destination,options});
+      buildMainCardSkeleton.call(view,'single-call-camera-intent');
+      view._els.callBtn.click();
       const card=new Card();card._render=()=>{};card._callOperationId=0;
       card._getSoftphoneTargetDevice=()=>({name:'Peer with video',capabilities:['audio','video']});
       card._softphoneRequestScope=()=>({endpoint_id:'Desk',device_id:'desk-device'});
       card._getSoftphoneEndpointId=()=>'Desk';card._getHaName=()=>'Desk';
       card._microphoneAntiAliasEnabled=()=>true;card._softphoneSupportsVideo=()=>true;
-      const requests=[];let cameraRequests=0;
-      __voipStackEngine.prepareAudioCall=async()=>{};
-      __voipStackEngine.prepareVideoCameraPermission=async()=>{cameraRequests++;return true;};
-      __voipStackEngine.startHaSoftphone=async(_peer,_source,intent)=>{requests.push({receive:intent.receiveVideo,send:intent.sendVideo});return null;};
-      for(const [options,cameraEnabled,preference] of [
-        [{receiveVideo:false,sendVideo:false},true,true],
-        [{receiveVideo:true},false,true],
-        [{receiveVideo:true},true,true],
-        [{receiveVideo:false,sendVideo:true},true,false],
-        [{},true,true],
-        [{receiveVideo:true},true,false],
-      ]){
-        card._softphoneSnapshot={send_video:preference,video_camera_send_enabled:cameraEnabled};
-        await card._startHaSoftphoneCall({},0,'Peer with video',options);
+      const requests=[],scopes=[];let cameraRequests=0;
+      const engine=__voipStackEngine;
+      const original={prepareAudioCall:engine.prepareAudioCall,
+        prepareVideoCameraPermission:engine.prepareVideoCameraPermission,startHaSoftphone:engine.startHaSoftphone};
+      let result;
+      try {
+        engine.prepareAudioCall=async()=>{};
+        engine.prepareVideoCameraPermission=async()=>{cameraRequests++;return true;};
+        engine.startHaSoftphone=async(peer,source,intent)=>{
+          requests.push({receive:intent.receiveVideo,send:intent.sendVideo});
+          scopes.push({peer,device_id:source.device_id,endpoint_id:source.endpoint_id,
+            negotiation_fields:['codec','video_codec','sip_video_codec','payload_type','sdp'].filter(key=>key in intent)});
+          return null;
+        };
+        // Programmatic restrictions remain explicit. The single UI Call
+        // invokes default options, preserving automatic receive and camera intent.
+        for(const [options,cameraEnabled,preference] of [
+          [{receiveVideo:false,sendVideo:false},true,true],
+          [{receiveVideo:true},false,true],
+          [{receiveVideo:true},true,true],
+          [{receiveVideo:false,sendVideo:true},true,false],
+          [{},true,true],
+          [{receiveVideo:true},true,false],
+          [{},true,false],
+          [{},false,true],
+        ]){
+          card._softphoneSnapshot={send_video:preference,video_camera_send_enabled:cameraEnabled};
+          await card._startHaSoftphoneCall({},0,'Peer with video',options);
+        }
+        result={controls,requests,scopes,cameraRequests,
+          callLabel:view._els.callBtn.getAttribute('aria-label'),
+          callCount:view.shadowRoot.querySelectorAll('button[aria-label="Call"]').length,
+          removedVideoControl:!view._els.videoCallBtn && !view.shadowRoot.querySelector('button[aria-label="Video call"]')};
+      } finally {
+        Object.assign(engine,original);
+        view.remove();card.remove();
+        await engine.close('single-call-intent-test-complete');
       }
-      return {controls,requests,cameraRequests,
-        audioLabel:view._els.callBtn.getAttribute('aria-label'),
-        videoLabel:view._els.videoCallBtn.getAttribute('aria-label')};
+      result.cleanup={methods_restored:Object.keys(original).every(key=>engine[key]===original[key]),
+        audio_context:!!engine._audioSession.audioContext,ws:!!engine._ws,
+        pending:engine.mediaCleanupPending,view_connected:view.isConnected,card_connected:card.isConnected};
+      return result;
     }""")
-    assert observed["controls"] == [{"receiveVideo": False, "sendVideo": False}, {"receiveVideo": True}]
+    (tmp_path / "single-call-camera-intent.json").write_text(json.dumps(observed, indent=2))
+    assert observed["controls"] == [{"destination": "", "options": {}}]
     assert observed["requests"] == [
         {"receive": False, "send": False}, {"receive": True, "send": False},
         {"receive": True, "send": True}, {"receive": False, "send": True},
-        {"receive": False, "send": False}, {"receive": True, "send": False},
+        {"receive": True, "send": True}, {"receive": True, "send": False},
+        {"receive": True, "send": False}, {"receive": True, "send": False},
     ]
-    assert observed["cameraRequests"] == 2
-    assert observed["audioLabel"] == "Call" and observed["videoLabel"] == "Video call"
+    assert observed["scopes"] == [{"peer": "Peer with video", "device_id": "desk-device",
+        "endpoint_id": "Desk", "negotiation_fields": []}] * 8
+    assert observed["cameraRequests"] == 3
+    assert observed["callLabel"] == "Call" and observed["callCount"] == 1 and observed["removedVideoControl"]
+    assert observed["cleanup"] == {"methods_restored": True, "audio_context": False,
+        "ws": False, "pending": False, "view_connected": False, "card_connected": False}
+    assert page.evaluate("mics===0 && contexts===0")

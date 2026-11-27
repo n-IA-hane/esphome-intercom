@@ -124,6 +124,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
                 f"{case.name} backend available but independent oracle gap: {case.oracle_gap}"
             )
     lab = canonical_browser
+    endpoint_id = lab.browser_endpoint_id
     entry = config_entry(lab.hass)
     # Each optional codec is explicitly enabled for this isolated test only.
     data = {**entry.data, "video_codecs": []}
@@ -133,7 +134,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
         data["audio_codecs"] = [case.name]
     lab.hass.config_entries.async_update_entry(entry, data=data)
     assert "audio_codecs" not in lab.browser_subentry.data
-    effective = effective_codec_policy(lab.hass, endpoint_id="casa")
+    effective = effective_codec_policy(lab.hass, endpoint_id=endpoint_id)
     if mixed_defaults:
         assert set(effective.audio) == {
             "PCMU",
@@ -147,7 +148,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
         assert not effective.audio_ordered
     else:
         assert effective.audio == (case.name,)
-    lab.runtime.endpoints.update("casa", name="Home reception")
+    lab.runtime.endpoints.update(endpoint_id, name="Home reception")
     registrar = lab.calls.component("registrar")
     shared = lab.browser_subentry.data
     registrar.update_accounts(
@@ -217,7 +218,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
         commits = []
 
         def observe_commit(snapshot):
-            view = _ha_softphone_state(lab.hass, "casa")
+            view = _ha_softphone_state(lab.hass, endpoint_id)
             commits.append(
                 {
                     "call_id": snapshot.call_id,
@@ -273,7 +274,7 @@ async def test_shared_account_codec_winner_media_and_reuse(
                 await caller.established()
             await until(lambda: lab.calls.get_session(call_id).state == "in_call")
             session = lab.calls.get_session(call_id)
-            assert "casa" in session.endpoint_claims
+            assert endpoint_id in session.endpoint_claims
             assert (await public_phone(lab))["state"] == "in_call"
             source_frequency = 450 + cycle * 50
             destination_frequency = 750 + cycle * 50

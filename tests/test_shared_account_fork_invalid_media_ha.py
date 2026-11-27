@@ -45,12 +45,13 @@ async def test_failed_sip_contact_leaves_shared_card_answerable(
     bad_response,
 ):
     lab = canonical_browser
+    endpoint_id = lab.browser_endpoint_id
     case = CASES[0]
     entry = config_entry(lab.hass)
     lab.hass.config_entries.async_update_entry(
         entry, data={**entry.data, "audio_codecs": ["PCMU"], "video_codecs": []}
     )
-    lab.runtime.endpoints.update("casa", name="Home reception")
+    lab.runtime.endpoints.update(endpoint_id, name="Home reception")
     registrar = lab.calls.component("registrar")
     shared = lab.browser_subentry.data
     registrar.update_accounts(
@@ -115,8 +116,8 @@ async def test_failed_sip_contact_leaves_shared_card_answerable(
         assert ringing["card"]["callee"] == "Home reception"
         assert (await public_phone(lab))["state"] == "ringing"
         session = lab.calls.get_session(call_id)
-        assert session is not None and "casa" in session.endpoint_claims
-        assert session.legs["browser:casa"].state == "ringing"
+        assert session is not None and endpoint_id in session.endpoint_claims
+        assert session.legs[f"browser:{endpoint_id}"].state == "ringing"
         assert not caller.active
         await card.command("answer")
         await caller.established()

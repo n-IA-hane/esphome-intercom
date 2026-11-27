@@ -67,7 +67,7 @@ async def test_public_dialer_offers_explicit_l24_to_unknown_peer_without_options
             "video_codecs": [],
         },
     )
-    policy = effective_codec_policy(lab.hass, endpoint_id="casa")
+    policy = effective_codec_policy(lab.hass, endpoint_id=lab.browser_endpoint_id)
     assert policy.audio == ("L24",)
     assert "audio_codecs" not in lab.browser_subentry.data
     peer = NoOptionsPeer(next(case for case in CASES if case.name == "L24"))
@@ -187,7 +187,7 @@ async def test_unknown_l24_public_card_call_has_independent_duplex_media(
                 "video_codecs": [],
             },
         )
-    policy = effective_codec_policy(lab.hass, endpoint_id="casa")
+    policy = effective_codec_policy(lab.hass, endpoint_id=lab.browser_endpoint_id)
     assert policy.audio == ("L24",) and policy.audio_configured
     peer = NoOptionsPeer(next(case for case in CASES if case.name == "L24"))
     card = Card()

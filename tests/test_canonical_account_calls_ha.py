@@ -8,6 +8,7 @@ import pytest
 from custom_components.voip_stack.account_runtime import recompute_account_availability
 from custom_components.voip_stack.ha_bindings import HaCardBindings
 from custom_components.voip_stack.phone_config import migrate_browser_accounts, endpoint_from_subentry
+from custom_components.voip_stack.sip_account_identity import async_migrate_account_identities
 from custom_components.voip_stack.store import config_entry
 from .test_browser_logical_availability_ha import (
     logical_browser as logical_browser,
@@ -28,20 +29,25 @@ async def canonical_browser(logical_browser):
     entry = config_entry(fixture.hass)
     before = fixture.browser_subentry.subentry_id
     migrate_browser_accounts(fixture.hass, entry)
+    await async_migrate_account_identities(fixture.hass, entry)
     fixture.browser_subentry = entry.subentries[before]
     assert fixture.browser_subentry.data['kind'] == 'sip_account'
     # The transfer peer fixture creates independent runtime-only SIP accounts.
     # Replace only the migrated subject; a full config sync deliberately removes
     # those unconfigured peers and would test fixture deletion, not upgrade.
-    previous = fixture.runtime.endpoints.require('casa')
-    fixture.runtime.endpoints.upsert(replace(endpoint_from_subentry(entry, fixture.browser_subentry),
+    configured = endpoint_from_subentry(entry, fixture.browser_subentry)
+    previous = fixture.runtime.endpoints.require(configured.endpoint_id)
+    fixture.runtime.endpoints.upsert(replace(configured,
         device_id=previous.device_id, entity_ids=previous.entity_ids))
+    fixture.browser_endpoint_id = fixture.runtime.endpoints.require(configured.endpoint_id).endpoint_id
+    assert fixture.browser_endpoint_id == configured.endpoint_id
+    assert fixture.browser_endpoint_id == fixture.browser_subentry.data['username']
     bindings = HaCardBindings(fixture.hass, entry, fixture.runtime,
         lambda ids: recompute_account_availability(fixture.hass, ids))
     fixture.runtime.ha_bindings = bindings
     await bindings.async_start()
     recompute_account_availability(fixture.hass)
-    assert fixture.runtime.endpoints.require('casa').availability.value == 'available'
+    assert fixture.runtime.endpoints.require(fixture.browser_endpoint_id).availability.value == 'available'
     yield fixture
     await bindings.async_close()
 

@@ -112,7 +112,7 @@ with sync_playwright() as runner:
             page.evaluate("""() => {
               let count = 0;
               const snapshot = () => ({call: engine._callId,
-                claim: engine.softphoneCallIdFor('casa'), attach: engine._sessionAttachKey?.callKey,
+                claim: engine.softphoneCallIdFor(card._softphoneSnapshot?.endpoint_id), attach: engine._sessionAttachKey?.callKey,
                 cleanup: !!engine._mediaCleanupPromise, socket: engine._ws?.readyState,
                 direction:engine._audioDirection, mode:engine._audioMode,
                 capture:!!engine._audioSession.captureNode, stream:!!engine._audioSession.mediaStream});

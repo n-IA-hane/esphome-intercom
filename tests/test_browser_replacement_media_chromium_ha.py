@@ -35,6 +35,7 @@ async def test_real_card_adopts_replaces_successor_with_duplex_pcm_and_reuse(
     canonical_browser, registered_phones, hass_ws_client, hass_admin_user, tmp_path, monkeypatch,
 ):
     runtime = canonical_browser
+    endpoint_id = runtime.browser_endpoint_id
     receive_video = bool(runtime.runtime.transport_config.get('experimental_sip_video'))
     caller, operator = registered_phones[1], registered_phones[0]
     card, spectator = Card(), Card()
@@ -77,7 +78,7 @@ async def test_real_card_adopts_replaces_successor_with_duplex_pcm_and_reuse(
         offset = len(operator.read())
         await asyncio.to_thread(operator.command, f'/atransferstart sip:221@127.0.0.1:{runtime.runtime.transport_config["sip_port"]}')
         await card.command('wait-answer')
-        old_id = runtime.runtime.endpoints.require('casa').active_call_id
+        old_id = runtime.runtime.endpoints.require(endpoint_id).active_call_id
         await card.command('answer')
         await until(lambda: 'Call established' in operator.read()[offset:])
         async with asyncio.timeout(8):
@@ -126,13 +127,13 @@ async def test_real_card_adopts_replaces_successor_with_duplex_pcm_and_reuse(
                     await asyncio.sleep(.03)
             assert after['card']['videoActive']
             assert after['card']['video'].get('sent', 0) == 0
-            assert f'casa|{old_id}' not in runtime.runtime.media.owners_for('video')
-            assert f'casa|{successor.call_id}' in runtime.runtime.media.owners_for('video')
+            assert f'{endpoint_id}|{old_id}' not in runtime.runtime.media.owners_for('video')
+            assert f'{endpoint_id}|{successor.call_id}' in runtime.runtime.media.owners_for('video')
             evidence['media']['video'] = after['card']['video']
         watching = await spectator.command('stats')
         assert watching['media_connections'] == 0 and not watching['card']['ownedCallId']
-        assert f'casa|{old_id}' not in runtime.runtime.media.owners_for('audio')
-        assert f'casa|{successor.call_id}' in runtime.runtime.media.owners_for('audio')
+        assert f'{endpoint_id}|{old_id}' not in runtime.runtime.media.owners_for('audio')
+        assert f'{endpoint_id}|{successor.call_id}' in runtime.runtime.media.owners_for('audio')
         await card.command('hangup')
         await until(lambda: not runtime.calls.sessions)
         await until(lambda: resources(runtime)['call_scoped_quiescent'])
@@ -150,7 +151,7 @@ async def test_real_card_adopts_replaces_successor_with_duplex_pcm_and_reuse(
         await asyncio.to_thread(registered_phones[2].command, '/dial 221')
         await card.command('wait-answer')
         await card.command('answer')
-        await until(lambda: runtime.runtime.endpoints.require('casa').active_call_id)
+        await until(lambda: runtime.runtime.endpoints.require(endpoint_id).active_call_id)
         await card.command('hangup')
         await until(lambda: not runtime.calls.sessions)
         await until(lambda: resources(runtime)['call_scoped_quiescent'])
@@ -160,8 +161,8 @@ async def test_real_card_adopts_replaces_successor_with_duplex_pcm_and_reuse(
         evidence['http_errors'] = getattr(card, 'http_errors', [])
         from custom_components.voip_stack.browser_phone_projection import _ha_softphone_state
         from custom_components.voip_stack.browser_phone_data import _ha_softphone_store
-        evidence['native_snapshot'] = _ha_softphone_state(runtime.hass, 'casa')
-        evidence['raw_store'] = dict(_ha_softphone_store(runtime.hass, 'casa'))
+        evidence['native_snapshot'] = _ha_softphone_state(runtime.hass, endpoint_id)
+        evidence['raw_store'] = dict(_ha_softphone_store(runtime.hass, endpoint_id))
         (tmp_path / 'REPLACES_CHROMIUM.json').write_text(json.dumps(evidence, indent=2))
         for peer in registered_phones:
             if peer.proc.poll() is None:
