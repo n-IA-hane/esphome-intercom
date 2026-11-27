@@ -316,6 +316,10 @@ async def lab(hass, monkeypatch, socket_enabled):
     roster[:] = [*compose_directory_entries(hass, [], registrar.registered_roster_entries()), *automation]
     runtime.directory.replace(roster)
     yield obj
+    # This manual runtime does not install the entry's normal shutdown hooks.
+    # Close its shielded directory work before cancelling the SIP wrappers.
+    if runtime.phonebook is not None:
+        await runtime.phonebook.async_close()
     from custom_components.voip_stack.endpoint_session import TerminationIntent
     for session in list(calls.sessions.values()):
         await calls.request_termination(session.call_id, TerminationIntent("test_done"))
