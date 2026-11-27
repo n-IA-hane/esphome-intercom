@@ -742,28 +742,39 @@ def test_retired_output_chooser_cannot_route_a_replacement_call(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
-def test_card_camera_intent_preserves_unknown_destination_video_contract():
+def test_card_camera_intent_preserves_unknown_destination_video_contract(tmp_path):
     """The real card and engine must send the user's intent to the public RPC."""
+    import json
+
     pytest.importorskip("playwright.async_api")
 
     async def check(context, base):
+        # One Call action requests permitted remote video automatically. The
+        # saved Send video preference controls only local camera transmission.
         scenarios = [
             (None, ["audio", "dtmf"], True, True, True),
             (None, ["audio", "dtmf"], False, True, False),
             ("", ["audio", "dtmf"], True, False, False),
-            ("", ["audio", "dtmf"], True, True, True),
+            ("", ["audio", "dtmf"], False, False, False),
             ("jpeg", ["audio", "dtmf"], True, True, True),
             (None, ["audio", "dtmf", "video"], True, True, True),
             ("__absent__", ["audio", "video"], True, True, True),
             ("", ["audio", "video"], True, False, False),
-            ("", ["audio", "video"], True, True, True),
+            ("", ["audio", "video"], False, False, False),
         ]
-        for codec, capabilities, camera_intent, video_call, expected in scenarios:
+        receipts = []
+        for codec, capabilities, camera_intent, receive_video, send_video in scenarios:
             page = await open_engine(context, base)
+            page.set_default_timeout(5000)
+            receipt = {"codec": codec, "capabilities": capabilities, "camera_intent": camera_intent}
             try:
                 await page.evaluate("""async ({codec, capabilities, cameraIntent}) => {
                     await import('/voip-stack/voip-stack-card.js');
-                    window.rpcCalls=[];
+                    window.rpcCalls=[];window.gumStreams=[];
+                    const getUserMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+                    navigator.mediaDevices.getUserMedia=async constraints=>{
+                        const stream=await getUserMedia(constraints);gumStreams.push(stream);return stream;
+                    };
                     const hass={language:'en',user:{is_admin:true},config:{location_name:'Home'},states:{},
                         connection:{subscribeMessage:async()=>()=>{}},
                         callWS:async request=>{
@@ -786,24 +797,41 @@ def test_card_camera_intent_preserves_unknown_destination_video_contract():
                     document.body.append(card);
                 }""", {"codec": codec, "capabilities": capabilities, "cameraIntent": camera_intent})
                 assert await page.evaluate("card._els.destSelect.selectedOptions[0].textContent") == "Registered phone"
-                # The explicit control supplies intent; discovery metadata does
-                # not negotiate the PBX's final SDP or enable the camera.
-                await page.get_by_role("button", name="Video call" if video_call else "Call", exact=True).click()
-                await page.wait_for_function("rpcCalls.length === 1")
+                assert await page.get_by_role("button", name="Call", exact=True).count() == 1
+                assert await page.get_by_role("button", name="Video call", exact=True).count() == 0
+                await page.get_by_role("button", name="Call", exact=True).click()
+                await page.wait_for_function("rpcCalls.length === 1 && !card._starting")
                 request = await page.evaluate("rpcCalls[0]")
-                assert request["service_data"]["send_video"] is expected, {
+                receipt["request"] = request
+                assert request["service_data"]["send_video"] is send_video, {
                     "codec": codec, "capabilities": capabilities,
-                    "camera_intent": camera_intent, "video_call": video_call, "request": request,
+                    "camera_intent": camera_intent, "request": request,
                 }
-                assert request["service_data"]["receive_video"] is video_call
+                assert request["service_data"]["receive_video"] is receive_video
+                # These are user intent flags. The backend negotiator remains
+                # authoritative for the final codec, payload and SDP contract.
+                assert not {"codec", "video_codec", "sip_video_codec", "payload_type", "sdp"}.intersection(request["service_data"])
                 # SIP accounts dial their public username while retaining the
                 # readable name in the contact selector.
                 assert request["service_data"]["destination"] == "registered-target"
                 assert request["service_data"]["device_id"] == "browser-device"
                 assert request["service_data"]["media_client_id"] == await page.evaluate("engine.mediaClientId")
+                assert await page.evaluate("gumStreams.length > 0"), "The native browser microphone was not prepared"
             finally:
-                await page.evaluate("async()=>{card.remove();await engine.close('test-complete')}")
-                await page.close()
+                try:
+                    async with asyncio.timeout(5):
+                        await page.evaluate("async()=>{window.card?.remove();await engine.close('test-complete')}")
+                        receipt["cleanup"] = await page.evaluate("""() => ({
+                            tracks_ended:gumStreams.every(stream=>stream.getTracks().every(track=>track.readyState==='ended')),
+                            audio_context:!!engine._audioSession.audioContext,ws:!!engine._ws,
+                            media_cleanup_pending:engine.mediaCleanupPending,card_connected:!!window.card?.isConnected})""")
+                        assert receipt["cleanup"] == {"tracks_ended": True, "audio_context": False,
+                            "ws": False, "media_cleanup_pending": False, "card_connected": False}
+                finally:
+                    async with asyncio.timeout(5):
+                        await page.close()
+                    receipts.append(receipt)
+                    (tmp_path / "camera-intent-rpc.json").write_text(json.dumps(receipts, indent=2))
 
     asyncio.run(browser_session(check))
 
