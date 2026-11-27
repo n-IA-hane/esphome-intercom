@@ -24,7 +24,7 @@
           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
           "rtp_port": "Basis-RTP-UDP-Port für HA-Medien und Relays.",
           "advertise_host": "Optionale Überschreibung für die in ESP-Telefonbüchern veröffentlichte Adresse. Nützlich, wenn sich HA hinter Routing, NAT, LXC, VPN oder mehreren Subnetzen befindet und die automatisch angekündigte Adresse für ESP-Geräte nicht erreichbar ist.",
-          "assist_intents": "Optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen registrieren (z. B. „Hey Jarvis, Kitchen anrufen“). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
+          "assist_intents": "Optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen registrieren (z. B. \"Hey Jarvis, Kitchen anrufen\"). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
           "assist_endpoint_enabled": "Fügt eine SIP-Nebenstelle hinzu, die direkt von einer Home Assistant Assist-Pipeline bedient wird. Es ist keine separate VoIP-Integration oder ein SIP-Listener erforderlich.",
           "debug_mode": "Ergänzt Details zu SIP, RTP und Medien. Für das Anrufrouting auf der Integrationsseite von VoIP Stack die Debug-Protokollierung aktivieren.",
           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
@@ -92,12 +92,12 @@
         },
         "data_description": {
           "video_transcoding_enabled": "VoIP Stack kann die FFmpeg-Binärdatei von Home Assistant verwenden, wenn zwei ausgehandelte Videoabschnitte keine direkte Codec-Übereinstimmung haben. Direktes H.264, VP8 und JPEG bleiben bevorzugt. Der begrenzte Fallback kann Legacy-Videos für das HA-Softphone und H.264 oder JPEG zwischen HA-eigenen SIP-Strecken konvertieren. Beim Browser-JPEG-Versand kann auch ein begrenzter RFC 2435-Normalisierer verwendet werden. Bei einem Fehler bleibt kompatibles Audio aktiv.",
-          "video_camera_send_enabled": "Auf der Karte die Option „Kamera senden“ bereitstellen. Jedes logische Home Assistant-Telefon behält seine Auswahl; die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist kein Kamerazugriff erforderlich."
+          "video_camera_send_enabled": "Auf der Karte die Option \"Kamera senden\" bereitstellen. Jedes logische Home Assistant-Telefon behält seine Auswahl; die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist kein Kamerazugriff erforderlich."
         }
       },
       "assist": {
         "title": "Sprachassistent-Nebenstelle",
-        "description": "SIP-Nebenstelle und Home Assistant Assist-Pipeline für Telefonanrufe auswählen. Bei aktivierten erweiterten Anrufdetails startet VoIP Stack das Gespräch mit einer Benutzernachricht wie „Eingehender SIP-Anruf von Daniele.“ Das Telefonverhalten lässt sich in den Anweisungen oder im Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren festlegen. Beispielanweisungen: „Nachrichten, die mit Eingehender SIP-Anruf von beginnen, als Live-Telefonanruf behandeln. Den Anrufer einmal begrüßen, wie eine prägnante Empfangskraft agieren und den Namen nicht in jeder Antwort wiederholen.“ Freundliche Stimmung: „Bei SIP-Anrufen fröhlich und informell, zugleich prägnant und hilfsbereit bleiben.“ Negativbeispiel: „Hallo. Kein Interesse – viel Glück auf eigene Faust.“",
+        "description": "SIP-Nebenstelle und Home Assistant Assist-Pipeline für Telefonanrufe auswählen. Bei aktivierten erweiterten Anrufdetails startet VoIP Stack das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Das Telefonverhalten lässt sich in den Anweisungen oder im Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren festlegen. Beispielanweisungen: \"Nachrichten, die mit Eingehender SIP-Anruf von beginnen, als Live-Telefonanruf behandeln. Den Anrufer einmal begrüßen, wie eine prägnante Empfangskraft agieren und den Namen nicht in jeder Antwort wiederholen.\" Freundliche Stimmung: \"Bei SIP-Anrufen fröhlich und informell, zugleich prägnant und hilfsbereit bleiben.\" Negativbeispiel: \"Hallo. Kein Interesse – viel Glück auf eigene Faust.\"",
         "data": {
           "assist_extension": "Sprachassistent-Nebenstelle",
           "assist_pipeline": "Pipeline für Sprachassistenten",
@@ -1397,7 +1397,7 @@
     },
     "default_trunk_missing": {
       "title": "Standardleitung für ausgehende SIP-Anrufe auswählen",
-      "description": "Es ist kein vorhandener Trunk als Standard ausgewählt. Unter VoIP Stack die gewünschte Leitung neu konfigurieren und „Als Standard für ausgehende Anrufe verwenden“ aktivieren. Alternativ lässt sich eine Leitung in den Telefonoptionen oder in der Anrufaktion auswählen. Beim Löschen einer Leitung wird niemals automatisch ein anderer Anbieter ausgewählt."
+      "description": "Es ist kein vorhandener Trunk als Standard ausgewählt. Unter VoIP Stack die gewünschte Leitung neu konfigurieren und \"Als Standard für ausgehende Anrufe verwenden\" aktivieren. Alternativ lässt sich eine Leitung in den Telefonoptionen oder in der Anrufaktion auswählen. Beim Löschen einer Leitung wird niemals automatisch ein anderer Anbieter ausgewählt."
     },
     "duplicate_extensions": {
       "title": "Doppelte Nebenstellennummern",
@@ -3455,7 +3455,7 @@
         },
         "expected_generation": {
           "name": "Anrufgeneration",
-          "description": "Nur bei einer expliziten call_id erforderlich. Die von der Aktion „Anruf“ zurückgegebene Generation verwenden."
+          "description": "Nur bei einer expliziten call_id erforderlich. Die von der Aktion \"Anruf\" zurückgegebene Generation verwenden."
         },
         "device_id": {
           "name": "Telefon für die manuelle Ausführung",
@@ -3610,7 +3610,7 @@
       "fields": {
         "mailbox": {
           "name": "Anrufbeantworter",
-          "description": "Beim Auslöser „Voicemail empfangen“ optional. Andernfalls zusätzlich die Nachrichten-ID angeben."
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Andernfalls zusätzlich die Nachrichten-ID angeben."
         },
         "message_id": {
           "name": "Nachrichten-ID",
@@ -3620,15 +3620,15 @@
     },
     "transcribe_voicemail": {
       "name": "Voicemail transkribieren",
-      "description": "Die gespeicherte Nachricht aus dem Auslöser „Voicemail empfangen“ in Text umwandeln. Alternativ lassen sich Mailbox und Nachrichten-ID explizit auswählen. Eine bestehende Entität für Spracherkennung in Home Assistant auswählen. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
+      "description": "Die gespeicherte Nachricht aus dem Auslöser \"Voicemail empfangen\" in Text umwandeln. Alternativ lassen sich Mailbox und Nachrichten-ID explizit auswählen. Eine bestehende Entität für Spracherkennung in Home Assistant auswählen. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
       "fields": {
         "mailbox": {
           "name": "Anrufbeantworter",
-          "description": "Beim Auslöser „Voicemail empfangen“ optional. Andernfalls zusätzlich die Nachrichten-ID angeben."
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Andernfalls zusätzlich die Nachrichten-ID angeben."
         },
         "message_id": {
           "name": "Nachrichten-ID",
-          "description": "Beim Auslöser „Voicemail empfangen“ optional. Die gespeicherte Nachricht anhand ihrer Nachrichten-ID auswählen."
+          "description": "Beim Auslöser \"Voicemail empfangen\" optional. Die gespeicherte Nachricht anhand ihrer Nachrichten-ID auswählen."
         },
         "stt_entity_id": {
           "name": "Entität für Spracherkennung"
