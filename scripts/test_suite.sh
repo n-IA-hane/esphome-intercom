@@ -446,6 +446,7 @@ ha_tests=(
   tests/test_repair_canonical_limits_ha.py
   tests/test_migration_preflight_recovery_ha.py
   tests/test_duration_runtime_requirements_ha.py
+  tests/test_unlimited_duration_policy_ha.py
   tests/test_parking_policy_cutover_ha.py
   tests/test_sip_admission_hardening_ha.py
   tests/test_trunk_destination_projection_ha.py
