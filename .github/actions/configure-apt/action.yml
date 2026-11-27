@@ -1,5 +1,5 @@
 name: Configure hosted Ubuntu APT
-description: Bound APT acquisition and prefer a verified mirror without replacing provider sources.
+description: Select signed Ubuntu archives for job dependencies while preserving provider source files and bounded acquisition.
 runs:
   using: composite
   steps:
@@ -53,7 +53,24 @@ runs:
             output.insert(0, mirror + b"\tpriority:0\n")
         path.write_bytes(b"".join(output))
         PY
+        # Our build/capture packages come from Ubuntu, not the runner image's
+        # Microsoft or other vendor feeds. A vendor HTTP 403 must not prevent
+        # their installation. Copy source entries without editing those feeds.
+        ubuntu_apt=$(mktemp -d "${RUNNER_TEMP:?}/voip-stack-apt.XXXXXX")
+        . /etc/os-release
+        python3 "${GITHUB_ACTION_PATH}/select_ubuntu_sources.py" \
+          --apt-root /etc/apt --codename "${VERSION_CODENAME:?}" --output "$ubuntu_apt"
+        # sudo resets APT_CONFIG, including in `sudo env DEBIAN_FRONTEND=...`.
+        # This job-owned drop-in selects only the copied Ubuntu sources for
+        # every APT invocation. Original source files and signature/TLS policy
+        # stay intact; the disposable hosted VM owns this configuration.
+        sudo install -m 0644 "$ubuntu_apt/apt.conf" /etc/apt/apt.conf.d/zz-voip-stack-sources
         echo 'Effective APT acquisition configuration'
         apt-config dump Acquire::Retries Acquire::http::Timeout Acquire::https::Timeout
+        echo 'Effective job APT sources'
+        apt-config dump Dir::Etc::sourcelist Dir::Etc::sourceparts
+        test "$(apt-config shell selected_list Dir::Etc::sourcelist)" = "selected_list='$ubuntu_apt/empty.list'"
+        test "$(apt-config shell selected_parts Dir::Etc::sourceparts)" = "selected_parts='$ubuntu_apt/sources.list.d'"
+        cat "$ubuntu_apt/selection.json"
         echo 'Effective Ubuntu mirror list'
         cat /etc/apt/apt-mirrors.txt
