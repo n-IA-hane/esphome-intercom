@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from builtins import BaseExceptionGroup
 from collections.abc import Mapping
+from copy import deepcopy
 from inspect import signature
 import logging
 import math
@@ -208,6 +209,85 @@ class AccountMigrationRetryRepairFlow(AccountMigrationRepairFlow):
 
     async def async_step_init(self, user_input=None):
         return await self.async_step_confirm(user_input)
+
+
+def async_sync_trunk_migration_source_issue(hass, entry, *, blocked=False):
+    """Expose overlapping migration sources through their existing native owner."""
+    issue_id = "trunk_migration_source_conflict_" + entry.entry_id
+    if not blocked:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(hass, DOMAIN, issue_id, config_entry_id=entry.entry_id,
+        is_fixable=True, is_persistent=True, severity=ir.IssueSeverity.ERROR,
+        translation_key="trunk_migration_source_conflict",
+        translation_placeholders={"entry": entry.title}, data={"entry_id": entry.entry_id})
+
+
+class TrunkMigrationSourceRepairFlow(RepairsFlow):
+    """Retain both static definitions while explicitly disabling one source owner."""
+
+    def __init__(self, entry_id):
+        self.entry_id = entry_id
+        self._snapshot = None
+
+    async def async_step_init(self, user_input=None):
+        from .trunk_config import legacy_trunk_source_conflicts
+
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        conflicts = legacy_trunk_source_conflicts(entry)
+        if not conflicts:
+            async_sync_trunk_migration_source_issue(self.hass, entry)
+            return self.async_create_entry(data={})
+        snapshot = deepcopy((dict(entry.data), {row.subentry_id: dict(row.data)
+                                               for row in entry.subentries.values()}))
+        choices = [{"value": "legacy", "label": entry.title},
+                   *({"value": row.subentry_id, "label": row.title} for row in conflicts)]
+        errors = {}
+        if user_input is not None:
+            if snapshot != self._snapshot or user_input.get("line") not in {row["value"] for row in choices}:
+                errors["base"] = "configuration_changed"
+            else:
+                try:
+                    if user_input["line"] == "legacy":
+                        self.hass.config_entries.async_update_entry(entry,
+                            data={**entry.data, "trunk_enabled": False})
+                    else:
+                        row = entry.subentries[user_input["line"]]
+                        self.hass.config_entries.async_update_subentry(entry, row,
+                            data={**row.data, "trunk_enabled": False})
+                except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError):
+                    errors["base"] = "save_failed"
+                else:
+                    return await self.async_step_confirm({})
+        self._snapshot = snapshot
+        return self.async_show_form(step_id="init", errors=errors, data_schema=vol.Schema({
+            vol.Required("line"): SelectSelector(SelectSelectorConfig(options=choices, mode="dropdown")),
+        }), description_placeholders={"entry": entry.title})
+
+    async def async_step_confirm(self, user_input=None):
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        if entry is None:
+            return self.async_create_entry(data={})
+        errors = {}
+        if user_input is not None:
+            try:
+                if entry.state is ConfigEntryState.MIGRATION_ERROR:
+                    await self.hass.config_entries.async_retry_migration(entry.entry_id)
+                elif entry.state is ConfigEntryState.NOT_LOADED:
+                    await self.hass.config_entries.async_setup(entry.entry_id)
+                else:
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+            except (HomeAssistantError, OSError, ValueError, TypeError, RuntimeError):
+                errors["base"] = "migration_retry_failed"
+            else:
+                if entry.state is ConfigEntryState.LOADED:
+                    async_sync_trunk_migration_source_issue(self.hass, entry)
+                    return self.async_create_entry(data={})
+                errors["base"] = "migration_retry_failed"
+        return self.async_show_form(step_id="confirm", errors=errors, data_schema=vol.Schema({}),
+                                    description_placeholders={"entry": entry.title})
 
 
 def _repair_number(value, *, integer=False):
@@ -469,6 +549,8 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
 
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data) -> RepairsFlow:
     """Create the native retry flow only for an account migration conflict."""
+    if issue_id.startswith("trunk_migration_source_conflict_") and data is not None:
+        return TrunkMigrationSourceRepairFlow(str(data["entry_id"]))
     if issue_id.startswith("duration_configuration_invalid_") and data is not None:
         return DurationMigrationRepairFlow(str(data["entry_id"]))
     if issue_id.startswith("account_migration_failed_") and data is not None:

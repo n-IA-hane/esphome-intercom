@@ -107,7 +107,7 @@ async def test_issue_present_only_in_memory_keeps_crash_recovery_journal(hass):
     assert entry.data[PENDING_TRUNK_MENU_NOTICES] == [row.subentry_id]
 
 
-@pytest.mark.parametrize("unconfirmed", ["wrong-owner", "not-persistent", "future-schema", "malformed"])
+@pytest.mark.parametrize("unconfirmed", ["wrong-owner", "not-persistent", "future-schema", "future-minor", "malformed"])
 async def test_unconfirmed_disk_record_does_not_acknowledge_notice(hass, unconfirmed):
     from custom_components.voip_stack import async_migrate_entry
     from custom_components.voip_stack.trunk_config import PENDING_TRUNK_MENU_NOTICES
@@ -122,6 +122,8 @@ async def test_unconfirmed_disk_record_does_not_acknowledge_notice(hass, unconfi
         issue["is_persistent"] = False
     elif unconfirmed == "future-schema":
         payload["version"] += 1
+    elif unconfirmed == "future-minor":
+        payload["minor_version"] += 1
     path = Path(hass.config.path(".storage", ir.STORAGE_KEY))
     path.parent.mkdir(exist_ok=True)
     path.write_text("broken-json" if unconfirmed == "malformed" else json.dumps(payload))
@@ -171,3 +173,48 @@ async def test_new_journal_entry_is_preserved_when_configuration_changes_during_
     assert later is not None
     assert entry.data[PENDING_TRUNK_MENU_NOTICES] == [later.subentry_id]
     assert entry.data["concurrent_setting"] == "preserved"
+
+
+async def test_issue_changed_during_storage_read_keeps_recovery_journal(hass, monkeypatch):
+    from homeassistant.util.json import load_json
+    from custom_components.voip_stack.trunk_config import async_complete_trunk_menu_notices, PENDING_TRUNK_MENU_NOTICES
+
+    entry, row, issue_id = await pending_notice(hass)
+    registry = ir.async_get(hass)
+    await flush_store(registry._store)
+    original_executor = hass.async_add_executor_job
+
+    async def read_then_ignore(target, *args, **kwargs):
+        result = await original_executor(target, *args, **kwargs)
+        if target is load_json:
+            registry.async_ignore("voip_stack", issue_id, True)
+        return result
+
+    monkeypatch.setattr(hass, "async_add_executor_job", read_then_ignore)
+    await async_complete_trunk_menu_notices(hass, entry)
+    assert entry.data[PENDING_TRUNK_MENU_NOTICES] == [row.subentry_id]
+    assert registry.async_get_issue("voip_stack", issue_id).dismissed_version is not None
+
+
+async def test_replaced_entry_during_storage_read_cannot_acknowledge_old_owner(hass, monkeypatch):
+    from homeassistant.util.json import load_json
+    from custom_components.voip_stack.trunk_config import async_complete_trunk_menu_notices, PENDING_TRUNK_MENU_NOTICES
+
+    entry, row, _ = await pending_notice(hass)
+    await flush_store(ir.async_get(hass)._store)
+    original_executor = hass.async_add_executor_job
+    original_lookup = hass.config_entries.async_get_entry
+    replacement = MockConfigEntry(domain="voip_stack", entry_id=entry.entry_id, version=7, minor_version=7,
+                                  data={"unrelated": "replacement"})
+
+    async def read_then_replace(target, *args, **kwargs):
+        result = await original_executor(target, *args, **kwargs)
+        if target is load_json:
+            monkeypatch.setattr(hass.config_entries, "async_get_entry",
+                lambda identity: replacement if identity == entry.entry_id else original_lookup(identity))
+        return result
+
+    monkeypatch.setattr(hass, "async_add_executor_job", read_then_replace)
+    await async_complete_trunk_menu_notices(hass, entry)
+    assert entry.data[PENDING_TRUNK_MENU_NOTICES] == [row.subentry_id]
+    assert replacement.data == {"unrelated": "replacement"}

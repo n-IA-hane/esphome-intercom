@@ -58,6 +58,58 @@ def _legacy_trunk_is_empty(data) -> bool:
     )
 
 
+def _migration_trunk_config(data):
+    """Leave the newer probe field for the current policy preflight/Repair."""
+    from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL
+
+    config = normalized_trunk_config({key: value for key, value in data.items()
+                                      if key != TRUNK_OPTIONS_INTERVAL})
+    if TRUNK_OPTIONS_INTERVAL in data:
+        config[TRUNK_OPTIONS_INTERVAL] = data[TRUNK_OPTIONS_INTERVAL]
+    return config
+
+
+def _legacy_trunk_matches(parent, record):
+    from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL
+
+    config = _migration_trunk_config(parent)
+    candidate = _migration_trunk_config(record.data)
+    if TRUNK_OPTIONS_INTERVAL not in parent:
+        candidate.pop(TRUNK_OPTIONS_INTERVAL, None)
+    # Selecting a default is not identity evidence. Compare the definition and
+    # any unrecognized parent fields before adopting an existing native owner.
+    return candidate == config and all(
+        record.data.get(key) == value for key, value in parent.items()
+        if key.startswith("trunk_") and key not in config and key not in LEGACY_TRUNK_MENU_KEYS
+        and key not in {"trunk_id", "trunk_inbound_unknown_target", PENDING_TRUNK_MENU_NOTICES}
+    )
+
+
+def legacy_trunk_source_conflicts(entry):
+    """Return native owners whose enabled static source rules overlap the parent."""
+    from .trunk_policy import trusted_networks
+
+    if "trunk_enabled" not in entry.data:
+        return []
+    parent = _migration_trunk_config(entry.data)
+    if (not parent["trunk_enabled"] or parent["trunk_register"] or parent["trunk_inbound_account"]):
+        return []
+    records = trunk_subentries(entry)
+    if any(_legacy_trunk_matches(entry.data, row) for row in records):
+        return []
+    networks = trusted_networks(parent["trunk_allowed_ips"])
+    conflicts = []
+    for row in records:
+        config = _migration_trunk_config(row.data)
+        if (not config["trunk_enabled"] or config["trunk_register"] or config["trunk_inbound_account"]
+                or config["trunk_transport"] != parent["trunk_transport"]):
+            continue
+        if any(left.version == right.version and left.overlaps(right)
+               for left in networks for right in trusted_networks(config["trunk_allowed_ips"])):
+            conflicts.append(row)
+    return conflicts
+
+
 def migrate_legacy_trunk(hass, entry) -> None:
     """Move the former parent-entry trunk into a stable native record once."""
     from uuid import uuid4
@@ -75,34 +127,52 @@ def migrate_legacy_trunk(hass, entry) -> None:
         hass.config_entries.async_update_entry(entry, data=parent)
         return
 
-    # The old 6.2 ownership move runs before the current policy preflight.
-    # Preserve a saved probe value verbatim so that preflight can report an
-    # invalid choice through Repairs instead of aborting this earlier step,
-    # including a native record already present after an interrupted move.
-    def migration_config(data):
-        config = normalized_trunk_config({key: value for key, value in data.items()
-                                          if key != TRUNK_OPTIONS_INTERVAL})
-        if TRUNK_OPTIONS_INTERVAL in data:
-            config[TRUNK_OPTIONS_INTERVAL] = data[TRUNK_OPTIONS_INTERVAL]
-        return config
-
     records = trunk_subentries(entry)
-    configs = {str(item.data.get("trunk_id") or item.subentry_id): migration_config(item.data)
+    configs = {str(item.data.get("trunk_id") or item.subentry_id): _migration_trunk_config(item.data)
                for item in records}
     if len(configs) != len(records):
         raise ValueError("Trunk identities must be unique")
     validate_static_trunk_sources(configs)
+    if legacy_trunk_source_conflicts(entry):
+        from .repairs import async_sync_trunk_migration_source_issue
+
+        async_sync_trunk_migration_source_issue(hass, entry, blocked=True)
+        raise ValueError("Legacy and native static trunks have overlapping source rules")
     selected = entry_default_trunk(entry, configs)
-    current = next((item for item in records
-                    if str(item.data.get("trunk_id") or item.subentry_id) == selected), None)
-    config = migration_config(entry.data)
+    config = _migration_trunk_config(entry.data)
+    legacy_id = entry.data.get("trunk_id")
+    if legacy_id is not None and (not isinstance(legacy_id, str) or not legacy_id.strip()):
+        raise ValueError("Invalid legacy trunk identity")
+    matches = [record for record in records if _legacy_trunk_matches(entry.data, record)]
+    identified = next((record for record in records
+                       if str(record.data.get("trunk_id") or record.subentry_id) == legacy_id), None)
+    if identified is not None and identified in matches:
+        current = identified
+    elif len(matches) == 1:
+        current = matches[0]
+    else:
+        current = next((record for record in matches
+                        if str(record.data.get("trunk_id") or record.subentry_id) == selected), None)
+        if matches and current is None:
+            current = min(matches, key=lambda record: record.subentry_id)
     if current is not None and TRUNK_OPTIONS_INTERVAL in current.data:
         # A parent saved by the old schema may not know this newer field.
         config.setdefault(TRUNK_OPTIONS_INTERVAL, current.data[TRUNK_OPTIONS_INTERVAL])
-    identity = selected if current is not None else uuid4().hex
+    identity = (str(current.data.get("trunk_id") or current.subentry_id) if current is not None
+                else legacy_id if legacy_id and legacy_id not in configs else uuid4().hex)
     title = current.title if current is not None else "SIP trunk"
-    data = {**config, **{key: value for key, value in entry.data.items()
-                       if key in LEGACY_TRUNK_MENU_KEYS}, "trunk_id": identity, "name": title}
+    if current is None:
+        data = {**config, **{key: value for key, value in entry.data.items()
+                            if key.startswith("trunk_") and key != PENDING_TRUNK_MENU_NOTICES},
+                "trunk_id": identity, "name": title}
+        if legacy_id and identity != legacy_id:
+            data["legacy_trunk_id"] = legacy_id
+    else:
+        # Equivalence allows retiring the parent without replacing the native
+        # record's literal settings, extension metadata or stable identity.
+        data = {**current.data, **{key: value for key, value in entry.data.items()
+                                  if key in LEGACY_TRUNK_MENU_KEYS}}
+    validate_static_trunk_sources({**configs, identity: _migration_trunk_config(data)})
     # Disabled is saved configuration, not permission to discard the line.
     if current is None:
         hass.config_entries.async_add_subentry(entry, ConfigSubentry(
@@ -110,9 +180,14 @@ def migrate_legacy_trunk(hass, entry) -> None:
         ))
     else:
         hass.config_entries.async_update_subentry(entry, current, data=data)
-    if config["trunk_enabled"] or current is not None or CONF_DEFAULT_TRUNK not in entry.data:
-        parent[CONF_DEFAULT_TRUNK] = identity
+    if CONF_DEFAULT_TRUNK not in entry.data:
+        # Materializing a second provider must preserve the previously implicit
+        # choice as well. An explicit choice, including empty, is never changed.
+        parent[CONF_DEFAULT_TRUNK] = selected or (identity if not records else "")
     hass.config_entries.async_update_entry(entry, data=parent)
+    from .repairs import async_sync_trunk_migration_source_issue
+
+    async_sync_trunk_migration_source_issue(hass, entry)
 
 
 def sync_trunk_devices(hass, entry) -> None:
