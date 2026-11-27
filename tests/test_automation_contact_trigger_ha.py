@@ -6,6 +6,7 @@ import socket
 import pytest
 import voluptuous as vol
 from homeassistant.config_entries import ConfigSubentry
+from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers import config_validation as cv
@@ -17,7 +18,7 @@ from custom_components.voip_stack.automation_contact_device import (
     automation_contact_device_identifier,
     automation_contact_event_unique_id,
 )
-from custom_components.voip_stack.const import DOMAIN
+from custom_components.voip_stack.const import CALL_EVENT, DOMAIN
 from custom_components.voip_stack.core import rtp
 from custom_components.voip_stack.core.audio_format import AudioFormat
 from custom_components.voip_stack.endpoint_session import TerminationIntent
@@ -41,6 +42,161 @@ def contact_selection(hass, entry, subentry, field):
         automation_contact_event_unique_id(entry.entry_id, "welcome-id"), config_entry=entry,
         config_subentry_id=subentry.subentry_id, device_id=device.id, suggested_object_id="welcome_call")
     return entity.entity_id
+
+
+@pytest.mark.parametrize("field", ["destination_device", "destination_entity"])
+async def test_selected_contact_filter_keeps_observations_and_same_call_reentry(hass, field):
+    from custom_components.voip_stack.automation_contact_device import automation_contact_records
+    from custom_components.voip_stack.automation_routing import matches_call
+    from custom_components.voip_stack.call_projection import publish_bridge_projection
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+    from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    entry, subentry = contact_entry(hass)
+    selected = contact_selection(hass, entry, subentry, field)
+    endpoints = EndpointRegistry()
+    calls = SipEndpointRuntime(allow_dark_sessions=True)
+    calls.activate()
+    entry.runtime_data = VoipStackRuntime({}, {}, {}, endpoints, PhoneAdapterRegistry(hass, endpoints), sip=calls)
+    contact = automation_contact_records(entry)["welcome-id"]
+    session = calls.upsert("welcome-forward-reentry", state="ringing", owner="automation",
+        caller="Caller", callee="Welcome", route_kind="automation")
+    application = automation_call.attach_automation_application(hass, session, None, contact, "127.0.0.1")
+    payload = {"call_id": session.call_id, "generation": session.generation, "direction": "incoming",
+        "state": "ringing", "event_type": "automation_requested", "callee": "Welcome", "route_kind": "automation"}
+    options = {field: selected}
+    runs = []
+
+    def run_action(variables, *_args):
+        runs.append(variables["call"])
+        completed = hass.loop.create_future()
+        completed.set_result(object())
+        return completed
+
+    subject = trigger.VoipCallTrigger(hass, TriggerConfig("voip_stack.call_received", options=options))
+    remove = await subject.async_attach_runner(run_action)
+    try:
+        automation_call.queue_automation_request(application)
+        await hass.async_block_till_done()
+        assert len(runs) == 1
+        assert matches_call(payload, options, hass=hass)
+        assert not matches_call({**payload, "generation": session.generation + 1}, options, hass=hass)
+        calls.transition(session.call_id, owner="router", state="ringing", callee="Test", route_kind="transfer")
+        forwarded = {**payload, "callee": "Test", "event_type": "ringing", "route_kind": "transfer"}
+        assert not matches_call(forwarded, options, hass=hass)
+        publish_bridge_projection(hass, session, direction="incoming", event_type="ringing", route_kind="transfer")
+        await hass.async_block_till_done()
+        assert len(runs) == 1
+        # Observation triggers retain their existing contract during handoff.
+        # Event Entity history separately follows the original CallToken.
+        for event_type in ("dtmf", "ended", "missed", "failed"):
+            assert matches_call({**forwarded, "event_type": event_type}, options, hass=hass)
+        # A failed forward may resume Welcome; another actual route may enter
+        # it again without changing the call's generation.
+        calls.transition(session.call_id, owner="automation", state="ringing", callee="Welcome", route_kind="automation")
+        application.require_current(session.generation)
+        assert matches_call(payload, options, hass=hass)
+        automation_call.queue_automation_request(application)
+        await hass.async_block_till_done()
+        assert len(runs) == 2 and all(run["call_id"] == session.call_id
+            and run["generation"] == session.generation for run in runs)
+        application.outgoing = True
+        assert not matches_call(payload, options, hass=hass)
+    finally:
+        remove()
+        await calls.shutdown()
+
+
+@pytest.mark.parametrize("field", ["destination_device", "destination_entity"])
+async def test_selected_contact_forward_to_card_does_not_retrigger(lab, monkeypatch, field):
+    """A retained Welcome application must not select the forwarded card's ringing."""
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.websocket_api import _ha_softphone_state
+
+    entry = lab.hass.config_entries.async_entries(DOMAIN)[0]
+    metadata = {"virtual_endpoint": "automation", "automation_timeout": 30}
+    subentry = ConfigSubentry(subentry_type="contact", title="Welcome", unique_id="contact:welcome-id",
+        data={"id": "welcome-id", "name": "Welcome", "metadata": metadata})
+    lab.hass.config_entries.async_add_subentry(entry, subentry)
+    contact = RosterEntry("welcome-id", name="Welcome", ha_bridge=True, metadata=metadata)
+    endpoint = PhoneEndpoint(endpoint_id="test-card", name="Test", device_id="test-card-device",
+        kind=EndpointKind.BROWSER, availability="available", capabilities=frozenset({"audio", "dtmf"}))
+    lab.runtime.endpoints.register(endpoint)
+    lab.roster.extend([contact, RosterEntry("Test", metadata={"local_ha": True,
+        "endpoint_id": endpoint.endpoint_id, "endpoint_kind": endpoint.kind.value})])
+    lab.runtime.directory.replace(lab.roster)
+    selected = contact_selection(lab.hass, entry, subentry, field)
+    config = await trigger.VoipCallTrigger.async_validate_config(lab.hass, {"options": {field: selected}})
+    subject = trigger.VoipCallTrigger(lab.hass,
+        TriggerConfig("voip_stack.call_received", options=config["options"]))
+    tts_fixture(monkeypatch, lab)
+    actions = await async_validate_actions_config(lab.hass, cv.SCRIPT_SCHEMA([
+        {"action": "voip_stack.tts_say", "data": {"tts_entity_id": "tts.test", "message": "Wake up"}},
+        {"action": "voip_stack.forward", "data": {"destination": "Test", "on_failure": "terminate"}},
+    ]))
+    script = Script(lab.hass, actions, "Welcome forwards to a card", DOMAIN)
+    runs, ringing = [], asyncio.Event()
+    events = []
+
+    def run_action(variables, _description, context):
+        task = lab.hass.async_create_task(script.async_run(variables, context=context))
+        runs.append(task)
+        return task
+
+    remove_trigger = await subject.async_attach_runner(run_action)
+
+    @callback
+    def observe(event):
+        data = dict(event.data)
+        events.append(data)
+        if data.get("state") == "ringing" and data.get("callee") == "Test":
+            ringing.set()
+
+    remove_observer = lab.hass.bus.async_listen(CALL_EVENT, observe)
+    account = sip_test_account(lab, "bedroom1")
+    audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    audio.bind(("127.0.0.2", 0))
+    audio.setblocking(False)
+    client = SipCallClient(local_ip="127.0.0.2", local_name="Caller", local_uri_user=account.username,
+        local_sip_port=0, local_rtp_port=audio.getsockname()[1], username=account.username,
+        password=account.password, supported_formats=[AudioFormat(16000, frame_ms=20)])
+    client.transport, client.protocol = await lab.hass.loop.create_datagram_endpoint(
+        lambda: SipDatagramQueueProtocol(client.queue), local_addr=("127.0.0.2", 0))
+    client.local_sip_port = client.transport.get_extra_info("sockname")[1]
+    client.audio_rtp_socket = audio
+    call_id = client.dialog_ids.call_id
+    try:
+        result = await client.invite(target="welcome-id", remote_host="127.0.0.1",
+            remote_sip_port=lab.runtime.transport_config["sip_port"], timeout=3)
+        assert result in {"ringing", "in_call"}
+        await asyncio.wait_for(ringing.wait(), 3)
+        session = lab.calls.get_session(call_id)
+        application = automation_call.automation_call(lab.hass, call_id)
+        assert session is not None and application is not None
+        assert session.owner != application.owner and session.callee == "Test"
+        state = _ha_softphone_state(lab.hass, endpoint.endpoint_id)
+        assert state["state"] == "ringing" and state["call_id"] == call_id
+        assert len(runs) == 1, events
+    finally:
+        remove_trigger()
+        remove_observer()
+        await client.terminate()
+        session = lab.calls.get_session(call_id)
+        if session is not None:
+            await asyncio.wait_for(session.terminated.wait(), 3)
+        for task in runs:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*runs, return_exceptions=True)
+        for session in tuple(lab.calls.sessions.values()):
+            barrier = lab.calls.request_termination(session.call_id, TerminationIntent("test_done"))
+            if barrier is not None:
+                await barrier
+        await client.close()
+        audio.close()
+        assert_call_resources_released(lab)
 
 
 @pytest.mark.parametrize("field", ["destination_device", "destination_entity"])

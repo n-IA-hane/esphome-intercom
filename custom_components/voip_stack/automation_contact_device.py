@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from homeassistant.core import callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
+from .automation_routing import automation_event_type
 from .const import DOMAIN
 from .roster import RosterEntry, parse_roster_json
 
@@ -150,6 +152,13 @@ def automation_contact_matches_destination(hass, contact: RosterEntry, payload) 
     registry = runtime.sip if runtime is not None else None
     application = registry.resource_for(str(payload.get("call_id") or ""), "automation") if registry else None
     if application is not None:
+        if automation_event_type(payload) in {"ringing", "automation_requested"}:
+            # Forwarding retains this application for rollback. Its new
+            # destination's ringing must not start the old contact again.
+            try:
+                application.require_current(int(payload.get("generation") or 0))
+            except (ServiceValidationError, TypeError, ValueError):
+                return False
         return (not application.outgoing and application.contact.id == contact.id
                 and application.contact.metadata.get("virtual_endpoint") == "automation")
     if payload.get("direction") == "outgoing" or payload.get("route_kind") != "automation":
