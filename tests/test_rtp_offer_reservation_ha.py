@@ -115,7 +115,7 @@ async def test_bridge_retains_first_rtp_after_ack_before_media_commit(trunks, mo
             with pytest.raises(OSError, match="Address already in use"):
                 probe.bind(("0.0.0.0", observed["offered_port"]))
         reservation = observed["reservation"]
-        reserved_fds = tuple(sock.fileno() for sock in reservation._audio_sockets)
+        reserved_fds = tuple(reservation.audio_socket(port).fileno() for port in reservation.ports)
         release_commit.set()
         assert await asyncio.wait_for(task, 3) == "in_call"
         session = lab.calls.get_session(caller.dialog_ids.call_id)

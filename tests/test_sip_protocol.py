@@ -3573,8 +3573,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_remote_reinvite_2xx_retransmits_over_tcp_until_ack(self) -> None:
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
         # Establish the same receive bounds as a real initial negotiation.
-        negotiated = sdp.negotiate_directional(sdp.build_offer_directional(
-            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm],
+        offer = sdp.build_offer_directional(
+            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]).encode()
+        negotiated = sdp.negotiate_directional(offer, [pcm], [pcm],
             local_capabilities=sip_client.HA_AUDIO_CAPABILITIES)
         assert negotiated is not None
         client = sip_client.SipCallClient(
@@ -3607,6 +3608,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             remote_uri="sip:ESP@127.0.0.2:5060",
             send_format=negotiated.send,
             recv_format=negotiated.recv,
+            recv_formats=negotiated.recv_formats,
+            send_formats=negotiated.send_formats,
+            **sip_client.remote_audio_rtcp_fields(offer),
             remote_target_uri="sip:ESP@127.0.0.2:5060",
         )
 
@@ -3622,13 +3626,6 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 headers.append(("Content-Type", "application/sdp"))
             return sip.build_request(method, "sip:HA@127.0.0.1:5060", headers, body)
 
-        offer = sdp.build_offer_directional(
-            "127.0.0.2",
-            "127.0.0.2",
-            42000,
-            [pcm],
-            [pcm],
-        ).encode()
         with (
             patch.object(sip_client, "SIP_T1", 0.002),
             patch.object(sip_client, "SIP_T2", 0.004),
@@ -3675,8 +3672,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 return
 
         pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
-        negotiated = sdp.negotiate_directional(sdp.build_offer_directional(
-            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]), [pcm], [pcm],
+        offer = sdp.build_offer_directional(
+            "127.0.0.2", "127.0.0.2", 42000, [pcm], [pcm]).encode()
+        negotiated = sdp.negotiate_directional(offer, [pcm], [pcm],
             local_capabilities=sip_client.HA_AUDIO_CAPABILITIES)
         assert negotiated is not None
         client = sip_client.SipCallClient(
@@ -3701,15 +3699,11 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             remote_uri="sip:ESP@127.0.0.2:5060",
             send_format=negotiated.send,
             recv_format=negotiated.recv,
+            recv_formats=negotiated.recv_formats,
+            send_formats=negotiated.send_formats,
+            **sip_client.remote_audio_rtcp_fields(offer),
             remote_target_uri="sip:ESP@127.0.0.2:5060",
         )
-        offer = sdp.build_offer_directional(
-            "127.0.0.2",
-            "127.0.0.2",
-            42000,
-            [pcm],
-            [pcm],
-        ).encode()
         reinvite = sip.build_request(
             "INVITE",
             "sip:HA@127.0.0.1:5060",

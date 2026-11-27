@@ -27,15 +27,11 @@ def reservation_runtime(monkeypatch):
     return runtime
 
 
-def _format(token: str):
-    return SimpleNamespace(
-        audio_format=SimpleNamespace(wire_token=lambda: token),
-        wire_token=lambda: token,
-    )
-
-
 def _fixture():
     from custom_components.voip_stack.outbound_attempts import OutboundLeg
+    from custom_components.voip_stack.core.sdp import RtpPcmFormat
+    from custom_components.voip_stack.core.sip import parse_sip_uri
+    from custom_components.voip_stack.sip_listener import SipInvite
 
     client = SimpleNamespace(
         dialog_ids=SimpleNamespace(call_id="dest-call"),
@@ -46,18 +42,23 @@ def _fixture():
         ports=(40000, 40002), detach=MagicMock(), release=MagicMock()
     )
     winner = OutboundLeg("desk", "sip:desk@pbx", client, ports)
-    invite = SimpleNamespace(
+    invite = SipInvite(
+        source_host="127.0.0.1",
+        source_port=5060,
+        request_uri=parse_sip_uri("sip:desk@127.0.0.1"),
+        caller_uri=parse_sip_uri("sip:door@127.0.0.1"),
+        target="desk",
+        caller="door",
         call_id="source-call",
-        send_format=_format("PCMA/8000"),
-        recv_format=_format("PCMU/8000"),
-        recv_formats=(),
-        send_formats=(),
-        send_video_format=None,
-        recv_video_format=None,
+        cseq="1 INVITE",
+        send_format=RtpPcmFormat(8, "PCMA", 8000, 1),
+        recv_format=RtpPcmFormat(0, "PCMU", 8000, 1),
+        remote_rtp_host="127.0.0.1",
+        remote_rtp_port=5000,
         remote_sdp=(
             "v=0\r\nc=IN IP4 127.0.0.1\r\n"
             "m=audio 5000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
-        ),
+        ).encode(),
     )
     session = SimpleNamespace(generation=1, state="connecting", create_task=asyncio.create_task, cleanup_waits_for=lambda _task: False)
     registry = SimpleNamespace(

@@ -2,6 +2,7 @@
 import asyncio
 import time
 from unittest.mock import AsyncMock
+from homeassistant.core import callback
 
 import pytest
 
@@ -16,6 +17,7 @@ pytestmark = pytest.mark.ha
 @pytest.mark.parametrize("final_answer", [False, True])
 async def test_browser_183_keeps_media_owner_and_releases(lab, monkeypatch, final_answer):
     from custom_components.voip_stack import softphone_originate, audio_ws_view
+    from custom_components.voip_stack.const import CALL_EVENT
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint
     from custom_components.voip_stack.roster import dump_roster_json
     from custom_components.voip_stack.websocket_api import _ha_softphone_state
@@ -45,9 +47,21 @@ async def test_browser_183_keeps_media_owner_and_releases(lab, monkeypatch, fina
             'device_id':source.device_id,'destination':'bedroom0'},blocking=True)
         call_id=lab.runtime.endpoints.get(source.endpoint_id).active_call_id
         client=lab.calls.sip_client_for(call_id)
-        async with asyncio.timeout(2):
-            while not any(dialog is not None for dialog in client.early_dialogs.values()):
-                await asyncio.sleep(.01)
+        # The parsed early dialog precedes async RTCP/media preparation. Wait
+        # for the owner's committed branch binding, not the public early flag.
+        committed = asyncio.Event()
+        @callback
+        def observe_provisional_owner(_snapshot):
+            current = lab.calls.get_session(call_id)
+            selected = current.metadata.get('browser_early_media_tag') if current else None
+            if selected and client.early_dialogs.get(selected) is not None:
+                committed.set()
+        detach_commit = lab.hass.bus.async_listen(CALL_EVENT, observe_provisional_owner)
+        try:
+            observe_provisional_owner(None)
+            await asyncio.wait_for(committed.wait(), 2)
+        finally:
+            detach_commit()
         assert client.dialog is None, '183 must remain an early SIP dialog'
         state=_ha_softphone_state(lab.hass,source.endpoint_id)
         assert state['state']=='remote_ringing' and not lab.calls.get_session(call_id).answer_committed

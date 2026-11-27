@@ -237,7 +237,7 @@ async def test_parking_slot_blf_tracks_reservation_without_a_fake_phone(lab, blf
     from custom_components.voip_stack.parking import get_parking_lot
 
     entry=config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{'enabled':True}})
+    lab.hass.config_entries.async_update_entry(entry,data={**entry.data,'parking':{**entry.data['parking'],'enabled':True}})
     methods, notifications, send=blf
     count=len(lab.runtime.endpoints.endpoints)
     result=await methods.handle(subscribe(target='701'),('127.0.0.3',5060),'UDP',send)

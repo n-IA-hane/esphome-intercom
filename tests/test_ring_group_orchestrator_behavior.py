@@ -38,9 +38,11 @@ def _invite() -> SipInvite:
 
 
 def _runtime() -> ring_group_orchestrator.RingGroupRuntime:
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+
     return ring_group_orchestrator.RingGroupRuntime(
         hass=SimpleNamespace(),
-        config={},
+        config=initialize_duration_config({"sip_port": 5060}),
         local_ip="192.0.2.1",
         ha_peer_name=Mock(return_value="Casa"),
         browser_leg_for_member=Mock(),
@@ -134,12 +136,12 @@ async def test_terminated_source_never_starts_group_candidates(
 async def test_ring_group_without_candidates_terminates_cleanly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = SimpleNamespace(generation=7, metadata={})
-    registry = SimpleNamespace(
-        sessions={"call-1": session},
-        resolve_session_id=Mock(return_value="call-1"),
-        is_generation_current=Mock(return_value=True),
-    )
+    from custom_components.voip_stack.group_config import materialize_ring_step
+    from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+
+    registry = SipEndpointRuntime()
+    registry.activate()
+    registry.upsert("call-1", state="connecting", owner="router")
     abort = AsyncMock()
     monkeypatch.setattr(
         ring_group_orchestrator,
@@ -171,12 +173,15 @@ async def test_ring_group_without_candidates_terminates_cleanly(
     entry = RosterEntry(
         id="empty-group",
         name="Empty group",
-        metadata={"members": [], "ring_timeout": 30},
+        metadata=materialize_ring_step({"members": [], "ring_timeout": 30}),
     )
 
-    await ring_group_orchestrator.run_ring_group_call(
-        _runtime(), _invite(), entry, [], []
-    )
+    try:
+        await ring_group_orchestrator.run_ring_group_call(
+            _runtime(), _invite(), entry, [], []
+        )
+    finally:
+        await registry.shutdown()
 
     abort.assert_awaited_once()
     intent = abort.await_args.args[1]

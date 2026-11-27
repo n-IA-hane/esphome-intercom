@@ -1,20 +1,13 @@
 """Phone policy validation and decisions, without HA or SIP transport mocks."""
 
 from dataclasses import FrozenInstanceError
-import importlib.util
-from pathlib import Path
-import sys
 
 import pytest
 
+from tests.support.module_loader import load_voip_stack_module
 
-SPEC = importlib.util.spec_from_file_location(
-    "phone_policy_contract",
-    Path(__file__).resolve().parents[1] / "custom_components/voip_stack/phone_policy.py",
-)
-policy = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = policy
-SPEC.loader.exec_module(policy)
+
+policy = load_voip_stack_module("phone_policy")
 
 
 def test_unconfigured_phone_has_no_timeout_or_routing_work():

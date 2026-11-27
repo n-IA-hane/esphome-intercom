@@ -73,7 +73,8 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
             "username": "existing-browser-user", "password": "fixture-existing-browser-password"}, opaque)]:
         assert sub.data["kind"] == "sip_account"
         projected = phone_subentry_data(sub)
-        assert all(projected[key] == value for key, value in original.items()
+        expected = {**original, "voicemail": {**original["voicemail"], "max_seconds": 180}}
+        assert all(projected[key] == value for key, value in expected.items()
                    if key not in {'kind', 'ha_bindings', 'endpoint_id', 'call_policy'})
         assert projected['endpoint_id'] == sub.data['username']
         policy = deepcopy(original['call_policy'])
@@ -86,9 +87,10 @@ async def test_v7_upgrade_preserves_every_id_field_preference_and_existing_crede
     assert phone_subentry_data(existing) == {**sip_before, 'endpoint_id': sip_before['username'], 'username_source': 'user'}
     assert all("endpoint_id" not in sub.data for sub in (legacy, opaque, existing))
     from custom_components.voip_stack.const import CONF_REGISTRAR_ENABLED, HA_SOFTPHONE_DEVICE_ID
-    assert dict(entry.data) == {**parent_before, CONF_REGISTRAR_ENABLED: True,
+    from custom_components.voip_stack.duration_config import initialize_duration_config
+    assert dict(entry.data) == initialize_duration_config({**parent_before, CONF_REGISTRAR_ENABLED: True,
         "default_ringing_timeout": 120, "max_dialog_subscription_expires": 60, 'legacy_phone_references': {
-        'default': 'Casa', HA_SOFTPHONE_DEVICE_ID: 'Casa', 'browser:opaque': 'existing-browser-user', 'sip:480': 'ha_phone_default'}}
+        'default': 'Casa', HA_SOFTPHONE_DEVICE_ID: 'Casa', 'browser:opaque': 'existing-browser-user', 'sip:480': 'ha_phone_default'}})
     assert dict(entry.options) == options_before
     assert devices.async_get(device.id).identifiers == {('voip_stack', 'phone_endpoint:Casa')}
     assert er.async_get(hass).async_get(entity.entity_id).id == entity.id

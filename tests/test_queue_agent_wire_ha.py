@@ -5,13 +5,15 @@ from xml.etree import ElementTree
 
 import pytest
 
-from custom_components.voip_stack.call_queues import QueueManager
+from custom_components.voip_stack.call_queues import QueueManager, QueuePolicy
+from custom_components.voip_stack.queue_config import initial_queue_policy
 from custom_components.voip_stack.config import normalized_trunk_config
 from custom_components.voip_stack.core import sip
 from custom_components.voip_stack.core.sip_auth import build_digest_authorization
 from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.sip_registrar import SipAccount
+from custom_components.voip_stack.sip_registration_policy import TRUNK_OPTIONS_FIELD
 from custom_components.voip_stack.sip_trunk import SipTrunkClient
 from custom_components.voip_stack.store import config_entry
 from custom_components.voip_stack.trunk_runtime import trunk_client_config
@@ -105,6 +107,7 @@ async def agents(trunks):
                 metadata={"endpoint_id": endpoint_id, "endpoint_kind": "sip_account", "registered": True}))
         manager = QueueManager(lab.hass, config_entry(lab.hass))
         lab.runtime.queues = manager
+        manager.policies['support'] = QueuePolicy.from_data(initial_queue_policy())
         manager.reconcile([("sip:" + name, ["Support"]) for name in names])
         manager.agent_states["support"] = {"sip:" + name: "logged_out" for name in names}
         yield lab, manager, peers, listener
@@ -184,6 +187,7 @@ async def test_queue_control_rejects_spoofed_registered_identity_wrong_source_an
     try:
         await _dial_key(lab, intruder, listener, "queue-pause+support", "unregistered-spoof", credentials=False, expected=401)
         cfg = normalized_trunk_config({"trunk_enabled": True, "trunk_register": False,
+            "trunk_options_interval": TRUNK_OPTIONS_FIELD.default,
             "trunk_server": "127.0.0.5", "trunk_allowed_ips": ["127.0.0.5/32"]})
         trunk = SipTrunkClient(config=trunk_client_config(cfg), local_ip="127.0.0.1", local_sip_port=listener[1], trunk_id="spoof-test")
         lab.runtime.trunk_configs["spoof-test"] = cfg

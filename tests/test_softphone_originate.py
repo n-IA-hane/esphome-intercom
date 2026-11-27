@@ -12,8 +12,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from custom_components.voip_stack.peer_media_profile import legacy_pcm_compatibility
-from custom_components.voip_stack.phone_policy import PhonePolicy
+
+from .support.module_loader import load_voip_stack_module
+
+legacy_pcm_compatibility = load_voip_stack_module("peer_media_profile").legacy_pcm_compatibility
+PhonePolicy = load_voip_stack_module("phone_policy").PhonePolicy
+initialize_duration_config = load_voip_stack_module("duration_config").initialize_duration_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +88,11 @@ def softphone_originate(monkeypatch):
     monkeypatch.setitem(sys.modules, "homeassistant", homeassistant)
     monkeypatch.setitem(sys.modules, "homeassistant.core", core)
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions)
+    helpers = types.ModuleType("homeassistant.helpers")
+    helpers.__path__ = []
+    devices = types.ModuleType("homeassistant.helpers.device_registry")
+    monkeypatch.setitem(sys.modules, helpers.__name__, helpers)
+    monkeypatch.setitem(sys.modules, devices.__name__, devices)
 
     dependencies = {
         # Transport-fork policy is qualified with the real HA runtime separately.
@@ -106,10 +115,12 @@ def softphone_originate(monkeypatch):
         "audio_format": {"HA_TRUNK_AUDIO_FORMATS": []},
         "authorization": {"async_require_service_admin": AsyncMock()},
             "config": {
-                "transport_config": Mock(return_value={}),
+                "transport_config": Mock(return_value=initialize_duration_config({})),
                 "trunk_config": Mock(return_value={}),
                 "trunk_enabled": Mock(return_value=False),
+                "normalized_trunk_config": Mock(),
             },
+        "trunk_config": {"trunk_subentries": Mock()},
         "const": {
             "CONF_SIP_VIDEO": "sip_video",
             "CONF_TRUNK_AUTH_USERNAME": "trunk_auth_username",
@@ -251,7 +262,10 @@ def softphone_originate(monkeypatch):
     runtime_adapter.runtime_data = lambda hass: getattr(hass, 'runtime', None)
     store_adapter = types.ModuleType(f'{package_name}.store')
     store_adapter.manual_roster_entries = lambda _hass: []
+    store_adapter.config_entry = Mock()
     monkeypatch.setitem(sys.modules, store_adapter.__name__, store_adapter)
+    trunk_contract = production_module("trunk_selection_contract", "trunk_selection.py")
+    sys.modules[f"{package_name}.trunk_selection"].trunk_destination_uri = trunk_contract.trunk_destination_uri
     routing_contract = production_module('routing_contract', 'endpoint_routing.py')
     routing_adapter = sys.modules[f'{package_name}.endpoint_routing']
     routing_adapter.sip_target_rtp_audio_profile = routing_contract.sip_target_rtp_audio_profile
@@ -309,10 +323,11 @@ def test_browser_to_browser_uses_local_bridge_before_network(
         supports=Mock(return_value=True),
     )
     destination_endpoint = SimpleNamespace(endpoint_id="test", name="Test")
-    route = SimpleNamespace(action=_RouteAction.ANSWER_HA, entry=object(), reason=None)
+    route = sys.modules[f"{softphone_originate.__package__}.router"].RouteDecision(
+        action=_RouteAction.ANSWER_HA, entry=object(), reason=None)
     softphone_originate._require_phone_service_control = AsyncMock()
     softphone_originate._get_transport_config = Mock(
-        return_value={"video_camera_send": True}
+        return_value=initialize_duration_config({"video_camera_send": True})
     )
     softphone_originate.ha_router_decision = Mock(return_value=route)
     softphone_originate._async_resolve_browser_destination = AsyncMock(
@@ -365,7 +380,7 @@ def test_offline_browser_phone_remains_a_local_ringing_destination(
     )
     endpoint_registry = SimpleNamespace(get=Mock(return_value=destination))
     hass = SimpleNamespace(data={"voip_stack": {"endpoint_registry": endpoint_registry}})
-    route = SimpleNamespace(
+    route = sys.modules[f"{softphone_originate.__package__}.router"].RouteDecision(
         action=_RouteAction.ANSWER_HA,
         entry=SimpleNamespace(metadata={"endpoint_id": "casa"}),
     )
@@ -427,12 +442,13 @@ def test_outgoing_peer_video_offer_respects_camera_and_capabilities(
         states=SimpleNamespace(get=lambda _: None),
     )
     entry = SimpleNamespace(metadata=metadata, sip_uri='sip:door@192.0.2.10', display_name='Door')
-    route = SimpleNamespace(action=_RouteAction.DIRECT, reason=None, entry=entry, sip_uri=entry.sip_uri)
+    route = sys.modules[f"{module.__package__}.router"].RouteDecision(
+        action=_RouteAction.DIRECT, reason=None, entry=entry, sip_uri=entry.sip_uri)
     module.ha_router_decision = Mock(return_value=route)
     module._async_resolve_browser_destination = AsyncMock(return_value=(route, 'Door', None))
-    module._get_transport_config = Mock(return_value={
+    module._get_transport_config = Mock(return_value=initialize_duration_config({
         'sip_port': 5060, 'sip_video': global_video, 'video_camera_send': camera_allowed,
-    })
+    }))
     module.reserve_sip_video_media = Mock(return_value=(SimpleNamespace(ports=(40000, 40002)), object(), object()))
     captured = {}
     class OfferCaptured(Exception):
@@ -475,8 +491,8 @@ def test_restricted_browser_rejects_trunk_before_call_start(softphone_originate,
     module = softphone_originate
     hass = SimpleNamespace(data={"voip_stack": {}}, states=SimpleNamespace(get=lambda _: None))
     source = SimpleNamespace(endpoint_id="caller", device_id="browser", availability=_Availability.AVAILABLE)
-    route = SimpleNamespace(action=action, sip_uri=uri, entry=None, reason=None)
-    module._get_transport_config = Mock(return_value={"external_call_blocked_endpoints": ["caller"]})
+    route = sys.modules[f"{module.__package__}.router"].RouteDecision(action=action, sip_uri=uri, entry=None, reason=None)
+    module._get_transport_config = Mock(return_value=initialize_duration_config({"external_call_blocked_endpoints": ["caller"]}))
     sys.modules[f"{module.__package__}.config"].trunk_config = Mock(return_value={"trunk_server": "provider.example"})
     hass.runtime = SimpleNamespace(trunk_configs={}, trunk_config=sys.modules[f"{module.__package__}.config"].trunk_config(hass), sip=None)
     module.ha_router_decision = Mock(return_value=route)
@@ -508,13 +524,13 @@ def test_static_dahua_contact_builds_full_offer_for_direct_and_trunk(
     )
     metadata = {"sip_profile": "dahua", "dahua_audio": audio_choice}
     entry = SimpleNamespace(metadata=metadata, sip_uri="" if via_trunk else "sip:8001@192.0.2.10", display_name="Door")
-    route = SimpleNamespace(
+    route = sys.modules[f"{module.__package__}.router"].RouteDecision(
         action=_RouteAction.TRUNK if via_trunk else _RouteAction.DIRECT,
         reason=None, entry=entry, sip_uri=entry.sip_uri, target="8001",
     )
     module.ha_router_decision = Mock(return_value=route)
     module._async_resolve_browser_destination = AsyncMock(return_value=(route, "8001", None))
-    module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": True, "video_camera_send": True})
+    module._get_transport_config = Mock(return_value=initialize_duration_config({"sip_port": 5060, "sip_video": True, "video_camera_send": True}))
     sys.modules[f"{module.__package__}.config"].trunk_config = Mock(return_value={
         "trunk_server": "pbx.example.test", "trunk_port": 5060, "trunk_transport": "udp", "trunk_username": "ha",
     })
@@ -575,10 +591,11 @@ def test_trunk_video_reception_is_independent_from_camera_capture(softphone_orig
         data={"voip_stack": {"sip_trunk": SimpleNamespace(ready=True)}},
         states=SimpleNamespace(get=lambda _: None),
     )
-    route = SimpleNamespace(action=_RouteAction.TRUNK, reason=None, entry=None, sip_uri="", target="441234567890")
+    route = sys.modules[f"{module.__package__}.router"].RouteDecision(
+        action=_RouteAction.TRUNK, reason=None, entry=None, sip_uri="", target="441234567890")
     module.ha_router_decision = Mock(return_value=route)
     module._async_resolve_browser_destination = AsyncMock(return_value=(route, route.target, None))
-    module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": True, "video_camera_send": True})
+    module._get_transport_config = Mock(return_value=initialize_duration_config({"sip_port": 5060, "sip_video": True, "video_camera_send": True}))
     sys.modules[f"{module.__package__}.config"].trunk_config = Mock(return_value={"trunk_server": "pbx.example.test", "trunk_port": 5060, "trunk_transport": "udp", "trunk_username": "ha", "trunk_video_codecs": ["H264"] if allow_video else []})
     module._trunk_enabled = Mock(return_value=True)
     module.reserve_sip_video_media = Mock(return_value=(SimpleNamespace(ports=(40000, 40002)), object(), object()))
@@ -610,24 +627,17 @@ def test_trunk_video_reception_is_independent_from_camera_capture(softphone_orig
 
 @pytest.mark.parametrize("action", [_RouteAction.ASSIST, _RouteAction.AUTOMATION, _RouteAction.VOICEMAIL, _RouteAction.PARKING])
 def test_every_local_application_uses_configured_pbx_listener_without_phonebook_hack(softphone_originate, action):
-    from dataclasses import dataclass
     import importlib
 
     module = softphone_originate
-    @dataclass
-    class Decision:
-        action: object
-        target: str = "application"
-        sip_uri: str = ""
-        entry: object = None
-        reason: object = None
-    route = Decision(action, entry=SimpleNamespace(display_name="Application", metadata={}, sip_uri=""))
+    route = sys.modules[f"{module.__package__}.router"].RouteDecision(
+        action, target="application", entry=SimpleNamespace(display_name="Application", metadata={}, sip_uri=""))
     hass = SimpleNamespace(data={"voip_stack": {}}, states=SimpleNamespace(get=lambda _: None))
     endpoint = SimpleNamespace(endpoint_id="caller", device_id="browser", sip_uri_user="browser",
                                availability=_Availability.AVAILABLE, supports=lambda _: False)
     module.ha_router_decision = Mock(return_value=route)
     module._async_resolve_browser_destination = AsyncMock(return_value=(route, route.target, None))
-    module._get_transport_config = Mock(return_value={"sip_port": 15060})
+    module._get_transport_config = Mock(return_value=initialize_duration_config({"sip_port": 15060}))
     core = importlib.import_module(f"{module.__package__}.core.sip")
     original = core.parse_sip_uri
     class Resolved(Exception):

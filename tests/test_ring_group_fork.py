@@ -34,11 +34,21 @@ def _load_module():
     async def close_outbound_leg(leg, *, bye_or_cancel=False):
         close_calls.append((leg, bye_or_cancel))
 
-    outbound = types.ModuleType(f"{PACKAGE}.outbound_attempts")
-    outbound.BrowserLeg = object
-    outbound.OutboundLeg = object
-    outbound.async_close_outbound_leg = close_outbound_leg
+    # Load the real leg records; only their transport boundaries and cleanup
+    # collector are controlled here. New leg lifecycle fields keep their real
+    # construction semantics instead of being invented by this fixture.
+    for name, exported in (("media_ports", "RtpPortReservation"),
+                           ("sip_client", "SipCallClient"),
+                           ("sip_video_relay", "SipVideoRtpRelay")):
+        boundary = types.ModuleType(f"{PACKAGE}.{name}")
+        setattr(boundary, exported, object)
+        sys.modules[boundary.__name__] = boundary
+    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.outbound_attempts", MODULE.with_name("outbound_attempts.py"))
+    assert spec is not None and spec.loader is not None
+    outbound = importlib.util.module_from_spec(spec)
     sys.modules[outbound.__name__] = outbound
+    spec.loader.exec_module(outbound)
+    outbound.async_close_outbound_leg = close_outbound_leg
 
     candidates = types.ModuleType(f"{PACKAGE}.group_candidates")
     candidates.PreflightFailure = tuple
@@ -58,6 +68,7 @@ _Disposition = ring_group_fork.DialDisposition
 _Outcome = ring_group_fork.DialOutcome
 _CloseMode = ring_group_fork.LegCloseMode
 _Candidate = sys.modules[f"{PACKAGE}.dial_fork"].DialCandidate
+_OutboundLeg = sys.modules[f"{PACKAGE}.outbound_attempts"].OutboundLeg
 
 
 class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
@@ -155,7 +166,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
                 return "in_call"
 
         client = Client()
-        leg = SimpleNamespace(
+        leg = _OutboundLeg(
             candidate_id="sip:ws3",
             client=client,
             uri=SimpleNamespace(
@@ -169,6 +180,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
             tier=1,
             order=2,
             endpoint_id="ws3",
+            ports=None,
         )
         fork, payloads, _decision = ring_group_fork.build_ring_group_fork(
             sip_port=5070,
@@ -206,7 +218,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
                 return "busy"
 
         def leg(call_id: str):
-            return SimpleNamespace(
+            return _OutboundLeg(
                 candidate_id=f"sip:{call_id}",
                 client=Client(call_id),
                 uri=SimpleNamespace(
@@ -218,6 +230,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
                 tier=0,
                 order=0,
                 endpoint_id=call_id,
+                ports=None,
             )
 
         fork, _payloads, _decision = ring_group_fork.build_ring_group_fork(
@@ -244,7 +257,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
             async def invite(self, **_kwargs):
                 return "sip_503"
 
-        leg = SimpleNamespace(candidate_id="unavailable-branch", client=Client(),
+        leg = _OutboundLeg(candidate_id="unavailable-branch", client=Client(), ports=None,
             uri=SimpleNamespace(user="desk", host="phone.local", port=5060),
             member="Desk", tier=0, order=0, endpoint_id="desk")
         fork, _payloads, _decision = ring_group_fork.build_ring_group_fork(

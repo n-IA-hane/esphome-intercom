@@ -711,7 +711,9 @@ def test_p4_video_workers_use_display_owned_mainloop_presentation() -> None:
     consume = _renderer_method(h264, "consume_h264_nal_")
     assert consume.index("esp_h264_dec_process(") < consume.index("input.raw_data.buffer += input.consume")
     assert decode.index("this->consume_h264_nal_(") < decode.index("cadence_.accept(output.pts)") < decode.index("this->render_i420_(")
-    assert "this->cadence_.accept(unit.timestamp_90khz)" in adapter
+    assert "frame.presentation_time = this->clock_.translate(unit.timestamp_90khz);" in adapter
+    assert "return this->renderer_->submit_frame(frame);" in adapter
+    assert "cadence_.accept(unit.timestamp_90khz)" not in adapter
     assert "h264_profile_level_id" in adapter
     assert "display_id: main_display" in h264_package
 

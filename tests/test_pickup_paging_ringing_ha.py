@@ -153,7 +153,7 @@ async def test_browser_announcement_has_the_same_inherit_and_zero_semantics(pagi
 
 @pytest.mark.parametrize("override", [None, 0, 5])
 def test_saved_paging_answer_value_distinguishes_inheritance_zero_and_explicit_five(override):
-    data = {"name": "Paging", "members": ["desk"]}
+    data = {"name": "Paging", "members": ["desk"], "timeout": 120}
     if override is not None:
         data["answer_timeout"] = override
     assert normalize_paging_group(data)["answer_timeout"] == override
