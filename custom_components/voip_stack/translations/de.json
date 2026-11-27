@@ -823,7 +823,7 @@
             "retry_delay": "Pause vor dem nächsten Versuch für denselben wartenden Anruf. Eine geänderte Agentenverfügbarkeit kann eine frühere Prüfung auslösen.",
             "fallback_timeout": "Ziel nach Ablauf der maximalen Wartezeit. Ein Mailboxziel zeichnet direkt auf; ein Telefonziel verwendet die normalen Klingelregeln dieses Telefons. Leer verwendet das gemeinsame Ausweichziel.",
             "members": "Wählen Sie Telefonkonten aus. Eine Rufgruppe akzeptiert zusätzlich Telefonbuchziele, Telefonnummern oder SIP-Adressen. Nicht verfügbare gespeicherte Mitglieder können Sie entfernen oder in derselben Zeile ersetzen.",
-            "strategy": "Bei parallelem Klingeln werden alle verfügbaren Mitglieder gleichzeitig angerufen. Bei nacheinander werden die Mitglieder in Listenreihenfolge angerufen. Die Warteschlange verteilt Anrufe entsprechend ihrer gewählten Strategie und verwendet dieselbe Reihenfolge.",
+            "strategy": "Beim parallelen Klingeln werden alle verfügbaren Mitglieder gleichzeitig angerufen. Beim sequenziellen Klingeln werden die Mitglieder in der Listenreihenfolge angerufen. Die Warteschlange verteilt Anrufe entsprechend ihrer gewählten Strategie und verwendet dieselbe Reihenfolge.",
             "overall_timeout": "Zeit in Sekunden bis zur Aktion bei Nichtannahme, wenn keine übergeordnete Klingeldauer übernommen wird. 0 bedeutet unbegrenzt. Das Ausweichziel bei Nichtannahme lässt sich unabhängig konfigurieren.",
             "step_timeout": "Maximale Zeit, bevor zum nächsten Mitglied oder zur nächsten Prioritätsstufe gewechselt wird. Der Standardwert beträgt 15 Sekunden und darf die maximale Klingeldauer nicht überschreiten.",
             "hold_media": "Wählen Sie eine Audiodatei aus den Home-Assistant-Medien für wartende Anrufer aus.",
@@ -1162,7 +1162,7 @@
       "options": {
         "ring_all": "Alle Telefone anrufen",
         "round_robin": "Reihum mit gespeicherter Position",
-        "longest_idle": "Am längsten untätig",
+        "longest_idle": "Am längsten frei",
         "ordered": "Festgelegte Reihenfolge mit Eskalation"
       }
     },
