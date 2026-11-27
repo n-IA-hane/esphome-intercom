@@ -102,7 +102,8 @@ jobs:
       - name: Install independent capture-file tools
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wireshark-common tshark
+          # Measured video fixtures decode their actual captured codec bytes.
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wireshark-common tshark ffmpeg
       - name: Check Python code and test fixtures
         run: python -m ruff check custom_components/voip_stack scripts tests tools/esp_profile.py
       - name: Record the unsharded software selection

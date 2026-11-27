@@ -52,7 +52,7 @@ async def test_rendered_casa_blf_pickup_retains_p4_caller_duplex_voice_and_clean
     profile, templates = _catalog()
     lab = trunks
     entry = config_entry(lab.hass)
-    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {'enabled': True},
+    lab.hass.config_entries.async_update_entry(entry, data={**entry.data, 'parking': {**entry.data['parking'], 'enabled': True},
         'sip_registrar_enabled': True})
     lab.runtime.transport_config['sip_registrar_enabled'] = True
     from custom_components.voip_stack.account_runtime import recompute_account_availability
