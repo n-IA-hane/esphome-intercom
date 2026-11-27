@@ -23,7 +23,7 @@
         "data_description": {
           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
           "rtp_port": "Basis-RTP-UDP-Port für HA-Medien und Relays.",
-          "advertise_host": "Optionale Überschreibung für die in ESP-Telefonbüchern veröffentlichte Adresse. Nützlich, wenn sich HA hinter Routing, NAT, LXC, VPN oder mehreren Subnetzen befindet und die automatisch angekündigte Adresse für ESP-Geräte nicht erreichbar ist.",
+          "advertise_host": "Optionale Überschreibung in ESP-Telefonbüchern veröffentlicht. Nützlich, wenn sich HA hinter Routing, NAT, LXC, VPN oder mehreren Subnetzen befindet und die automatisch angekündigte Adresse für ESP-Geräte nicht erreichbar ist.",
           "assist_intents": "Optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen registrieren (z. B. \"Hey Jarvis, Kitchen anrufen\"). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
           "assist_endpoint_enabled": "Fügt eine SIP-Nebenstelle hinzu, die direkt von einer Home Assistant Assist-Pipeline bedient wird. Es ist keine separate VoIP-Integration oder ein SIP-Listener erforderlich.",
           "debug_mode": "Ergänzt Details zu SIP, RTP und Medien. Für das Anrufrouting auf der Integrationsseite von VoIP Stack die Debug-Protokollierung aktivieren.",
@@ -92,12 +92,12 @@
         },
         "data_description": {
           "video_transcoding_enabled": "VoIP Stack kann die FFmpeg-Binärdatei von Home Assistant verwenden, wenn zwei ausgehandelte Videoabschnitte keine direkte Codec-Übereinstimmung haben. Direktes H.264, VP8 und JPEG bleiben bevorzugt. Der begrenzte Fallback kann Legacy-Videos für das HA-Softphone und H.264 oder JPEG zwischen HA-eigenen SIP-Strecken konvertieren. Beim Browser-JPEG-Versand kann auch ein begrenzter RFC 2435-Normalisierer verwendet werden. Bei einem Fehler bleibt kompatibles Audio aktiv.",
-          "video_camera_send_enabled": "Auf der Karte die Option \"Kamera senden\" bereitstellen. Jedes logische Home Assistant-Telefon behält seine Auswahl; die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist kein Kamerazugriff erforderlich."
+          "video_camera_send_enabled": "Auf der Karte die Option \"Kamera senden\" bereitstellen. Jedes logische Home Assistant-Telefon behält seine Wahl; die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist niemals Kamerazugriff erforderlich."
         }
       },
       "assist": {
         "title": "Sprachassistent-Nebenstelle",
-        "description": "SIP-Nebenstelle und Home Assistant Assist-Pipeline für Telefonanrufe auswählen. Bei aktivierten erweiterten Anrufdetails startet VoIP Stack das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Das Telefonverhalten lässt sich in den Anweisungen oder im Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren festlegen. Beispielanweisungen: \"Nachrichten, die mit Eingehender SIP-Anruf von beginnen, als Live-Telefonanruf behandeln. Den Anrufer einmal begrüßen, wie eine prägnante Empfangskraft agieren und den Namen nicht in jeder Antwort wiederholen.\" Freundliche Stimmung: \"Bei SIP-Anrufen fröhlich und informell, zugleich prägnant und hilfsbereit bleiben.\" Negativbeispiel: \"Hallo. Kein Interesse – viel Glück auf eigene Faust.\"",
+        "description": "SIP-Nebenstelle und Home Assistant Assist-Pipeline für Telefonanrufe auswählen. Wenn erweiterte Anrufdetails aktiviert sind, startet VoIP Stack das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Das Telefonverhalten lässt sich in den Anweisungen oder im Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren festlegen. Beispielanweisungen: \"Nachrichten, die mit Eingehender SIP-Anruf von beginnen, als Live-Telefonanruf behandeln. Den Anrufer einmal begrüßen, wie eine prägnante Empfangskraft agieren und den Namen nicht in jeder Antwort wiederholen.\" Freundliche Stimmung: \"Bei SIP-Anrufen fröhlich und informell, zugleich prägnant und hilfsbereit bleiben.\" Negativbeispiel: \"Hallo. Kein Interesse – viel Glück auf eigene Faust.\"",
         "data": {
           "assist_extension": "Sprachassistent-Nebenstelle",
           "assist_pipeline": "Pipeline für Sprachassistenten",
@@ -499,7 +499,7 @@
         },
         "sip_account": {
           "title": "Standard-SIP-Konto",
-          "description": "Anmeldeinformationen für jedes Standard-SIP/RTP-Telefon oder Softphone erstellen. Es kommt kein herstellerspezifisches Verhalten zum Einsatz.",
+          "description": "Anmeldeinformationen für jedes Standard-SIP/RTP-Telefon oder Softphone erstellen. Es wird kein herstellerspezifisches Verhalten verwendet.",
           "data": {
             "name": "Name",
             "extension": "Nebenstelle",
@@ -541,8 +541,8 @@
             "audio_codecs_inherit": "Use the integration audio codec order and enabled choices. Turn this off to save a separate policy.",
             "video_codecs": "Drag rows into preference order and enable the codecs this route may use. Clear the list or disable every row for audio-only calls. Video still requires compatible endpoints and an enabled video path.",
             "video_codecs_inherit": "Use the integration video codec order and enabled choices. Turn this off to save a separate video policy, including audio-only calls.",
-            "ring_group": "Vorhandene Rufgruppen auswählen oder Namen eingeben. Die Gruppenverwaltung übernimmt die Verwaltung der gespeicherten Mitglieder und ihrer Reihenfolge.",
-            "queues": "Vorhandene Warteschlangen auswählen oder Namen eingeben. Die Warteschlangenverwaltung übernimmt die Verwaltung des Status und der Reihenfolge ihrer Mitglieder.",
+            "ring_group": "Vorhandene Rufgruppen auswählen oder Namen eingeben. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge.",
+            "queues": "Vorhandene Warteschlangen auswählen oder Namen eingeben. Die Warteschlangenverwaltung verwaltet den Status und die Reihenfolge ihrer Mitglieder.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
             "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
@@ -573,8 +573,8 @@
             "outbound_caller_name": "Ausgehender Anrufername"
           },
           "data_description": {
-            "ring_group": "Vorhandene Rufgruppen auswählen oder Namen eingeben. Die Gruppenverwaltung übernimmt die Verwaltung der gespeicherten Mitglieder und ihrer Reihenfolge.",
-            "queues": "Vorhandene Warteschlangen auswählen oder Namen eingeben. Die Warteschlangenverwaltung übernimmt die Verwaltung des Status und der Reihenfolge ihrer Mitglieder.",
+            "ring_group": "Vorhandene Rufgruppen auswählen oder Namen eingeben. Die Gruppenverwaltung verwaltet die gespeicherten Mitglieder und deren Reihenfolge.",
+            "queues": "Vorhandene Warteschlangen auswählen oder Namen eingeben. Die Warteschlangenverwaltung verwaltet den Status und die Reihenfolge ihrer Mitglieder.",
             "conference_group": "Choose a current conference name or enter a name for an ad-hoc conference.",
             "ringing_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently.",
             "forward_to": "Choose a directory destination or enter a username, number or SIP address.",
@@ -3179,7 +3179,7 @@
         },
         "conference_group": {
           "name": "Optionale Konferenzgruppe",
-          "description": "Den Kontakt einer oder mehreren VoIP-Konferenzgruppen hinzufügen. Mehrere Gruppennamen durch Kommas trennen."
+          "description": "Fügt den Kontakt einer oder mehreren VoIP-Konferenzgruppen hinzu. Mehrere Gruppennamen durch Kommas trennen."
         },
         "conference_ring": {
           "name": "Bei Konferenzbeginn klingeln",
@@ -3373,7 +3373,7 @@
         },
         "conference_group": {
           "name": "Optionale Konferenzgruppe",
-          "description": "Das registrierte SIP-Konto einer oder mehreren Konferenzgruppen hinzufügen. Mehrere Gruppennamen durch Kommas trennen."
+          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Konferenzgruppen hinzu. Mehrere Gruppennamen durch Kommas trennen."
         },
         "conference_ring": {
           "name": "Bei Konferenzbeginn klingeln",
@@ -3381,7 +3381,7 @@
         },
         "ring_group": {
           "name": "Optionale Rufgruppen",
-          "description": "Das registrierte SIP-Konto einer oder mehreren Rufgruppen hinzufügen. Mehrere Gruppennamen durch Kommas trennen."
+          "description": "Fügt das registrierte SIP-Konto einer oder mehreren Rufgruppen hinzu. Mehrere Gruppennamen durch Kommas trennen."
         }
       }
     },
@@ -3592,7 +3592,7 @@
         },
         "greeting_media": {
           "name": "Mailboxansage",
-          "description": "Optionale Audiodatei aus der Medienübersicht von Home Assistant zur Wiedergabe vor dem Aufnahmesignal."
+          "description": "Optionale Audiodatei aus der Medienübersicht von Home Assistant. Sie wird vor dem Aufnahmesignal abgespielt."
         },
         "clear_greeting": {
           "name": "Ansage entfernen",
@@ -3620,7 +3620,7 @@
     },
     "transcribe_voicemail": {
       "name": "Voicemail transkribieren",
-      "description": "Die gespeicherte Nachricht aus dem Auslöser \"Voicemail empfangen\" in Text umwandeln. Alternativ lassen sich Mailbox und Nachrichten-ID explizit auswählen. Eine bestehende Entität für Spracherkennung in Home Assistant auswählen. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
+      "description": "Wandelt die gespeicherte Nachricht aus dem Auslöser \"Voicemail empfangen\" in Text um. Alternativ können Mailbox und Nachrichten-ID explizit gewählt werden. Eine bestehende Entität für Spracherkennung in Home Assistant auswählen. Die Aufnahme bleibt unverändert und wird nicht als gelesen markiert.",
       "fields": {
         "mailbox": {
           "name": "Anrufbeantworter",
@@ -3644,7 +3644,7 @@
     },
     "send_to_voicemail": {
       "name": "Anruf an die Mailbox weiterleiten",
-      "description": "Den aktuellen Anruf der Automation an eine aktivierte Telefonmailbox übergeben. Die Mailbox übernimmt die Aufnahme und beendet den Anruf nach der Nachricht. Diese Aktion nach einer etwaigen Begrüßung oder Sprachausgabe einfügen. Anschließend keine Aktion zum Auflegen hinzufügen.",
+      "description": "Übergibt den aktuellen Anruf der Automation an eine aktivierte Telefonmailbox. Die Mailbox übernimmt die Aufnahme und beendet den Anruf nach der Nachricht. Diese Aktion nach einer etwaigen Begrüßung oder Sprachausgabe einfügen. Anschließend keine Aktion zum Auflegen hinzufügen.",
       "fields": {
         "mailbox": {
           "name": "Zielmailbox"
@@ -3850,7 +3850,7 @@
     },
     "rotate_phone_provisioning_token": {
       "name": "Zugangsdaten für die Telefonbereitstellung erneuern",
-      "description": "Die bisherige private Download-URL ungültig machen. Vor dem erneuten Herunterladen der Konfiguration die neue URL einrichten.",
+      "description": "Macht die bisherige private Download-URL ungültig. Vor dem erneuten Herunterladen der Konfiguration die neue URL einrichten.",
       "fields": {
         "device_id": {
           "name": "Tischtelefon"
