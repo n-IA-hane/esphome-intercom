@@ -127,9 +127,10 @@ class ParkingLot:
             raise ParkingError("The parked call has ended")
         if parked.timer is not None:
             return
+        minimum, maximum = PARKING_DURATION_LIMITS["timeout"]
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-                or not PARKING_DURATION_LIMITS["timeout"][0] <= timeout <= PARKING_DURATION_LIMITS["timeout"][1] or not math.isfinite(timeout)):
-            raise ParkingError("Parking timeout must be between 0 and 3600 seconds")
+                or not minimum <= timeout <= maximum or not math.isfinite(timeout)):
+            raise ParkingError(f"Parking timeout must be between {minimum} and {maximum} seconds")
         if timeout == 0:
             parked.deadline = None
             return
