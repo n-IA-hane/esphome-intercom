@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from aioesphomeapi import DeviceInfo, UserService, UserServiceArg, UserServiceArgType
 from homeassistant.components.esphome.entry_data import RuntimeEntryData
+from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant.common import MockConfigEntry
 import pytest
@@ -104,7 +105,14 @@ async def phone_lab(hass):
         "sensor", "esphome", "84c7bb000001-voip_state", config_entry=native,
         device_id=device.id, suggested_object_id="phone_node_voip_state")
     hass.states.async_set(state_entity.entity_id, "idle")
-    unsub = hass.bus.async_listen("call_service", lambda event: events.append(dict(event.data)))
+    @callback
+    def record_service_event(event):
+        # This is a nonblocking receipt observer. An undecorated listener is
+        # dispatched to an executor and can still be pending after the native
+        # service has completed, making the command/event assertions race.
+        events.append(dict(event.data))
+
+    unsub = hass.bus.async_listen("call_service", record_service_event)
     lab = SimpleNamespace(hass=hass, entry=entry, native=native, device=device,
         registrar=registrar, runtime=entry.runtime_data, sent=sent, events=events, gate=gate)
     yield lab
