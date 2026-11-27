@@ -1624,6 +1624,10 @@ async def _run_application_audio_session(hass, ws, session, *, endpoint_id, play
                                           handoff_requested=None):
     """Deliver call-owned paging PCM, with no browser capture or RTP loopback."""
     media = session.application_playback
+    registry = require_runtime_data(hass).sip
+    owner_session = (registry.get_session(registry.resolve_session_id(session.call_id))
+                     if registry is not None else None)
+    owner_token = session.call_token
 
     async def output():
         loop = asyncio.get_running_loop()
@@ -1669,6 +1673,13 @@ async def _run_application_audio_session(hass, ws, session, *, endpoint_id, play
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             if not task.cancelled() and task.exception() is not None and not media.closed.is_set():
+                error = task.exception()
+                # Playback closes before the media resource during teardown.
+                # Only this captured call generation can make that close normal.
+                if (isinstance(error, ConnectionError) and owner_session is not None
+                        and owner_token is not None and owner_session.token == owner_token
+                        and owner_session.termination_started.is_set()):
+                    continue
                 media.counters["tx_error"] += 1
                 task.result()
     finally:

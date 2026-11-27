@@ -21,7 +21,7 @@ from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpo
 from custom_components.voip_stack.roster import RosterEntry, dump_roster_json
 from custom_components.voip_stack.websocket_api import HA_SOFTPHONE_STATE_EVENT, _ha_softphone_state
 from tests.test_automation_originate_ha import lab as lab, assert_call_resources_released
-from tests.test_browser_paging_ha import Browser
+from tests.test_browser_paging_ha import Browser, _answer, _ringing, browser_lab as browser_lab
 
 pytestmark = pytest.mark.ha
 
@@ -168,3 +168,121 @@ async def test_local_paging_group_does_not_offer_the_call_back_to_its_browser_ca
         await bindings.async_close()
         assert_call_resources_released(lab)
         await endpoint_runtime.async_stop_sip_endpoint(lab.hass)
+
+
+@pytest.mark.parametrize("during_termination", [False, True], ids=["live-error", "terminal-close"])
+async def test_paging_audio_readiness_close_uses_its_call_owner(browser_lab, monkeypatch, during_termination):
+    """A terminal playback close is normal, but a live output error still fails."""
+    lab, phone, job = browser_lab
+    originate, owner = await _ringing(lab, phone, job)
+    application = await _answer(lab, phone, owner)
+    browser = Browser()
+    application.playback.attach(browser)
+    media_session = audio_ws_view._active_softphone_media_session(lab.hass, phone.endpoint_id)
+    token = owner.token
+    worker = asyncio.create_task(audio_ws_view._run_audio_session(
+        lab.hass, browser, media_session, endpoint_id=phone.endpoint_id, playback=application.playback))
+    barrier = None
+    release_stop = asyncio.Event()
+    try:
+        browser.ready()
+        assert await asyncio.wait_for(originate, 2) == {"call_id": owner.call_id, "generation": token.generation}
+
+        async def frame():
+            yield b"\x12\x34" * 320
+
+        await application.media.play_pcm_stream(frame())
+        async with asyncio.timeout(2):
+            while not browser.frames:
+                await asyncio.sleep(0)
+        assert browser.frames[0] == b"\x12\x34" * 320
+        # Reset readiness through the real connection lifecycle and let the
+        # output reach its next real readiness wait, without replacing results.
+        application.playback.detach(browser)
+        waiting = asyncio.Event()
+        real_wait = application.playback.wait_ready
+
+        async def observed_wait(*args, **kwargs):
+            waiting.set()
+            return await real_wait(*args, **kwargs)
+
+        monkeypatch.setattr(application.playback, "wait_ready", observed_wait)
+        await application.media.play_pcm_stream(frame())
+        await asyncio.wait_for(waiting.wait(), 2)
+        assert owner.live and owner.token == token
+
+        if during_termination:
+            stopping = asyncio.Event()
+            worker_finalizing = asyncio.Event()
+            real_stop = application.media.stop
+            stop_count = 0
+
+            async def paused_stop(reason="ended"):
+                nonlocal stop_count
+                stop_count += 1
+                (stopping if stop_count == 1 else worker_finalizing).set()
+                await release_stop.wait()
+                await real_stop(reason)
+
+            monkeypatch.setattr(application.media, "stop", paused_stop)
+            barrier = lab.calls.request_termination(owner.call_id, TerminationIntent("test_hangup"))
+            await asyncio.wait_for(stopping.wait(), 2)
+            await asyncio.wait_for(worker_finalizing.wait(), 2)
+            assert owner.termination_started.is_set() and not owner.live
+            assert owner.token == token and not application.media.closed.is_set()
+            release_stop.set()
+            await asyncio.wait_for(worker, 2)
+            await asyncio.wait_for(barrier, 2)
+        else:
+            await application.playback.close("live_output_failure")
+            with pytest.raises(ConnectionError, match="The announcement call has ended"):
+                await asyncio.wait_for(worker, 2)
+            assert owner.live and not owner.termination_started.is_set()
+        assert browser.closed
+    finally:
+        release_stop.set()
+        if owner.live:
+            barrier = lab.calls.request_termination(owner.call_id, TerminationIntent("test_done"))
+        if barrier is not None:
+            await barrier
+        browser.force_close()
+        await asyncio.gather(originate, worker, return_exceptions=True)
+        assert_call_resources_released(lab)
+
+
+async def test_paging_audio_unexpected_write_error_survives_terminal_decision(browser_lab):
+    """A call's terminal flag cannot hide an unrelated WebSocket write error."""
+    lab, phone, job = browser_lab
+    originate, owner = await _ringing(lab, phone, job)
+    application = await _answer(lab, phone, owner)
+
+    class BrokenBrowser(Browser):
+        async def send_bytes(self, _value):
+            raise RuntimeError("WebSocket write failed")
+
+    browser = BrokenBrowser()
+    application.playback.attach(browser)
+    media_session = audio_ws_view._active_softphone_media_session(lab.hass, phone.endpoint_id)
+    worker = asyncio.create_task(audio_ws_view._run_audio_session(
+        lab.hass, browser, media_session, endpoint_id=phone.endpoint_id, playback=application.playback))
+    try:
+        browser.ready()
+        await asyncio.wait_for(originate, 2)
+        # This is the real synchronous terminal decision; resource cleanup has
+        # not started yet, so the actual output task still observes the write.
+        assert owner.claim_termination(TerminationIntent("test_hangup"))
+        assert owner.termination_started.is_set() and not application.media.closed.is_set()
+
+        async def frame():
+            yield b"\x12\x34" * 320
+
+        await application.media.play_pcm_stream(frame())
+        with pytest.raises(RuntimeError, match="WebSocket write failed"):
+            await asyncio.wait_for(worker, 2)
+        assert application.media.counters["tx_error"] == 1
+        assert browser.closed
+    finally:
+        await lab.calls.request_termination(owner.call_id, TerminationIntent("test_hangup"))
+        browser.force_close()
+        await asyncio.gather(originate, worker, return_exceptions=True)
+        assert_call_resources_released(lab)
