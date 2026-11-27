@@ -31,10 +31,12 @@ def _entrypoints():
 
 
 @pytest.mark.parametrize("path", _entrypoints())
+@pytest.mark.timeout(190)  # Let the real ESPHome subprocess enforce its existing 180-second limit.
 def test_public_firmware_recipe_validates_with_the_coordinated_minimum(path):
     assert str(profile(path)["esphome"]["min_version"]) == MINIMUM
 
 
+@pytest.mark.timeout(190)  # The external validator includes package/model retrieval before validation.
 def test_box3_additions_validate_with_the_parent_i2c_buses(tmp_path):
     parent = BOX3_DIRECTORY / "esp32-s3-box-3-full-aec.yaml"
     # The legacy overlay needs the board buses and supplies display/dock entities.
