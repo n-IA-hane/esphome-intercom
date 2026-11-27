@@ -87,6 +87,15 @@ def sync_trunk_devices(hass, entry) -> None:
 LEGACY_TRUNK_MENU_KEYS = frozenset({
     "trunk_inbound_mode", "trunk_dtmf_enabled", "trunk_dtmf_timeout_ms", "trunk_dtmf_terminator",
 })
+PENDING_TRUNK_MENU_NOTICES = "trunk_menu_retirement_pending"
+
+
+def pending_trunk_menu_notices(entry) -> list[str]:
+    """Validate the retry journal without exposing arbitrary stored values."""
+    pending = entry.data.get(PENDING_TRUNK_MENU_NOTICES, [])
+    if not isinstance(pending, list) or any(not isinstance(item, str) or not item for item in pending):
+        raise ValueError("Invalid pending trunk menu notice")
+    return list(dict.fromkeys(pending))
 
 
 def legacy_trunk_collects_digits(data) -> bool:
@@ -119,12 +128,21 @@ def migrate_trunk_menus(hass, entry) -> None:
     """Retire automatic collection without rewriting destinations or identities."""
     from .repairs import async_report_trunk_menu_retired
 
+    pending = pending_trunk_menu_notices(entry)
     migrate_legacy_trunk(hass, entry)
-    for record in trunk_subentries(entry):
+    records = trunk_subentries(entry)
+    pending = list(dict.fromkeys([*pending, *(record.subentry_id for record in records
+                               if legacy_trunk_collects_digits(record.data))]))
+    if pending and entry.data.get(PENDING_TRUNK_MENU_NOTICES) != pending:
+        # The config entry and issue registry are saved independently. Retain
+        # enough ownership to restore every warning after an interrupted save.
+        hass.config_entries.async_update_entry(entry,
+            data={**entry.data, PENDING_TRUNK_MENU_NOTICES: pending})
+    for record in records:
         data = dict(record.data)
         # Match the retired normalizer: an explicit DTMF mode determined the
         # effective flag, including persisted records with a stale false flag.
-        if legacy_trunk_collects_digits(data):
+        if record.subentry_id in pending:
             async_report_trunk_menu_retired(hass, entry, record)
         proposed = migrated_trunk_routing_data(data)
         if proposed != data:

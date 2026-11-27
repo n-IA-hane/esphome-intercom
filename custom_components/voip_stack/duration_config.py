@@ -78,11 +78,16 @@ def duration_migration_plan(entry) -> tuple[dict, list[tuple[object, dict]]]:
     from .queue_config import initial_queue_policy
     from .roster import parse_roster_json
 
-    from .trunk_config import legacy_trunk_collects_digits, migrated_trunk_routing_data
+    from .trunk_config import (
+        PENDING_TRUNK_MENU_NOTICES, legacy_trunk_collects_digits,
+        migrated_trunk_routing_data, pending_trunk_menu_notices,
+    )
+    pending_trunk_menu_notices(entry)
     legacy_trunk_collects_digits(entry.data)
     if "trunk_enabled" in entry.data:
         normalized_trunk_config(entry.data)
     data = migrated_trunk_routing_data(initialize_duration_config(entry.data))
+    data.pop(PENDING_TRUNK_MENU_NOTICES, None)
     normalize_parking_config(data["parking"])
     # Existing contacts used this initial value before a stored default existed.
     # Changing a PBX default must not rewrite a saved per-contact policy.
@@ -149,8 +154,9 @@ def migrate_duration_policies(hass, entry) -> None:
     # Validate every owner before the first write, including collector fields
     # which can fail before the duration phase on installations still at 7.5.
     duration_migration_plan(entry)
-    from .trunk_config import LEGACY_TRUNK_MENU_KEYS, migrate_trunk_menus
-    if "trunk_enabled" in entry.data or LEGACY_TRUNK_MENU_KEYS.intersection(entry.data) or any(
+    from .trunk_config import LEGACY_TRUNK_MENU_KEYS, PENDING_TRUNK_MENU_NOTICES, migrate_trunk_menus
+    if ("trunk_enabled" in entry.data or PENDING_TRUNK_MENU_NOTICES in entry.data
+            or LEGACY_TRUNK_MENU_KEYS.intersection(entry.data)) or any(
             row.subentry_type == "trunk" and LEGACY_TRUNK_MENU_KEYS.intersection(row.data)
             for row in entry.subentries.values()):
         # Preserve the existing owner and per-trunk notices after preflight.

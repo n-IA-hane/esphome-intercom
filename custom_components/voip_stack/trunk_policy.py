@@ -7,7 +7,7 @@ import ipaddress
 
 def inbound_trunk_destination(config, *, default="HA") -> str:
     """Retain the saved unknown-number decision across older trunk schemas."""
-    policy = config.get("trunk_inbound_unknown_target", "fallback")
+    policy = str(config.get("trunk_inbound_unknown_target") or "fallback").strip()
     if policy not in {"fallback", "reject"}:
         raise ValueError("Invalid legacy trunk unknown-number policy")
     if policy == "reject":

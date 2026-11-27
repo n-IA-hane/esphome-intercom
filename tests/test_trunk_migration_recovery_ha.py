@@ -88,3 +88,40 @@ async def test_residual_parent_trunk_converges_once_without_resurrecting_legacy_
     before = deepcopy(entry.as_dict())
     assert await async_migrate_entry(hass, entry)
     assert entry.as_dict() == before
+
+
+async def test_interrupted_retirement_recreates_notice_from_saved_journal(hass, monkeypatch):
+    from custom_components.voip_stack import async_migrate_entry
+
+    entry = MockConfigEntry(domain="voip_stack", version=7, minor_version=5, data={})
+    entry.add_to_hass(hass)
+    row = add_trunk(hass, entry, "provider", trunk_inbound_mode="dtmf", trunk_dtmf_timeout_ms=3000)
+    update_entry = hass.config_entries.async_update_entry
+    interrupted = False
+
+    def interrupt_final_write(current, **kwargs):
+        nonlocal interrupted
+        if current is entry and kwargs.get("minor_version") == 7 and not interrupted:
+            interrupted = True
+            raise OSError("Interrupted configuration save")
+        return update_entry(current, **kwargs)
+
+    monkeypatch.setattr(hass.config_entries, "async_update_entry", interrupt_final_write)
+    assert not await async_migrate_entry(hass, entry)
+    assert "trunk_inbound_mode" not in row.data
+    assert entry.data["trunk_menu_retirement_pending"] == [row.subentry_id]
+    issue_id = "trunk_dtmf_retired_" + row.subentry_id
+    # Config entries and the issue registry have independent persistence. The
+    # retry must recover the notice even if only the config entry was flushed.
+    ir.async_delete_issue(hass, "voip_stack", issue_id)
+    assert await async_migrate_entry(hass, entry)
+    assert "trunk_menu_retirement_pending" not in entry.data
+    assert ir.async_get(hass).async_get_issue("voip_stack", issue_id)
+
+
+@pytest.mark.parametrize("legacy", [None, "", " fallback "])
+def test_legacy_empty_unknown_policy_keeps_its_existing_fallback(legacy):
+    from custom_components.voip_stack.config import normalized_trunk_config
+
+    assert normalized_trunk_config({"trunk_inbound_unknown_target": legacy,
+        "trunk_inbound_default_target": "Desk"})["trunk_inbound_default_target"] == "Desk"
