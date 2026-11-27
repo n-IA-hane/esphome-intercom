@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only copied-storage preflight for the local 7.7 duration bridge.
+"""Read-only copied-storage preflight for the 7.5/7.6 to 7.7 policy bridge.
 
 No setup or network connection runs. Reports contain changed paths and failure
 classes, never configuration values. A pass validates a plan, not deployment.
@@ -75,7 +75,7 @@ def preflight_store(payload):
         if not isinstance(raw, Mapping) or raw.get("domain") != "voip_stack":
             continue
         entry = _entry(raw)
-        supported = entry.version == 7 and entry.minor_version in (6, 7)
+        supported = entry.version == 7 and entry.minor_version in (5, 6, 7)
         result = {"entry_id": entry.entry_id, "schema": [entry.version, entry.minor_version],
                   "target_schema": [7, 7], "prerequisite_migrations_required": not supported}
         try:
@@ -86,10 +86,16 @@ def preflight_store(payload):
         except (ValueError, TypeError, KeyError, OSError, RuntimeError, OverflowError) as error:
             result.update(status="blocked", error_type=type(error).__name__)
         else:
-            changed = proposed != entry.data or bool(updates)
+            # Runtime must also move a residual legacy parent trunk into a
+            # native subentry. The pure validation plan cannot allocate that
+            # HA identity, so disclose the required move instead of claiming
+            # that an already initialized numeric 7.7 is fully migrated.
+            parent_trunk_move = "trunk_enabled" in entry.data
+            changed = proposed != entry.data or bool(updates) or parent_trunk_move
             result.update(entry_fields=_changed_paths(entry.data, proposed),
                 subentries=[{"subentry_id": row.subentry_id, "fields": _changed_paths(row.data, data)}
                             for row, data in updates], stored_postconditions_satisfied=not changed,
+                parent_trunk_move_required=parent_trunk_move,
                 migration_required=entry.minor_version < 7 or changed)
             result["status"] = "passed" if supported and (entry.minor_version < 7 or not changed) else "blocked"
             if entry.minor_version == 7 and changed:
@@ -97,7 +103,7 @@ def preflight_store(payload):
         results.append(result)
     if not results:
         raise ValueError("No VoIP Stack entry found")
-    return {"read_only": True, "scope": "Local 7.7 duration and retired-trunk postconditions",
+    return {"read_only": True, "scope": "7.5/7.6 upgrade validation and 7.7 duration and retired-trunk postconditions",
             "status": "passed" if all(row["status"] == "passed" for row in results) else "blocked", "entries": results}
 
 def source_fingerprint():
