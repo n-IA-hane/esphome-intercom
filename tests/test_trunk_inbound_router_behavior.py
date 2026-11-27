@@ -134,7 +134,7 @@ def test_static_trunk_classifies_only_explicitly_allowed_sources():
     from custom_components.voip_stack.sip_trunk import SipTrunkClient, SipTrunkConfig
 
     trunk = SipTrunkClient(
-        config=SipTrunkConfig(enabled=True, transport="udp", server="198.51.100.20",
+        config=SipTrunkConfig(options_interval=30, enabled=True, transport="udp", server="198.51.100.20",
                              port=5060, domain="", username="", auth_username="",
                              password="", expires=300, register=False,
                              allowed_ips=("198.51.100.20",)),

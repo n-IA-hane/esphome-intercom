@@ -231,7 +231,7 @@ async def test_registered_trunk_capture_contains_authenticated_bye_once_per_io()
     peer, _ = await loop.create_datagram_endpoint(Provider, local_addr=("127.0.0.1", 0))
     port = peer.get_extra_info("sockname")[1]
     trunk = sip_trunk.SipTrunkClient(
-        config=sip_trunk.SipTrunkConfig(
+        config=sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="127.0.0.1",

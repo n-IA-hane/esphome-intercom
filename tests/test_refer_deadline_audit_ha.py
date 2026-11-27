@@ -1,5 +1,7 @@
 """The real REFER notifier keeps a finite lease and one subscription owner."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import math
 import socket
@@ -88,7 +90,7 @@ async def test_refer_refresh_updates_registry_owner_in_monotonic_domain(hass, mo
     from custom_components.voip_stack import sip_application
 
     wire = NotifyWire()
-    registrar = SipRegistrar(enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
     application = SipApplicationMethods(hass, registrar)
     notifier = sip_transfer.ReferNotifier(wire.dialog, 7, wire.send)
     async def follow_up(_request, _address, result):

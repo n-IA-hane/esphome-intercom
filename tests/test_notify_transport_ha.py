@@ -1,5 +1,7 @@
 """A UDP subscriber observes application notifications on real UDP/TCP peers."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import time
 from xml.etree import ElementTree
@@ -97,7 +99,7 @@ async def test_udp_subscription_large_dialog_notify_uses_owned_tcp_and_keeps_tar
                 observed.put_nowait((message, "UDP", raw))
 
     udp, peer = await loop.create_datagram_endpoint(Datagram, local_addr=("127.0.0.3", port))
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount(watcher, "Watcher", "test-only")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount(watcher, "Watcher", "test-only")],
                              local_ip="127.0.0.1", local_sip_port=5060)
     registrar.registrations[watcher] = SipRegistration(username=watcher,
         contact_uri=f"sip:{watcher}@127.0.0.3:{port};transport=udp", source_host="127.0.0.3",

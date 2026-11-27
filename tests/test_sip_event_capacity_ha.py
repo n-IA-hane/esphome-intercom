@@ -1,5 +1,7 @@
 """The shipped SIP event owner admits office BLF load and backs off refusals."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import time
 
@@ -31,7 +33,7 @@ async def office_blf(hass):
     entry.runtime_data = VoipStackRuntime(transport_config={}, assist_config={}, trunk_config={},
         endpoints=endpoints, phones=None, sip=calls)
     accounts = [SipAccount(f"watcher{i}", f"Watcher {i}", "fixture-only") for i in range(20)]
-    registrar = SipRegistrar(enabled=True, accounts=accounts, local_ip="127.0.0.1", local_sip_port=5060)
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=accounts, local_ip="127.0.0.1", local_sip_port=5060)
     for index, account in enumerate(accounts):
         registrar.registrations[account.username] = SipRegistration(username=account.username,
             contact_uri=f"sip:{account.username}@127.0.0.{index+2}:5060", source_host=f"127.0.0.{index+2}",

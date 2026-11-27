@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 from dataclasses import replace
 
@@ -78,7 +80,7 @@ class MwiSession:
     def __init__(self, lab, transport="UDP"):
         self.lab = lab
         self.transport = transport
-        self.registrar = SipRegistrar(enabled=True, accounts=[SipAccount("kitchen", "Kitchen", "test-only")],
+        self.registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("kitchen", "Kitchen", "test-only")],
                                       local_ip="127.0.0.1", local_sip_port=5060)
         self.methods = SipApplicationMethods(lab.hass, self.registrar)
         self.endpoint = SipUdpEndpoint(local_ip="127.0.0.1", local_sip_port=0, local_rtp_port=41000,

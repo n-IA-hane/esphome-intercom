@@ -17,7 +17,7 @@ async def test_unregistered_trunk_resolves_server_or_proxy_without_resolving_cal
         async def resolve(self, uri, *, transport):
             requested.append((uri.host, uri.port, transport))
             return (sip_resolution.SipServerTarget(uri.host, uri.port, transport, ("192.0.2.10",)),)
-    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
         enabled=True, transport=transport.lower(), server="server.example", port=5099,
         domain="called.example", username="line", auth_username="", password="", expires=300,
         outbound_proxy=proxy_uri), local_ip="127.0.0.1", local_sip_port=5060)

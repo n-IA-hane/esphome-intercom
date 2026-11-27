@@ -30,7 +30,7 @@ async def test_register_failure_preserves_live_dialog_socket_and_can_recover(res
             self.transport.sendto(sip.build_response(status, "Witness", headers), address)
 
     transport, _ = await loop.create_datagram_endpoint(Registrar, local_addr=("127.0.0.1", 0))
-    client = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+    client = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
         enabled=True, transport="udp", server="127.0.0.1", port=transport.get_extra_info("sockname")[1],
         domain="test", username="line", auth_username="", password="", expires=300),
         local_ip="127.0.0.1", local_sip_port=5060)
@@ -139,7 +139,7 @@ async def test_tcp_invite_keeps_stable_contact_reachable_on_another_connection(u
     client = sip_client.SipCallClient(local_ip="127.0.0.1", local_name="office", local_uri_user="office",
         local_sip_port=stable_port, local_rtp_port=40000, signaling_transport="TCP")
     client.local_contact_uri = f"sip:office@127.0.0.1:{stable_port};transport=tcp"
-    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(enabled=True, transport="tcp",
+    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30, enabled=True, transport="tcp",
         server="127.0.0.1", port=peer_port, domain="test", username="office", auth_username="",
         password="", expires=300, register=False, allowed_ips=("127.0.0.1",)),
         local_ip="127.0.0.1", local_sip_port=stable_port)
@@ -246,7 +246,7 @@ async def test_register_failure_preserves_incoming_trunk_dialog_socket(response,
 
     transport, peer = await loop.create_datagram_endpoint(Registrar, local_addr=("127.0.0.1", 0))
     peer_port = transport.get_extra_info("sockname")[1]
-    client = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+    client = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
         enabled=True, transport="udp", server="127.0.0.1", port=peer_port,
         domain="test", username="line", auth_username="", password="", expires=300),
         local_ip="127.0.0.1", local_sip_port=5060)

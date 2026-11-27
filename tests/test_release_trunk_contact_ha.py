@@ -43,7 +43,7 @@ async def test_static_tcp_trunk_bye_arrives_on_a_new_connection_to_stable_contac
     server = await asyncio.start_server(remote_pbx, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     manager = lab.calls.component("udp_listener")
-    trunk = SipTrunkClient(config=SipTrunkConfig(enabled=True, register=False, transport="tcp",
+    trunk = SipTrunkClient(config=SipTrunkConfig(options_interval=30, enabled=True, register=False, transport="tcp",
         server="127.0.0.1", port=port, domain="test", username="line", auth_username="", password="",
         expires=300, allowed_ips=("127.0.0.1",)), local_ip="127.0.0.1", local_sip_port=manager.port)
     client = SipCallClient(local_ip="127.0.0.1", local_name="line", local_sip_port=manager.port,

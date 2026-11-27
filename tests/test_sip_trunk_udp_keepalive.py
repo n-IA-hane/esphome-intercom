@@ -38,7 +38,7 @@ async def test_registered_udp_flow_maintains_nat_and_stops_cleanly(monkeypatch, 
 
     transport, peer = await loop.create_datagram_endpoint(Registrar, local_addr=('127.0.0.1', 0))
     client = sip_trunk.SipTrunkClient(
-        config=sip_trunk.SipTrunkConfig(enabled=True, transport='udp', server='127.0.0.1',
+        config=sip_trunk.SipTrunkConfig(options_interval=30, enabled=True, transport='udp', server='127.0.0.1',
             port=transport.get_extra_info('sockname')[1], domain='test', username='line',
             auth_username='', password='', expires=300),
         local_ip='127.0.0.1', local_sip_port=5060,

@@ -1,5 +1,7 @@
 """BLF uses canonical call ownership and the existing SIP subscription owner."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import time
 from xml.etree import ElementTree
@@ -32,7 +34,7 @@ def subscribe(*, tag="", event="dialog", expires=300, accept="application/dialog
 async def blf(lab):
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)
     lab.runtime.endpoints.update("bedroom0", extension="101")
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("watcher", "Watcher", "test-only")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("watcher", "Watcher", "test-only")],
                              local_ip="127.0.0.1", local_sip_port=5060)
     registrar.registrations["watcher"] = SipRegistration(
         username="watcher", contact_uri="sip:watcher@127.0.0.3:5060", source_host="127.0.0.3",

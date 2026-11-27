@@ -223,7 +223,7 @@ async def test_trunk_423_retry_uses_owned_contact_expiry_and_keeps_udp_owner(soc
     transport, provider = await loop.create_datagram_endpoint(Registrar, local_addr=("127.0.0.1", 0))
     trunk = None
     try:
-        trunk = SipTrunkClient(config=SipTrunkConfig(enabled=True, transport="udp", server="127.0.0.1",
+        trunk = SipTrunkClient(config=SipTrunkConfig(options_interval=30, enabled=True, transport="udp", server="127.0.0.1",
             port=provider.port, domain=realm, username="line", auth_username="line", password=password, expires=60),
             local_ip="127.0.0.1", local_sip_port=0)
         await trunk._connect_udp()

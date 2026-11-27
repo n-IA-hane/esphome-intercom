@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 from dataclasses import replace
 
 from .voip_phase1_support import (
@@ -35,7 +37,7 @@ from .voip_phase1_support import (
 class SipRegisteredTcpRecoveryTest(unittest.IsolatedAsyncioTestCase):
     async def test_complete_bad_frame_preserves_authenticated_registration_and_flow(self):
         registrar_module = _load_intercom_module("sip_registrar")
-        registrar = registrar_module.SipRegistrar(enabled=True,
+        registrar = registrar_module.SipRegistrar(policy=configured_registrar_policy(), enabled=True,
             accounts=[registrar_module.SipAccount("desk", "Desk", "test-only-password")],
             local_ip="127.0.0.1", local_sip_port=5060)
         server = sip_listener.SipTcpServer(host="127.0.0.1", port=0,
@@ -714,7 +716,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_trunk_start_schedules_rfc_registration_without_blocking_setup(
         self,
     ) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="127.0.0.1",
@@ -1891,7 +1893,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(received[0].header("Call-ID"), right_call_id)
 
     async def test_trunk_registration_filters_call_id_method_and_cseq(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="127.0.0.1",
@@ -2007,7 +2009,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             local_addr=("127.0.0.1", 0),
         )
         server_port = server_transport.get_extra_info("sockname")[1]
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="127.0.0.1",
@@ -2086,7 +2088,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
 
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="registrar.example",
@@ -2152,7 +2154,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         server_port = server_transport.get_extra_info("sockname")[1]
         trunk = sip_trunk.SipTrunkClient(
-            config=sip_trunk.SipTrunkConfig(
+            config=sip_trunk.SipTrunkConfig(options_interval=30,
                 enabled=True,
                 transport="udp",
                 server="logical.invalid",
@@ -2200,7 +2202,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 return False
 
         trunk = sip_trunk.SipTrunkClient(
-            config=sip_trunk.SipTrunkConfig(
+            config=sip_trunk.SipTrunkConfig(options_interval=30,
                 enabled=True,
                 transport="udp",
                 server="proxy.example",
@@ -2257,7 +2259,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             def close(self) -> None:
                 self.closed = True
 
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="192.0.2.10",
@@ -2340,7 +2342,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 raise OSError("first target unavailable")
             return asyncio.StreamReader(), writer
 
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="pbx.example",
@@ -2409,7 +2411,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             observed.update(host=host, port=port, **kwargs)
             return asyncio.StreamReader(), Writer()
 
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tls",
             server="registrar.example",
@@ -2441,7 +2443,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         await trunk.stop()
 
     def test_trunk_outbound_proxy_uri_selects_host_and_port(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="pbx.example",
@@ -2468,7 +2470,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(secure.registrar_target, ("secure.example", 5061))
 
     async def test_udp_trunk_drops_packets_outside_resolved_proxy_hosts(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="pbx.example",
@@ -2517,7 +2519,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(task, return_exceptions=True)
 
     async def test_trunk_routes_in_dialog_responses_to_endpoint_owner(self) -> None:
-        config = sip_trunk.SipTrunkConfig(enabled=True, transport="udp", server="pbx.example", port=5060, domain="pbx.example", username="ha", auth_username="ha", password="", expires=300)
+        config = sip_trunk.SipTrunkConfig(options_interval=30, enabled=True, transport="udp", server="pbx.example", port=5060, domain="pbx.example", username="ha", auth_username="ha", password="", expires=300)
         trunk = sip_trunk.SipTrunkClient(config=config, local_ip="127.0.0.1", local_sip_port=5060)
         trunk._trusted_udp_hosts = frozenset({"192.0.2.10"})
         handled = []
@@ -2540,7 +2542,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(task, return_exceptions=True)
 
     def test_video_trunk_endpoint_rejects_missing_media_update_handler(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="pbx.example",
@@ -2580,7 +2582,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(trunk.inbound_endpoint)
 
     def test_trunk_inbound_endpoint_inherits_video_policy(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="pbx.example",
@@ -4150,7 +4152,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([sip.parse_message(raw).method for raw, _addr in transport.sent], ["CANCEL", "ACK", "BYE"])
 
     async def test_trunk_old_tcp_reader_cannot_clear_replacement(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="127.0.0.1",
@@ -4207,7 +4209,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_trunk_transport_loss_preserves_confirmed_dialog_for_new_flow(self) -> None:
         """A confirmed trunk dialog must outlive the TCP flow that carried it."""
 
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="pbx.example",
@@ -5024,7 +5026,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*tuple(endpoint._request_tasks))
 
     async def test_trunk_reserves_control_capacity_under_invite_load(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="udp",
             server="127.0.0.1",

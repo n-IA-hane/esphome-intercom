@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 from .voip_phase1_support import (
     _reserved_udp_ports,
     asyncio,
@@ -305,7 +307,7 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
         with _reserved_udp_ports(3) as ports:
             sip_port, ha_rtp_port, dahua_rtp_port = ports
         audio = audio_format.AudioFormat(16000, "s16le", 1, 20)
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("100", "Dahua VTO", "secret")],
             local_ip=local,

@@ -3322,7 +3322,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(manager._stopped)
 
     async def test_trunk_stop_cannot_resurrect_delayed_tcp_connection(self) -> None:
-        config = sip_trunk.SipTrunkConfig(
+        config = sip_trunk.SipTrunkConfig(options_interval=30,
             enabled=True,
             transport="tcp",
             server="127.0.0.1",

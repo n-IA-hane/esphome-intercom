@@ -1,5 +1,7 @@
 """Restart restores valid datagram leases without reviving stream ownership."""
 
+from .support.sip_policy import configured_registrar_policy
+
 from dataclasses import replace
 import time
 from unittest.mock import AsyncMock
@@ -13,7 +15,7 @@ pytestmark = pytest.mark.ha
 
 
 def registrar(password="test-only-password"):
-    return SipRegistrar(enabled=True, accounts=[SipAccount("Desk", "Desk", password)],
+    return SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("Desk", "Desk", password)],
                         local_ip="127.0.0.1", local_sip_port=5060)
 
 

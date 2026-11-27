@@ -232,7 +232,7 @@ async def test_public_pickup_preserves_preanswered_source_and_immediate_picker_p
     sync_registry_from_entry(lab.hass, entry)
     registrar.update_accounts([*registrar.accounts.values(),
         account_from_mapping(dict(configured.data))])
-    registration = SipTrunkClient(config=SipTrunkConfig(enabled=True, transport="udp", server="127.0.0.1",
+    registration = SipTrunkClient(config=SipTrunkConfig(options_interval=30, enabled=True, transport="udp", server="127.0.0.1",
         port=lab.runtime.transport_config["sip_port"], domain="127.0.0.1", username="reservation-picker",
         auth_username="reservation-picker", password="controlled-test-only", expires=60, audio_codecs=("L16",)),
         local_ip="127.0.0.1", local_sip_port=lab.runtime.transport_config["sip_port"])

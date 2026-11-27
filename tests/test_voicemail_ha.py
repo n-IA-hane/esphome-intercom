@@ -1,5 +1,7 @@
 """Application handoff and mailbox persistence through real SIP/RTP calls."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import re
 import struct
@@ -1116,7 +1118,7 @@ async def test_mwi_uses_existing_subscription_lifecycle_and_mailbox_counts(mailb
 
     lab = mailbox_lab
     lab.runtime.endpoints.update("kitchen", kind=EndpointKind.SIP_ACCOUNT, username="kitchen")
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("kitchen", "Kitchen", "test-only")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("kitchen", "Kitchen", "test-only")],
                              local_ip="127.0.0.1", local_sip_port=5060)
     registrar.registrations["kitchen"] = SipRegistration(
         username="kitchen", contact_uri="sip:kitchen@127.0.0.2:5060", source_host="127.0.0.2",

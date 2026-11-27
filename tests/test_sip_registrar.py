@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 from .voip_phase1_support import (
     router,
     sip,
@@ -17,7 +19,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         from dataclasses import replace
 
         account = sip_registrar.SipAccount("phone", "Phone", "test-only")
-        registrar = sip_registrar.SipRegistrar(enabled=True, accounts=[account],
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[account],
             local_ip="127.0.0.1", local_sip_port=5060)
         addr = ("127.0.0.1", 5062)
         request = sip.SipMessage(method="INVITE", uri="sip:desk@127.0.0.1",
@@ -54,7 +56,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
     def test_shared_flow_identity_requires_one_enabled_registered_account(self) -> None:
         from dataclasses import replace
 
-        registrar = sip_registrar.SipRegistrar(enabled=True,
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(), enabled=True,
             accounts=[sip_registrar.SipAccount(name, name, "test-only") for name in ("alice", "bob")],
             local_ip="192.0.2.1", local_sip_port=5060)
         address = ("192.0.2.50", 5062)
@@ -75,7 +77,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
     def test_closed_flow_removes_only_its_bindings(self) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
             local_ip="192.168.1.10",
@@ -160,7 +162,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         ]
         for request_uri, digest_uri, expected in cases:
             with self.subTest(request_uri=request_uri, digest_uri=digest_uri):
-                registrar = sip_registrar.SipRegistrar(
+                registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
                     enabled=True,
                     accounts=[sip_registrar.SipAccount("door", "Door", "secret")],
                     local_ip="192.168.1.10", local_sip_port=5060,
@@ -174,7 +176,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.status, expected)
 
     def test_digest_nonce_cache_is_bounded(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[],
             local_ip="192.168.1.10",
@@ -189,7 +191,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import patch
 
         account = sip_registrar.SipAccount("phone", "Phone", "test-only")
-        registrar = sip_registrar.SipRegistrar(enabled=True, accounts=[account],
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[account],
             local_ip="127.0.0.1", local_sip_port=5060)
         request = sip.SipMessage(method="INVITE", uri="sip:desk@127.0.0.1")
         signed = []
@@ -225,7 +227,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_register_challenge_hides_accounts_and_reuses_source_nonce(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Known", "Known", "secret")],
             local_ip="192.168.1.10",
@@ -300,7 +302,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_register_challenge_then_binding_roster_entry(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("SmartphoneDany", "Smartphone Dany", "secret")],
             local_ip="192.168.1.10",
@@ -374,7 +376,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
     async def test_dahua_refresh_replay_rotates_nonce_with_stale_and_recovers(
         self,
     ) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("100", "Dahua VTO", "secret")],
             local_ip="192.168.1.10",
@@ -477,7 +479,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_bad_register_password_does_not_claim_stale_nonce(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("100", "Dahua VTO", "secret")],
             local_ip="192.168.1.10",
@@ -520,7 +522,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("stale=true", dict(result.headers)["WWW-Authenticate"])
 
     async def test_register_contact_is_pinned_to_authenticated_source_flow(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Pivot", "Pivot", "secret")],
             local_ip="192.168.1.10",
@@ -577,7 +579,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_password_rotation_revokes_case_variant_registration(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "old-secret")],
             local_ip="192.168.1.10",
@@ -602,7 +604,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("deskphone", "Desk", "secret")],
             local_ip="192.168.1.10",
@@ -633,7 +635,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
     def test_account_removal_emits_one_offline_event(self) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "secret")],
             local_ip="192.168.1.10",
@@ -658,7 +660,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
     def test_expired_final_binding_emits_offline_event(self) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "secret")],
             local_ip="192.168.1.10",
@@ -682,7 +684,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(changes, [("DeskPhone", False)])
 
     def test_next_expiration_returns_nearest_live_contact(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "secret")],
             local_ip="192.168.1.10",
@@ -708,7 +710,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registrar.next_expiration_at(), 9999999000)
 
     async def test_registration_identity_requires_exact_signaling_flow(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "secret")],
             local_ip="192.168.1.10",
@@ -754,7 +756,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_registrar_rejects_an_unadvertised_digest_algorithm_without_creating_a_binding(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Desk", "Desk", "secret")],
             local_ip="192.168.1.10",
@@ -792,7 +794,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(registrar.registered_contacts("Desk")), 1)
 
     async def test_stale_unregister_does_not_remove_active_binding(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Zoiper", "Zoiper", "secret")],
             local_ip="192.168.1.10",
@@ -837,7 +839,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entries[0].sip_uri, "sip:Zoiper@192.168.1.50:5062;transport=tcp")
 
     async def test_registered_softphone_roster_entry_carries_group_membership(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[
                 sip_registrar.SipAccount(
@@ -869,7 +871,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entries[0].metadata["ring_group"], "RG Casa")
 
     async def test_register_with_active_and_expired_contacts_keeps_active_binding(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Zoiper", "Zoiper", "secret")],
             local_ip="192.168.1.10",
@@ -911,7 +913,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entries[0].sip_uri, "sip:Zoiper@192.168.1.50:5062;transport=tcp")
 
     def test_sip_account_does_not_publish_as_phonebook_contact_when_not_registered(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Zoiper", "Zoiper", "secret")],
             local_ip="192.168.1.10",
@@ -922,7 +924,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registrar.registered_roster_entries(), [])
 
     def test_registered_softphone_entry_is_sip_uri_contact(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Zoiper", "Zoiper", "secret", extension="201")],
             local_ip="192.168.1.10",
@@ -953,7 +955,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_extension.sip_uri, "sip:Zoiper@192.168.1.50:5062;transport=tcp")
 
     def test_account_without_registration_is_not_a_callable_roster_entry(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Zoiper", "Zoiper", "secret")],
             local_ip="192.168.1.10",
@@ -977,7 +979,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(parsed.params)["transport"], "udp")
 
     async def test_register_accepts_host_only_request_uri_from_baresip(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("SmartphoneDany", "Smartphone Dany", "secret")],
             local_ip="192.168.1.10",
@@ -1014,7 +1016,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_outbound_instance_rebinds_one_logical_tcp_flow(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
             local_ip="192.168.1.10",
@@ -1073,7 +1075,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(contacts[0].instance_id, instance)
 
     async def test_outbound_capability_does_not_require_flow_parameters(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
             local_ip="192.168.1.10",
@@ -1110,7 +1112,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(transport=transport):
                 # Linphone advertises Supported: outbound and sends +sip.instance for
                 # GRUU without reg-id. RFC 5626 treats that as a non-outbound binding.
-                registrar = sip_registrar.SipRegistrar(
+                registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
                     enabled=True,
                     accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
                     local_ip="192.168.1.10",
@@ -1145,7 +1147,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("Require", dict(result.headers))
 
     async def test_outbound_reg_id_without_instance_is_rejected(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
             local_ip="192.168.1.10",
@@ -1176,7 +1178,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
     async def test_outbound_capability_without_reg_id_preserves_gruu(self) -> None:
         for transport in ("UDP", "TCP"):
             with self.subTest(transport=transport):
-                registrar = sip_registrar.SipRegistrar(
+                registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
                     enabled=True,
                     accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
                     local_ip="192.168.1.10",
@@ -1216,7 +1218,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_outbound_reg_id_with_instance_remains_rejected(self) -> None:
         for reg_id in ("0", "-1", "2147483648", "invalid", "1.0"):
             with self.subTest(reg_id=reg_id):
-                registrar = sip_registrar.SipRegistrar(
+                registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
                     enabled=True,
                     accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
                     local_ip="192.168.1.10",
@@ -1247,7 +1249,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
     async def test_instance_parameter_without_outbound_remains_an_ordinary_contact(
         self,
     ) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
             local_ip="192.168.1.10",
@@ -1281,7 +1283,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_multiple_contacts_are_independent_and_all_returned(self) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Multi", "Multi", "secret")],
             local_ip="192.168.1.10",
@@ -1342,7 +1344,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unregister_one_contact_preserves_other_and_presence(self) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Multi", "Multi", "secret")],
             local_ip="192.168.1.10",
@@ -1383,7 +1385,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_register_query_and_wildcard_use_complete_binding_set(self) -> None:
         changes: list[tuple[str, bool]] = []
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Multi", "Multi", "secret")],
             local_ip="192.168.1.10",
@@ -1454,7 +1456,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(changes, [("Multi", True), ("Multi", False)])
 
     async def test_lower_cseq_and_invalid_batch_do_not_mutate_bindings(self) -> None:
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True,
             accounts=[sip_registrar.SipAccount("Multi", "Multi", "secret")],
             local_ip="192.168.1.10",
@@ -1508,7 +1510,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_gruu_targets_instance_and_preserves_temporary_tokens_until_expiry(self):
-        registrar = sip_registrar.SipRegistrar(enabled=True,
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(), enabled=True,
             accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
             local_ip="192.168.1.10", local_sip_port=5060)
         instances = ("urn:uuid:12345678-1234-5678-1234-567812345678",

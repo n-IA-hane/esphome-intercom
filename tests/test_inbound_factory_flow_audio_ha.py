@@ -1,5 +1,7 @@
 """Real inbound factories preserve outbound flows and advisory codec offers."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -89,7 +91,7 @@ async def _exercise_factory(monkeypatch, *, factory, outbound=False, advisory=No
         transport, _ = await loop.create_datagram_endpoint(lambda: owner, local_addr=("127.0.0.1", 0))
         transports.append(transport)
         listener_port = transport.get_extra_info("sockname")[1]
-        registrar = SipRegistrar(enabled=True, accounts=[SipAccount("phone", "Phone", "test-only")],
+        registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("phone", "Phone", "test-only")],
             local_ip="127.0.0.1", local_sip_port=listener_port)
         registrar.registrations["phone"] = SipRegistration(username="phone", contact_uri=contact,
             source_host="127.0.0.1", source_port=source_port, transport="UDP", outbound=outbound,

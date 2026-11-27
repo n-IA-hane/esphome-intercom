@@ -1,5 +1,7 @@
 """REFER auth follows the committed leg principal on a shared registered flow."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 from dataclasses import replace
 import hashlib
@@ -126,7 +128,7 @@ async def exercise(order, *, revoke=False, logical_leg=False, end_before_final=F
     )
     peer.gruu = True
     peer_addr = remote.get_extra_info("sockname")
-    registrar = sip_registrar.SipRegistrar(
+    registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[sip_registrar.SipAccount(u, u, p) for u, p in PASSWORDS.items()],
         local_ip="127.0.0.1",
@@ -510,7 +512,7 @@ async def state_scene():
             async_entries=lambda _: [SimpleNamespace(runtime_data=runtime)]
         ),
     )
-    registrar = sip_registrar.SipRegistrar(
+    registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[sip_registrar.SipAccount(u, u, p) for u, p in PASSWORDS.items()],
         local_ip="127.0.0.1",

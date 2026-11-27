@@ -200,7 +200,7 @@ class ReferCorrelationTest(unittest.IsolatedAsyncioTestCase):
         receive_task = None
         if borrowed:
             from custom_components.voip_stack.trunk_signaling import reuse_registered_trunk_flow
-            trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+            trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
                 enabled=True, transport="udp", server="127.0.0.1", port=port,
                 domain="127.0.0.1", username="ha", auth_username="ha", password="test-only", expires=300),
                 local_ip="127.0.0.1", local_sip_port=0)

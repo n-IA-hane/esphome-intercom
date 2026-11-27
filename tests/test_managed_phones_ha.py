@@ -1,5 +1,7 @@
 """Managed phones through HA registries and their existing native API owner."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,7 +76,7 @@ async def phone_lab(hass):
         if endpoint is not None:
             recompute_account_availability(hass, endpoint.endpoint_id)
 
-    registrar = SipRegistrar(enabled=False, accounts=[], local_ip="127.0.0.1", local_sip_port=5060,
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=False, accounts=[], local_ip="127.0.0.1", local_sip_port=5060,
         on_registration_change=registration_changed)
     calls.attach_component("registrar", registrar)
     calls.activate()

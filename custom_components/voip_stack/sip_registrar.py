@@ -364,11 +364,13 @@ class SipRegistrar:
         accounts: list[SipAccount],
         local_ip: str,
         local_sip_port: int,
+        policy: RegistrarPolicy,
         on_registration_change: Callable[[str, bool], None] | None = None,
-        policy: RegistrarPolicy | None = None,
         on_source_block: Callable[[str, int], None] | None = None,
     ) -> None:
-        self.policy = policy if policy is not None else RegistrarPolicy()
+        if policy is None:
+            raise ValueError("Registrar policy must be explicitly configured")
+        self.policy = policy
         self.on_source_block = on_source_block
         self.authentication_failures: OrderedDict[str, _SourceAuthenticationFailures] = OrderedDict()
         self.enabled = bool(enabled)

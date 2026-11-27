@@ -53,7 +53,7 @@ async def test_static_options_drives_existing_ready_state_and_cleans_up(monkeypa
     else:
         server = await asyncio.start_server(stream, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-    config = sip_trunk.SipTrunkConfig(enabled=True, transport=transport_name, server="127.0.0.1", port=port,
+    config = sip_trunk.SipTrunkConfig(options_interval=30, enabled=True, transport=transport_name, server="127.0.0.1", port=port,
         domain="peer.example", username="line", auth_username="", password="", expires=300,
         register=False, allowed_ips=("127.0.0.1",))
     client = sip_trunk.SipTrunkClient(config=config, local_ip="127.0.0.1", local_sip_port=5060)

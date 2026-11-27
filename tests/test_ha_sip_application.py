@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 import time
 
 from homeassistant.core import HomeAssistant
@@ -91,7 +93,7 @@ def _subscribe(*, target: str = "alice", expires: int = 300):
 async def test_message_uses_authenticated_registration_identity(
     hass: HomeAssistant,
 ) -> None:
-    registrar = SipRegistrar(
+    registrar = SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[SipAccount("alice", "Alice", "secret")],
         local_ip="127.0.0.1",
@@ -126,7 +128,7 @@ async def test_message_uses_authenticated_registration_identity(
 async def test_message_rejects_unknown_flow_and_unsupported_body(
     hass: HomeAssistant,
 ) -> None:
-    registrar = SipRegistrar(
+    registrar = SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[],
         local_ip="127.0.0.1",
@@ -160,7 +162,7 @@ async def test_message_rejects_unknown_flow_and_unsupported_body(
 async def test_publish_presence_create_refresh_and_remove(
     hass: HomeAssistant,
 ) -> None:
-    registrar = SipRegistrar(
+    registrar = SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[SipAccount("alice", "Alice", "secret")],
         local_ip="127.0.0.1",
@@ -210,7 +212,7 @@ async def test_publish_presence_create_refresh_and_remove(
 async def test_publish_rejects_cross_account_and_stale_entity_tag(
     hass: HomeAssistant,
 ) -> None:
-    registrar = SipRegistrar(
+    registrar = SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[SipAccount("alice", "Alice", "secret")],
         local_ip="127.0.0.1",
@@ -245,7 +247,7 @@ async def test_publish_rejects_cross_account_and_stale_entity_tag(
 async def test_presence_subscription_notifies_initial_and_published_state(
     hass: HomeAssistant,
 ) -> None:
-    registrar = SipRegistrar(
+    registrar = SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[SipAccount("alice", "Alice", "secret")],
         local_ip="127.0.0.1",
@@ -302,7 +304,7 @@ async def test_presence_subscription_notifies_initial_and_published_state(
 async def test_presence_subscription_requires_authenticated_from_identity(
     hass: HomeAssistant,
 ) -> None:
-    registrar = SipRegistrar(
+    registrar = SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[SipAccount("alice", "Alice", "secret")],
         local_ip="127.0.0.1",
@@ -343,7 +345,7 @@ async def test_presence_subscription_requires_authenticated_from_identity(
 
 async def test_publish_keeps_independent_publications_and_rotates_tags(hass):
     from xml.etree import ElementTree
-    methods = SipApplicationMethods(hass, SipRegistrar(enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060))
+    methods = SipApplicationMethods(hass, SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060))
     try:
         first = methods._publish(_publish(body=_pidf()), "alice")
         second = methods._publish(_publish(body=_pidf().replace(b"open", b"closed")), "alice")
@@ -364,7 +366,7 @@ async def test_publish_keeps_independent_publications_and_rotates_tags(hass):
 
 async def test_subscription_refresh_retains_route_and_rejects_stale_cseq(hass):
     from dataclasses import replace
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("alice", "Alice", "test")], local_ip="127.0.0.1", local_sip_port=5060)
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("alice", "Alice", "test")], local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(hass, registrar)
     async def send(*_args):
         return sip.SipMessage(status_code=200, reason="OK")
@@ -389,7 +391,7 @@ async def test_subscription_refresh_retains_route_and_rejects_stale_cseq(hass):
 
 async def test_slow_subscriber_coalesces_updates_and_preserves_terminal(hass):
     import asyncio
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("alice", "Alice", "test")], local_ip="127.0.0.1", local_sip_port=5060)
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("alice", "Alice", "test")], local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(hass, registrar)
     entered, release = asyncio.Event(), asyncio.Event()
     sent = []
@@ -424,7 +426,7 @@ async def test_slow_subscriber_coalesces_updates_and_preserves_terminal(hass):
 @pytest.mark.parametrize("status, retained", [(None, False), (481, False), (500, True), (200, True)])
 async def test_notify_transaction_outcome_releases_only_failed_subscription(hass, status, retained):
     import asyncio
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("alice", "Alice", "test")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("alice", "Alice", "test")],
                              local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(hass, registrar)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -458,7 +460,7 @@ async def test_notify_transaction_outcome_releases_only_failed_subscription(hass
 async def test_subscription_limits_count_retiring_notifiers_until_they_finish(hass):
     import asyncio
     accounts = [SipAccount(f"watcher{i}", f"Watcher {i}", "test") for i in range(17)]
-    registrar = SipRegistrar(enabled=True, accounts=accounts, local_ip="127.0.0.1", local_sip_port=5060)
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=accounts, local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(hass, registrar)
     release, all_started = asyncio.Event(), asyncio.Event()
     senders = 0
@@ -613,7 +615,7 @@ async def test_registered_instance_gruu_routes_ack_refer_and_bye_to_its_contact(
 
 async def test_expired_subscription_emits_terminal_even_on_unrelated_update(hass):
     import asyncio
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("alice", "Alice", "test")], local_ip="127.0.0.1", local_sip_port=5060)
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("alice", "Alice", "test")], local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(hass, registrar)
     sent = []
     async def send(_request, _addr, result):

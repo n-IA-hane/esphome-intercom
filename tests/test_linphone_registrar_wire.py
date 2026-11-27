@@ -1,6 +1,8 @@
 """Linphone-style ordinary REGISTER over real UDP/TCP with independent Digest."""
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import hashlib
 import re
@@ -59,7 +61,7 @@ async def check_account_registration(transport: str, supported: str, account) ->
     local = '127.0.0.1'
     with _reserved_udp_ports(2) as ports:
         sip_port, rtp_port = ports
-    registrar = sip_registrar.SipRegistrar(
+    registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
         enabled=True,
         accounts=[account],
         local_ip=local, local_sip_port=sip_port,

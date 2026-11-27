@@ -1,5 +1,7 @@
 """Authenticated outbound routing and ordinary UDP dialog routing stay distinct."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 from contextlib import ExitStack
 from dataclasses import replace
@@ -585,7 +587,7 @@ async def test_stale_or_mismatched_outbound_selection_cannot_borrow_listener(wir
             for account in wire.registrar.accounts.values()])
     elif invalid == "registrar-replaced":
         assert wire.lab.calls.release_component("registrar", wire.registrar)
-        replacement = SipRegistrar(enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
+        replacement = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
         wire.lab.calls.adopt_component("registrar", replacement)
     elif invalid == "wrong-contact":
         uri = sip.SipUri(uri.user, *wire.b.address)

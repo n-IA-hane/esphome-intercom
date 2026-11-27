@@ -56,12 +56,12 @@ def validate_registrar_policy(data: Mapping[str, Any]) -> dict[str, int]:
 
 @dataclass(frozen=True, slots=True)
 class RegistrarPolicy:
-    auth_failure_threshold: int = REGISTRAR_POLICY_FIELDS["registrar_auth_failure_threshold"].default
-    auth_failure_window: int = REGISTRAR_POLICY_FIELDS["registrar_auth_failure_window"].default
-    auth_block_duration: int = REGISTRAR_POLICY_FIELDS["registrar_auth_block_duration"].default
-    min_expires: int = REGISTRAR_POLICY_FIELDS["registrar_min_expires"].default
-    max_expires: int = REGISTRAR_POLICY_FIELDS["registrar_max_expires"].default
-    contact_limit: int = REGISTRAR_POLICY_FIELDS["registrar_contact_limit"].default
+    auth_failure_threshold: int
+    auth_failure_window: int
+    auth_block_duration: int
+    min_expires: int
+    max_expires: int
+    contact_limit: int
 
     def __post_init__(self):
         validate_registrar_policy({"registrar_" + key: getattr(self, key)

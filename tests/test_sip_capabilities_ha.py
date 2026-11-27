@@ -1,5 +1,7 @@
 """Advisory OPTIONS uses real signaling without owning a media session."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import json
 from dataclasses import replace
@@ -323,7 +325,7 @@ def authorized_register(registrar, *, username="caps", call_id="registration", c
 
 @pytest.mark.parametrize("change", ["same", "contact", "host", "port", "transport", "call-id"])
 async def test_authenticated_renewal_preserves_only_identical_binding_cache(change):
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("caps", "Caps", "fixture-only")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("caps", "Caps", "fixture-only")],
         local_ip="127.0.0.1", local_sip_port=5060)
     first = authorized_register(registrar)
     assert (await registrar.handle_register(first, ("127.0.0.1", 41000), "UDP")).status == 200
@@ -345,7 +347,7 @@ async def test_late_discovery_publishes_only_to_its_current_binding_lifetime(mon
     from custom_components.voip_stack import sip_capabilities as module
     from custom_components.voip_stack import config_entry_runtime
 
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("caps", "Caps", "fixture-only")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("caps", "Caps", "fixture-only")],
         local_ip="127.0.0.1", local_sip_port=5060)
     assert (await registrar.handle_register(authorized_register(registrar), ("127.0.0.1", 41000), "UDP")).status == 200
     binding = registrar.registered_contacts("caps")[0]
@@ -375,7 +377,7 @@ async def test_late_discovery_publishes_only_to_its_current_binding_lifetime(mon
         assert (await registrar.handle_register(authorized_register(registrar, cseq=2),
             ("127.0.0.1", 41000), "UDP")).status == 200
     elif change == "registrar":
-        current["registrar"] = SipRegistrar(enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
+        current["registrar"] = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[], local_ip="127.0.0.1", local_sip_port=5060)
     elif change == "manager":
         current["manager"] = object()
     future.set_result(sip.parse_message(sip.build_response(200, "OK", [("Content-Type", "application/sdp")], CAPS)))

@@ -91,6 +91,7 @@ class SipTrunkConfig:
     auth_username: str
     password: str
     expires: int
+    options_interval: int
     outbound_proxy: str = ""
     register: bool = True
     allowed_ips: tuple[str, ...] = ()
@@ -103,7 +104,6 @@ class SipTrunkConfig:
     audio_ordered: bool = True
     video_ordered: bool = True
     audio_configured: bool | None = None
-    options_interval: int = TRUNK_OPTIONS_FIELD.default
 
     def __post_init__(self):
         TRUNK_OPTIONS_FIELD.validate(self.options_interval)

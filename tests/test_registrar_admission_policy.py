@@ -1,6 +1,8 @@
 """Configured registrar limits preserve leases and bound authentication state."""
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 from types import SimpleNamespace
 import time
 
@@ -16,7 +18,8 @@ from custom_components.voip_stack.sip_registration_policy import (
 def owner(policy=None, **kwargs):
     return sip_registrar.SipRegistrar(enabled=True,
         accounts=[sip_registrar.SipAccount("phone", "Phone", "test-password")],
-        local_ip="127.0.0.1", local_sip_port=5060, policy=policy, **kwargs)
+        local_ip="127.0.0.1", local_sip_port=5060,
+        policy=policy if policy is not None else configured_registrar_policy(), **kwargs)
 
 
 def request(registrar, sequence=1, password="test-password", contacts=None, expires=120, challenge=None):
@@ -33,7 +36,7 @@ def request(registrar, sequence=1, password="test-password", contacts=None, expi
 
 
 async def test_expiry_bounds_and_contact_expiry_are_configured_and_atomic():
-    registrar = owner(RegistrarPolicy(min_expires=90, max_expires=180))
+    registrar = owner(configured_registrar_policy(min_expires=90, max_expires=180))
     bad = request(registrar, contacts=["<sip:first@192.0.2.10>", "<sip:short@192.0.2.10>;expires=89"])
     result = await registrar.handle_register(bad, ("192.0.2.10", 5060), "UDP")
     assert result.status == 423 and result.headers == (("Min-Expires", "90"),)
@@ -47,11 +50,11 @@ async def test_expiry_bounds_and_contact_expiry_are_configured_and_atomic():
 
 
 async def test_lowered_contact_limit_preserves_refresh_and_removal_then_rejects_new_excess():
-    registrar = owner(RegistrarPolicy(contact_limit=3))
+    registrar = owner(configured_registrar_policy(contact_limit=3))
     contacts = [f"<sip:client{n}@192.0.2.10>" for n in range(3)]
     assert (await registrar.handle_register(request(registrar, contacts=contacts), ("192.0.2.10", 5060), "UDP")).status == 200
     before = dict(registrar.registrations)
-    registrar.configure_policy(RegistrarPolicy(contact_limit=2))
+    registrar.configure_policy(configured_registrar_policy(contact_limit=2))
     assert registrar.registrations == before
     assert (await registrar.handle_register(request(registrar, 2, contacts=contacts), ("192.0.2.10", 5060), "UDP")).status == 200
     mixed = [contacts[0] + ";expires=0", "<sip:new@192.0.2.10>"]
@@ -64,7 +67,7 @@ async def test_lowered_contact_limit_preserves_refresh_and_removal_then_rejects_
     assert len(registrar.registrations) == 2
 
 
-@pytest.mark.parametrize("policy", [RegistrarPolicy(auth_failure_threshold=0), RegistrarPolicy(auth_block_duration=0)])
+@pytest.mark.parametrize("policy", [configured_registrar_policy(auth_failure_threshold=0), configured_registrar_policy(auth_block_duration=0)])
 async def test_zero_threshold_or_duration_disables_counter_and_block(policy):
     registrar = owner(policy)
     for sequence in range(1, 30):
@@ -77,7 +80,7 @@ async def test_failure_window_stale_nonce_block_expiry_source_isolation_and_noti
     clock = [1000.0]
     monkeypatch.setattr(sip_registrar, "time", SimpleNamespace(time=time.time, monotonic=lambda: clock[0]))
     notifications = []
-    registrar = owner(RegistrarPolicy(auth_failure_threshold=2, auth_failure_window=60, auth_block_duration=300),
+    registrar = owner(configured_registrar_policy(auth_failure_threshold=2, auth_failure_window=60, auth_block_duration=300),
         on_source_block=lambda source, duration: notifications.append((source, duration)))
     address = ("192.0.2.10", 5060)
     wrong = request(registrar, 1, "incorrect")
@@ -106,7 +109,7 @@ async def test_failure_window_stale_nonce_block_expiry_source_isolation_and_noti
 
 
 async def test_failed_authentication_memory_and_nonce_budgets_remain_bounded():
-    registrar = owner(RegistrarPolicy(auth_failure_threshold=2))
+    registrar = owner(configured_registrar_policy(auth_failure_threshold=2))
     for index in range(sip_registrar.MAX_AUTH_FAILURE_SOURCES + 20):
         source = f"192.0.{index // 254}.{index % 254 + 1}"
         assert (await registrar.handle_register(request(registrar, index + 1, "incorrect"), (source, 5060), "UDP")).status == 401

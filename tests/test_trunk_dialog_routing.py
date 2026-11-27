@@ -83,7 +83,7 @@ async def test_trunk_dialog_next_hop_and_registration_lease(scenario):
     b, _ = await loop.create_datagram_endpoint(lambda: Peer("B"), local_addr=("127.0.0.1" if dns_target else "127.0.0.2", 0))
     a_address, b_address = a.get_extra_info("sockname"), b.get_extra_info("sockname")
     proxy = f"sip:{a_address[0]}:{a_address[1]};lr" if scenario == "proxy" else ""
-    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
         enabled=True, transport="udp", server=a_address[0], port=a_address[1],
         domain="fixture.test", username="line", auth_username="", password="",
         expires=300, outbound_proxy=proxy,
@@ -219,7 +219,7 @@ async def test_default_final_wait_preserves_initial_transaction_deadline():
 @pytest.mark.asyncio
 async def test_dialog_target_admission_does_not_expand_trunk_source_policy():
     loop = asyncio.get_running_loop()
-    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
         enabled=True, transport="udp", server="127.0.0.1", port=5060,
         domain="fixture.test", username="line", auth_username="", password="", expires=300,
     ), local_ip="127.0.0.1", local_sip_port=5060)
@@ -294,7 +294,7 @@ async def test_losing_dns_branch_does_not_replace_winner_or_repeat_bye(failed_re
     a, _ = await loop.create_datagram_endpoint(lambda: Peer("A"), local_addr=("127.0.0.2", 0))
     b, _ = await loop.create_datagram_endpoint(lambda: Peer("B"), local_addr=("127.0.0.1", 0))
     a_address, b_address = a.get_extra_info("sockname"), b.get_extra_info("sockname")
-    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(
+    trunk = sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30,
         enabled=True, transport="udp", server=a_address[0], port=a_address[1],
         domain="fixture.test", username="line", auth_username="", password="", expires=300),
         local_ip="127.0.0.1", local_sip_port=5060)

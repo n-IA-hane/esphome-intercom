@@ -1,5 +1,7 @@
 """TCP subscriber ownership, flow loss, lease expiry and fresh full snapshots."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import time
 from xml.etree import ElementTree
@@ -24,7 +26,7 @@ async def test_closed_tcp_subscription_recovers_only_by_its_route_and_renews_aft
     pytest_socket.socket_allow_hosts(["127.0.0.1", "127.0.0.3"])
     observed, responses = asyncio.Queue(), asyncio.Queue()
     contact_writers, subscriber_writers, tasks = [], [], set()
-    registrar = SipRegistrar(enabled=True, accounts=[SipAccount("watcher", "Watcher", "test-only")],
+    registrar = SipRegistrar(policy=configured_registrar_policy(), enabled=True, accounts=[SipAccount("watcher", "Watcher", "test-only")],
                              local_ip="127.0.0.1", local_sip_port=5060)
     methods = SipApplicationMethods(lab.hass, registrar)
     lab.calls.bind_endpoint_registry(lab.runtime.endpoints)

@@ -69,7 +69,7 @@ async def test_request_size_switch_preserves_registration_and_digest(scenario):
             writers.discard(writer)
             tasks.discard(asyncio.current_task())
     server=None if scenario=='refused' else await asyncio.start_server(serve,'127.0.0.1',port)
-    trunk=sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(enabled=True,transport='udp',server='127.0.0.1',port=port,
+    trunk=sip_trunk.SipTrunkClient(config=sip_trunk.SipTrunkConfig(options_interval=30, enabled=True,transport='udp',server='127.0.0.1',port=port,
         domain='test',username='line',auth_username='line',password='secret',expires=300),local_ip='127.0.0.1',local_sip_port=5060)
     client=None
     try:

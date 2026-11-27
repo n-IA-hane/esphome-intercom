@@ -1,5 +1,7 @@
 """Register managed SIP names on loopback and check when their contacts are callable."""
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 from contextlib import ExitStack
 import socket
@@ -16,7 +18,7 @@ from .voip_phase1_support import _reserved_udp_ports, audio_format, sip, sip_aut
 async def registrar_wire():
     host = "127.0.0.1"
     with _reserved_udp_ports(2) as (sip_port, rtp_port):
-        registrar = sip_registrar.SipRegistrar(
+        registrar = sip_registrar.SipRegistrar(policy=configured_registrar_policy(),
             enabled=True, accounts=[], local_ip=host, local_sip_port=sip_port,
         )
     server = sip_listener.SipUdpServer(

@@ -1,6 +1,8 @@
 """Independent SIP peers qualify registrar admission and cleanup on real flows."""
 from __future__ import annotations
 
+from .support.sip_policy import configured_registrar_policy
+
 import asyncio
 import socket
 
@@ -73,7 +75,7 @@ class RegistrarPeer:
 
 
 def registrar(**kwargs):
-    return sip_registrar.SipRegistrar(enabled=True,
+    return sip_registrar.SipRegistrar(policy=configured_registrar_policy(), enabled=True,
         accounts=[sip_registrar.SipAccount("phone", "Phone", "wire-only-password")],
         local_ip="127.0.0.1", local_sip_port=5060, **kwargs)
 
