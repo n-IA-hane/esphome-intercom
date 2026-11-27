@@ -492,7 +492,7 @@
       "step": {
         "user": {
           "title": "SIP-Konto hinzufügen",
-          "description": "Weiteres Home Assistant-Browser-Softphone oder Standard-SIP-Konto erstellen. Beide Telefonarten nutzen denselben SIP-Listener und RTP-Pool.",
+          "description": "Weiteres Home Assistant-Browser-Softphone oder Standard-SIP-Konto erstellen. Jedes Telefon nutzt denselben SIP-Listener und RTP-Pool.",
           "data": {
             "kind": "Telefontyp"
           }
