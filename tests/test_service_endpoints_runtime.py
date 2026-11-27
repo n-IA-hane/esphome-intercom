@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG_NAME = "voip_stack_service_endpoints_test"
+PKG_NAME = "custom_components.voip_stack"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
@@ -72,6 +72,10 @@ def _load_service_endpoints(
     require_endpoint: AsyncMock,
     require_entities: AsyncMock,
 ):
+    if "custom_components" not in sys.modules:
+        root = types.ModuleType("custom_components")
+        root.__path__ = [str(ROOT / "custom_components")]
+        sys.modules["custom_components"] = root
     if PKG_NAME not in sys.modules:
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
@@ -148,18 +152,22 @@ def _load_service_endpoints(
         store_spec.loader.exec_module(store)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
-    sys.modules[store_name] = store
-    return module
+    return module, store
 
 
 class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.require_endpoint = AsyncMock()
         self.require_entities = AsyncMock()
-        self.module = _load_service_endpoints(
+        self.module, store = _load_service_endpoints(
             self.require_endpoint,
             self.require_entities,
         )
+        # Keep the production identity visible to mutation dispatch without
+        # leaking this unit's HA storage adapter into later native tests.
+        store_binding = patch.dict(sys.modules, {f"{PKG_NAME}.store": store})
+        store_binding.start()
+        self.addCleanup(store_binding.stop)
         self.hass = types.SimpleNamespace(
             data={"voip_stack": {}},
             config=types.SimpleNamespace(location_name="Casa"),

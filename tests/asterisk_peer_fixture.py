@@ -66,7 +66,11 @@ async def asterisk_middle(directory, *, port, port_a, port_b, transport, passwor
     for local, target, remote in (("from_101", port_a, "from_202"), ("from_202", port_b, "from_101")):
         pjsip += [
             f"[{local}]", "type=endpoint", "transport=transport-test", "context=from-ha",
-            "disallow=all", "allow=alaw", "direct_media=no", "identify_by=auth_username",
+            # The static trunk qualifies with an unauthenticated OPTIONS ping.
+            # Identify its From user before Digest exists, while INVITE still
+            # requires the endpoint's configured inbound authentication.
+            "disallow=all", "allow=alaw", "direct_media=no", "identify_by=auth_username,username",
+            "allow_unauthenticated_options=yes",
             f"auth=in-{local}", f"outbound_auth=out-{local}", f"aors={local}",
             "trust_id_inbound=no", "send_pai=no", "send_rpid=no", "contact_user=middle-pbx",
             *( ["from_user=central-pbx"] if force_caller else [] ), "",
