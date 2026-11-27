@@ -61,25 +61,25 @@ def owner_choice(form):
         ("phone", ("voicemail", "max_seconds"), 193), id="huge-mailbox"),
     ({"service_timeouts": {"media_timeout": 0, "future_key": "literal"}}, (),
      {"media_timeout": 125}, (None, ("service_timeouts", "media_timeout"), 125)),
-    ({"parking": {"timeout": 0, "return_timeout": 0, "hold_media": "media-source://preserved"}}, (),
+    ({"parking": {"timeout": -1, "return_timeout": 0, "hold_media": "media-source://preserved"}}, (),
      {"timeout": 250, "return_timeout": 0}, (None, ("parking", "timeout"), 250)),
     ({}, [("contact", {"id": "auto", "name": "Gate", "metadata": {
         "virtual_endpoint": "automation", "automation_timeout": 0, "custom": "literal"}})],
      {"automation_timeout": 47}, ("contact", ("metadata", "automation_timeout"), 47)),
     ({}, [("group", {"kind": "ring", "policy": {"step_timeout": 25, "overall_timeout": 10}, "members": ["Desk"]})],
      {"step_timeout": 8, "overall_timeout": 10}, ("group", ("policy", "step_timeout"), 8)),
-    ({}, [("group", {"kind": "queue", "policy": {"max_wait": 0, "ring_timeout": 0}, "members": ["Desk"]})],
+    ({}, [("group", {"kind": "queue", "policy": {"max_wait": -1, "ring_timeout": 0}, "members": ["Desk"]})],
      {"max_wait": 72, "ring_timeout": 0}, ("group", ("policy", "max_wait"), 72)),
     ({}, [("phone", {"kind": "sip_account", "username": "Desk", "password": "fixture-secret",
-                       "voicemail": {"enabled": True, "max_seconds": 0, "pin_hash": "fixture-pin"}})],
+                       "voicemail": {"enabled": True, "max_seconds": -1, "pin_hash": "fixture-pin"}})],
      {"max_seconds": 193}, ("phone", ("voicemail", "max_seconds"), 193)),
     ({}, [("paging", {"name": "Page", "members": ["Desk"], "timeout": 0, "answer_timeout": None})],
      {"timeout": 85}, ("paging", ("timeout",), 85)),
     ({"roster_contacts": [{"id": "Legacy", "metadata": {"virtual_endpoint": "automation", "automation_timeout": 0}}]}, (),
      {"automation_timeout": 25}, (None, ("roster_contacts", 0, "metadata", "automation_timeout"), 25)),
-    ({"esphome_mailboxes": {"endpoint": {"enabled": True, "max_seconds": 0, "pin_hash": "fixture-pin"}}}, (),
+    ({"esphome_mailboxes": {"endpoint": {"enabled": True, "max_seconds": -1, "pin_hash": "fixture-pin"}}}, (),
      {"max_seconds": 149}, (None, ("esphome_mailboxes", "endpoint", "max_seconds"), 149)),
-    ({"sip_accounts": [{"username": "Legacy", "password": "fixture-secret", "voicemail": {"max_seconds": 0}}]}, (),
+    ({"sip_accounts": [{"username": "Legacy", "password": "fixture-secret", "voicemail": {"max_seconds": -1}}]}, (),
      {"max_seconds": 174}, (None, ("sip_accounts", 0, "voicemail", "max_seconds"), 174)),
 ])
 async def test_repair_edits_invalid_duration_and_runs_real_migration(hass, monkeypatch, data, rows, correction, verify):
@@ -177,7 +177,7 @@ async def test_new_zero_group_step_is_rejected_instead_of_materializing_legacy_d
 
 async def test_reordered_legacy_accounts_with_equal_mailboxes_cannot_receive_each_others_edit(hass, monkeypatch):
     accounts = [{"name": "Same label", "username": username, "password": "secret-" + username,
-                 "voicemail": {"max_seconds": 0}} for username in ("first", "second")]
+                 "voicemail": {"max_seconds": -1}} for username in ("first", "second")]
     entry, setup, manager, initial, _ = await blocked_repair(hass, monkeypatch, {"sip_accounts": accounts})
     form = await manager.async_configure(initial["flow_id"], {"owner": owner_choice(initial)})
     hass.config_entries.async_update_entry(entry, data={"sip_accounts": list(reversed(accounts))})

@@ -138,8 +138,8 @@ async def test_upgrade_materializes_parking_even_when_its_form_was_never_opened(
     ("contact", automation("Invalid", automation_timeout=0)),
     ("paging", {"name": "Invalid", "members": [], "timeout": 0}),
     ("group", {"kind": "ring", "policy": {"step_timeout": -1}}),
-    ("group", {"kind": "queue", "policy": {"max_wait": 0}}),
-    ("phone", {"kind": "sip_account", "username": "Invalid", "voicemail": {"enabled": True, "max_seconds": 0}}),
+    ("group", {"kind": "queue", "policy": {"max_wait": -1}}),
+    ("phone", {"kind": "sip_account", "username": "Invalid", "voicemail": {"enabled": True, "max_seconds": -1}}),
 ])
 async def test_invalid_later_record_prevents_every_config_write(hass, monkeypatch, kind, invalid):
     from custom_components.voip_stack import async_migrate_entry
@@ -329,6 +329,44 @@ async def test_queue_and_mailbox_migration_materializes_only_absent_values(hass)
         {"username": "Legacy missing", "password": "fixture-kept", "voicemail": {"enabled": True, "max_seconds": 180}},
         {"username": "Legacy explicit", "voicemail": {"enabled": True, "max_seconds": 245}},
     ]
+    before = deepcopy(entry.as_dict())
+    assert await async_migrate_entry(hass, entry)
+    assert entry.as_dict() == before
+
+
+async def test_explicit_unlimited_durations_survive_migration_and_repeat(hass):
+    """Approved zero policies stay explicit while finite sibling waits survive."""
+    from custom_components.voip_stack import async_migrate_entry
+    from custom_components.voip_stack.duration_repair import duration_repair_owners
+
+    entry = MockConfigEntry(domain="voip_stack", version=7, minor_version=6, data={
+        "parking": {"timeout": 0, "return_timeout": 9},
+        "service_timeouts": {"recording_timeout": 0, "media_timeout": 125},
+        "unrelated": {"keep": "literal"},
+    })
+    entry.add_to_hass(hass)
+    queue = add_row(hass, entry, "group", "unlimited-queue", {
+        "group_id": "unlimited-queue", "kind": "queue", "name": "Support", "members": [],
+        "policy": {"max_wait": 0, "ring_timeout": 15, "retry_delay": 2,
+                   "no_agent_wait": 1, "wrap_up": 0},
+    })
+    phone = add_row(hass, entry, "phone", "unlimited-mailbox", {
+        "kind": "sip_account", "username": "Desk", "password": "fixture-kept",
+        "voicemail": {"enabled": True, "max_seconds": 0, "pin_hash": "fixture-pin"},
+    })
+    identities = native_ids(hass, entry)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.data["parking"] == {"timeout": 0, "return_timeout": 9}
+    assert entry.data["service_timeouts"]["recording_timeout"] == 0
+    assert entry.data["service_timeouts"]["media_timeout"] == 125
+    assert queue.data["policy"]["max_wait"] == 0
+    assert queue.data["policy"]["retry_delay"] == 2
+    assert phone.data["voicemail"] == {
+        "enabled": True, "max_seconds": 0, "pin_hash": "fixture-pin",
+    }
+    assert phone.data["password"] == "fixture-kept"
+    assert native_ids(hass, entry) == identities
+    assert duration_repair_owners(entry) == []
     before = deepcopy(entry.as_dict())
     assert await async_migrate_entry(hass, entry)
     assert entry.as_dict() == before
