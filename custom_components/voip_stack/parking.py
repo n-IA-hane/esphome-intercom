@@ -271,6 +271,10 @@ async def park_local_browser_call(hass, session, endpoint_id, *, slot=""):
             snapshot, caller_media=current.caller_media, callee_media=current.callee_media
         ):
             raise ParkingError("The local call changed before parking")
+        # Socket preparation yields to configuration changes. Validate while
+        # the staged slot and media still belong to this rollback boundary.
+        if get_parking_lot(hass) is not lot:
+            raise ParkingError("The parking owner changed before parking")
     except BaseException:
         source.media.clear()
         source.media.update(source.original_media)
