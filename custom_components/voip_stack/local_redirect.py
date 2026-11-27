@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, fields, replace
+import logging
 import re
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
@@ -31,8 +32,12 @@ from .phone_endpoint import EndpointKind
 from .ring_group_fork import build_offer_candidates
 from .router import RouteAction
 from .runtime_data import require_runtime_data
+from .session_cleanup import async_wait_for_cleanup
 from .trunk_policy import call_external_call_denied, is_any_trunk_uri
 from .sip_registration_policy import LOCAL_REDIRECT_HOPS_FIELD, LOCAL_REDIRECT_MAX_HOPS
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def redirect_contacts(headers: Iterable[str]) -> list[tuple[float, sip.SipUri]]:
@@ -165,12 +170,16 @@ class LocalAccountRedirect:
             return reduce_dial_failures(failures)
 
         self.session.ensure_live(self.session.token)
-        await async_close_outbound_leg(outbound)
-        if self.on_leg_state is not None:
-            self.on_leg_state(outbound, "closed")
-        # Retire the old account only after its final physical branch closes.
-        # Other original SIP Contacts and the existing HA offer remain eligible.
-        self.release_closed_account(outbound.endpoint_id)
+        try:
+            await async_close_outbound_leg(outbound)
+        finally:
+            try:
+                if self.on_leg_state is not None:
+                    self.on_leg_state(outbound, "closed")
+            finally:
+                # Port cleanup completes even if closing the relay raises.
+                # Retain any other original SIP Contact or existing HA offer.
+                self.release_closed_account(outbound.endpoint_id)
         prepared = GroupCandidates()
         transferred = None
         try:
@@ -239,14 +248,23 @@ class LocalAccountRedirect:
             return result.outcome
         finally:
             retired = [attempt for attempt in prepared.attempts if attempt is not transferred]
-            await asyncio.gather(*(async_close_outbound_leg(attempt, bye_or_cancel=True)
-                for attempt in retired))
-            for attempt in retired:
-                if self.on_leg_state is not None:
-                    self.on_leg_state(attempt, "closed")
-            # The outer fork cannot enumerate claims made by this inner fork.
-            # Keep pending original Contacts, accepted media and published HA
-            # offers; release failed or never-started redirect destinations.
-            for endpoint_id in {item.endpoint_id for item in (*retired, *prepared.browser_legs)}:
-                if transferred is None or endpoint_id != transferred.endpoint_id:
-                    self.release_closed_account(endpoint_id)
+
+            async def cleanup():
+                results = await asyncio.gather(*(async_close_outbound_leg(attempt, bye_or_cancel=True)
+                    for attempt in retired), return_exceptions=True)
+                try:
+                    for attempt, result in zip(retired, results, strict=True):
+                        if isinstance(result, BaseException):
+                            _LOGGER.debug("Redirect leg cleanup failed candidate=%s",
+                                attempt.candidate_id, exc_info=(type(result), result, result.__traceback__))
+                        if self.on_leg_state is not None:
+                            self.on_leg_state(attempt, "closed")
+                finally:
+                    # The outer fork cannot enumerate claims made by this inner
+                    # fork. Retain pending Contacts, accepted media and HA offers.
+                    for endpoint_id in {item.endpoint_id for item in (*retired, *prepared.browser_legs)}:
+                        if transferred is None or endpoint_id != transferred.endpoint_id:
+                            self.release_closed_account(endpoint_id)
+
+            task = asyncio.create_task(cleanup(), name=f"voip-redirect-cleanup-{self.session.call_id}")
+            await async_wait_for_cleanup(task)

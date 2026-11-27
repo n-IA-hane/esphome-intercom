@@ -258,6 +258,94 @@ async def test_failed_redirect_releases_target_while_an_original_group_offer_con
         audio.close()
 
 
+@pytest.mark.parametrize("failed_endpoint,cancel_cleanup", [("bedroom1", False),
+    ("bedroom1", True), ("bedroom0", False)],
+    ids=["close-error", "cancelled-cleanup", "redirector-close-error"])
+async def test_redirect_cleanup_error_releases_only_retired_claims(lab, monkeypatch, failed_endpoint, cancel_cleanup):
+    from custom_components.voip_stack import local_redirect
+
+    initial = await initial_ha_account(lab)
+    port = lab.runtime.transport_config["sip_port"]
+    _redirect_phone(monkeypatch, lab.phones[0], [f"<sip:bedroom1@127.0.0.1:{port}>"])
+    lab.phones[1].final_status = 486
+    _add_group(lab, ["bedroom0", "default"])
+    stopped = []
+    final_cleanup = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    finished = asyncio.Event()
+    follow_tasks = []
+    follow_errors = []
+    close = local_redirect.async_close_outbound_leg
+    follow = local_redirect.LocalAccountRedirect.follow
+
+    class BrokenRelay:
+        async def stop(self):
+            stopped.append(True)
+            raise OSError("injected video relay stop failure")
+
+    async def observed_close(attempt, **kwargs):
+        if attempt.endpoint_id == failed_endpoint:
+            attempt.video_relay = BrokenRelay()
+        if attempt.endpoint_id == "bedroom1" and kwargs.get("bye_or_cancel"):
+            final_cleanup.set()
+            if cancel_cleanup:
+                await allow_cleanup.wait()
+        await close(attempt, **kwargs)
+
+    async def observed_follow(self, *args):
+        follow_tasks.append(asyncio.current_task())
+        try:
+            return await follow(self, *args)
+        except BaseException as error:
+            follow_errors.append(error)
+            raise
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(local_redirect, "async_close_outbound_leg", observed_close)
+    monkeypatch.setattr(local_redirect.LocalAccountRedirect, "follow", observed_follow)
+    caller, audio = await _source(lab)
+    try:
+        assert await caller.invite(target="Redirect team", remote_host="127.0.0.1",
+            remote_sip_port=port, timeout=3) == "ringing"
+        call_id = caller.dialog_ids.call_id
+        session = lab.calls.get_session(call_id)
+        if cancel_cleanup:
+            await asyncio.wait_for(final_cleanup.wait(), 3)
+            # Repeated cancellation of this retired branch must not abandon
+            # its cleanup or cancel the independent original browser offer.
+            assert len(follow_tasks) == 1
+            follow_tasks[0].cancel()
+            await asyncio.sleep(0)
+            follow_tasks[0].cancel()
+            await asyncio.sleep(0)
+            allow_cleanup.set()
+        await asyncio.wait_for(finished.wait(), 3)
+        assert stopped
+        assert session.live and lab.calls.get_session(call_id) is session
+        assert not lab.runtime.endpoints.require("bedroom0").active_call_id
+        assert not lab.runtime.endpoints.require("bedroom1").active_call_id
+        assert lab.runtime.endpoints.require(initial.endpoint_id).active_call_id == call_id
+        assert lab.runtime.softphones[initial.endpoint_id]["state"] == "ringing"
+        if failed_endpoint == "bedroom0":
+            assert len(follow_errors) == 1 and isinstance(follow_errors[0], OSError)
+            assert not lab.phones[1].invites
+        else:
+            assert not [error for error in follow_errors if not isinstance(error, asyncio.CancelledError)]
+            assert bool(follow_errors) is cancel_cleanup
+        await lab.hass.services.async_call("voip_stack", "answer", {
+            "device_id": initial.device_id, "call_id": call_id,
+            "media_client_id": "surviving-original-browser",
+        }, blocking=True)
+        assert await caller.wait_for_final(timeout=3) == "in_call"
+        assert lab.calls.get_session(call_id) is session
+    finally:
+        allow_cleanup.set()
+        await caller.terminate(timeout=1)
+        await caller.close()
+        audio.close()
+
+
 @pytest.mark.parametrize("forwarded", [False, True], ids=["initial-group", "forwarded-group"])
 async def test_redirect_does_not_republish_existing_browser_offers(lab, monkeypatch, forwarded):
     from homeassistant.core import callback
