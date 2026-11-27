@@ -1489,7 +1489,7 @@
       "description": "Incoming calls on {trunk} now route immediately to the called number or the configured destination: {destination}. The automatic extension collection has been removed. To keep an interactive menu, create an Automation contact named Welcome, select it as this trunk incoming destination, and follow the linked migration example. In-call keypad events and forwarding remain available."
     },
     "duration_configuration_invalid": {
-      "title": "PBX duration configuration needs attention",
+      "title": "PBX policy configuration needs attention",
       "description": "The duration migration could not complete: {error}. Open this repair to correct invalid saved durations, even while the PBX is not loaded, then retry the migration. Valid values and unrelated settings are preserved. Structural configuration errors are reported here but cannot be edited in this repair.",
       "fix_flow": {
         "step": {
@@ -1501,8 +1501,8 @@
             }
           },
           "edit_durations": {
-            "title": "Correct saved durations",
-            "description": "{owner}\n\n{error}\n\nEnter valid durations in seconds. Only the selected item's duration fields are changed; other settings are preserved. After all invalid items are corrected, retry the migration.",
+            "title": "Correct saved policies",
+            "description": "{owner}\n\n{error}\n\nCorrect the saved policy values shown here. Durations use seconds; limits without a unit are counts. Only the selected item's policy fields change. Then retry the migration.",
             "sections": {
               "advanced": {
                 "name": "Advanced settings",
@@ -1534,7 +1534,20 @@
                   "retry_delay": "Queue retry delay",
                   "wrap_up": "Agent wrap-up",
                   "max_seconds": "Recording limit",
-                  "answer_timeout": "Answer wait"
+                  "answer_timeout": "Answer wait",
+                  "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
+                  "registrar_auth_failure_window": "Authentication observation window (seconds)",
+                  "registrar_auth_block_duration": "Authentication block duration (seconds)",
+                  "registrar_min_expires": "Minimum registration lifetime (seconds)",
+                  "registrar_max_expires": "Maximum registration lifetime (seconds)",
+                  "registrar_contact_limit": "Maximum registered Contacts per account",
+                  "audio_rtcp_min_interval": "Minimum audio RTCP interval",
+                  "local_redirect_max_hops": "Maximum local redirect hops",
+                  "trunk_options_interval": "OPTIONS interval (seconds)"
+                },
+                "data_description": {
+                  "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected.",
+                  "trunk_options_interval": "0 disables periodic OPTIONS probes."
                 }
               }
             }

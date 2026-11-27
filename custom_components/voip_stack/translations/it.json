@@ -1485,7 +1485,7 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "duration_configuration_invalid": {
-      "title": "Controlla la configurazione delle durate",
+      "title": "La configurazione delle regole del PBX richiede attenzione",
       "description": "La migrazione delle durate non è stata completata: {error}. Apri questa riparazione per correggere le durate salvate non valide anche se il centralino non è caricato, poi riprova la migrazione. I valori validi e le altre impostazioni vengono conservati. Gli errori nella struttura della configurazione vengono segnalati qui ma non sono modificabili da questa riparazione.",
       "fix_flow": {
         "step": {
@@ -1497,8 +1497,8 @@
             }
           },
           "edit_durations": {
-            "title": "Correggi le durate salvate",
-            "description": "{owner}\n\n{error}\n\nInserisci durate valide in secondi. Vengono modificati solo i campi delle durate dell'elemento selezionato; le altre impostazioni vengono conservate. Dopo aver corretto tutti gli elementi non validi, riprova la migrazione.",
+            "title": "Correggi le regole salvate",
+            "description": "{owner}\n\n{error}\n\nCorreggi i valori salvati mostrati qui. Le durate sono in secondi; i limiti senza unità indicano quantità. Cambiano solo i campi della regola selezionata. Poi riprova la migrazione.",
             "sections": {
               "advanced": {
                 "name": "Impostazioni avanzate",
@@ -1530,7 +1530,20 @@
                   "retry_delay": "Intervallo tra tentativi della coda",
                   "wrap_up": "Pausa dell'operatore dopo la chiamata",
                   "max_seconds": "Limite di registrazione",
-                  "answer_timeout": "Attesa della risposta"
+                  "answer_timeout": "Attesa della risposta",
+                  "registrar_auth_failure_threshold": "Autenticazioni fallite prima del blocco",
+                  "registrar_auth_failure_window": "Finestra delle autenticazioni fallite (secondi)",
+                  "registrar_auth_block_duration": "Durata del blocco autenticazione (secondi)",
+                  "registrar_min_expires": "Durata minima registrazione (secondi)",
+                  "registrar_max_expires": "Durata massima registrazione (secondi)",
+                  "registrar_contact_limit": "Contact registrati massimi per account",
+                  "audio_rtcp_min_interval": "Intervallo minimo RTCP audio",
+                  "local_redirect_max_hops": "Numero massimo di inoltri locali",
+                  "trunk_options_interval": "Intervallo OPTIONS (secondi)"
+                },
+                "data_description": {
+                  "local_redirect_max_hops": "Limite degli inoltri verso account locali verificati. Gli inoltri remoti dei trunk restano rifiutati.",
+                  "trunk_options_interval": "0 disabilita le richieste OPTIONS periodiche."
                 }
               }
             }

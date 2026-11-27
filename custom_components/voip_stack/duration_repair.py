@@ -15,10 +15,11 @@ from .duration_policy import SERVICE_TIMEOUT_LIMITS, validate_duration
 
 @dataclass(frozen=True)
 class DurationRepairField:
-    """A known duration path; unrelated record fields are never exposed."""
+    """A known policy path; unrelated record fields are never exposed."""
 
     name: str
     path: tuple[str, ...]
+    unit: str | None = "s"
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,22 @@ def _validate_policy(kind: str, data: Mapping) -> None:
 
         validate_duration(data.get("timeout", INITIAL_PAGING_TIMEOUT), "announcement_timeout")
         validate_ringing_timeout(data.get("answer_timeout"), inherit=True)
+    elif kind == "advanced":
+        from .sip_registration_policy import (
+            AUDIO_RTCP_INTERVAL_FIELD, AUDIO_RTCP_MIN_INTERVAL,
+            LOCAL_REDIRECT_HOPS_FIELD, LOCAL_REDIRECT_MAX_HOPS,
+            registrar_policy_defaults, validate_registrar_policy,
+        )
+
+        validate_registrar_policy({**registrar_policy_defaults(), **data})
+        for key, field in ((AUDIO_RTCP_MIN_INTERVAL, AUDIO_RTCP_INTERVAL_FIELD),
+                           (LOCAL_REDIRECT_MAX_HOPS, LOCAL_REDIRECT_HOPS_FIELD)):
+            if key in data:
+                field.validate(data[key])
+    elif kind == "trunk":
+        from .sip_registration_policy import TRUNK_OPTIONS_FIELD, TRUNK_OPTIONS_INTERVAL
+
+        TRUNK_OPTIONS_FIELD.validate(data[TRUNK_OPTIONS_INTERVAL])
     else:
         raise ValueError("Unknown duration owner")
 
@@ -141,6 +158,21 @@ def duration_repair_owners(entry, *, invalid_only: bool = True) -> list[Duration
         data = deepcopy(dict(raw))
         if kind == "service":
             fields = [DurationRepairField(key, (key,)) for key in SERVICE_TIMEOUT_LIMITS if key in data]
+        elif kind == "advanced":
+            from .sip_registration_policy import (
+                AUDIO_RTCP_MIN_INTERVAL, LOCAL_REDIRECT_MAX_HOPS, REGISTRAR_POLICY_FIELDS,
+            )
+
+            counts = {"registrar_contact_limit", "registrar_auth_failure_threshold", LOCAL_REDIRECT_MAX_HOPS}
+            fields = [DurationRepairField(key, (key,), None if key in counts else "s")
+                      for key in (*REGISTRAR_POLICY_FIELDS, AUDIO_RTCP_MIN_INTERVAL, LOCAL_REDIRECT_MAX_HOPS)
+                      if key in data]
+        elif kind == "trunk":
+            from .sip_registration_policy import TRUNK_OPTIONS_INTERVAL
+
+            fields = [DurationRepairField(TRUNK_OPTIONS_INTERVAL, (TRUNK_OPTIONS_INTERVAL,))]
+            if TRUNK_OPTIONS_INTERVAL not in data:
+                return
         elif kind == "contact":
             metadata = data.get("metadata") or {}
             if not isinstance(metadata, Mapping) or not (data.get("type") == "automation"
@@ -178,6 +210,7 @@ def duration_repair_owners(entry, *, invalid_only: bool = True) -> list[Duration
             owners.append(owner)
 
     add("service", entry.data, ("service_timeouts",), None, "PBX / service_timeouts")
+    add("advanced", entry.data, (), None, "PBX / advanced")
     add("parking", entry.data, ("parking",), None, "PBX / parking")
     contacts = entry.data.get(CONF_PHONEBOOK_CONTACTS)
     if isinstance(contacts, list):
@@ -202,7 +235,7 @@ def duration_repair_owners(entry, *, invalid_only: bool = True) -> list[Duration
             add(row.data["kind"], row.data, ("policy",), row.subentry_id, row.title)
         elif kind == "phone":
             add("mailbox", row.data, ("voicemail",), row.subentry_id, row.title)
-        elif kind in {"contact", "paging"}:
+        elif kind in {"contact", "paging", "trunk"}:
             add(kind, row.data, (), row.subentry_id, row.title)
     return owners
 

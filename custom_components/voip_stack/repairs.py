@@ -244,9 +244,10 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
             return await self.async_step_init()
         errors = {}
         detail = self._selected.error()
+        values = user_input.get("advanced", user_input) if user_input is not None else {}
         if user_input is not None:
             try:
-                row, data = duration_repair_update(entry, self._selected, user_input.get("advanced", user_input))
+                row, data = duration_repair_update(entry, self._selected, values)
             except RuntimeError:
                 self._selected = None
                 result = await self.async_step_init()
@@ -271,13 +272,14 @@ class DurationMigrationRepairFlow(ConfirmRepairFlow):
                     return await self.async_step_confirm({})
         schema = {}
         for field in self._selected.fields:
-            value = (user_input or {}).get(field.name, _at_path(self._selected.data, field.path))
+            value = values.get(field.name, _at_path(self._selected.data, field.path))
             try:
                 numeric = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
             except OverflowError:
                 numeric = False
             required = vol.Required(field.name, **({"default": value} if numeric else {}))
-            schema[required] = NumberSelector(NumberSelectorConfig(mode="box", step="any", unit_of_measurement="s"))
+            schema[required] = NumberSelector(NumberSelectorConfig(mode="box", step="any",
+                **({"unit_of_measurement": field.unit} if field.unit else {})))
         return self.async_show_form(step_id="edit_durations", errors=errors, data_schema=vol.Schema({
                 vol.Optional("advanced"): section(vol.Schema(schema), {"collapsed": True}),
             }), description_placeholders={"owner": self._selected.title, "error": detail})

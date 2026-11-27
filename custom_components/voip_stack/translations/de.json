@@ -1485,7 +1485,7 @@
       "description": "The account and saved Home Assistant references for {phone} are preserved. Connect the phone and install the current VoIP firmware with register_ha_account support so it can receive its account settings and register over SIP. The phone stays offline until SIP registration; hardware discovery alone does not make it callable."
     },
     "duration_configuration_invalid": {
-      "title": "Zeitkonfiguration der Telefonanlage prüfen",
+      "title": "Die PBX-Konfiguration muss korrigiert werden",
       "description": "Die Migration der Zeitwerte konnte nicht abgeschlossen werden: {error}. Öffnen Sie diese Reparatur, um ungültige gespeicherte Zeitwerte auch bei nicht geladener PBX zu korrigieren, und wiederholen Sie danach die Migration. Gültige Werte und andere Einstellungen bleiben erhalten. Strukturelle Konfigurationsfehler werden hier angezeigt, können in dieser Reparatur aber nicht bearbeitet werden.",
       "fix_flow": {
         "step": {
@@ -1497,8 +1497,8 @@
             }
           },
           "edit_durations": {
-            "title": "Gespeicherte Zeitwerte korrigieren",
-            "description": "{owner}\n\n{error}\n\nGeben Sie gültige Zeitwerte in Sekunden ein. Nur die Zeitfelder des ausgewählten Elements werden geändert; andere Einstellungen bleiben erhalten. Wiederholen Sie die Migration, nachdem alle ungültigen Elemente korrigiert wurden.",
+            "title": "Gespeicherte Einstellungen korrigieren",
+            "description": "{owner}\n\n{error}\n\nKorrigieren Sie die angezeigten Werte. Zeitangaben sind in Sekunden; Grenzen ohne Einheit sind Anzahlen. Nur die ausgewählten Einstellungen werden geändert. Wiederholen Sie dann die Migration.",
             "sections": {
               "advanced": {
                 "name": "Erweiterte Einstellungen",
@@ -1530,7 +1530,20 @@
                   "retry_delay": "Wiederholungsabstand der Warteschlange",
                   "wrap_up": "Nachbearbeitungszeit des Agenten",
                   "max_seconds": "Aufnahmelimit",
-                  "answer_timeout": "Wartezeit auf Antwort"
+                  "answer_timeout": "Wartezeit auf Antwort",
+                  "registrar_auth_failure_threshold": "Failed authentication attempts before blocking",
+                  "registrar_auth_failure_window": "Authentication observation window (seconds)",
+                  "registrar_auth_block_duration": "Authentication block duration (seconds)",
+                  "registrar_min_expires": "Minimum registration lifetime (seconds)",
+                  "registrar_max_expires": "Maximum registration lifetime (seconds)",
+                  "registrar_contact_limit": "Maximum registered Contacts per account",
+                  "audio_rtcp_min_interval": "Minimum audio RTCP interval",
+                  "local_redirect_max_hops": "Maximum local redirect hops",
+                  "trunk_options_interval": "OPTIONS interval (seconds)"
+                },
+                "data_description": {
+                  "local_redirect_max_hops": "Limit redirects to verified local accounts. Remote trunk redirects remain rejected.",
+                  "trunk_options_interval": "0 disables periodic OPTIONS probes."
                 }
               }
             }
