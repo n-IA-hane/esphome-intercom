@@ -23,9 +23,16 @@ from .test_trunk_route_outcomes_ha import (
 pytestmark = pytest.mark.ha
 
 
-@pytest.mark.parametrize("policy_edit", ["missing", "zero", "valid"])
+@pytest.mark.parametrize("policy_edit,timeout", [
+    pytest.param("missing", None, id="missing"),
+    pytest.param("zero", 0, id="zero"),
+    pytest.param("valid", 61, id="valid"),
+    pytest.param("too_large", 3601, id="too-large"),
+    pytest.param("boolean", True, id="boolean"),
+    pytest.param("string", "61", id="string"),
+])
 async def test_parking_rechecks_policy_before_committing_prepared_media(
-    lab, monkeypatch, policy_edit,
+    lab, monkeypatch, policy_edit, timeout,
 ):
     first = await initial_ha_account(lab, "parking-a")
     second = await initial_ha_account(lab, "parking-b")
@@ -44,13 +51,20 @@ async def test_parking_rechecks_policy_before_committing_prepared_media(
     lot = get_parking_lot(lab.hass)
     entered, release = asyncio.Event(), asyncio.Event()
     original_start = LocalCallMedia.start
+    armed = asyncio.Event()
+    original_arm_return = lot.arm_return
 
     async def start(media):
         await original_start(media)
         entered.set()
         await release.wait()
 
+    def arm_return(*args):
+        original_arm_return(*args)
+        armed.set()
+
     monkeypatch.setattr(LocalCallMedia, "start", start)
+    monkeypatch.setattr(lot, "arm_return", arm_return)
     task = asyncio.create_task(lab.hass.services.async_call(
         "voip_stack", "park", {"device_id": first.device_id}, blocking=True,
     ))
@@ -60,15 +74,16 @@ async def test_parking_rechecks_policy_before_committing_prepared_media(
         if policy_edit == "missing":
             settings.pop("timeout")
         else:
-            settings["timeout"] = 61 if policy_edit == "valid" else 0
+            settings["timeout"] = timeout
         lab.hass.config_entries.async_update_entry(entry, data={
             **entry.data, "parking": settings,
         })
         release.set()
-        if policy_edit != "valid":
+        if policy_edit not in {"zero", "valid"}:
             with pytest.raises(ServiceValidationError):
                 await task
             assert not lot.calls
+            assert not armed.is_set()
             assert not lab.runtime.rtp_port_pool["used"]
             assert lab.calls.resource_for(call.call_id, "relay") is None
             assert lab.calls.resource_for(call.call_id, "softphone_media") is original_media
@@ -85,15 +100,22 @@ async def test_parking_rechecks_policy_before_committing_prepared_media(
             application = lab.calls.resource_for(call.call_id, "parking")
             assert application is not None
             assert session.live and session.owner == "parking"
-            assert application.settings["timeout"] == 61
-            async with asyncio.timeout(2):
-                while application.parked.timer is None:
-                    await asyncio.sleep(0)
+            assert application.settings["timeout"] == timeout
+            # Observe the real policy application even when zero creates no timer.
+            await asyncio.wait_for(armed.wait(), 2)
+            assert lot.calls == {application.parked.slot: application.parked}
+            if policy_edit == "zero":
+                assert application.parked.timer is None
+                assert application.parked.deadline is None
+            else:
+                assert application.parked.timer is not None
+                assert not application.parked.timer.done()
+                assert application.parked.deadline is not None
             deadline = application.parked.deadline
             lab.hass.config_entries.async_update_entry(entry, data={
                 **entry.data, "parking": {**settings, "timeout": 89},
             })
-            assert application.settings["timeout"] == 61
+            assert application.settings["timeout"] == timeout
             assert application.parked.deadline == deadline
     finally:
         release.set()

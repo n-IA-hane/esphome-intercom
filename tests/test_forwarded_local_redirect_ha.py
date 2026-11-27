@@ -228,24 +228,71 @@ async def test_cancelling_forwarded_redirect_acknowledges_and_closes_late_answer
 
 
 async def test_failed_redirect_releases_target_while_an_original_group_offer_continues(lab, monkeypatch):
+    from custom_components.voip_stack import local_redirect
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.sip_client import SipCallClient
+    from .test_automation_originate_ha import PHONE_PASSWORD
+
+    close = local_redirect.async_close_outbound_leg
+    follow = local_redirect.LocalAccountRedirect.follow
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def observed_close(attempt, **kwargs):
+        if attempt.endpoint_id == "bedroom1" and kwargs.get("bye_or_cancel"):
+            cleanup_started.set()
+            await allow_cleanup.wait()
+        await close(attempt, **kwargs)
+
+    async def observed_follow(self, *args):
+        try:
+            return await follow(self, *args)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(local_redirect, "async_close_outbound_leg", observed_close)
+    monkeypatch.setattr(local_redirect.LocalAccountRedirect, "follow", observed_follow)
     initial = await initial_ha_account(lab)
     port = lab.runtime.transport_config["sip_port"]
     _redirect_phone(monkeypatch, lab.phones[0], [f"<sip:bedroom1@127.0.0.1:{port}>"])
     lab.phones[1].final_status = 486
     _add_group(lab, ["bedroom0", "default"])
     caller, audio = await _source(lab)
+    retry = None
     try:
         assert await caller.invite(target="Redirect team", remote_host="127.0.0.1",
             remote_sip_port=port, timeout=3) == "ringing"
         await asyncio.wait_for(lab.phones[1].invited.wait(), 3)
         call_id = caller.dialog_ids.call_id
         session = lab.calls.get_session(call_id)
-        async with asyncio.timeout(3):
-            while any(leg.endpoint_id == "bedroom1" for leg in session.legs.values()):
-                await asyncio.sleep(.005)
+        await asyncio.wait_for(cleanup_started.wait(), 3)
+        # The physical leg can disappear before its cleanup finishes. Its
+        # absence is not the redirect owner's completion barrier.
+        assert not any(leg.endpoint_id == "bedroom1" for leg in session.legs.values())
+        assert lab.runtime.endpoints.require("bedroom1").active_call_id == call_id
+        assert not finished.is_set()
+        allow_cleanup.set()
+        await asyncio.wait_for(finished.wait(), 3)
         assert session.live
         assert not lab.runtime.endpoints.require("bedroom1").active_call_id
         assert lab.runtime.softphones[initial.endpoint_id]["state"] == "ringing"
+        # A real second INVITE proves that the failed target is reusable while
+        # the original group's independent browser offer remains live.
+        lab.phones[1].final_status = 200
+        retry = SipCallClient(local_ip="127.0.0.1", local_name="bedroom0",
+            local_uri_user="bedroom0", username="bedroom0", password=PHONE_PASSWORD,
+            local_sip_port=0, local_rtp_port=lab.phones[0].rtp_socket.getsockname()[1],
+            supported_formats=[AudioFormat(16000, frame_ms=20)])
+        result = await retry.invite(target="bedroom1", remote_host="127.0.0.1",
+            remote_sip_port=port, timeout=3)
+        if result == "ringing":
+            result = await retry.wait_for_final(timeout=3)
+        assert result == "in_call"
+        assert len(lab.phones[1].invites) == 2
+        assert lab.calls.get_session(call_id) is session and session.live
+        assert lab.runtime.softphones[initial.endpoint_id]["state"] == "ringing"
+        await retry.terminate(timeout=1)
         await lab.hass.services.async_call("voip_stack", "answer", {
             "device_id": initial.device_id, "call_id": call_id,
             "media_client_id": "original-group-browser",
@@ -253,6 +300,10 @@ async def test_failed_redirect_releases_target_while_an_original_group_offer_con
         assert await caller.wait_for_final(timeout=3) == "in_call"
         assert lab.calls.get_session(call_id) is session
     finally:
+        allow_cleanup.set()
+        if retry is not None:
+            await retry.terminate(timeout=1)
+            await retry.close()
         await caller.terminate(timeout=1)
         await caller.close()
         audio.close()
