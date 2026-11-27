@@ -40,6 +40,8 @@ def profile(path: str | Path, **substitutions) -> dict:
         config = device_config(Path(directory), original['substitutions']['firmware_features'], str(path),
                                overrides=substitutions)
         data = yaml_util.load_yaml(config)
+        # Schema contracts must observe the public profile's own build path.
+        data['esphome'].pop('build_path')
         data.update({k: v for k, v in original.items() if k not in ('substitutions', 'packages')})
         config.write_text(yaml_util.dump(data))
         result = subprocess.run([sys.executable, '-m', 'esphome', 'config', '--no-defaults', str(config)],

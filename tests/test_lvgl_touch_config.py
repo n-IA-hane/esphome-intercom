@@ -19,6 +19,7 @@ substitutions:
   ext_components_source: {ROOT / 'esphome/components'}
 esphome:
   name: touch-contract
+  build_path: {tmp_path / '.esphome/build/touch-contract'}
 esp32:
   board: esp32-s3-devkitc-1
   framework:

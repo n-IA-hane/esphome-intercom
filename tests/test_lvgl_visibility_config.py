@@ -26,6 +26,7 @@ def test_visibility_codegen_binds_all_boot_pages(tmp_path):
     config.write_text(f"""
 esphome:
   name: visibility-contract
+  build_path: {tmp_path / '.esphome/build/visibility-contract'}
 esp32:
   board: esp32-s3-devkitc-1
   framework:

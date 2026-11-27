@@ -187,7 +187,10 @@ def device_config(directory: Path, features: list[str], profile_path: str = 'yam
         package_path = resolved.relative_to(ROOT / 'packages')
     else:
         package_path = str(reference).split('/packages/', 1)[1].rsplit('@', 1)[0]
-    config.write_text(yaml_util.dump({'substitutions': substitutions}) +
+    # Keep generated sources local even when ESPHOME_DATA_DIR shares dependency caches.
+    fixture = {'substitutions': substitutions,
+               'esphome': {'build_path': str(directory.resolve() / '.esphome/build/${name}')}}
+    config.write_text(yaml_util.dump(fixture) +
                       '\npackages:\n  device: !include ' +
                       str(ROOT / 'packages' / package_path) + '\n')
     return config
