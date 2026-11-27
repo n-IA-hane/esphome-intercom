@@ -54,10 +54,10 @@ class CallIVR:
                 self.playback = None
                 self.media.discard_output()
 
-    async def next_digit(self, timeout=30):
+    async def next_digit(self, timeout):
         return await asyncio.wait_for(self.digits.get(), timeout)
 
-    async def collect(self, *, maximum=10, timeout=10):
+    async def collect(self, *, maximum=10, timeout):
         """Collect a numeric selection terminated by #; * cancels selection."""
         value = ""
         while True:

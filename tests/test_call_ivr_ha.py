@@ -74,9 +74,9 @@ async def test_prequeued_selection_survives_prompt_and_uses_explicit_terminator(
             assert ivr.feed(digit)
         assert not await ivr.play(speech())
         assert not started
-        assert await ivr.next_digit() == "0"
-        assert await ivr.collect() == "1"
-        assert await ivr.next_digit() == "2"
+        assert await ivr.next_digit(timeout=1) == "0"
+        assert await ivr.collect(timeout=1) == "1"
+        assert await ivr.next_digit(timeout=1) == "2"
     finally:
         await ivr.close()
         await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))

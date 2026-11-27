@@ -141,7 +141,7 @@ class ParkingCall(LocalCallApplication):
             await self.answer()
             if self.settings.get("hold_media"):
                 self.music_task = self.session.create_task(self._music(), name="parking-hold-audio")
-            self.lot.arm_return(self.parked, float(self.settings.get("timeout", 180)), self._return)
+            self.lot.arm_return(self.parked, float(self.settings["timeout"]), self._return)
             publish_bridge_projection(self.hass, self.session, event_type="parked", route_kind="parking",
                                       parking_slot=self.parked.slot)
         except asyncio.CancelledError:
