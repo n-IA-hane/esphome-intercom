@@ -283,11 +283,24 @@ The username supplies the outbound SIP identity when the caller policy is
 `trunk` and no separate trunk caller number is configured. Other policies keep
 the original caller or select the local account's public outgoing number.
 
-HA sends no REGISTER, registration refresh or unregister in this mode. OPTIONS
-is not used to simulate registration. Availability means the static route is
-configured, not that the remote peer has been probed successfully. Calls still
-report connection failures normally. The allowed IP list applies to SIP signaling,
-not the RTP media addresses negotiated in SDP.
+HA sends no REGISTER, registration refresh or unregister in this mode. In the
+trunk form's **Advanced** section, **OPTIONS interval (seconds)** configures
+periodic signaling checks, initially every 30 seconds. A positive interval
+keeps the outgoing line unavailable until that peer returns a successful
+`2xx` OPTIONS response. A later failure or timeout makes it unavailable again.
+The interval accepts whole seconds from `0` through `86400`.
+
+Set the interval to `0` to disable periodic probes. This leaves the configured
+static route available for outgoing attempts without claiming that the remote
+peer was reached. It does not disable the trunk. Disabling the trunk itself
+removes its usable line and incoming trust, independently of this setting.
+Even a successful OPTIONS response establishes signaling reachability, not an
+answered call or working RTP audio/video. Calls still report their own failures.
+
+Incoming source authorization is independent of outgoing probe health. The
+configured IP allowlist or authenticated account still governs incoming calls;
+an OPTIONS result does not grant incoming access. The allowed IP list applies
+to SIP signaling, not the RTP media addresses negotiated in SDP.
 
 Calls from a matching source use the existing trunk routing rules. Other sources
 do not acquire trunk privileges; registered phones and ESP endpoints keep their
@@ -328,8 +341,9 @@ Local targets still resolve through the phonebook first.
   `extension`.
 
 In registration mode, the trunk must be registered before routing unresolved
-outbound targets. In static mode, the configured route is available without
-registration. There is no proprietary intercom compatibility route.
+outbound targets. Static mode needs no registration; the selected line must
+pass its configured OPTIONS check, or have periodic probes explicitly disabled.
+There is no proprietary intercom compatibility route.
 
 ## Inbound routing
 
