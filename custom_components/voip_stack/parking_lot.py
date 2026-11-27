@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 
 from .endpoint_session import CleanupStage, EndpointCallSession, TerminationIntent
+from .parking_config import PARKING_DURATION_LIMITS
 from .pbx_trace import trace_call
 
 
@@ -125,8 +127,12 @@ class ParkingLot:
             raise ParkingError("The parked call has ended")
         if parked.timer is not None:
             return
-        if timeout <= 0:
-            raise ParkingError("Parking timeout must be positive")
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not PARKING_DURATION_LIMITS["timeout"][0] <= timeout <= PARKING_DURATION_LIMITS["timeout"][1] or not math.isfinite(timeout)):
+            raise ParkingError("Parking timeout must be between 0 and 3600 seconds")
+        if timeout == 0:
+            parked.deadline = None
+            return
         parked.deadline = asyncio.get_running_loop().time() + timeout
         async def expire():
             await asyncio.sleep(max(0, parked.deadline - asyncio.get_running_loop().time()))

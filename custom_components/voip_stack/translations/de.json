@@ -72,7 +72,7 @@
               "announcement_timeout": "Gesamtzeit für eine Ansageaktion ohne explizite Zeitbegrenzung, einschließlich Vorbereitung und Übertragung.",
               "unanswered_wait": "Dauer, für die ein Automationsanruf ohne explizite Dauer unbeantwortet bleibt.",
               "transcription_timeout": "Maximale Dauer einer Transkriptionsaktion ohne explizite Zeitbegrenzung.",
-              "recording_timeout": "Maximale Aufnahmedauer, wenn die Aktion keine Begrenzung angibt.",
+              "recording_timeout": "Maximale Aufnahmedauer, wenn die Aktion keine Begrenzung angibt. Null bedeutet unbegrenzt.",
               "ivr_digit_timeout": "Wartezeit auf den nächsten Befehl nach einer Mailboxansage.",
               "ivr_interdigit_timeout": "Wartezeit für jede Ziffer bei der Eingabe einer Mailboxnummer, PIN oder Nachrichtennummer; beginnt nach jeder Ziffer neu. Gilt nur für Voicemail-Menüs. Auf Tastatureingabe warten in Automation-Anrufen verwendet ein eigenes Gesamtzeitlimit.",
               "ivr_prompt_timeout": "Maximale Dauer jeder gesprochenen Menüansage, einschließlich Spracherzeugung und Übertragung.",
@@ -218,7 +218,8 @@
         },
         "data_description": {
           "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings."
+          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings.",
+          "timeout": "Null bedeutet unbegrenzt."
         }
       },
       "reconfigure": {
@@ -403,7 +404,7 @@
       "voicemail_language_unsupported": "Diese Sprache wird nicht von den Ansagen und dem gewählten TTS unterstützt.",
       "voicemail_route_conflict": "Ein Telefon, Kontakt oder eine Gruppe verwendet eine Voicemail-Adresse (*97, *98, mailbox, mailbox.*, voicemail.* oder *60 mit Nebenstelle). Benennen Sie dieses Ziel vor dem Aktivieren um.",
       "voicemail_voice_unavailable": "Wählen Sie eine Stimme, die die gewählte TTS-Engine und Sprache unterstützt.",
-      "parking_configuration_invalid": "Wählen Sie eindeutige Parkcodes und Zeiten zwischen 1 und 3600 Sekunden.",
+      "parking_configuration_invalid": "Wähle unterschiedliche Parkcodes und Zeiten zwischen 0 und 3600 Sekunden; 0 bedeutet unbegrenzt.",
       "parking_route_conflict": "Ein Parkcode wird bereits von einem Telefon, Kontakt, Assist-Anschluss oder einer Gruppe verwendet.",
       "trunk_codecs_invalid": "Wähle unterstützte Codecs und mindestens einen Audiocodec.",
       "trunk_target_required": "Wähle ein empfangendes Telefon oder gib ein Ziel im Wählplan ein.",
@@ -818,7 +819,7 @@
             "auto_pause_after": "Bei 0 deaktiviert. Mit 3 wird nach drei unbeantworteten Versuchen mit Klingeln pausiert; besetzte oder nicht erreichbare Telefone und Abbrüche zählen nicht.",
             "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
             "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
-            "max_wait": "Gesamte Wartezeit einschließlich Klingeln und Pausen zwischen Versuchen. Der letzte Versuch kann kürzer sein, um diese Grenze einzuhalten.",
+            "max_wait": "Gesamte Wartezeit einschließlich Klingeln und Pausen zwischen Versuchen. Der letzte Versuch kann kürzer sein, um diese Grenze einzuhalten. Null bedeutet unbegrenzt.",
             "retry_delay": "Pause vor dem nächsten Versuch für denselben wartenden Anruf. Eine geänderte Agentenverfügbarkeit kann eine frühere Prüfung auslösen.",
             "fallback_timeout": "Ziel nach Ablauf der maximalen Wartezeit. Ein Mailboxziel zeichnet direkt auf; ein Telefonziel verwendet die normalen Klingelregeln dieses Telefons. Leer verwendet das gemeinsame Ausweichziel.",
             "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
@@ -1601,6 +1602,31 @@
     "trunk_dtmf_retired_ha": {
       "title": "Eingehende Anrufe auf {trunk} prüfen",
       "description": "Das bisherige stille Warten auf Tasteneingaben am Trunk „{trunk}“ wurde entfernt. Eingehende Anrufe werden sofort weitergeleitet. Eine erkannte gewählte Nebenstelle folgt ihrer normalen Route.\n\nWird die gewählte Nummer nicht erkannt, führt die bestehende Standardeinstellung zum Home-Assistant-Telefon. In den gespeicherten Daten steht für diesen Hinweis kein Telefonname zur Verfügung. Prüfe das gewünschte Ziel vor der Verwendung dieses Trunks.\n\nÖffne Einstellungen → Geräte & Dienste → VoIP Stack, wähle den Trunk „{trunk}“ und bearbeite sein Eingangsziel.\n\nFür ein Sprachmenü mit Tastenauswahl wähle einen Automationskontakt als Ziel. Konfiguriere dessen Automation so, dass sie den Anruf annimmt, die Ansage abspielt und den Anruf weiterleitet oder die gewünschte Aktion ausführt. Das verlinkte Beispiel zeigt die Schritte. Tastenereignisse während des Gesprächs bleiben verfügbar.\n\nDas Ignorieren dieses Migrationshinweises ändert die Route nicht."
+    },
+    "trunk_migration_source_conflict": {
+      "title": "Überlappende Trunk-Quellen auflösen",
+      "description": "Die bisherige Leitung und eine vorhandene statische SIP-Leitung in {entry} vertrauen überlappenden Quellnetzen. Öffne diese Reparatur und wähle die vorübergehend zu deaktivierende Leitung. Beide Definitionen, Zugangsdaten und die aktuelle Standardauswahl bleiben erhalten.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Zu deaktivierende Leitung wählen",
+            "description": "{entry}\n\nBeide aktivierten Leitungen können Anrufe aus derselben Quelle annehmen. Wähle eine zu deaktivierende Leitung. Die Bestätigung erhält ihre Einstellungen, importiert beide Definitionen und versucht den Start erneut. Später kannst du die Leitungen unter Geräte & Dienste bearbeiten.",
+            "data": {
+              "line": "Zu deaktivierende Leitung"
+            }
+          },
+          "confirm": {
+            "title": "Trunk-Migration erneut versuchen",
+            "description": "{entry}\n\nDie ausgewählte Leitung ist deaktiviert und beide Definitionen bleiben erhalten. Bestätige, um den Start erneut zu versuchen. Falls ein weiteres Problem besteht, prüfe die übrigen Reparaturen.",
+            "data": {}
+          }
+        },
+        "error": {
+          "configuration_changed": "Die Trunk-Konfiguration wurde während dieser Reparatur geändert. Prüfe die aktualisierte Auswahl vor der Bestätigung.",
+          "save_failed": "Die ausgewählte Leitung konnte nicht aktualisiert werden. Sonst wurde nichts geändert.",
+          "migration_retry_failed": "Die ausgewählte Leitung wurde deaktiviert, aber der Start ist weiterhin blockiert. Prüfe die übrigen Reparaturen und versuche es erneut."
+        }
+      }
     }
   },
   "exceptions": {
@@ -2653,7 +2679,8 @@
           "name": "Maximale Anzahl wartender Anrufer"
         },
         "max_wait": {
-          "name": "Maximale Wartezeit"
+          "name": "Maximale Wartezeit",
+          "description": "Null bedeutet unbegrenzt."
         },
         "ring_timeout": {
           "name": "Klingeldauer pro Versuch",
@@ -3565,7 +3592,7 @@
         },
         "max_seconds": {
           "name": "Maximale Nachrichtendauer",
-          "description": "Verfügbare Aufnahmezeit in Sekunden nach dem Signalton. Für neue Mailboxen gelten 180 Sekunden."
+          "description": "Verfügbare Aufnahmezeit in Sekunden nach dem Signalton. Für neue Mailboxen gelten 180 Sekunden. Null zeichnet bis zum Auflegen auf."
         },
         "greeting_media": {
           "name": "Mailboxansage",
@@ -3682,7 +3709,8 @@
           "name": "Telefon"
         },
         "max_seconds": {
-          "name": "Maximale Dauer"
+          "name": "Maximale Dauer",
+          "description": "Null zeichnet bis zum Stoppen, Auflegen oder Medienwechsel auf. Ohne Angabe gilt das PBX-Aufnahmelimit."
         },
         "call_id": {
           "name": "Anruf-ID"

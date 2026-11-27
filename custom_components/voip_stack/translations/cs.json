@@ -72,7 +72,7 @@
               "announcement_timeout": "Celkový limit akce oznámení bez uvedeného časového limitu, včetně přípravy a doručení.",
               "unanswered_wait": "Doba ponechání hovoru Automatizace bez přijetí, pokud akce neuvádí dobu trvání.",
               "transcription_timeout": "Maximální doba akce přepisu bez uvedeného časového limitu.",
-              "recording_timeout": "Maximální doba nahrávání, pokud akce neuvádí limit.",
+              "recording_timeout": "Maximální doba nahrávání, pokud akce neuvádí limit. Nula znamená bez omezení.",
               "ivr_digit_timeout": "Doba čekání na další příkaz po výzvě hlasové schránky.",
               "ivr_interdigit_timeout": "Čekání na každou číslici při zadávání čísla schránky, PINu nebo čísla zprávy; po každé číslici se obnoví. Platí pouze pro nabídky hlasové schránky. Čekat na vstup z klávesnice v hovorech Automation používá vlastní celkový časový limit.",
               "ivr_prompt_timeout": "Maximální doba každé hlasové nabídky, včetně vytvoření a přenosu řeči.",
@@ -218,7 +218,8 @@
         },
         "data_description": {
           "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings."
+          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings.",
+          "timeout": "Nula znamená bez omezení."
         }
       },
       "reconfigure": {
@@ -403,7 +404,7 @@
       "voicemail_language_unsupported": "Tento jazyk není podporován současně pokyny hlasové schránky a vybraným systémem TTS.",
       "voicemail_route_conflict": "Existující telefon, kontakt nebo skupina používá adresu hlasové schránky (*97, *98, mailbox, mailbox.*, voicemail.* nebo *60 s klapkou). Před povolením hlasové schránky tuto adresu přejmenujte.",
       "voicemail_voice_unavailable": "Vyberte hlas podporovaný zvoleným systémem TTS a jazykem.",
-      "parking_configuration_invalid": "Zvolte odlišné parkovací kódy a časové limity od 1 do 3600 sekund.",
+      "parking_configuration_invalid": "Zvolte odlišné parkovací kódy a časy od 0 do 3600 sekund; 0 znamená bez omezení.",
       "parking_route_conflict": "Parkovací kód je v konfliktu s existujícím telefonem, kontaktem, klapkou Assist nebo skupinou.",
       "trunk_codecs_invalid": "Vyberte podporované kodeky a ponechte alespoň jeden zvukový kodek.",
       "trunk_target_required": "Vyberte přijímající telefon nebo zadejte cíl vytáčecího plánu.",
@@ -818,7 +819,7 @@
             "auto_pause_after": "Hodnota 0 funkci vypne. Hodnota 3 pozastaví přiřazování po třech nezodpovězených pokusech s vyzváněním; obsazenost, nedostupnost a zrušení se nepočítají.",
             "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
             "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
-            "max_wait": "Celková doba čekání včetně vyzvánění a přestávek mezi pokusy. Poslední pokus může být kratší, aby tento limit dodržel.",
+            "max_wait": "Celková doba čekání včetně vyzvánění a přestávek mezi pokusy. Poslední pokus může být kratší, aby tento limit dodržel. Nula znamená bez omezení.",
             "retry_delay": "Přestávka před dalším pokusem o předání stejného čekajícího hovoru. Změna dostupnosti operátora může vyvolat dřívější kontrolu.",
             "fallback_timeout": "Cíl po uplynutí maximální doby čekání. Cíl hlasové schránky ihned nahraje zprávu; telefonní cíl použije běžná pravidla vyzvánění telefonu. Prázdná hodnota použije společný náhradní cíl.",
             "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
@@ -1601,6 +1602,31 @@
     "trunk_dtmf_retired_ha": {
       "title": "Zkontrolujte příchozí hovory na {trunk}",
       "description": "Původní tiché čekání na stisk kláves na trunku „{trunk}“ bylo odstraněno. Příchozí hovory se nyní směrují okamžitě. Rozpoznaná volaná linka používá svou běžnou trasu.\n\nPokud volané číslo není rozpoznáno, stávající výchozí nastavení jej směruje na telefon Home Assistant. V uložené konfiguraci není pro toto upozornění dostupný název telefonu. Před použitím trunku ověřte požadovaný cíl.\n\nOtevřete Nastavení → Zařízení a služby → VoIP Stack, vyberte trunk „{trunk}“ a upravte jeho příchozí cíl.\n\nPro hlasovou nabídku ovládanou klávesami vyberte jako cíl kontakt Automatizace. Jeho automatizace má hovor přijmout, přehrát výzvu a přesměrovat hovor nebo provést požadovanou akci. Postup najdete v odkazovaném příkladu. Události stisku kláves během hovoru zůstávají dostupné.\n\nIgnorování tohoto upozornění na migraci nemění směrování."
+    },
+    "trunk_migration_source_conflict": {
+      "title": "Vyřešit překrývající se zdroje SIP linek",
+      "description": "Původní linka a existující statická SIP linka v {entry} důvěřují překrývajícím se zdrojovým sítím. Otevřete tuto opravu a vyberte linku, kterou chcete dočasně zakázat. Obě definice, přihlašovací údaje i aktuální výchozí volba zůstanou zachovány.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Vyberte linku k zakázání",
+            "description": "{entry}\n\nObě povolené linky mohou přijímat hovory ze stejného zdroje. Vyberte jednu linku k zakázání. Potvrzení zachová její nastavení, importuje obě definice a znovu zkusí spuštění. Linky můžete později upravit v Zařízení a služby.",
+            "data": {
+              "line": "Linka k zakázání"
+            }
+          },
+          "confirm": {
+            "title": "Znovu zkusit migraci linek",
+            "description": "{entry}\n\nVybraná linka je zakázána a obě definice zůstávají zachovány. Potvrďte nový pokus o spuštění. Pokud přetrvává další problém, zkontrolujte ostatní opravy.",
+            "data": {}
+          }
+        },
+        "error": {
+          "configuration_changed": "Konfigurace linek se během této opravy změnila. Před potvrzením zkontrolujte aktualizované možnosti.",
+          "save_failed": "Vybranou linku nelze aktualizovat. Žádné další změny nebyly provedeny.",
+          "migration_retry_failed": "Vybraná linka byla zakázána, ale spuštění je stále blokováno. Zkontrolujte zbývající opravy a zkuste to znovu."
+        }
+      }
     }
   },
   "exceptions": {
@@ -2653,7 +2679,8 @@
           "name": "Nejvyšší počet čekajících volajících"
         },
         "max_wait": {
-          "name": "Nejdelší čekání"
+          "name": "Nejdelší čekání",
+          "description": "Nula znamená bez omezení."
         },
         "ring_timeout": {
           "name": "Doba vyzvánění na pokus",
@@ -3565,7 +3592,7 @@
         },
         "max_seconds": {
           "name": "Nejdelší doba zprávy",
-          "description": "Počet sekund povolených po tónu nahrávání. Nové schránky používají 180 sekund."
+          "description": "Počet sekund povolených po tónu nahrávání. Nové schránky používají 180 sekund. Nula nahrává až do zavěšení."
         },
         "greeting_media": {
           "name": "Uvítání schránky",
@@ -3682,7 +3709,8 @@
           "name": "Telefon"
         },
         "max_seconds": {
-          "name": "Nejdelší doba trvání"
+          "name": "Nejdelší doba trvání",
+          "description": "Nula nahrává do zastavení, zavěšení nebo předání médií. Bez zadání se použije limit nahrávání PBX."
         },
         "call_id": {
           "name": "ID hovoru"

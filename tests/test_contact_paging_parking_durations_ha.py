@@ -55,8 +55,11 @@ def test_persisted_policy_records_reject_missing_or_invalid_durations(value):
         parse_roster_json([contact])
     with pytest.raises(ValueError):
         normalize_paging_group(page)
-    with pytest.raises(ValueError):
-        normalize_parking_config(park)
+    if value == 0 and not isinstance(value, bool):
+        assert normalize_parking_config(park)["timeout"] == 0
+    else:
+        with pytest.raises(ValueError):
+            normalize_parking_config(park)
     with pytest.raises(ServiceValidationError):
         paging.validate_announcement({"targets": ["desk"], "media": "media-source://test", **park})
 

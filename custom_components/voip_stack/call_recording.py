@@ -29,7 +29,7 @@ class CallRecording:
     endpoint: object
     archive: object
     writer: object
-    max_seconds: float
+    max_seconds: float | None
     detach: object = None
     task: object = None
     stopped: asyncio.Event = field(default_factory=asyncio.Event)
@@ -192,7 +192,7 @@ async def _start_recording(call, runtime, session, endpoint):
     _media_observer(runtime, session, endpoint.endpoint_id)
     archive = await get_archive(call.hass)
     writer = await archive.begin(endpoint.endpoint_id, kind="recording", caller=session.caller)
-    recording = CallRecording(call.hass, session, endpoint, archive, writer, maximum)
+    recording = CallRecording(call.hass, session, endpoint, archive, writer, maximum if maximum else None)
     try:
         if (not runtime.sip.is_generation_current(session.call_id, session.generation)
                 or session.state != "in_call" or session.owner not in {"bridge", "ha_softphone", "local_bridge"}

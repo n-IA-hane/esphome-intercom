@@ -138,7 +138,7 @@ class QueueCall(LocalCallApplication):
                     await self._fallback(policy, "queue_removed")
                     return
                 now = self.manager.clock()
-                if not policy.enabled or now >= self.ticket.deadline:
+                if not policy.enabled or (self.ticket.deadline is not None and now >= self.ticket.deadline):
                     await self._fallback(policy, "queue_disabled" if not policy.enabled else "queue_timeout")
                     return
                 source_endpoint_id = self.session.metadata.get("source_endpoint_id", "")
@@ -168,7 +168,8 @@ class QueueCall(LocalCallApplication):
                     try:
                         task = await registry.forward_call(call_id=self.session.call_id, destination=definition.name,
                             on_failure="resume", _resolved_decision=decision,
-                            _ring_timeout=cap_ringing_timeout(budget, self.ticket.deadline - now),
+                            _ring_timeout=cap_ringing_timeout(budget,
+                                self.ticket.deadline - now if self.ticket.deadline is not None else None),
                             _queue_offer=(self.manager, self.ticket))
                         if task is not None:
                             await asyncio.shield(task)
@@ -177,7 +178,8 @@ class QueueCall(LocalCallApplication):
                     if self.detached or not self.session.live:
                         return
                 self.ticket.changed.clear()
-                remaining = self.ticket.deadline - self.manager.clock()
+                remaining = (self.ticket.deadline - self.manager.clock()
+                    if self.ticket.deadline is not None else policy.retry_delay)
                 if no_agent_since is not None:
                     remaining = min(remaining, policy.no_agent_wait - (self.manager.clock() - no_agent_since))
                 try:

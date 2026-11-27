@@ -265,9 +265,14 @@ def mailbox_lab(lab, tmp_path, monkeypatch):
     return lab
 
 
-@pytest.mark.parametrize("termination", ["remote", "limit", "removed", "remote_then_removed", "lookup_then_removed"])
+@pytest.mark.parametrize("termination", ["remote", "limit", "removed", "remote_then_removed", "lookup_then_removed", "unlimited_remote"])
 async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_lab, monkeypatch, termination):
     lab = mailbox_lab
+    if termination == "unlimited_remote":
+        from custom_components.voip_stack.mailbox import mailbox_settings
+        await lab.hass.services.async_call("voip_stack", "set_voicemail_settings", {
+            "device_id": "mailbox-device", "max_seconds": 0}, blocking=True)
+        assert mailbox_settings(lab.hass, "kitchen")["max_seconds"] == 0
     stream = tts_fixture(monkeypatch, lab)
     recording, saved = asyncio.Event(), asyncio.Event()
     saved_events = []
@@ -313,7 +318,10 @@ async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_la
             await asyncio.wait_for(received.wait(), 2)
         finally:
             detach()
-        if termination == "remote":
+        if termination in {"remote", "unlimited_remote"}:
+            if termination == "unlimited_remote":
+                assert voicemail.settings["max_seconds"] == 0
+                assert session.live and not saved.is_set()
             lab.phones[0].remote_hangup()
         if termination in {"removed", "remote_then_removed", "lookup_then_removed"}:
             from custom_components.voip_stack.mailbox import async_remove_mailbox
@@ -385,6 +393,10 @@ async def test_tts_then_voicemail_reuses_media_and_saves_received_pcm(mailbox_la
             assert wav.getframerate() == 16000
             assert wav.readframes(wav.getnframes()) == struct.pack("<1920h", *([2300] * 1920))
         assert not archive._active and archive._reserved == 0
+        from custom_components.voip_stack.core.media_archive import MediaArchive
+        restored = MediaArchive(archive.root, archive.run_io)
+        await restored.load()
+        assert restored.message(entry["id"], "kitchen") == entry
     finally:
         unsubscribe()
         unsubscribe_saved()

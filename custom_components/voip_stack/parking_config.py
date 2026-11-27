@@ -7,7 +7,7 @@ from .ringing_policy import RINGING_TIMEOUT_LIMITS
 
 DEFAULT_SLOTS = tuple(str(number) for number in range(701, 721))
 _ADDRESS = re.compile(r"[A-Za-z0-9*#_-]{1,64}")
-PARKING_DURATION_LIMITS = {"timeout": (1, 3600), "return_timeout": RINGING_TIMEOUT_LIMITS}
+PARKING_DURATION_LIMITS = {"timeout": (0, 3600), "return_timeout": RINGING_TIMEOUT_LIMITS}
 
 
 def parking_settings(hass):
@@ -49,7 +49,7 @@ def normalize_parking_config(value):
         if name == "return_timeout" and number is None:
             result[name] = None
             continue
-        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or not minimum <= number <= maximum:
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not minimum <= number <= maximum or not math.isfinite(number):
             residence = PARKING_DURATION_LIMITS["timeout"]
             ringing = PARKING_DURATION_LIMITS["return_timeout"]
             raise ValueError(f"Parking residence is {residence[0]}..{residence[1]} seconds; "

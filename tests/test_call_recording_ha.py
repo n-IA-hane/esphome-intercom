@@ -119,7 +119,8 @@ async def test_sip_conversation_recording_keeps_audio_and_owns_one_file(
 
 
 @pytest.mark.parametrize('ending', ['stop', 'remote', 'capture_error'])
-async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_lab, tmp_path, monkeypatch, ending):
+@pytest.mark.parametrize('maximum', ['default', 'configured_zero', 0])
+async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_lab, tmp_path, monkeypatch, ending, maximum):
     import struct
     from custom_components.voip_stack.local_softphone_runtime import start_local_softphone_call
     runtime = browser_lab
@@ -131,9 +132,16 @@ async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_
     runtime.bridge.answer(call.call_id, 'kitchen', 'second')
     first = runtime.bridge.acquire_media(call.call_id, 'browser', 'first')
     second = runtime.bridge.acquire_media(call.call_id, 'kitchen', 'second')
+    if maximum == 'configured_zero':
+        from custom_components.voip_stack.store import config_entry
+        entry = config_entry(runtime.hass)
+        runtime.hass.config_entries.async_update_entry(entry, data={**entry.data,
+            'service_timeouts': {**entry.data['service_timeouts'], 'recording_timeout': 0}})
     response = await runtime.hass.services.async_call('voip_stack', 'start_recording',
-        {'device_id': 'Reception'}, blocking=True, return_response=True)
+        {'device_id': 'Reception', **({'max_seconds': maximum} if maximum == 0 else {})},
+        blocking=True, return_response=True)
     recording = runtime.calls.resource_for(call.call_id, 'recording')
+    assert recording.max_seconds == (3600 if maximum == 'default' else None)
     if ending == 'capture_error':
         def fail_capture(*_args, **_kwargs):
             raise ValueError('injected capture failure')
@@ -165,6 +173,13 @@ async def test_local_browser_recording_reuses_frames_and_preserves_call(browser_
             assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (48000, 2, 2)
             pcm = np.frombuffer(wav.readframes(wav.getnframes()), dtype='<i2')
         assert np.count_nonzero(pcm == 3000) > 1000
+        from custom_components.voip_stack.mailbox import get_archive
+        from custom_components.voip_stack.core.media_archive import MediaArchive
+        archive = await get_archive(runtime.hass)
+        restored = MediaArchive(archive.root, archive.run_io)
+        await restored.load()
+        assert restored.message(response['recording_id'], 'browser')['status'] == 'complete'
+        assert not archive._active and archive._reserved == 0
     if runtime.bridge.get_call(call.call_id) is not None:
         runtime.bridge.hangup(call.call_id, 'browser')
 

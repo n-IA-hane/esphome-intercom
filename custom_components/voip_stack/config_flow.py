@@ -1059,7 +1059,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         }))
 
     async def async_step_parking(self, user_input=None):
-        from .parking_config import DEFAULT_SLOTS, normalize_parking_config, parking_namespace_conflicts
+        from .parking_config import DEFAULT_SLOTS, PARKING_DURATION_LIMITS, normalize_parking_config, parking_namespace_conflicts
         from .runtime_data import runtime_data
 
         entry, existing = self._current_entry_data()
@@ -1097,7 +1097,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="parking", errors=errors, data_schema=vol.Schema({
             vol.Required("access", default=current.get("access", "700")): str,
             vol.Required("slots", default=", ".join(slots)): TextSelector(TextSelectorConfig(multiline=True)),
-            vol.Required("timeout", default=current.get("timeout", 180)): NumberSelector(NumberSelectorConfig(min=1, max=3600, mode="box", unit_of_measurement="s")),
+            vol.Required("timeout", default=current.get("timeout", 180)): NumberSelector(NumberSelectorConfig(
+                min=PARKING_DURATION_LIMITS["timeout"][0], max=PARKING_DURATION_LIMITS["timeout"][1],
+                mode="box", unit_of_measurement="s")),
             vol.Required("inherit_ringing_timeout", default=current.get("return_timeout") is None): BooleanSelector(),
             visible_required("return_timeout",
                 default=current.get("return_timeout") if current.get("return_timeout") is not None else existing.get("default_ringing_timeout", 0),

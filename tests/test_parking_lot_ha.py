@@ -1221,3 +1221,28 @@ async def test_audio_parking_pickup_rejects_only_new_jpeg_offer(trunks, monkeypa
         await asyncio.gather(*watchers, return_exceptions=True)
         for sock in sockets:
             sock.close()
+
+
+@pytest.mark.parametrize("ending", ["pickup", "hangup", "shutdown"])
+async def test_unlimited_parking_owns_no_return_timer_and_releases_on_lifecycle(ending):
+    from unittest.mock import AsyncMock
+    owner = SipEndpointRuntime()
+    owner.activate()
+    session = owner.upsert("unlimited", state="in_call", owner="parking")
+    lot = ParkingLot(("701",))
+    parked = lot.reserve(session)
+    returned = AsyncMock()
+    lot.arm_return(parked, 0, returned)
+    assert parked.deadline is None and parked.timer is None
+    await asyncio.sleep(0)
+    assert lot.calls["701"] is parked and session.live
+    if ending == "pickup":
+        lot.claim("701", "pickup").commit()
+        assert session.live
+    elif ending == "hangup":
+        await session.terminate(TerminationIntent("remote_hangup"))
+    else:
+        await lot.close()
+    assert not lot.calls
+    returned.assert_not_awaited()
+    await owner.shutdown()

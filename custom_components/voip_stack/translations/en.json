@@ -71,7 +71,7 @@
               "announcement_timeout": "Whole-job limit for an announcement action that omits its timeout, including preparation and delivery.",
               "unanswered_wait": "Time to keep an Automation call unanswered when the action omits its duration.",
               "transcription_timeout": "Maximum time for a transcription action that omits its timeout.",
-              "recording_timeout": "Maximum recording duration when the action omits its limit.",
+              "recording_timeout": "Maximum recording duration when the action omits its limit. Zero is unlimited.",
               "ivr_digit_timeout": "Time to wait for the next command after a mailbox prompt.",
               "ivr_interdigit_timeout": "Wait for each digit while entering a mailbox number, PIN or message number; restarts after each digit. Applies only to voicemail menus. Automation Wait for keypad input uses its own total timeout.",
               "ivr_prompt_timeout": "Maximum time for each spoken menu prompt, including speech generation and transmission.",
@@ -218,7 +218,8 @@
         },
         "data_description": {
           "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings."
+          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings.",
+          "timeout": "Zero is unlimited."
         }
       },
       "reconfigure": {
@@ -403,7 +404,7 @@
       "voicemail_language_unsupported": "This language is not supported by both the voicemail prompts and the selected TTS engine.",
       "voicemail_route_conflict": "An existing phone, contact or group uses a voicemail address (*97, *98, mailbox, mailbox.*, voicemail.* or *60 plus an extension). Rename that route before enabling voicemail.",
       "voicemail_voice_unavailable": "Select a voice supported by the chosen TTS engine and language.",
-      "parking_configuration_invalid": "Choose distinct parking codes and timeouts between 1 and 3600 seconds.",
+      "parking_configuration_invalid": "Choose distinct parking codes and timeouts between 0 and 3600 seconds; 0 is unlimited.",
       "parking_route_conflict": "A parking code conflicts with an existing phone, contact, Assist extension or group.",
       "trunk_codecs_invalid": "Select supported codecs and keep at least one audio codec.",
       "trunk_target_required": "Choose a receiving phone or enter a dial-plan destination.",
@@ -818,7 +819,7 @@
             "auto_pause_after": "Disabled at 0. Set 3 to pause after three unanswered ringing attempts; busy, offline and cancellations do not count.",
             "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
             "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
-            "max_wait": "Total waiting time, including ringing and pauses between attempts. The final attempt may be shorter to respect this limit.",
+            "max_wait": "Total waiting time, including ringing and pauses between attempts. The final attempt may be shorter to respect this limit. Zero is unlimited.",
             "retry_delay": "Pause before offering the same waiting call again. Changes in agent availability can trigger an earlier check.",
             "fallback_timeout": "Where the queue sends the caller after the maximum wait. A voicemail destination deposits directly; a phone destination applies that phone's normal ringing policy. Empty uses the common fallback.",
             "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
@@ -1601,6 +1602,31 @@
     "trunk_dtmf_retired_ha": {
       "title": "Review incoming calls on {trunk}",
       "description": "The old silent keypad collection on “{trunk}” has been removed. Incoming calls are now routed immediately: a recognized called extension follows its normal route.\n\nIf the called number is not recognized, the existing default routes it to the Home Assistant phone. No named phone destination is available in the saved configuration for this notice. Verify the intended destination before using this trunk.\n\nTo review or change this, open Settings → Devices & services → VoIP Stack, choose trunk “{trunk}” and edit its incoming destination.\n\nIf callers should hear a menu and choose with the keypad, select an Automation contact as that destination and configure its automation to answer, play the prompt and route the call or perform the requested action. The linked example shows the sequence. In-call keypad events remain available.\n\nThis notice reports the migration; dismissing it does not change the route."
+    },
+    "trunk_migration_source_conflict": {
+      "title": "Resolve overlapping trunk sources",
+      "description": "The legacy line and an existing static SIP line in {entry} trust overlapping source networks. Open this repair to choose which line to disable temporarily. Both definitions, credentials and the current default are preserved.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Choose the line to disable",
+            "description": "{entry}\n\nBoth enabled lines can accept calls from the same source. Choose one line to disable. Confirming preserves its settings, imports both definitions and retries startup. You can edit the lines later from Devices & services.",
+            "data": {
+              "line": "Line to disable"
+            }
+          },
+          "confirm": {
+            "title": "Retry the trunk migration",
+            "description": "{entry}\n\nThe selected line is disabled and both definitions are preserved. Confirm to retry startup. If another problem remains, review the other Repairs.",
+            "data": {}
+          }
+        },
+        "error": {
+          "configuration_changed": "The trunk configuration changed while this repair was open. Review the updated choices before confirming.",
+          "save_failed": "The selected line could not be updated. Nothing else has been changed.",
+          "migration_retry_failed": "The selected line was disabled, but startup is still blocked. Review the remaining Repairs and try again."
+        }
+      }
     }
   },
   "exceptions": {
@@ -2653,7 +2679,8 @@
           "name": "Maximum waiting callers"
         },
         "max_wait": {
-          "name": "Maximum wait"
+          "name": "Maximum wait",
+          "description": "Zero is unlimited."
         },
         "ring_timeout": {
           "name": "Ring time per attempt",
@@ -3565,7 +3592,7 @@
         },
         "max_seconds": {
           "name": "Maximum message duration",
-          "description": "Seconds allowed after the recording tone. New mailboxes use 180 seconds."
+          "description": "Seconds allowed after the recording tone. New mailboxes use 180 seconds. Zero records until hangup."
         },
         "greeting_media": {
           "name": "Mailbox greeting",
@@ -3682,7 +3709,8 @@
           "name": "Phone"
         },
         "max_seconds": {
-          "name": "Maximum duration"
+          "name": "Maximum duration",
+          "description": "Zero records until stopped, hangup or media handoff. Omit to use the PBX recording limit."
         },
         "call_id": {
           "name": "Call ID"

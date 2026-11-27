@@ -1348,3 +1348,30 @@ async def test_caller_member_does_not_mask_no_agents_but_other_busy_members_do(q
         assert not lab.calls.sessions
         assert not lab.manager.waiting and not lab.manager.reservations
         assert all(not endpoint.active_call_id for endpoint in lab.runtime.endpoints.endpoints)
+
+
+@pytest.mark.parametrize("trunks", [True], indirect=True)
+@pytest.mark.parametrize("ring_timeout", [0, 0.1])
+async def test_unlimited_queue_wait_preserves_offer_limit_and_caller_hangup(queue_lab, ring_timeout):
+    lab = queue_lab
+    lab.manager.policies[lab.identity] = replace(lab.manager.policies[lab.identity],
+        max_wait=0, ring_timeout=ring_timeout)
+    for phone in lab.phones:
+        phone.auto_answer = False
+    client, _audio = await dial_queue(lab)
+    session = lab.calls.get_session(client.dialog_ids.call_id)
+    await wait_until(lambda: all(phone.invites for phone in lab.phones))
+    application = lab.calls.resource_for(session.call_id, "queue")
+    assert application.ticket.deadline is None
+    if ring_timeout:
+        await wait_until(lambda: all(len(phone.invites) >= 2 for phone in lab.phones))
+    else:
+        # No queue deadline may shorten an explicitly unlimited ringing offer.
+        lab.manager.clock = lambda: application.ticket.enqueued + 4000
+        await asyncio.sleep(0.15)
+        assert all(len(phone.invites) == 1 for phone in lab.phones)
+    assert session.live and not application.ticket.closed
+    await client.terminate()
+    await asyncio.wait_for(session.terminated.wait(), 3)
+    assert not lab.manager.waiting and not lab.manager.reservations
+    assert not lab.calls.sessions and not lab.runtime.rtp_port_pool.get("used", set())

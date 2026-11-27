@@ -16,7 +16,7 @@ SERVICE_TIMEOUT_LIMITS = {
     "announcement_timeout": (1, 600),
     "unanswered_wait": (1, 3600),
     "transcription_timeout": (1, 600),
-    "recording_timeout": (1, 3600),
+    "recording_timeout": (0, 3600),
     "ivr_digit_timeout": (0.1, 300),
     "ivr_interdigit_timeout": (0.1, 300),
     "ivr_prompt_timeout": (1, 600),
@@ -27,7 +27,7 @@ SERVICE_TIMEOUT_LIMITS = {
 
 
 def validate_duration(value, key: str) -> float:
-    """Validate one policy duration; only conference ringing allows zero."""
+    """Validate one policy duration; recording and conference ringing allow zero."""
     minimum, maximum = SERVICE_TIMEOUT_LIMITS[key]
     if (
         isinstance(value, bool)

@@ -4,7 +4,7 @@ from collections.abc import Mapping
 import math
 
 INITIAL_MAILBOX_MAX_SECONDS = 180
-MAILBOX_MAX_SECONDS_LIMITS = (1, 3600)
+MAILBOX_MAX_SECONDS_LIMITS = (0, 3600)
 
 
 def validate_mailbox_settings(data) -> dict:
@@ -16,7 +16,7 @@ def validate_mailbox_settings(data) -> dict:
         value = result.get("max_seconds")
         minimum, maximum = MAILBOX_MAX_SECONDS_LIMITS
         if (isinstance(value, bool) or not isinstance(value, (int, float))
-                or not math.isfinite(value) or not minimum <= value <= maximum):
+                or not minimum <= value <= maximum or not math.isfinite(value)):
             raise ValueError(f"Mailbox message duration must be between {minimum} and {maximum} seconds")
     return result
 

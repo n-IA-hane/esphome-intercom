@@ -16,12 +16,13 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .automation_context import current_execution
 from .call_projection import publish_bridge_projection
-from .duration_policy import resolve_service_timeout, validate_duration
+from .duration_policy import resolve_service_timeout
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, TerminationIntent
 from .local_application import LocalCallApplication, attach_local_application
 from .mailbox import (EVENT_VOICEMAIL_CHANGED, EVENT_VOICEMAIL_RECEIVED, get_archive,
                       mailbox_settings, selected_mailbox, message_audio_reference, mailbox_display_name)
+from .mailbox_config import validate_mailbox_settings
 from .roster import RosterEntry
 from .session_cleanup import async_wait_for_cleanup
 
@@ -53,7 +54,7 @@ class VoicemailCall(LocalCallApplication):
         registry = call_registry(self.hass)
         try:
             self.require_current()
-            maximum = validate_duration((self.settings or {}).get("max_seconds"), "recording_timeout")
+            maximum = validate_mailbox_settings(self.settings or {})["max_seconds"]
             greeting_timeout = resolve_service_timeout(self.hass, "voicemail_greeting_timeout")
             archive = await get_archive(self.hass)
             self.writer = await archive.begin(self.mailbox_id, caller=self.recorded_caller or self.session.caller)
@@ -80,7 +81,7 @@ class VoicemailCall(LocalCallApplication):
             )
             publish_bridge_projection(self.hass, self.session, event_type="voicemail_recording", route_kind="voicemail")
             try:
-                await asyncio.wait_for(self.writer.failed.wait(), maximum)
+                await asyncio.wait_for(self.writer.failed.wait(), maximum if maximum else None)
             except TimeoutError:
                 pass
             registry.request_termination(self.session.call_id, TerminationIntent("voicemail_complete", public_state="idle"),

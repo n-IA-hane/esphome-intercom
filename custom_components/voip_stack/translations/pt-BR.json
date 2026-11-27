@@ -72,7 +72,7 @@
               "announcement_timeout": "Limite total de uma ação de anúncio que omite seu tempo limite, incluindo preparação e entrega.",
               "unanswered_wait": "Tempo para manter uma chamada de Automação sem atendimento quando a ação omite sua duração.",
               "transcription_timeout": "Duração máxima de uma ação de transcrição que omite seu tempo limite.",
-              "recording_timeout": "Duração máxima da gravação quando a ação omite seu limite.",
+              "recording_timeout": "Duração máxima da gravação quando a ação omite seu limite. Zero significa sem limite.",
               "ivr_digit_timeout": "Tempo de espera pelo próximo comando após uma mensagem da caixa postal.",
               "ivr_interdigit_timeout": "Espera por cada dígito ao inserir um número de caixa postal, PIN ou número de mensagem; reinicia após cada dígito. Aplica-se somente aos menus da caixa postal. Aguardar entrada pelo teclado em chamadas Automation usa seu próprio tempo limite total.",
               "ivr_prompt_timeout": "Duração máxima de cada mensagem falada do menu, incluindo geração e transmissão da fala.",
@@ -218,7 +218,8 @@
         },
         "data_description": {
           "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings."
+          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings.",
+          "timeout": "Zero significa sem limite."
         }
       },
       "reconfigure": {
@@ -403,7 +404,7 @@
       "voicemail_language_unsupported": "Este idioma não é compatível com os avisos e o mecanismo TTS selecionado.",
       "voicemail_route_conflict": "Um telefone, contato ou grupo usa um endereço de correio de voz (*97, *98, mailbox, mailbox.*, voicemail.* ou *60 seguido de um ramal). Renomeie esse destino antes de ativar o correio de voz.",
       "voicemail_voice_unavailable": "Selecione uma voz compatível com o mecanismo TTS e o idioma escolhidos.",
-      "parking_configuration_invalid": "Escolha códigos distintos e tempos entre 1 e 3600 segundos.",
+      "parking_configuration_invalid": "Escolha códigos de estacionamento distintos e tempos entre 0 e 3600 segundos; 0 significa sem limite.",
       "parking_route_conflict": "Um código já está em uso por um telefone, contato, ramal Assist ou grupo.",
       "trunk_codecs_invalid": "Selecione codecs suportados e mantenha pelo menos um codec de áudio.",
       "trunk_target_required": "Selecione um telefone de destino ou informe um destino do plano de discagem.",
@@ -818,7 +819,7 @@
             "auto_pause_after": "Desativado em 0. Defina 3 para pausar após três tentativas com toque sem atendimento; ocupado, indisponível e cancelamentos não contam.",
             "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
             "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
-            "max_wait": "Tempo total de espera, incluindo os toques e as pausas entre tentativas. A última tentativa pode ser menor para respeitar esse limite.",
+            "max_wait": "Tempo total de espera, incluindo os toques e as pausas entre tentativas. A última tentativa pode ser menor para respeitar esse limite. Zero significa sem limite.",
             "retry_delay": "Pausa antes de oferecer novamente a mesma chamada em espera. Uma mudança na disponibilidade dos agentes pode antecipar a verificação.",
             "fallback_timeout": "Destino após o tempo máximo de espera. Um destino de correio de voz grava diretamente; um destino de telefone aplica as regras normais de toque desse telefone. Vazio usa o destino alternativo comum.",
             "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
@@ -1601,6 +1602,31 @@
     "trunk_dtmf_retired_ha": {
       "title": "Verifique as chamadas recebidas em {trunk}",
       "description": "A antiga espera silenciosa por teclas no tronco “{trunk}” foi removida. As chamadas recebidas agora são encaminhadas imediatamente. Um ramal chamado reconhecido segue sua rota normal.\n\nSe o número chamado não for reconhecido, o comportamento padrão existente o encaminha ao telefone do Home Assistant. A configuração salva não fornece um nome de telefone para este aviso. Verifique o destino desejado antes de usar o tronco.\n\nAbra Configurações → Dispositivos e serviços → VoIP Stack, selecione o tronco “{trunk}” e edite seu destino de entrada.\n\nPara um menu de voz com seleção por teclas, escolha um contato de Automação como destino. Configure a automação para atender, reproduzir a mensagem e encaminhar a chamada ou executar a ação desejada. O exemplo vinculado mostra a sequência. Os eventos de teclas durante a chamada continuam disponíveis.\n\nIgnorar este aviso de migração não altera a rota."
+    },
+    "trunk_migration_source_conflict": {
+      "title": "Resolver origens de tronco sobrepostas",
+      "description": "A linha antiga e uma linha SIP estática existente em {entry} confiam em redes de origem sobrepostas. Abra este reparo para escolher qual linha desativar temporariamente. As duas definições, as credenciais e a escolha padrão atual serão preservadas.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Escolha a linha para desativar",
+            "description": "{entry}\n\nAs duas linhas ativadas podem aceitar chamadas da mesma origem. Escolha uma linha para desativar. A confirmação preserva suas configurações, importa as duas definições e tenta iniciar novamente. Você pode editar as linhas depois em Dispositivos e serviços.",
+            "data": {
+              "line": "Linha para desativar"
+            }
+          },
+          "confirm": {
+            "title": "Tentar novamente a migração dos troncos",
+            "description": "{entry}\n\nA linha selecionada está desativada e as duas definições foram preservadas. Confirme para tentar iniciar novamente. Se outro problema persistir, revise os demais reparos.",
+            "data": {}
+          }
+        },
+        "error": {
+          "configuration_changed": "A configuração dos troncos mudou enquanto este reparo estava aberto. Revise as opções atualizadas antes de confirmar.",
+          "save_failed": "Não foi possível atualizar a linha selecionada. Nenhuma outra alteração foi feita.",
+          "migration_retry_failed": "A linha selecionada foi desativada, mas a inicialização ainda está bloqueada. Revise os reparos restantes e tente novamente."
+        }
+      }
     }
   },
   "exceptions": {
@@ -2653,7 +2679,8 @@
           "name": "Máximo de chamadores em espera"
         },
         "max_wait": {
-          "name": "Espera máxima"
+          "name": "Espera máxima",
+          "description": "Zero significa sem limite."
         },
         "ring_timeout": {
           "name": "Tempo de toque por tentativa",
@@ -3565,7 +3592,7 @@
         },
         "max_seconds": {
           "name": "Duração máxima da mensagem",
-          "description": "Segundos permitidos após o tom de gravação. Novas caixas usam 180 segundos."
+          "description": "Segundos permitidos após o tom de gravação. Novas caixas usam 180 segundos. Zero grava até desligar a chamada."
         },
         "greeting_media": {
           "name": "Saudação da caixa postal",
@@ -3682,7 +3709,8 @@
           "name": "Telefone"
         },
         "max_seconds": {
-          "name": "Duração máxima"
+          "name": "Duração máxima",
+          "description": "Zero grava até parar, desligar ou transferir o áudio. Omita para usar o limite de gravação do PBX."
         },
         "call_id": {
           "name": "ID da chamada"

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from .ringing_policy import RINGING_TIMEOUT_LIMITS
 
 # Canonical bounds consumed by validation and the blocked-migration Repair.
 QUEUE_DURATION_LIMITS = {
-    "max_wait": (1, 3600),
+    "max_wait": (0, 3600),
     "ring_timeout": RINGING_TIMEOUT_LIMITS,
     "no_agent_wait": (0, 120),
     "retry_delay": (0.1, 120),
@@ -70,7 +71,7 @@ class QueuePolicy:
             value = getattr(policy, name)
             if name == "ring_timeout" and value is None:
                 continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= value <= maximum:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= value <= maximum or not math.isfinite(value):
                 raise ValueError(f"{name} must be between {minimum} and {maximum}")
         if not isinstance(policy.fallback, str) or len(policy.fallback) > 256:
             raise ValueError("fallback must be a destination of at most 256 characters")

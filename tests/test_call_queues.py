@@ -117,7 +117,7 @@ def test_removed_queue_wakes_waiters_and_releases_without_ending_connected_calls
 
 @pytest.mark.parametrize("field,value", [
     ("max_waiting", 0), ("max_waiting", 65), ("max_waiting", True),
-    ("max_wait", 0), ("ring_timeout", 3601), ("retry_delay", 0),
+    ("max_wait", -1), ("ring_timeout", 3601), ("retry_delay", 0),
     ("wrap_up", -1), ("enabled", "yes"), ("unknown", 1),
 ])
 def test_invalid_policy_cannot_partially_change_queue(manager, field, value):
@@ -415,3 +415,33 @@ def test_online_agent_query_excludes_unavailable_operator_or_presence(manager, s
         manager.endpoints.update("sip:1", availability=phones.EndpointAvailability.OFFLINE)
     assert not manager.has_online_agents("1002")
     assert not manager.has_online_agents("missing")
+
+
+@pytest.mark.parametrize("value", [0, 0.25, 20])
+def test_wait_limit_roundtrips_without_losing_unlimited_or_fractional_values(manager, value):
+    manager.configure("1002", {"max_wait": value})
+    saved = manager._snapshot()
+    assert saved["policies"]["1002"]["max_wait"] == value
+    fresh = queues.QueueManager(None, manager.entry, clock=lambda: manager.test_clock[0])
+    fresh.policies = {key: queues.QueuePolicy.from_data(row) for key, row in saved["policies"].items()}
+    fresh.reconcile([("sip:1", ("1002",)), ("sip:2", ("1002", "Support"))])
+    ticket = fresh.enqueue("1002", "unlimited", 1)
+    assert ticket.deadline == (100 + value if value else None)
+    manager.test_clock[0] += 4000
+    assert bool(fresh.claim_turn(ticket)) is (value == 0)
+    fresh.finish(ticket)
+    assert not fresh.waiting and not fresh.reservations
+
+
+def test_transfer_to_unlimited_queue_preserves_absent_deadline(manager):
+    manager.configure("Support", {"max_wait": 0})
+    original = manager.enqueue("1002", "move", 1)
+    prepared = manager.prepare_transfer(original, "Support")
+    assert prepared.deadline is None
+    manager.test_clock[0] += 10
+    manager.commit_transfer(original, prepared)
+    assert prepared.deadline is None
+    manager.test_clock[0] += 4000
+    assert manager.claim_turn(prepared) == ("sip:2",)
+    manager.finish(prepared)
+    assert not manager.waiting and not manager.reservations

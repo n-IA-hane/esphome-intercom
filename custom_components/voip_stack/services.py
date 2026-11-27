@@ -17,6 +17,8 @@ from .authorization import (
 )
 from .const import DOMAIN
 from .duration_policy import configured_service_timeout, validate_duration
+from .mailbox_config import MAILBOX_MAX_SECONDS_LIMITS
+from .queue_policy import QUEUE_DURATION_LIMITS
 
 
 SIP_FAILURE_STATUS = vol.All(vol.Coerce(int), vol.Range(min=300, max=699))
@@ -445,7 +447,8 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Required("device_id"): IDENTIFIER_TEXT,
         vol.Optional("enabled"): cv.boolean,
         vol.Optional("pin"): PASSWORD_TEXT,
-        vol.Optional("max_seconds"): vol.All(_duration("recording_timeout"), vol.Coerce(int)),
+        vol.Optional("max_seconds"): vol.All(_finite_duration, vol.Range(
+            min=MAILBOX_MAX_SECONDS_LIMITS[0], max=MAILBOX_MAX_SECONDS_LIMITS[1])),
         vol.Exclusive("greeting_media", "greeting"): MediaSelector({"accept": ["audio/*"]}),
         vol.Exclusive("clear_greeting", "greeting"): cv.boolean,
     }, extra=vol.PREVENT_EXTRA)
@@ -564,7 +567,8 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         schema=vol.Schema({vol.Required("queue"): IDENTIFIER_TEXT,
             vol.Optional("enabled"): cv.boolean,
             vol.Optional("max_waiting"): vol.All(vol.Coerce(int), vol.Range(min=1, max=64)),
-            vol.Optional("max_wait"): vol.All(_finite_duration, vol.Range(min=1, max=3600)),
+            vol.Optional("max_wait"): vol.All(_finite_duration, vol.Range(
+                min=QUEUE_DURATION_LIMITS["max_wait"][0], max=QUEUE_DURATION_LIMITS["max_wait"][1])),
             vol.Optional("ring_timeout"): vol.Any(None, vol.All(_finite_duration, vol.Range(min=0, max=3600))),
             vol.Optional("no_agent_wait"): vol.All(_finite_duration, vol.Range(min=0, max=120)),
             vol.Optional("retry_delay"): vol.All(_finite_duration, vol.Range(min=0.1, max=120)),

@@ -71,7 +71,7 @@
               "announcement_timeout": "Limite totale di un annuncio senza durata esplicita, inclusi preparazione e trasmissione.",
               "unanswered_wait": "Attesa senza rispondere alla chiamata Automazione quando l'azione non indica una durata.",
               "transcription_timeout": "Tempo massimo di una trascrizione quando l'azione non indica una durata.",
-              "recording_timeout": "Durata massima della registrazione quando l'azione omette il limite.",
+              "recording_timeout": "Durata massima della registrazione quando l'azione omette il limite. Zero indica durata illimitata.",
               "ivr_digit_timeout": "Attesa del comando successivo dopo un messaggio del menu.",
               "ivr_interdigit_timeout": "Attesa di ogni cifra durante l'inserimento di una casella, un PIN o un numero di messaggio; riparte dopo ogni cifra. Vale solo per i menu della segreteria. Attendi input da tastiera nelle chiamate Automation usa il proprio timeout totale.",
               "ivr_prompt_timeout": "Tempo massimo per ogni messaggio del menu, inclusi sintesi vocale e trasmissione.",
@@ -218,7 +218,8 @@
         },
         "data_description": {
           "inherit_ringing_timeout": "Use the PBX value when no per-call override exists. Turn off inheritance to store an explicit duration, including 0 for unlimited.",
-          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings."
+          "return_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. An explicit return value overrides the destination account and PBX, including 0 for unlimited; inheritance uses those parent settings.",
+          "timeout": "Zero indica durata illimitata."
         }
       },
       "reconfigure": {
@@ -403,7 +404,7 @@
       "voicemail_language_unsupported": "Questa lingua non è supportata sia dai messaggi della segreteria sia dal motore TTS scelto.",
       "voicemail_route_conflict": "Un telefono, contatto o gruppo usa un indirizzo della segreteria (*97, *98, mailbox, mailbox.*, voicemail.* oppure *60 seguito da un interno). Rinomina quel percorso prima di abilitare la segreteria.",
       "voicemail_voice_unavailable": "Seleziona una voce supportata dal motore TTS e dalla lingua scelti.",
-      "parking_configuration_invalid": "Scegli codici distinti e tempi tra 1 e 3600 secondi.",
+      "parking_configuration_invalid": "Scegli codici di parcheggio distinti e durate tra 0 e 3600 secondi; 0 indica durata illimitata.",
       "parking_route_conflict": "Un codice del parcheggio è già usato da un telefono, contatto, interno Assist o gruppo.",
       "trunk_codecs_invalid": "Seleziona codec supportati e mantieni almeno un codec audio.",
       "trunk_target_required": "Seleziona un telefono destinatario o inserisci una destinazione del piano di chiamata.",
@@ -818,7 +819,7 @@
             "auto_pause_after": "0 disabilita. Imposta 3 per mettere in pausa dopo tre squilli senza risposta; occupato, offline e annullamenti non contano.",
             "fallback": "Choose a directory destination or enter a telephone number or SIP address. An empty value ends the call when no specific fallback applies.",
             "ring_timeout": "Seconds before the no-answer action when inheritance is disabled. Zero is unlimited. The no-answer destination can be configured independently. The queue total wait still bounds every attempt.",
-            "max_wait": "Tempo totale di attesa, compresi gli squilli e le pause fra i tentativi. L'ultimo tentativo può essere più breve per rispettare questo limite.",
+            "max_wait": "Tempo totale di attesa, compresi gli squilli e le pause fra i tentativi. L'ultimo tentativo può essere più breve per rispettare questo limite. Zero indica durata illimitata.",
             "retry_delay": "Pausa prima di riproporre la stessa chiamata in attesa. Un cambio nella disponibilità degli operatori può anticipare la verifica.",
             "fallback_timeout": "Destinazione al termine dell'attesa massima. Una destinazione di segreteria registra subito il messaggio; una destinazione telefono applica le normali regole di squillo di quel telefono. Se vuota, usa la destinazione alternativa comune.",
             "members": "Select account devices. A ring group also accepts a directory destination, telephone number or SIP address. Remove an unavailable saved member or replace it in the same row.",
@@ -1601,6 +1602,31 @@
     "trunk_dtmf_retired_ha": {
       "title": "Controlla le chiamate in ingresso su {trunk}",
       "description": "La vecchia attesa silenziosa dei tasti sul trunk “{trunk}” è stata rimossa. Le chiamate in ingresso vengono instradate subito: se l’interno chiamato è riconosciuto, segue il suo percorso ordinario.\n\nSe il numero chiamato non è riconosciuto, il comportamento predefinito esistente lo indirizza al telefono Home Assistant. Nella configurazione salvata non è disponibile il nome di un telefono da mostrare in questo avviso. Verifica la destinazione desiderata prima di usare il trunk.\n\nPer controllare o cambiare la scelta, apri Impostazioni → Dispositivi e servizi → VoIP Stack, seleziona il trunk “{trunk}” e modifica la sua destinazione d’ingresso.\n\nSe chi chiama deve ascoltare un menu e scegliere con i tasti, seleziona come destinazione un contatto Automazione e configura l’automazione per rispondere, riprodurre il messaggio e inoltrare la chiamata o eseguire l’azione desiderata. L’esempio collegato mostra la sequenza. Gli eventi dei tasti durante la chiamata restano disponibili.\n\nQuesto avviso descrive la migrazione: ignorarlo non cambia l’instradamento."
+    },
+    "trunk_migration_source_conflict": {
+      "title": "Risolvi le sorgenti trunk sovrapposte",
+      "description": "La linea precedente e una linea SIP statica esistente in {entry} autorizzano reti sorgenti sovrapposte. Apri questa riparazione per scegliere quale linea disabilitare temporaneamente. Entrambe le definizioni, le credenziali e la scelta predefinita attuale vengono conservate.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Scegli la linea da disabilitare",
+            "description": "{entry}\n\nEntrambe le linee abilitate possono accettare chiamate dalla stessa sorgente. Scegli una linea da disabilitare. La conferma conserva le impostazioni, importa entrambe le definizioni e riprova l’avvio. Puoi modificare le linee in seguito da Dispositivi e servizi.",
+            "data": {
+              "line": "Linea da disabilitare"
+            }
+          },
+          "confirm": {
+            "title": "Riprova la migrazione dei trunk",
+            "description": "{entry}\n\nLa linea selezionata è disabilitata ed entrambe le definizioni sono conservate. Conferma per riprovare l’avvio. Se rimane un altro problema, controlla le altre riparazioni.",
+            "data": {}
+          }
+        },
+        "error": {
+          "configuration_changed": "La configurazione dei trunk è cambiata mentre questa riparazione era aperta. Controlla le scelte aggiornate prima di confermare.",
+          "save_failed": "Non è stato possibile aggiornare la linea selezionata. Nessun’altra modifica è stata applicata.",
+          "migration_retry_failed": "La linea selezionata è stata disabilitata, ma l’avvio è ancora bloccato. Controlla le altre riparazioni e riprova."
+        }
+      }
     }
   },
   "exceptions": {
@@ -2653,7 +2679,8 @@
           "name": "Numero massimo di chiamanti in attesa"
         },
         "max_wait": {
-          "name": "Attesa massima"
+          "name": "Attesa massima",
+          "description": "Zero indica durata illimitata."
         },
         "ring_timeout": {
           "name": "Durata dello squillo per tentativo",
@@ -3565,7 +3592,7 @@
         },
         "max_seconds": {
           "name": "Durata massima del messaggio",
-          "description": "Secondi consentiti dopo il tono di registrazione. Le nuove caselle usano 180 secondi."
+          "description": "Secondi consentiti dopo il tono di registrazione. Le nuove caselle usano 180 secondi. Zero registra fino alla chiusura della chiamata."
         },
         "greeting_media": {
           "name": "Saluto della casella vocale",
@@ -3682,7 +3709,8 @@
           "name": "Telefono"
         },
         "max_seconds": {
-          "name": "Durata massima"
+          "name": "Durata massima",
+          "description": "Zero registra fino allo stop, alla chiusura della chiamata o al trasferimento audio. Omettere per usare il limite del PBX."
         },
         "call_id": {
           "name": "ID chiamata"

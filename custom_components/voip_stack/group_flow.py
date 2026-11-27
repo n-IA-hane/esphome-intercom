@@ -12,6 +12,7 @@ from .group_config import (
     INITIAL_RING_STEP_TIMEOUT, group_members, normalize_group_data, validate_group_namespace,
 )
 from .phone_queue_membership import iter_phone_memberships
+from .queue_policy import QUEUE_DURATION_LIMITS
 
 
 def destination_options(hass, entry):
@@ -181,7 +182,7 @@ class GroupSubentryFlowHandler(ConfigSubentryFlow):
                 "options": options, "custom_value": True, "mode": "dropdown"})
         else:
             for key, default, minimum, maximum in (
-                ("max_waiting", 10, 1, 64), ("max_wait", 60, 1, 3600),
+                ("max_waiting", 10, 1, 64), ("max_wait", 60, *QUEUE_DURATION_LIMITS["max_wait"]),
                 ("no_agent_wait", 1, 0, 120), ("retry_delay", 1, 0.1, 120), ("wrap_up", 0, 0, 3600)):
                 config = {"min": minimum, "max": maximum, "mode": "box", "step": 1 if key == "max_waiting" else 0.1}
                 if key != "max_waiting":

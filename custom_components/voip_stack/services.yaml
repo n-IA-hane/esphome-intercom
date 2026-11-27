@@ -200,9 +200,10 @@ configure_queue:
           mode: box
     max_wait:
       name: Maximum wait
+      description: Maximum total waiting time, including ringing and retry pauses. Zero is unlimited.
       selector:
         number:
-          min: 1
+          min: 0
           max: 3600
           unit_of_measurement: s
           mode: box
@@ -1752,10 +1753,10 @@ set_voicemail_settings:
         boolean: null
     max_seconds:
       name: Maximum message duration
-      description: Seconds allowed after the recording tone. New mailboxes use 180 seconds.
+      description: Seconds allowed after the recording tone. Zero records until hangup. New mailboxes use 180 seconds.
       selector:
         number:
-          min: 1
+          min: 0
           max: 3600
           mode: box
           unit_of_measurement: s
@@ -1921,10 +1922,11 @@ start_recording:
             model: SIP account
     max_seconds:
       name: Maximum duration
+      description: Zero records until stopped, hangup or media handoff. Omit to use the PBX recording limit.
       default: 3600
       selector:
         number:
-          min: 1
+          min: 0
           max: 3600
           unit_of_measurement: s
           mode: box

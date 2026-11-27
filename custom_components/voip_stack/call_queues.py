@@ -98,7 +98,7 @@ class QueueTicket:
     call_id: str
     generation: int
     enqueued: float
-    deadline: float
+    deadline: float | None
     policy: QueuePolicy
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     reserved: tuple[str, ...] = ()
@@ -308,7 +308,7 @@ class QueueManager:
                 ticket.call_id == call_id for ticket in self.staged_admissions.values()):
             raise ValueError("The call already has a queue ticket")
         now = self.clock()
-        ticket = QueueTicket(queue.queue_id, call_id, generation, now, now + policy.max_wait, policy=policy)
+        ticket = QueueTicket(queue.queue_id, call_id, generation, now, now + policy.max_wait if policy.max_wait else None, policy=policy)
         if replacing is not None:
             ticket.admitted = False
             self.staged_admissions[ticket.entry_id] = ticket
@@ -350,7 +350,7 @@ class QueueManager:
         previous.closed = True
         prepared.admitted = True
         prepared.enqueued = self.clock()
-        prepared.deadline = prepared.enqueued + prepared.policy.max_wait
+        prepared.deadline = prepared.enqueued + prepared.policy.max_wait if prepared.policy.max_wait else None
         self.staged_admissions.pop(prepared.entry_id)
         self.waiting.setdefault(prepared.queue_id, deque()).append(prepared)
         if notify:
@@ -375,7 +375,7 @@ class QueueManager:
         """The FIFO head atomically reserves agents across all queues."""
         pending = self.waiting.get(ticket.queue_id, ())
         if (ticket.closed or self.resolve(ticket.queue_id) is None or not pending or pending[0] is not ticket
-                or ticket.deadline <= self.clock()):
+                or (ticket.deadline is not None and ticket.deadline <= self.clock())):
             return ()
         if ticket.reserved:
             return ticket.reserved
