@@ -18,6 +18,7 @@ from .endpoint_session import CleanupStage, TerminationIntent
 from .fsm import CallState, TerminalReason
 from .inbound_answer import async_commit_runtime_answer
 from .media_ports import RtpPortReservation, release_video_media_reservation
+from .media_paths import debug_capture_path
 from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
 from .runtime_data import sip_endpoint_manager
 from .session_cleanup import async_wait_for_cleanup
@@ -253,7 +254,8 @@ async def async_commit_outbound_bridge(
                 raise RuntimeError("The retained source dialog ended")
             relay = SipRtpRelay(left=dialog_rtp_peer(data.source_client.dialog), right=dialog_rtp_peer(client.dialog),
                 left_port=data.source_relay_port, right_port=data.dest_relay_port,
-                debug=debug_mode(hass), debug_capture=media_capture_enabled(hass), on_release=_release_ports)
+                debug=debug_mode(hass), debug_capture=media_capture_enabled(hass),
+                capture_directory=debug_capture_path(hass), on_release=_release_ports)
         elif policy.local_source:
             relay = build_local_client_relay(
                 client=client,
@@ -265,6 +267,7 @@ async def async_commit_outbound_bridge(
                 capture_name=f"{invite.call_id}_{dest_call_id}",
                 debug=debug_mode(hass),
                 debug_capture=media_capture_enabled(hass),
+                capture_directory=debug_capture_path(hass),
                 on_release=_release_ports,
             )
         else:
@@ -275,6 +278,7 @@ async def async_commit_outbound_bridge(
                 dest_relay_port=data.dest_relay_port,
                 debug=debug_mode(hass),
                 debug_capture=media_capture_enabled(hass),
+                capture_directory=debug_capture_path(hass),
                 on_release=_release_ports,
             )
         reservations = ((data.prepared_media.reservation,)

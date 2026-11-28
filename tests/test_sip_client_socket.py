@@ -2013,6 +2013,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         rtp_format = sdp.audio_format_to_rtp(pcm, 96)
         capture = audio_ws_view._DebugAudioCapture(
             "atomic-debug",
+            directory=Path("unused"),
             rx_format=rtp_format,
             tx_format=rtp_format,
         )
@@ -2030,11 +2031,10 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             tempfile.TemporaryDirectory() as temp_dir,
-            patch.object(audio_ws_view, "DEBUG_CAPTURE_DIR", Path(temp_dir)),
             patch.object(
                 audio_ws_view,
                 "debug_capture_transaction",
-                side_effect=lambda: contextlib.nullcontext(),
+                side_effect=lambda _directory: contextlib.nullcontext(),
             ),
             patch.object(
                 audio_ws_view,
@@ -2042,6 +2042,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 side_effect=fail_second_commit,
             ),
         ):
+            capture.directory = Path(temp_dir)
             with self.assertRaisesRegex(OSError, "rename failed"):
                 capture.write({})
             self.assertEqual(list(Path(temp_dir).iterdir()), [])

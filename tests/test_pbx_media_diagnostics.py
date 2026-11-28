@@ -59,11 +59,8 @@ async def test_operations_come_from_observed_wire_and_current_encoder(source, ta
         await media.stop()
 
 
-async def test_debug_decoder_does_not_make_identical_wire_a_conversion(monkeypatch, tmp_path):
-    from custom_components.voip_stack import sip_rtp_bridge
-
-    monkeypatch.setattr(sip_rtp_bridge, "DEBUG_CAPTURE_DIR", tmp_path)
-    media = relay(debug_capture=True)
+async def test_debug_decoder_does_not_make_identical_wire_a_conversion(tmp_path):
+    media = relay(debug_capture=True, capture_directory=tmp_path)
     try:
         assert media.left_decoder is not None and media.right_encoder is not None
         media.left_to_right_clock.observe_format(media.left.inbound_rtp_format)

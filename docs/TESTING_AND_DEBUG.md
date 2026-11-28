@@ -565,15 +565,25 @@ For HA-side runtime, inspect call events, softphone state events and
 
 ## Audio debug
 
-When private media capture is explicitly enabled, HA writes WAV captures under:
+When private media capture is explicitly enabled, find WAV captures in Home
+Assistant's native Media Browser at **Media > Local media > voip_stack > debug**.
+The capture directory uses the configured `local` media root, or the first
+configured media directory when `local` is unavailable. On HAOS with the usual
+`local: /media` mapping, this is:
 
 ```text
-~/.cache/voip_stack_debug/
+/media/voip_stack/debug/
 ```
 
 The filenames include source/destination call IDs and side labels. Use these
 when a call connects but audio direction, volume or format negotiation is
 unclear.
+
+No files are exposed through `www`. Home Assistant's existing media access
+applies, so users who can browse that media directory can listen to captures.
+If no media directory is configured or writing fails, HA logs the diagnostic
+failure and normal calls and cleanup continue. Existing captures in the old
+cache directory are not moved or deleted automatically.
 
 `debug_mode` controls detailed logs and metrics only. The separate
 `media_capture` option records up to 15

@@ -328,7 +328,9 @@ def test_debug_and_media_capture_options_disclose_separate_behaviors(path: Path)
     assert "priv" in capture_title
     assert "15" in capture_description
     assert "8" in capture_description
-    assert "~/.cache/voip_stack_debug" in capture_description
+    assert "voip_stack" in capture_description and "debug" in capture_description
+    assert "media" in capture_description
+    assert "~/.cache" not in capture_description
     assert "0700" in capture_description
     assert "24" in capture_description
     assert "64 mib" in capture_description

@@ -32,7 +32,6 @@ from .core.audio_pcm import PcmFrameConverter
 from .core.media.bridge import plan_browser_audio
 from .core.sdp import RtpDtmfFormat, RtpPcmFormat
 from .debug_capture import (
-    DEBUG_CAPTURE_DIR,
     DEBUG_CAPTURE_MAX_PENDING_WRITES,
     capture_temp_path,
     capture_session_name,
@@ -50,6 +49,7 @@ from .dtmf import (
     telephone_event_code,
 )
 from .media_debug import merge_media_debug
+from .media_paths import debug_capture_path
 from .media_call_lifetime import (
     active_media_call,
     listen_for_media_call_end as _listen_for_call_end,
@@ -178,8 +178,9 @@ class _RtpAudioProtocol(asyncio.DatagramProtocol):
 
 
 class _DebugAudioCapture:
-    def __init__(self, call_id: str, *, rx_format: Any, tx_format: Any) -> None:
+    def __init__(self, call_id: str, *, directory: Path, rx_format: Any, tx_format: Any) -> None:
         self.call_id = str(call_id or "call")
+        self.directory = directory
         self.capture_name = capture_session_name(self.call_id)
         self.rx_format = getattr(rx_format, "audio_format", rx_format)
         self.tx_format = getattr(tx_format, "audio_format", tx_format)
@@ -228,9 +229,9 @@ class _DebugAudioCapture:
 
     def write(self, counters: dict[str, int]) -> None:
         safe_name = self.capture_name
-        rx_path = DEBUG_CAPTURE_DIR / f"{safe_name}_ha_ws_rtp_to_browser.wav"
-        tx_path = DEBUG_CAPTURE_DIR / f"{safe_name}_ha_ws_browser_to_rtp.wav"
-        meta_path = DEBUG_CAPTURE_DIR / f"{safe_name}_ha_ws_timing.json"
+        rx_path = self.directory / f"{safe_name}_ha_ws_rtp_to_browser.wav"
+        tx_path = self.directory / f"{safe_name}_ha_ws_browser_to_rtp.wav"
+        meta_path = self.directory / f"{safe_name}_ha_ws_timing.json"
         rx_payload = bytes(self.rtp_to_ws)
         tx_payload = bytes(self.ws_to_rtp)
         meta = {
@@ -245,7 +246,7 @@ class _DebugAudioCapture:
             "ws_send_deltas_ms": self.ws_send_deltas_ms,
             "rtp_tx_deltas_ms": self.rtp_tx_deltas_ms,
         }
-        with debug_capture_transaction():
+        with debug_capture_transaction(self.directory):
             rx_temp = capture_temp_path(rx_path)
             tx_temp = capture_temp_path(tx_path)
             meta_temp = capture_temp_path(meta_path)
@@ -263,7 +264,7 @@ class _DebugAudioCapture:
                 published.append(tx_path)
                 commit_capture_file(meta_temp, meta_path)
                 published.append(meta_path)
-                prune_debug_captures()
+                prune_debug_captures(self.directory)
             except BaseException:
                 # Session names are unique, so these paths cannot refer to a
                 # previous capture. Roll back a partially published group: a
@@ -941,9 +942,14 @@ async def _run_audio_session(
     dtmf_send_lock = asyncio.Lock()
     dtmf_source = None
     dtmf_tasks: set[asyncio.Task[None]] = set()
+    capture_enabled = media_capture_enabled(hass)
+    capture_directory = debug_capture_path(hass) if capture_enabled else None
+    if capture_enabled and capture_directory is None:
+        _LOGGER.warning("HA softphone debug capture unavailable: no Home Assistant media directory configured")
     debug_capture = (
-        _DebugAudioCapture(session.call_id, rx_format=browser_plan.speaker, tx_format=browser_plan.microphone)
-        if media_capture_enabled(hass)
+        _DebugAudioCapture(session.call_id, directory=capture_directory,
+                           rx_format=browser_plan.speaker, tx_format=browser_plan.microphone)
+        if capture_directory is not None
         else None
     )
     rtp_decoder: RtpAudioReceiver
@@ -1126,6 +1132,7 @@ async def _run_audio_session(
                 _schedule_debug_capture_write(hass, debug_capture, counters)
                 debug_capture = _DebugAudioCapture(
                     session.call_id,
+                    directory=debug_capture.directory,
                     rx_format=browser_plan.speaker,
                     tx_format=browser_plan.microphone,
                 )

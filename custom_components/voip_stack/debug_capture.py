@@ -11,7 +11,6 @@ import threading
 from collections.abc import Iterator
 
 
-DEBUG_CAPTURE_DIR = Path.home() / ".cache" / "voip_stack_debug"
 DEBUG_CAPTURE_MAX_FILES = 24
 DEBUG_CAPTURE_MAX_BYTES = 64 * 1024 * 1024
 DEBUG_CAPTURE_MAX_PENDING_WRITES = 4
@@ -57,7 +56,7 @@ def debug_capture_pending_writes() -> int:
         return _capture_pending_writes
 
 
-def ensure_debug_capture_dir(directory: Path = DEBUG_CAPTURE_DIR) -> None:
+def ensure_debug_capture_dir(directory: Path) -> None:
     """Create the opt-in capture directory with user-only permissions."""
 
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -82,7 +81,7 @@ def capture_session_name(value: object) -> str:
 
 @contextmanager
 def debug_capture_transaction(
-    directory: Path = DEBUG_CAPTURE_DIR,
+    directory: Path,
 ) -> Iterator[None]:
     """Serialize one atomic capture group and its retention pass."""
 
@@ -136,7 +135,7 @@ def _capture_group_key(path: Path) -> str:
 
 
 def prune_debug_captures(
-    directory: Path = DEBUG_CAPTURE_DIR,
+    directory: Path,
     *,
     max_files: int = DEBUG_CAPTURE_MAX_FILES,
     max_bytes: int = DEBUG_CAPTURE_MAX_BYTES,

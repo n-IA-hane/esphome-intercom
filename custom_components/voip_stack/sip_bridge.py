@@ -7,6 +7,7 @@ from .peer_media_profile import legacy_pcm_compatibility
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 import logging
+from pathlib import Path
 from typing import Any
 
 from .core import sdp
@@ -475,6 +476,7 @@ def build_invite_client_relay(
     dest_relay_port: int,
     debug: bool = False,
     debug_capture: bool = False,
+    capture_directory: Path | None = None,
     on_release: Callable[[tuple[int, int]], None] | None = None,
 ) -> SipRtpRelay:
     """Build the RTP relay for an inbound INVITE bridged to an outbound client."""
@@ -487,6 +489,7 @@ def build_invite_client_relay(
         right_port=dest_relay_port,
         debug=debug,
         debug_capture=debug_capture,
+        capture_directory=capture_directory,
         capture_name=f"{invite.call_id}_{client.dialog_ids.call_id}",
         on_release=on_release,
     )
@@ -503,6 +506,7 @@ def build_local_client_relay(
     capture_name: str,
     debug: bool = False,
     debug_capture: bool = False,
+    capture_directory: Path | None = None,
     on_release: Callable[[tuple[int, int]], None] | None = None,
 ) -> SipRtpRelay:
     """Build a browser-loopback to established SIP dialog RTP relay.
@@ -521,6 +525,7 @@ def build_local_client_relay(
         right_port=dest_relay_port,
         debug=debug,
         debug_capture=debug_capture,
+        capture_directory=capture_directory,
         capture_name=capture_name,
         on_release=on_release,
     )

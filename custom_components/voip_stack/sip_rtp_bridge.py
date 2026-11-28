@@ -19,7 +19,6 @@ from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .core.media.bridge import AudioOperation, payload_relay_compatible, plan_audio_flow
 from .debug_capture import (
-    DEBUG_CAPTURE_DIR,
     capture_temp_path,
     capture_session_name,
     commit_capture_file,
@@ -340,6 +339,7 @@ class SipRtpRelay:
             right_port=getattr(destination, f"{destination_side}_port"),
             debug=source.debug or destination.debug,
             debug_capture=source.debug_capture or destination.debug_capture,
+            capture_directory=source.capture_directory if source.debug_capture else destination.capture_directory,
             capture_name=f"splice-{source.left_port}-{destination.right_port}",
         )
         for previous, previous_side, next_side in ((source, source_side, "left"), (destination, destination_side, "right")):
@@ -400,6 +400,7 @@ class SipRtpRelay:
         right_port: int,
         debug: bool = False,
         debug_capture: bool = False,
+        capture_directory: Path | None = None,
         capture_name: str = "",
         on_release: Callable[[tuple[int, int]], None] | None = None,
         on_dtmf: Callable[[str, str, str], None] | None = None,
@@ -413,7 +414,10 @@ class SipRtpRelay:
         self.left_port = int(left_port)
         self.right_port = int(right_port)
         self.debug = bool(debug)
-        self.debug_capture = bool(debug_capture)
+        self.capture_directory = capture_directory
+        self.debug_capture = bool(debug_capture and capture_directory is not None)
+        if debug_capture and capture_directory is None:
+            _LOGGER.warning("SIP RTP debug capture unavailable: no Home Assistant media directory configured")
         self.left_transport: asyncio.DatagramTransport | None = None
         self.right_transport: asyncio.DatagramTransport | None = None
         self._audio_sockets: tuple[socket.socket, ...] | None = None
@@ -461,7 +465,7 @@ class SipRtpRelay:
         self._capture_formats: dict[str, AudioFormat] = {}
         self._capture_frames: dict[str, int] = {"left": 0, "right": 0}
         self._capture_snapshot: dict[str, tuple[bytes, AudioFormat, Path]] = {}
-        if debug_capture:
+        if self.debug_capture:
             self._prepare_debug_capture(capture_name)
 
     def observe_audio(self, callback, on_error=None):
@@ -915,7 +919,7 @@ class SipRtpRelay:
     def _prepare_debug_capture(self, capture_name: str) -> None:
         safe_name = capture_session_name(capture_name or f"relay_{self.left_port}_{self.right_port}")
         for side, fmt in (("left", self.left.audio_format), ("right", self.right.audio_format)):
-            path = DEBUG_CAPTURE_DIR / f"{safe_name}_{side}_rx.wav"
+            path = self.capture_directory / f"{safe_name}_{side}_rx.wav"
             self._capture_buffers[side] = bytearray()
             self._capture_paths[side] = path
             self._capture_formats[side] = fmt
@@ -957,7 +961,8 @@ class SipRtpRelay:
         snapshot = dict(self._capture_snapshot)
         if not snapshot:
             return
-        with debug_capture_transaction():
+        directory = next(iter(snapshot.values()))[2].parent
+        with debug_capture_transaction(directory):
             published: list[Path] = []
             try:
                 for side, (pcm, fmt, path) in snapshot.items():
@@ -981,7 +986,7 @@ class SipRtpRelay:
                         len(pcm),
                         fmt.wire_token(),
                     )
-                prune_debug_captures()
+                prune_debug_captures(directory)
             except BaseException:
                 for destination in published:
                     with contextlib.suppress(OSError):

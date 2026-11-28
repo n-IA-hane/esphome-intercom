@@ -12,6 +12,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .core.media_archive import ArchiveError, MediaArchive
 from .mailbox_config import initial_mailbox_settings
+from .media_paths import archive_path
 from .phone_config import phone_subentry_by_endpoint_id, update_phone_subentry
 from .runtime_data import require_runtime_data
 from .service_endpoints import async_require_phone_service_control, resolve_service_phone
@@ -25,12 +26,6 @@ EVENT_VOICEMAIL_CHANGED = "voip_stack_voicemail_changed"
 def mailbox_display_name(endpoint):
     """Keep the mailbox service distinct from its owning phone."""
     return f"Voicemail: {endpoint.name}" if endpoint is not None else "Voicemail"
-
-
-def archive_path(hass):
-    directories = hass.config.media_dirs
-    directory = directories.get("local") or next(iter(directories.values()), None)
-    return Path(directory) / "voip_stack" if directory else None
 
 
 def mailbox_settings(hass, endpoint_id: str) -> dict:

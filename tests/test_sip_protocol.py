@@ -1255,7 +1255,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 sip_rtp_bridge,
                 "debug_capture_transaction",
-                side_effect=lambda: contextlib.nullcontext(),
+                side_effect=lambda _directory: contextlib.nullcontext(),
             ),
             patch.object(
                 sip_rtp_bridge,
@@ -1312,6 +1312,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             left_port=42000,
             right_port=42002,
             debug_capture=True,
+            capture_directory=Path("unused"),
             capture_name="bounded-relay-debug",
             on_release=released.append,
         )
