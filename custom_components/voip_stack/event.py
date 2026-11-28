@@ -22,6 +22,7 @@ from .endpoint_entity_manager import (
     register_endpoint_entity_manager,
 )
 from .const import CALL_EVENT, SIP_DTMF_EVENT
+from .pbx_device import pbx_device_info, pbx_subentry_id
 
 
 async def async_setup_entry(
@@ -30,7 +31,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up canonical PBX, phone and Automation contact event projections."""
-    async_add_entities([VoipStackCallEvent(hass, entry)])
+    async_add_entities([VoipStackCallEvent(hass, entry)],
+        config_subentry_id=pbx_subentry_id(entry))
     _setup_automation_contact_events(hass, entry, async_add_entities)
     from .queue_activity import async_setup_queue_activity
     async_setup_queue_activity(hass, entry, async_add_entities)
@@ -67,12 +69,7 @@ class VoipStackCallEvent(EventEntity):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entity_id = "event.voip_stack_call"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title or "VoIP Stack",
-            manufacturer="VoIP Stack",
-            model="PBX",
-        )
+        self._attr_device_info = pbx_device_info(entry)
 
     @callback
     def async_entity_id_changed(self, old_entity_id: str) -> None:

@@ -158,13 +158,18 @@ async def test_setup_entry_provisions_device_name_on_existing_native_owner(phone
     monkeypatch.setattr(voip_stack, "_async_start_sip_endpoint", start)
     assert await voip_stack.async_setup_entry(lab.hass, lab.entry)
     await lab.hass.async_block_till_done(wait_background_tasks=True)
+    pbx_rows = [row for row in lab.entry.subentries.values() if row.subentry_type == "pbx"]
+    assert len(pbx_rows) == 1
+    pbx = dr.async_get(lab.hass).async_get_device_by_identifier(
+        ("voip_stack", lab.entry.entry_id), lab.entry.entry_id)
+    assert pbx is not None and pbx.config_subentry_id == pbx_rows[0].subentry_id
     account = phone_subentry(lab)
-    assert list(lab.entry.subentries) == [account.subentry_id]
+    assert set(lab.entry.subentries) == {account.subentry_id, pbx_rows[0].subentry_id}
     assert account.data["username"] == "Ingresso" and "managed_esphome_phones" not in lab.entry.data
     assert [name for name, _data in lab.sent] == [
         "set_ha_display_name", "set_account", "register_ha_account"]
     assert lab.events == []
-    assert len(dr.async_get(lab.hass).devices) == 2
+    assert len(dr.async_get(lab.hass).devices) == 3
     account_service_device(lab)
 
 

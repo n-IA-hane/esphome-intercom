@@ -200,7 +200,7 @@ def _assert_native_contact_owner(hass, entry, contact_id):
     assert not any(row.subentry_type == "phone" for row in entry.subentries.values())
     assert not entry.runtime_data.endpoints.endpoints
     owned = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
-    assert {row.model for row in owned} == {"PBX", AUTOMATION_CONTACT_MODEL}
+    assert {row.model for row in owned} == {"VoIP Stack PBX", AUTOMATION_CONTACT_MODEL}
     assert {frozenset(row.identifiers) for row in owned} == {
         frozenset({(DOMAIN, entry.entry_id)}), frozenset({(DOMAIN, identifier)})}
     return device, entity

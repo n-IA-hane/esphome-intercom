@@ -795,6 +795,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
 
     if not async_ensure_duration_policies(hass, entry):
         raise ConfigEntryError("Correct the saved duration policy through Repairs")
+    from .pbx_device import async_ensure_pbx_device
+    async_ensure_pbx_device(hass, entry)
     from .trunk_config import async_complete_trunk_menu_notices
     await async_complete_trunk_menu_notices(hass, entry)
     previous_runtime = _runtime_data(hass)

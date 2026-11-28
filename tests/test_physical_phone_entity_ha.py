@@ -213,8 +213,8 @@ async def test_device_metadata_distinguishes_pbx_and_hardware_without_renaming(p
 
     pbx = VoipStackCallEvent(lab.hass, lab.entry).device_info
     assert pbx["identifiers"] == {("voip_stack", lab.entry.entry_id)}
-    assert pbx["name"] == lab.entry.title
-    assert pbx["manufacturer"] == "VoIP Stack" and pbx["model"] == "PBX"
+    assert pbx["name"] == "VoIP Stack PBX"
+    assert pbx["manufacturer"] == "VoIP Stack" and pbx["model"] == "VoIP Stack PBX"
 
 
 async def test_physical_buttons_use_real_admin_service_and_context_without_bypassing_permissions(physical_entities, hass_admin_user, hass_read_only_user):

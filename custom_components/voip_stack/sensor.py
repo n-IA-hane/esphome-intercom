@@ -20,6 +20,7 @@ from .endpoint_entity_manager import (
 )
 from .phonebook_coordinator import PHONEBOOK_UPDATED, PhonebookCoordinator
 from .pbx_media_diagnostics import PROCESSING_STATES
+from .pbx_device import pbx_subentry_id
 from .phone_entity import PhoneEndpointEntity
 from .runtime_data import require_runtime_data, runtime_data
 from .service_entity import NativeServiceEntity, async_setup_native_service_entities
@@ -57,7 +58,7 @@ async def async_setup_entry(
     runtime = require_runtime_data(hass)
     async_add_entities([VoipPhonebookSensor(runtime.phonebook)])
     counters = [PbxCountSensor(entry, key) for key in ("active_calls", "registered_contacts")]
-    async_add_entities(counters)
+    async_add_entities(counters, config_subentry_id=pbx_subentry_id(entry))
 
     @callback
     def refresh_counters(_change=None):
