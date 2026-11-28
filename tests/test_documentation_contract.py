@@ -53,6 +53,17 @@ MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*$", re.MULTILINE)
 YAML_EXAMPLES = tuple(sorted((ROOT / "examples").glob("*.yaml")))
 
 
+def _load_yaml_example(text):
+    """Read documented !secret references without opening any secret files."""
+    class ExampleLoader(yaml.SafeLoader):
+        pass
+
+    ExampleLoader.add_constructor(
+        "!secret", lambda loader, node: "!secret " + loader.construct_scalar(node)
+    )
+    return yaml.load(text, Loader=ExampleLoader)
+
+
 def _service_fields() -> dict[str, set[str]]:
     services = yaml.safe_load(
         (ROOT / "custom_components/voip_stack/services.yaml").read_text()
@@ -273,7 +284,7 @@ def test_ha_services_are_documented_and_examples_use_real_fields() -> None:
     for document in CURRENT_SERVICE_DOCS:
         for index, block in enumerate(YAML_FENCE.findall(document.read_text()), 1):
             try:
-                parsed = yaml.safe_load(block)
+                parsed = _load_yaml_example(block)
             except yaml.YAMLError:
                 # ESPHome examples may contain custom !include/!lambda tags.
                 continue
@@ -332,7 +343,7 @@ def test_automation_cookbook_actions_pass_the_runtime_schemas() -> None:
     runtime = load_service_schemas()
     errors: list[str] = []
     for index, block in enumerate(YAML_FENCE.findall(AUTOMATION_COOKBOOK.read_text()), 1):
-        parsed = yaml.safe_load(block)
+        parsed = _load_yaml_example(block)
         for service, payload in _walk_service_payloads(parsed):
             schema = runtime.get(service)
             if schema is None:
@@ -357,7 +368,7 @@ def test_automation_cookbook_uses_real_event_types_and_payload_fields() -> None:
     dtmf_fields = _mapping_keys_in_function(DTMF_EVENTS, "publish_dtmf_event", "payload")
     errors: list[str] = []
     for index, block in enumerate(YAML_FENCE.findall(AUTOMATION_COOKBOOK.read_text()), 1):
-        parsed = yaml.safe_load(block)
+        parsed = _load_yaml_example(block)
         received_types: set[str] = set()
         for trigger in _walk_event_received_triggers(parsed):
             configured = (trigger.get("options") or {}).get("event_type") or []

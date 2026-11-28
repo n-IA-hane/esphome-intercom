@@ -50,6 +50,7 @@ alone does not take ownership or disable the phone's normal fallback.
 | Choose where a call rings based on presence or time | [Initial routing](#override-the-initial-destination) |
 | Ring a phone first, then try Assist | [No-answer forwarding](#forward-an-unanswered-ha-call-to-assist) |
 | Offer "press 1 or 2" choices | [Keypad menu](#build-a-small-keypad-menu) |
+| Ring Home or check a PIN for a demo gate | [Welcome menu with a PIN](#build-a-welcome-menu-with-a-pin) |
 | Allow or block trunk calls for one phone | [External call access](#control-external-calls-per-phone) |
 | Act on a key during a conversation | [In-call DTMF](#dtmf-during-a-connected-call) |
 | Answer or decline from a phone notification | [Actionable notification](#actionable-doorbell-notification) |
@@ -1454,6 +1455,141 @@ The native call-received trigger binds each execution to its own call, so the
 recipe needs no manually entered Call-ID. Caller hangup cancels the pending
 menu work. After forwarding, the established conversation uses the same
 negotiated DTMF path for ordinary in-call keys.
+
+## Build a welcome menu with a PIN
+
+This alternative Welcome menu offers two choices: **1** forwards the same call
+to `Home`; **2** asks for a numeric PIN before opening a demonstration cover in
+Home Assistant. It uses ordinary HA actions and the native call context.
+
+Create an **Automation** contact named `Welcome` in the phonebook and select it
+as your trunk's incoming destination, or as the destination of the relevant DID
+rule. The contact has its own HA device and Call event entity. In the visual
+editor, you can select its **Automation contact device** in **VoIP call
+received**. The portable YAML below uses **Destination: Welcome** instead;
+choose one destination selector. Replace the existing Welcome automation with
+this sequence rather than enabling two controlling automations for the contact.
+
+Use your own TTS provider and an existing phone or ring group named `Home`.
+For this walkthrough, `cover.voip_demo_gate` must be a lab demonstration cover
+with no connection to a physical gate. The example opens only that demo entity.
+
+Save the automation in a YAML file loaded through your HA automation include.
+Define `voip_gate_pin` in `secrets.yaml` as a **quoted string of 1 to 32 numeric
+digits**, preserving any leading zeros. The `!secret` tag below is resolved when
+HA loads that file. It cannot be pasted into the automation editor's YAML view:
+the editor does not resolve `!secret` and cannot open an automation file that
+contains it. Keep this secret-backed example file-managed. To explore the other
+actions in the UI, use an editor-managed demonstration without a secret tag.
+
+```yaml
+alias: VoIP - Welcome Home and demo gate
+mode: parallel
+variables:
+  gate_pin: !secret voip_gate_pin
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination: Welcome
+actions:
+  - action: voip_stack.tts_say
+    data:
+      tts_entity_id: tts.piper
+      message: "Welcome. Press one to call Home, or two for the demo gate."
+  - action: voip_stack.wait_for_dtmf
+    data:
+      timeout: 15
+      max_digits: 1
+      terminator: ""
+    response_variable: menu
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ menu.digits == '1' }}"
+        sequence:
+          - action: voip_stack.forward
+            data:
+              destination: Home
+              on_failure: terminate
+      - conditions:
+          - condition: template
+            value_template: "{{ menu.digits == '2' }}"
+        sequence:
+          - action: voip_stack.tts_say
+            data:
+              tts_entity_id: tts.piper
+              message: "Enter your PIN. Press hash to confirm, or pause for three seconds."
+          - action: voip_stack.wait_for_dtmf
+            data:
+              timeout: 15
+              inter_digit_timeout: 3
+              max_digits: 32
+              terminator: "#"
+            response_variable: pin
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ pin.digits is match('^[0-9]{1,32}$') and pin.digits == (gate_pin | string) }}"
+                  - condition: voip_stack.is_call_state
+                    options:
+                      state: in_call
+                sequence:
+                  - action: cover.open_cover
+                    target:
+                      entity_id: cover.voip_demo_gate
+                  - action: voip_stack.tts_say
+                    data:
+                      tts_entity_id: tts.piper
+                      message: "The demo gate has been opened. Goodbye."
+            default:
+              - action: voip_stack.tts_say
+                data:
+                  tts_entity_id: tts.piper
+                  message: "The PIN was not accepted. Goodbye."
+    default:
+      - action: voip_stack.tts_say
+        data:
+          tts_entity_id: tts.piper
+          message: "No valid selection was entered. Goodbye."
+```
+
+The first wait collects one key, so `1` or `2` selects its branch immediately.
+The PIN wait collects the whole input for up to 15 seconds. `#` confirms early
+and is excluded from the returned digits; it is optional because a three-second
+gap also completes the wait. A gap or the total deadline returns `status:
+timeout` together with any collected digits. The comparison therefore checks
+the complete numeric string, without requiring `status: received`. A missing,
+shorter, longer or different PIN does not match. There is one attempt per call.
+
+The native **Call is in a state: In call** condition checks the original call
+and generation immediately before the cover action. Do not replace it with a
+global phone-state sensor: unrelated HA actions need this call-specific check
+after a wait. The cover action here is a demonstration, not a physical access
+control deployment. After its final message, the Automation contact call ends.
+Choice 1 instead transfers ownership to `Home`, so the conversation continues
+on the same call; `on_failure: terminate` ends it if forwarding fails.
+
+These native Home Assistant screens show the destination picker, the Welcome
+trigger and the two menu branches with the PIN collection settings:
+
+![Native Home Assistant Welcome menu setup: trunk destination, trigger and PIN input actions](images/ivr-welcome-walkthrough.png)
+
+The screenshots use the lab-only virtual cover. That editor-managed
+demonstration reads a password-mode helper through
+`{{ states('input_text.voip_demo_gate_pin') }}` in its `gate_pin` variable.
+Its test code controls no physical access. The file-managed recipe above uses
+`!secret` instead; the editor does not resolve that tag.
+
+<details>
+<summary>Full native screenshots</summary>
+
+![Native trunk destination picker showing Welcome](images/ivr-welcome-trunk-full.png)
+
+![Native call-received trigger filtered to Welcome](images/ivr-welcome-trigger-full.png)
+
+![Native menu branches and PIN input settings](images/ivr-welcome-actions-full.png)
+
+</details>
 
 ## Use the menu for incoming trunk calls
 
