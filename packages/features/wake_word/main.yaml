@@ -2,11 +2,5 @@ packages:
   events: !include '../../runtime/wake_word_events.yaml'
   controls: !include '../../runtime/wake_word_controls.yaml'
   priority: !include '../../runtime/mww_task_priority.yaml'
-esp32:
-  framework:
-    components:
-      # Native FINAL-priority override of the official MWW provider's 1.4.1 pin.
-      - name: espressif/esp-tflite-micro
-        ref: 1.4.3
 voice_assistant:
   micro_wake_word: mww
