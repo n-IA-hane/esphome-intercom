@@ -191,6 +191,138 @@ async def register_phone(wire, *, username="outbound-phone", outbound=True, phon
     return binding
 
 
+async def test_large_ordinary_registered_contact_stays_udp_without_tcp_probe(wire_lab, monkeypatch):
+    """A selected authenticated Contact carries an explicit UDP transport policy."""
+    wire = wire_lab
+    binding = await register_phone(wire, outbound=False, discover=False)
+    uri = sip.parse_sip_uri(binding.contact_uri)
+    selected = wire.registrar.select_outbound_flow(binding.username, uri, allow_ordinary=True)
+    client = SipCallClient(local_ip="127.0.0.1", local_name="Registered caller " * 100,
+        local_sip_port=wire.listener[1], local_rtp_port=40000,
+        supported_formats=[AudioFormat(16000, frame_ms=20)])
+    connect = AsyncMock(side_effect=TimeoutError())
+    try:
+        assert sip_runtime.enable_reused_signaling_flow(wire.lab.hass, client, uri,
+            target=binding.username, default_sip_port=wire.listener[1], selected_flow=selected)
+        monkeypatch.setattr(asyncio, "open_connection", connect)
+        assert await client.invite(target=binding.username, remote_host=uri.host,
+            remote_sip_port=uri.port, request_uri=str(uri), timeout=1) == "in_call"
+        invite, address = await wire.a.receive("INVITE")
+        ack, ack_address = await wire.b.receive("ACK")
+        assert wire.a.last_invite_size > 1300
+        connect.assert_not_awaited()
+        assert invite.body == client._pending_invite_body
+        assert invite.uri == str(uri)
+        assert invite.header("Call-ID") == client.dialog_ids.call_id
+        assert "SIP/2.0/UDP" in invite.header("Via")
+        assert address == ack_address == wire.listener
+        assert ack.uri == str(sip.SipUri("wire", *wire.b.address))
+        assert client._reused_udp_next_hop is None
+        assert client._reused_udp_send_to is not None
+        await client.terminate(timeout=1)
+        await wire.b.receive("BYE")
+    finally:
+        await client.close()
+    assert not wire.manager.udp_server.endpoint._dialog_queues
+    assert not wire.manager.udp_server.endpoint._reused_dialog_keys
+    assert wire.manager.udp_server.transport is not None
+    assert wire.registrar.registered_contacts(binding.username)
+
+
+async def test_registered_udp_transport_preserves_ordinary_route_next_hop(wire_lab, monkeypatch):
+    wire = wire_lab
+    binding = await register_phone(wire, outbound=False, discover=False)
+    uri = sip.parse_sip_uri(binding.contact_uri)
+    selected = wire.registrar.select_outbound_flow(binding.username, uri, allow_ordinary=True)
+    proxy = str(sip.SipUri("", *wire.b.address, params=(("lr", None),)))
+    client = SipCallClient(local_ip="127.0.0.1", local_name="Routed caller " * 100,
+        local_sip_port=wire.listener[1], local_rtp_port=40000, outbound_proxy=proxy,
+        supported_formats=[AudioFormat(16000, frame_ms=20)])
+    connect = AsyncMock(side_effect=TimeoutError())
+    try:
+        assert sip_runtime.enable_reused_signaling_flow(wire.lab.hass, client, uri,
+            target=binding.username, default_sip_port=wire.listener[1], selected_flow=selected)
+        monkeypatch.setattr(asyncio, "open_connection", connect)
+        assert await client.invite(target=binding.username, remote_host=uri.host,
+            remote_sip_port=uri.port, request_uri=str(uri), timeout=1) == "in_call"
+        invite, address = await wire.b.receive("INVITE")
+        ack, ack_address = await wire.b.receive("ACK")
+        connect.assert_not_awaited()
+        assert wire.b.last_invite_size > 1300
+        assert invite.uri == str(uri)
+        assert sip.name_addr_uri(invite.header("Route")) == proxy
+        assert ack.uri == str(sip.SipUri("wire", *wire.b.address))
+        assert sip.name_addr_uri(ack.header("Route")) == proxy
+        assert address == ack_address == wire.listener
+        assert not any(request.method in {"INVITE", "ACK"} for request in wire.a.requests)
+        assert client._reused_udp_next_hop is None
+        await client.terminate(timeout=1)
+        await wire.b.receive("BYE")
+    finally:
+        await client.close()
+    assert not wire.manager.udp_server.endpoint._dialog_queues
+    assert not wire.manager.udp_server.endpoint._reused_dialog_keys
+
+
+async def test_generic_borrowed_udp_socket_still_tries_tcp_for_large_request(wire_lab, monkeypatch):
+    """Borrowing a socket alone supplies no authenticated binding policy."""
+    wire = wire_lab
+    uri = sip.SipUri("unregistered", *wire.a.address)
+    client = SipCallClient(local_ip="127.0.0.1", local_name="Generic caller " * 100,
+        local_sip_port=wire.listener[1], local_rtp_port=40000,
+        supported_formats=[AudioFormat(16000, frame_ms=20)])
+    endpoint = wire.manager.udp_server.endpoint
+    reuse = endpoint.open_reused_dialog(wire.a.address, client.dialog_ids.call_id,
+        flow_active=lambda: endpoint.transport is not None, routed=True)
+    assert reuse is not None
+    send, responses = reuse
+    client.use_reused_signaling_flow(send=send, responses=responses,
+        close=lambda: endpoint.close_reused_dialog(wire.a.address, client.dialog_ids.call_id, queue=responses),
+        udp_send_to=send)
+    connect = AsyncMock(side_effect=TimeoutError())
+    try:
+        monkeypatch.setattr(asyncio, "open_connection", connect)
+        assert await client.invite(target="unregistered", remote_host=uri.host,
+            remote_sip_port=uri.port, request_uri=str(uri), timeout=1) == "in_call"
+        await wire.a.receive("INVITE")
+        await wire.b.receive("ACK")
+        assert wire.a.last_invite_size > 1300
+        connect.assert_awaited_once_with(uri.host, uri.port)
+        await client.terminate(timeout=1)
+        await wire.b.receive("BYE")
+    finally:
+        await client.close()
+    assert not endpoint._dialog_queues
+    assert not endpoint._reused_dialog_keys
+
+
+@pytest.mark.parametrize("reset", ["close", "tcp-replacement"])
+async def test_registered_udp_transport_policy_resets_with_its_flow_owner(wire_lab, reset):
+    wire = wire_lab
+    binding = await register_phone(wire, outbound=False, discover=False)
+    uri = sip.parse_sip_uri(binding.contact_uri)
+    selected = wire.registrar.select_outbound_flow(binding.username, uri, allow_ordinary=True)
+    client = SipCallClient(local_ip="127.0.0.1", local_name="Policy lifetime",
+        local_sip_port=wire.listener[1], local_rtp_port=40000,
+        supported_formats=[AudioFormat(16000, frame_ms=20)])
+    try:
+        assert sip_runtime.enable_reused_signaling_flow(wire.lab.hass, client, uri,
+            target=binding.username, default_sip_port=wire.listener[1], selected_flow=selected)
+        assert client._registered_udp_transport
+        if reset == "close":
+            await client.close()
+        else:
+            # Release the old external lease before installing a different owner.
+            client._reused_flow_close()
+            client.use_reused_tcp_connection(send=lambda _raw: True,
+                responses=asyncio.Queue(), close=lambda: None)
+        assert not client._registered_udp_transport
+    finally:
+        await client.close()
+    assert not wire.manager.udp_server.endpoint._dialog_queues
+    assert not wire.manager.udp_server.endpoint._reused_dialog_keys
+
+
 async def test_public_register_ack_never_exposes_stale_routing_snapshot(wire_lab, monkeypatch):
     """Observe REGISTER200 while an explicitly older refresh is still pending."""
     from custom_components.voip_stack import peer_snapshot, sip_capabilities

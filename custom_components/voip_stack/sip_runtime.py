@@ -235,8 +235,8 @@ def enable_reused_signaling_flow(
 ) -> bool:
     """Use a selected authenticated UDP flow or the existing TCP connection.
 
-    Ordinary registered Contacts borrow the UDP source socket while retaining
-    standard dialog routing. RFC 5626 bindings retain their fixed next hop.
+    Registered Contacts retain their authenticated UDP transport. Ordinary
+    Contacts keep standard dialog routing; only RFC 5626 fixes the next hop.
 
     A registered endpoint behind NAT commonly advertises an unreachable
     Contact.  The registrar therefore normalizes TCP contacts to the observed
@@ -274,7 +274,8 @@ def enable_reused_signaling_flow(
         client.use_reused_signaling_flow(send=send, responses=responses,
             close=lambda: server.close_reused_dialog(address, client.dialog_ids.call_id, queue=responses),
             udp_next_hop=address if selected_flow.outbound else None,
-            udp_send_to=send if not selected_flow.outbound else None)
+            udp_send_to=send if not selected_flow.outbound else None,
+            registered_udp_transport=True)
         client.local_sip_port = int(server.transport.get_extra_info("sockname")[1])
         client.bind_signaling_usage = lambda usage_id: server.bind_reused_usage(address,
             client.dialog_ids.call_id, usage_id)

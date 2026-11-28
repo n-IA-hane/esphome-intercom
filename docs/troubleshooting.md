@@ -211,9 +211,25 @@ transport and destination address/port. A successful attempt reports the local
 port and elapsed time. A failed attempt includes the exception type, operating
 system error number and elapsed time, even when no INVITE was sent.
 
-`reason=message_size` means an initially UDP request exceeded 1300 bytes and
-triggered a TCP attempt. This can happen when video adds more SDP to the SIP
-request; it does not mean the video itself uses TCP. If every TCP connection
+Calls to a current authenticated UDP registration keep UDP without probing
+TCP first, including for large INVITEs. The registrar validates the selected
+Contact before the client acquires its signaling flow. This transport policy
+does not pin ordinary registrations to an observed source address: Contact and
+Record-Route still control dialog routing. RFC 5626 Outbound registrations
+retain their existing fixed-flow behavior. An arbitrary URI or a borrowed UDP
+socket alone does not enable this policy.
+
+Preserving registered UDP is an interoperability choice, similar to
+[Asterisk's default `disable_tcp_switch=yes`](https://docs.asterisk.org/Latest_API/API_Documentation/Module_Configuration/res_pjsip/),
+rather than an exception granted by
+[RFC 3261 section 18.1.1](https://www.rfc-editor.org/rfc/rfc3261.html#section-18.1.1).
+Large UDP messages can still require IP fragmentation; network
+paths that discard fragments need a reachable TCP/TLS setup. The SDP, codec
+preferences and UDP datagram size limit remain unchanged.
+
+For other initially UDP requests, `reason=message_size` means the request
+exceeded 1300 bytes and triggered a TCP attempt. This can happen when video
+adds more SDP; it does not mean the video itself uses TCP. If every TCP connection
 candidate is explicitly refused/reset or reports protocol-unreachable before
 the request is sent, the client retries the original UDP route once, as described
 in RFC 3261 section 18.1.1. The same compatibility recovery covers a confirmed
@@ -223,8 +239,8 @@ the existing setup budget and preserves the original SDP and dialog identity.
 The log marks this with `reason=connection_failed_before_send`. DNS, writer
 publication, unrelated errors, cancellation and SIP response timeouts do not
 enable that retry. A request already queued or sent over TCP is never replayed
-over UDP by this recovery. Explicit TCP/TLS choices and reused registration
-flows remain unchanged, and TLS is never downgraded.
+over UDP by this recovery. Explicit TCP/TLS choices remain unchanged, and TLS
+is never downgraded.
 
 These entries describe application-level attempts and outcomes, not captured
 TCP SYN/RST packets. For an on-wire handshake or firewall diagnosis, capture

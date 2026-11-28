@@ -456,10 +456,14 @@ class SipInviteTransactions:
     async def _prepare_invite_request_transport(self, exchange: InviteExchange) -> str | None:
         if not exchange.needs_tcp(self.signaling_transport):
             return None
-        if self._reused_flow_send is not None and self._reused_udp_next_hop is not None:
-            # Only the registrar-selected RFC 5626 Outbound binding sets this
-            # fixed next hop. Ordinary borrowed sockets and trunks still use
-            # the complete-request size rule below.
+        if self._reused_flow_send is not None and (
+            self._registered_udp_transport or self._reused_udp_next_hop is not None
+        ):
+            # Preserve the transport of a current authenticated registration,
+            # avoiding a speculative TCP connect before a registered phone rings.
+            # This interoperability policy is separate from RFC 5626 next-hop
+            # pinning: ordinary Contacts still follow Contact/Record-Route.
+            # A borrowed socket alone does not authorize this size-rule bypass.
             if len(exchange.request) > SIP_UDP_MAX_REQUEST_BYTES:
                 return self._transport_failure(OSError(errno.EMSGSIZE, "SIP request exceeds UDP datagram limit"),
                     exchange.target, exchange.host, exchange.port)

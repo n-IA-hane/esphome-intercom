@@ -227,6 +227,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self._reused_flow_send: Callable[[bytes], bool | None] | None = None
         self._reused_udp_next_hop: tuple[str, int] | None = None
         self._reused_udp_send_to: Callable[[bytes, tuple[str, int]], bool | None] | None = None
+        self._registered_udp_transport = False
         self._reused_flow_responses: asyncio.Queue[bytes | tuple[bytes, tuple[str, int]]] | None = None
         self._reused_flow_close: Callable[[], None] | None = None
         self.bind_signaling_usage: Callable[[str], Callable[[], None]] | None = None
@@ -576,6 +577,7 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self._reused_flow_responses = None
         self._reused_udp_next_hop = None
         self._reused_udp_send_to = None
+        self._registered_udp_transport = False
         try:
             try:
                 if tcp_writer is not None:
@@ -614,6 +616,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         self._reused_flow_send = send
         self._reused_flow_responses = responses
         self._reused_flow_close = close
+        self._reused_udp_next_hop = None
+        self._reused_udp_send_to = None
+        self._registered_udp_transport = False
 
     def use_reused_signaling_flow(
         self,
@@ -623,11 +628,17 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
         close: Callable[[], None],
         udp_next_hop: tuple[str, int] | None = None,
         udp_send_to: Callable[[bytes, tuple[str, int]], bool | None] | None = None,
+        registered_udp_transport: bool = False,
     ) -> None:
-        """Use one externally owned SIP flow for this dialog."""
+        """Use one externally owned SIP flow for this dialog.
+
+        Only a registrar-validated binding may preserve registered UDP.
+        Borrowing a sender alone supplies no such transport policy.
+        """
         self.use_reused_tcp_connection(send=send, responses=responses, close=close)
         self._reused_udp_next_hop = udp_next_hop
         self._reused_udp_send_to = udp_send_to
+        self._registered_udp_transport = registered_udp_transport
 
     async def _connect_tcp(self, remote_host: str, remote_sip_port: int) -> None:
         async with self._start_lock:
