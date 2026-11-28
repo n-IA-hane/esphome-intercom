@@ -34,9 +34,19 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
         for call_id, invite in registry.artifact_items("pending_invite")
         if call_belongs_to_endpoint(registry, call_id, endpoint_id)
     }
+    requested_call_id = str(data.get("call_id") or "").strip()
+    if (not requested_call_id and not owned_routes and not owned_invites
+            and getattr(endpoint, "active_call_id", "")):
+        # Local HA calls have no pending SIP invite. Select the current owned
+        # call through the same boundary as answer, decline and hangup.
+        from .softphone_commands import async_resolve_browser_call_command
+
+        command = await async_resolve_browser_call_command(hass, call,
+            endpoint_id=endpoint_id, endpoint=endpoint)
+        requested_call_id = command.call_id
     try:
         selected_call_id = resolve_forward_call_id(
-            str(data.get("call_id") or ""),
+            requested_call_id,
             owned_routes,
             owned_invites,
         )
@@ -46,6 +56,9 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
         raise ServiceValidationError(
             f"call_id {selected_call_id} belongs to another phone endpoint"
         )
+    expected = data.get("expected_generation")
+    if expected is not None and not registry.is_generation_current(selected_call_id, expected):
+        raise ServiceValidationError("The selected call generation is no longer current")
     if not data.get("call_id"):
         context = registry.event_context(selected_call_id)
         data["call_id"] = selected_call_id
