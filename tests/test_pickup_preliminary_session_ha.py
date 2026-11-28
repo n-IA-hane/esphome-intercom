@@ -18,6 +18,10 @@ pytestmark = pytest.mark.ha
     ("parking", True, None), ("directed", True, None),
     ("parking", False, "cancel"), ("directed", False, "cancel"),
     ("parking", False, "new_generation"), ("directed", False, "new_generation"),
+    ("directed", False, "canonical_offline"),
+    ("directed", False, "canonical_dnd"),
+    ("directed", False, "canonical_disabled"),
+    ("directed", False, "canonical_stale_claim"),
 ])
 async def test_native_pickup_retires_preliminary_session_and_preserves_parallel_call(lab, monkeypatch, mode, fail, fault):
     from custom_components.voip_stack import softphone_originate
@@ -30,12 +34,17 @@ async def test_native_pickup_retires_preliminary_session_and_preserves_parallel_
     from custom_components.voip_stack.phone_endpoint import PhoneEndpoint, EndpointKind
     from custom_components.voip_stack.roster import RosterEntry
     from custom_components.voip_stack.runtime_data import registration_data
+    from custom_components.voip_stack.directory_runtime import _endpoint_entry
 
     for name in ("route-a", "route-b", "route-c", "parallel-a", "parallel-b"):
-        lab.runtime.endpoints.register(PhoneEndpoint(endpoint_id=name, username=name, name=name,
-            device_id="device-" + name, kind=EndpointKind.BROWSER,
-            availability="available", capabilities=frozenset({"audio", "dtmf"})))
-        lab.roster.append(RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name}))
+        canonical = name == "route-c" and str(fault).startswith("canonical_")
+        endpoint = PhoneEndpoint(endpoint_id=name, username=name, name=name,
+            device_id="device-" + name, kind=EndpointKind.SIP_ACCOUNT if canonical else EndpointKind.BROWSER,
+            availability="unavailable" if canonical and fault == "canonical_disabled" else "offline" if canonical else "available",
+            dnd=canonical and fault == "canonical_dnd", capabilities=frozenset({"audio", "dtmf"}))
+        lab.runtime.endpoints.register(endpoint)
+        lab.roster.append(_endpoint_entry(endpoint) if canonical else
+            RosterEntry(name, metadata={"local_ha": True, "endpoint_id": name}))
     lab.runtime.directory.replace(lab.roster)
     monkeypatch.setattr(softphone_originate, "_ha_advertise_host", AsyncMock(return_value="127.0.0.1"))
     monkeypatch.setattr(softphone_originate, "_resolve_target_device", AsyncMock(return_value=None))
@@ -86,6 +95,19 @@ async def test_native_pickup_retires_preliminary_session_and_preserves_parallel_
             return await forward(**kwargs)
 
         lab.calls.forward_call = pause_handoff
+    elif fault == "canonical_stale_claim":
+        from custom_components.voip_stack import call_forwarder
+        discover = call_forwarder._async_build_peer_snapshot
+
+        async def retire_claim(hass):
+            peers = await discover(hass)
+            claim = lab.calls.resource_for(token.call_id, "pickup")
+            lab.calls.release_resource(token.call_id, "pickup:" + token.call_id,
+                value=claim, generation=token.generation)
+            return peers
+
+        monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", retire_claim)
+    rejected = fail or fault in {"canonical_dnd", "canonical_disabled", "canonical_stale_claim"}
     try:
         call = lab.hass.services.async_call("voip_stack", "call", {
             "device_id": "device-" + picker, "destination": destination,
@@ -96,7 +118,7 @@ async def test_native_pickup_retires_preliminary_session_and_preserves_parallel_
             pending.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await pending
-        elif fail:
+        elif rejected:
             with pytest.raises((ServiceValidationError, ValueError)):
                 await call
         else:
@@ -107,7 +129,7 @@ async def test_native_pickup_retires_preliminary_session_and_preserves_parallel_
         # The LAB witness retained an otherwise empty router session here.
         assert set(lab.calls.sessions) == {original.call_id, parallel.call_id, *(s.call_id for s in successors)}
         assert all(successor.live for successor in successors)
-        if fail or fault == "cancel":
+        if rejected or fault == "cancel":
             if mode == "parking":
                 assert get_parking_lot(lab.hass).calls["701"].session is session
                 assert get_parking_lot(lab.hass).calls["701"].claim is None

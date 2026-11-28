@@ -325,6 +325,8 @@ class _ForwardAdmission:
                 )
                 peers = await _async_build_peer_snapshot(hass)
                 self.validate_snapshot()
+                if self.pickup_claim is not None:
+                    self.validate_pickup()
                 if bridge.get_call(call_id) != local_call:
                     raise _service_error(
                         f"call_id {call_id} changed while the route was being resolved",
@@ -334,7 +336,7 @@ class _ForwardAdmission:
                 roster_entries = _roster_from_peers(
                     hass, peers, _registered_roster_entries(hass)
                 )
-                decision = route_resolver.route(destination, roster_entries)
+                decision = self.request.resolved_decision or route_resolver.route(destination, roster_entries)
                 self.check_external_route(decision)
                 target = self.runtime.route_resolver.logical_endpoint(
                     decision.target or destination,

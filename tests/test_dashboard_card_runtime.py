@@ -111,6 +111,54 @@ assert.equal(gate.extension,'301');assert.equal(gate.metadata.virtual_endpoint,'
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is unavailable")
+def test_dashboard_first_pickup_uses_selected_idle_client_without_hiding_account_calls():
+    script = f"""
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import * as model from {json.dumps(MODEL.as_uri())};
+import * as cardModel from {json.dumps((FRONTEND / 'voip-stack-card-model.js').as_uri())};
+import {{VoipEntityIds}} from {json.dumps((FRONTEND / 'voip-stack-entity-ids.js').as_uri())};
+const source=fs.readFileSync({json.dumps(str(FRONTEND / 'voip-stack-dashboard-card.js'))},'utf8');
+const klass=source.slice(source.indexOf('class VoipStackDashboardCard'),source.indexOf('\\nif (!customElements.get('));
+class Element {{constructor(){{this.isConnected=true}}attachShadow(){{return this.shadowRoot={{}}}}}}
+class Observer {{observe(){{}}disconnect(){{}}}}
+const actions=[];
+const engine={{dashboardPickup:async(owner,target,call)=>actions.push([owner.endpoint_id,target.endpoint_id,call.id])}};
+const context=vm.createContext({{HTMLElement:Element,ResizeObserver:Observer,VoipEntityIds,
+ voipStackEngine:engine,...model,...cardModel,voipStackTranslate:(_hass,text)=>text}});
+vm.runInContext(klass+'\\nthis.Card=VoipStackDashboardCard;',context);
+const card=new context.Card();card._render=()=>{{}};card._syncOwner=()=>{{}};
+card._phoneView={{focusPhoneView(){{}}}};card._config={{device_id:'selected-device'}};
+const account={{endpoint_id:'selected',device_id:'selected-device',kind:'sip_account',state:'unavailable',availability:'offline',calls:[],dnd:false}};
+const snapshot={{endpoint_id:'selected',device_id:'selected-device',state:'idle',enabled:true,ha_client_supported:true,can_control:true,dnd:false}};
+const ringing={{endpoint_id:'ringing',device_id:'ringing-device',state:'ringing',calls:[{{id:'original',generation:7,pickup_available:true}}]}};
+card._devices=[account];card._store.ready=true;card._store.phones=new Map([['selected',account],['ringing',ringing]]);
+card._ownerSnapshot=snapshot;
+assert.equal(card._owner().state,'idle');
+assert.equal(card._owner().availability,'offline');
+assert.equal(model.dashboardPickupCandidate(card._owner(),ringing).id,'original');
+await card._runAction('pickup',ringing,ringing.calls[0]);
+assert.deepEqual(actions,[['selected','ringing','original']]);
+assert.equal(account.state,'unavailable');assert.equal(model.phonePresentation(account).visual,'offline');
+for(const [phone,client] of [
+ [account,{{...snapshot,can_control:false}}],[account,{{...snapshot,enabled:false}}],
+ [account,{{...snapshot,ha_client_supported:false}}],[account,{{...snapshot,endpoint_id:'other'}}],
+ [account,{{...snapshot,device_id:'other-device'}}],[account,{{...snapshot,dnd:true}}],
+ [{{...account,dnd:true}},snapshot],[{{...account,availability:'unavailable'}},snapshot],
+ [{{...account,calls:[{{id:'remote-native-call',state:'confirmed'}}]}},snapshot],
+ [{{...account,state:'in_call',calls:[{{id:'remote-native-call',state:'confirmed'}}]}},snapshot],
+]){{
+ card._store.phones.set('selected',phone);card._ownerSnapshot=client;
+ assert.equal(card._owner().state,phone.state);
+ const before=actions.length;await card._runAction('pickup',ringing,ringing.calls[0]);assert.equal(actions.length,before);
+}}
+"""
+    result = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 ENGINE_STUB = """
 const engine=new EventTarget();
 Object.assign(engine,{actions:[],phoneSubscribers:new Set(),ownerSubscribers:new Set(),active:false,callId:'',endpointId:'',closed:0,mediaClientId:'dashboard-test-client-1234',

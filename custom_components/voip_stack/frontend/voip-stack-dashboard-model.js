@@ -53,14 +53,24 @@ export class DashboardPhoneStore {
   }
 }
 
-export function ownerDeviceInfo(devices, phones, deviceId) {
+export function ownerDeviceInfo(devices, phones, deviceId, clientSnapshot = null) {
   if (!deviceId) return null;
   const device = devices.find((entry) => entry.device_id === deviceId);
   if (!device) return null;
   const phone = [...phones.values()].find((entry) => entry.device_id === deviceId);
   const kind = phone?.kind || device.kind || device.endpoint_type || (device.softphone ? "browser" : "esphome");
   if (!["browser", "ha_softphone", "sip_account", "esphome"].includes(kind)) return null;
-  return { ...device, ...phone, kind, softphone: kind !== "esphome", calls: phone?.calls || [] };
+  const owner = { ...device, ...phone, kind, softphone: kind !== "esphome", calls: phone?.calls || [] };
+  // SIP reachability stays global; the selected idle HA client can pick up
+  // without first originating another call or concealing an account dialog.
+  if (owner.softphone && phone?.state === "unavailable" && phone.availability === "offline" &&
+      Array.isArray(phone.calls) && phone.calls.length === 0 && !phone.dnd &&
+      clientSnapshot?.device_id === deviceId && clientSnapshot.endpoint_id === phone.endpoint_id &&
+      clientSnapshot.state === "idle" && clientSnapshot.enabled === true &&
+      clientSnapshot.ha_client_supported === true && clientSnapshot.can_control === true && !clientSnapshot.dnd) {
+    owner.state = "idle";
+  }
+  return owner;
 }
 
 export function dashboardSections(phones, roster, ownerId) {

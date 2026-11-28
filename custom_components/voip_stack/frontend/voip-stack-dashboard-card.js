@@ -148,7 +148,7 @@ class VoipStackDashboardCard extends HTMLElement {
     this._rosterRaw = raw; this._roster = parseDashboardRoster(raw);
   }
 
-  _owner() { return ownerDeviceInfo(this._devices, this._store.phones, this._config.device_id); }
+  _owner() { return ownerDeviceInfo(this._devices, this._store.phones, this._config.device_id, this._ownerSnapshot); }
 
   _bindOwner() {
     const owner = this._owner();
