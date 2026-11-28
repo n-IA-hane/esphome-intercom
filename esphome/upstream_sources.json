@@ -42,7 +42,7 @@
       "public_proposal": true,
       "source_sha256": {
         "voice_assistant.h": "6c068c427442dacb47b56392564db62a2c0b5e88b92c3e8d341874a38234bbc2",
-        "voice_assistant.cpp": "4cb4520f0e92061c32a948ea2142ef22d228724a68faf0e363b41bf94fcc6fbb",
+        "voice_assistant.cpp": "17a32ba34d696dafbf976a4ac629896074e6226a1d14f5266cc3e26aa248c4d1",
         "__init__.py": "7f705fbd9fdc504c7d2bfdfb25b4847674fb3efcd169fdfa88ee7a16c97da7dd"
       },
       "upstream_source_sha256": {
@@ -56,7 +56,14 @@
       "proposal_head": "a0df8ac2286173112b66bb85826db6a834f3ad42",
       "upstream_pr_head": "984d0234156bdcacbb660e5a453e1cd7fd03acbe",
       "upstream_pr_status": "open",
-      "upstream_status_checked_at": "2026-11-25"
+      "upstream_status_checked_at": "2026-11-25",
+      "official_backports": [
+        {
+          "revision": "6ed680fcf3a5cc3fe8c0611798027b01964259bc",
+          "pull_request": "https://github.com/esphome/esphome/pull/22848",
+          "scope": "Finish a cancelled queued response before playback starts"
+        }
+      ]
     },
     "mipi_dsi": {
       "local_repository": "esphome-intercom",

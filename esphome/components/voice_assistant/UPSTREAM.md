@@ -5,6 +5,21 @@ Source: ESPHome development commit
 `esphome/components/voice_assistant`. The machine-readable reference, original
 upstream hashes and exact local file hashes are in `esphome/upstream_sources.json`.
 
+## Official cancellation correction
+
+The runtime additionally includes the exact cancellation correction from
+ESPHome commit `6ed680fcf3a5cc3fe8c0611798027b01964259bc`
+([#22848](https://github.com/esphome/esphome/pull/22848)). STOP marks a queued
+`URL_SENT` response as `FINISHED` when playback has never started. The existing
+response loop then cancels its timer, notifies Home Assistant and completes the
+response, also when microphone shutdown is still pending. No new state owner,
+task, buffer or timeout is introduced.
+
+Switch-based state logging remains compatible with the supported ESPHome
+2026.11.1 core at `3f5bf1bbae1b1ec51d5e010e6eff7590f5911dee`. The later dev
+PROGMEM lookup changes require a different core API and are not part of this
+bounded backport.
+
 ## Remaining adaptations
 
 - Emit on_idle once on a real noncontinuous transition to IDLE.
@@ -31,6 +46,12 @@ helper and IDLE branch in a small host class, including restart from an idle
 callback and coexistence with deferred on_end. They are not complete Voice
 Assistant or Home Assistant integration tests, and do not qualify physical TTS,
 acoustic behavior or resource headroom on every board.
+
+The cancellation host regressions execute the actual stop/cancel methods and
+the affected loop branches. They cover queued playback, both microphone-shutdown
+states, dual-channel shutdown, asynchronous player completion, repeated STOP,
+streaming-TTS stop signaling and a restart from on_idle. Test doubles represent
+the media player, microphone and API boundaries; no physical output is exercised.
 
 Use `scripts/export_fork_diff.py` to export the focused source delta against the
 recorded upstream commit. These files retain the ESPHome split license: C++
