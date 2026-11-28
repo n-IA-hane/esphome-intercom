@@ -173,6 +173,10 @@ Native automation triggers expose the original and normalized called number,
 its provenance, caller identity and stable incoming line. That initial identity
 survives forwarding and termination. A native line-device selector makes it
 possible to distinguish trunks without depending on their display names.
+Call events report the current display name beside each stable trunk ID, so an
+action can announce the line without another lookup while a rename never breaks
+the automation. The placing line remains available through `outbound_trunk_id`
+on events and as a native trigger filter.
 
 The qualification bank exercises 100 mapped public numbers, exceptions and
 unknown-number fallback through HA automations and real SIP recipients. It does

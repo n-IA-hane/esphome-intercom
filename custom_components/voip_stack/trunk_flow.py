@@ -12,7 +12,7 @@ from .core.codec_policy import CodecPolicy
 from .config_flow import TrunkFormMixin, _disabled_trunk_data
 from .peer_snapshot import async_advertise_host
 from .runtime_data import runtime_data, sip_trunk
-from .trunk_config import CONF_DEFAULT_TRUNK, entry_default_trunk, entry_trunk_configs, trunk_subentries
+from .trunk_config import CONF_DEFAULT_TRUNK, entry_default_trunk, entry_trunk_configs, trunk_identity, trunk_subentries
 from .trunk_policy import validate_static_trunk_sources
 from .trunk_runtime import create_trunk_client, trunk_client_config, trunk_has_calls
 
@@ -33,7 +33,7 @@ class TrunkSubentryFlowHandler(TrunkFormMixin, ConfigSubentryFlow):
 
     async def async_step_reconfigure(self, user_input=None):
         self._current = self._get_reconfigure_subentry()
-        self._identity = str(self._current.data.get("trunk_id") or self._current.subentry_id)
+        self._identity = trunk_identity(self._current)
         self._base_input = {"trunk_id": self._identity,
                             "trunk_registration_id": int(self._current.data.get("trunk_registration_id", 1))}
         return await self.async_step_user(user_input)

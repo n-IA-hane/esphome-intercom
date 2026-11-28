@@ -19,6 +19,8 @@ from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 from custom_components.voip_stack.phone_control import PhoneAdapterRegistry
 from custom_components.voip_stack.runtime_data import VoipStackRuntime, sip_trunk, sip_trunks
 from custom_components.voip_stack.trunk_config import entry_trunk_configs, entry_default_trunk
+from custom_components.voip_stack.trunk_events import add_trunk_names, trunk_display_name
+from custom_components.voip_stack.websocket_api import CALL_EVENT, _set_sip_bridge_call_state
 from custom_components.voip_stack.trunk_runtime import async_start_sip_trunk, async_stop_sip_trunk
 
 from .test_invite_router_behavior import _invite
@@ -101,6 +103,51 @@ def test_trunk_rename_does_not_change_identity_or_selection(hass, catalog):
     hass.config_entries.async_update_subentry(catalog, work, title="Office provider")
     assert set(entry_trunk_configs(catalog)) == {"home", "work"}
     assert entry_default_trunk(catalog, entry_trunk_configs(catalog)) == "home"
+    assert trunk_display_name(hass, "work") == "Office provider"
+
+
+def test_trunk_names_are_resolved_for_event_payloads(hass, catalog):
+    assert trunk_display_name(hass, "home") == "home"
+    assert trunk_display_name(hass, "") == ""
+    assert trunk_display_name(hass, "missing") == ""
+
+    payload = {"inbound_trunk_id": "home", "outbound_trunk_id": "work"}
+    add_trunk_names(hass, payload)
+
+    assert payload["inbound_trunk_name"] == "home"
+    assert payload["outbound_trunk_name"] == "work"
+
+
+def test_call_event_exposes_current_trunk_names(hass, catalog):
+    sip = catalog.runtime_data.sip
+    sip.upsert(
+        "call-1",
+        state="ringing",
+        ingress="trunk",
+        origin="trunk",
+        inbound_trunk_id="home",
+        outbound_trunk_id="work",
+    )
+    events = []
+    remove = hass.bus.async_listen(CALL_EVENT, lambda event: events.append(dict(event.data)))
+    try:
+        _set_sip_bridge_call_state(
+            hass, "ringing", call_id="call-1", caller="Alice", callee="Casa"
+        )
+
+        assert events[-1]["inbound_trunk_name"] == "home"
+        assert events[-1]["outbound_trunk_name"] == "work"
+
+        work = next(item for item in catalog.subentries.values() if item.data["trunk_id"] == "work")
+        hass.config_entries.async_update_subentry(catalog, work, title="Office provider")
+        _set_sip_bridge_call_state(
+            hass, "ringing", call_id="call-1", caller="Alice", callee="Casa"
+        )
+    finally:
+        remove()
+
+    assert events[-1]["outbound_trunk_id"] == "work"
+    assert events[-1]["outbound_trunk_name"] == "Office provider"
 
 
 async def test_public_named_trunk_destination_resolves_for_an_account(hass, catalog):

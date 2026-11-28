@@ -221,6 +221,9 @@ def fire_call_event(
         if event.get(owner_key) not in (None, ""):
             registry_fields.pop(owner_key, None)
     event.update(registry_fields)
+    from .trunk_events import add_trunk_names
+
+    add_trunk_names(hass, event)
     call_origin = canonical_call_origin(
         event.get("ingress") or event.get("origin"),
         event.get("route_kind"),

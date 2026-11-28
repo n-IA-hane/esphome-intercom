@@ -467,8 +467,15 @@ The payload includes the canonical SIP fields when available: `state`,
 `automation_control`, `caller`, `callee`, `peer_name`, `direction`,
 `local_name`, `target`, `sip_uri`, `route_kind`, `sip_transport`,
 `sip_status_code`, `terminal_reason`, `endpoint_id`, source/destination endpoint
-and Device IDs, stable `ingress` / `origin` (`trunk` or `extension`), selected
-media formats, and RTP counters.
+and Device IDs, stable `ingress` / `origin` (`trunk` or `extension`),
+`inbound_trunk_id` / `inbound_trunk_name` when the call arrived from a configured
+SIP trunk, `outbound_trunk_id` / `outbound_trunk_name` when it leaves through
+one, selected media formats, and RTP counters. Trunk IDs are stable configured
+identities; trunk names are current display labels and can change on rename.
+These event IDs are not the `trunk_id` service selector, which also accepts a
+trunk Device ID or its unique display name.
+Both directions can appear on one call when a trunk call is forwarded or bridged
+through another line.
 
 Existing Event Entity automations use HA's `event.received` trigger. Raw event-bus messages
 are internal plumbing between the integration, frontend and Event Entities and
@@ -521,7 +528,10 @@ The integration provides native HA triggers: `voip_stack.call_started`,
 `voip_stack.call_received`, `voip_stack.route_requested`,
 `voip_stack.call_unanswered`, `voip_stack.call_connected`,
 `voip_stack.call_ended` and `voip_stack.dtmf_received`. Optional filters select
-caller, destination and local/trunk origin. The unanswered trigger uses `for`
+caller, destination, local/trunk origin and the receiving or placing SIP trunk.
+The trigger offers a line-device selector for the receiving trunk and accepts
+the stable `inbound_trunk_id` and `outbound_trunk_id` values directly. The
+unanswered trigger uses `for`
 as a duration measured from ringing, cancelled by answering or forwarding.
 
 Call actions inherit the triggering call. Explicit identifiers remain accepted

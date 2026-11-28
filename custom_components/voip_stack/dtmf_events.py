@@ -157,6 +157,9 @@ def publish_dtmf_event(
         "automation_control": "ha_anchored",
     }
     payload.update(registry.event_fields(call_id, state))
+    from .trunk_events import add_trunk_names
+
+    add_trunk_names(hass, payload)
     context = registry.ha_context(call_id)
     if context is None:
         hass.bus.async_fire(SIP_DTMF_EVENT, payload)

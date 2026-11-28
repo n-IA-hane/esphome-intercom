@@ -10,7 +10,7 @@ from .const import DOMAIN
 from .core.sip import SipUri
 from .runtime_data import require_runtime_data, sip_trunk
 from .store import config_entry
-from .trunk_config import trunk_subentries
+from .trunk_config import trunk_identity, trunk_subentries
 from .trunk_policy import trunk_available
 
 
@@ -57,7 +57,7 @@ def resolve_trunk_selector(hass, value: str) -> str:
             if domain == DOMAIN and identifier.startswith("trunk:") and identifier[6:] in runtime.trunk_configs:
                 return identifier[6:]
     entry = config_entry(hass)
-    matches = [str(item.data.get("trunk_id") or item.subentry_id)
+    matches = [trunk_identity(item)
                for item in trunk_subentries(entry) if item.title.casefold() == value.casefold()] if entry else []
     if len(matches) == 1:
         return matches[0]
@@ -81,7 +81,7 @@ def public_trunk_destination(hass, identity, destination):
     """Build the same public PBX address that any SIP phone can dial."""
     entry = config_entry(hass)
     record = next((item for item in trunk_subentries(entry)
-                   if str(item.data.get("trunk_id") or item.subentry_id) == identity), None) if entry else None
+                   if trunk_identity(item) == identity), None) if entry else None
     if record is None:
         raise ServiceValidationError("Select a configured SIP trunk")
     return f"trunk.{record.title}.{destination}"
@@ -98,7 +98,7 @@ def parse_public_trunk_destination(hass, destination):
     for record in trunk_subentries(entry) if entry else ():
         prefix = f"trunk.{record.title}."
         if target.casefold().startswith(prefix.casefold()) and target[len(prefix):]:
-            matches.append((len(prefix), str(record.data.get("trunk_id") or record.subentry_id), target[len(prefix):]))
+            matches.append((len(prefix), trunk_identity(record), target[len(prefix):]))
     if not matches:
         return "", target
     longest = max(item[0] for item in matches)

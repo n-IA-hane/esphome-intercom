@@ -13,9 +13,14 @@ def trunk_subentries(entry):
     return [item for item in entry.subentries.values() if item.subentry_type == TRUNK_SUBENTRY_TYPE]
 
 
+def trunk_identity(record) -> str:
+    """Return the stable identity stored on one trunk subentry."""
+    return str(record.data.get("trunk_id") or record.subentry_id)
+
+
 def entry_trunk_configs(entry) -> dict[str, dict]:
     records = trunk_subentries(entry)
-    configs = {str(item.data.get("trunk_id") or item.subentry_id): normalized_trunk_config(item.data) for item in records}
+    configs = {trunk_identity(item): normalized_trunk_config(item.data) for item in records}
     if len(configs) != len(records):
         raise ValueError("Trunk identities must be unique")
     validate_static_trunk_sources(configs)
@@ -128,7 +133,7 @@ def migrate_legacy_trunk(hass, entry) -> None:
         return
 
     records = trunk_subentries(entry)
-    configs = {str(item.data.get("trunk_id") or item.subentry_id): _migration_trunk_config(item.data)
+    configs = {trunk_identity(item): _migration_trunk_config(item.data)
                for item in records}
     if len(configs) != len(records):
         raise ValueError("Trunk identities must be unique")
@@ -145,20 +150,20 @@ def migrate_legacy_trunk(hass, entry) -> None:
         raise ValueError("Invalid legacy trunk identity")
     matches = [record for record in records if _legacy_trunk_matches(entry.data, record)]
     identified = next((record for record in records
-                       if str(record.data.get("trunk_id") or record.subentry_id) == legacy_id), None)
+                       if trunk_identity(record) == legacy_id), None)
     if identified is not None and identified in matches:
         current = identified
     elif len(matches) == 1:
         current = matches[0]
     else:
         current = next((record for record in matches
-                        if str(record.data.get("trunk_id") or record.subentry_id) == selected), None)
+                        if trunk_identity(record) == selected), None)
         if matches and current is None:
             current = min(matches, key=lambda record: record.subentry_id)
     if current is not None and TRUNK_OPTIONS_INTERVAL in current.data:
         # A parent saved by the old schema may not know this newer field.
         config.setdefault(TRUNK_OPTIONS_INTERVAL, current.data[TRUNK_OPTIONS_INTERVAL])
-    identity = (str(current.data.get("trunk_id") or current.subentry_id) if current is not None
+    identity = (trunk_identity(current) if current is not None
                 else legacy_id if legacy_id and legacy_id not in configs else uuid4().hex)
     title = current.title if current is not None else "SIP trunk"
     if current is None:
@@ -197,7 +202,7 @@ def sync_trunk_devices(hass, entry) -> None:
 
     devices = dr.async_get(hass)
     for record in trunk_subentries(entry):
-        identity = str(record.data.get("trunk_id") or record.subentry_id)
+        identity = trunk_identity(record)
         devices.async_get_or_create(
             config_entry_id=entry.entry_id, config_subentry_id=record.subentry_id,
             identifiers={(DOMAIN, f"trunk:{identity}")}, name=record.title,

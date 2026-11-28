@@ -60,7 +60,15 @@ def _fixture():
             "m=audio 5000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
         ).encode(),
     )
-    session = SimpleNamespace(generation=1, state="connecting", create_task=asyncio.create_task, cleanup_waits_for=lambda _task: False)
+    session = SimpleNamespace(
+        generation=1,
+        state="connecting",
+        create_task=asyncio.create_task,
+        cleanup_waits_for=lambda _task: False,
+        legs={"dest-call": SimpleNamespace(trunk_id="")},
+        metadata={},
+        update_metadata=MagicMock(),
+    )
     registry = SimpleNamespace(
         register_bridge=MagicMock(return_value=session),
         observe_leg=MagicMock(),
@@ -612,3 +620,127 @@ async def test_external_termination_drains_owned_media_start_without_wait_cycle(
     assert not h.pool and h.releases==[(40000,40002)]
     assert not h.registry.sessions
     assert all(relay.left_transport is None and relay.right_transport is None for relay in h.relays)
+
+
+@pytest.mark.asyncio
+async def test_commit_passes_trunk_identities_to_a_new_bridge(monkeypatch):
+    from custom_components.voip_stack import outbound_bridge_commit as module
+    from custom_components.voip_stack.inbound_answer import AnswerCommitResult
+
+    from dataclasses import replace
+
+    invite, winner, registry, relay = _fixture()
+    invite = replace(invite, trunk_id="provider-a")
+    winner.trunk_id = "provider-b"
+    monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
+    monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
+    monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: SimpleNamespace(attach=MagicMock()))
+    monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
+    monkeypatch.setattr(module, "async_watch_sip_bridge_destination", AsyncMock())
+
+    await module.async_commit_outbound_bridge(
+        MagicMock(),
+        registry,
+        module.BridgeCommitData(
+            invite=invite,
+            winner=winner,
+            source_relay_port=40000,
+            dest_relay_port=40002,
+            local_ip="127.0.0.1",
+            release_port_pairs=(winner.ports.ports,),
+            detach_reservations=(winner.ports,),
+        ),
+        module.BridgeCommitPolicy(route_kind="direct", caller="door", callee="desk", connected_party="desk"),
+    )
+    await asyncio.sleep(0)
+
+    kwargs = registry.register_bridge.call_args.kwargs
+    assert kwargs["inbound_trunk_id"] == "provider-a"
+    assert kwargs["outbound_trunk_id"] == "provider-b"
+
+
+@pytest.mark.asyncio
+async def test_commit_falls_back_to_invite_outbound_trunk(monkeypatch):
+    from custom_components.voip_stack import outbound_bridge_commit as module
+    from custom_components.voip_stack.inbound_answer import AnswerCommitResult
+
+    from dataclasses import replace
+
+    invite, winner, registry, relay = _fixture()
+    invite = replace(invite, trunk_id="provider-a", outbound_trunk_id="provider-b")
+    monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
+    monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
+    monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: SimpleNamespace(attach=MagicMock()))
+    monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
+    monkeypatch.setattr(module, "async_watch_sip_bridge_destination", AsyncMock())
+
+    await module.async_commit_outbound_bridge(
+        MagicMock(),
+        registry,
+        module.BridgeCommitData(
+            invite=invite,
+            winner=winner,
+            source_relay_port=40000,
+            dest_relay_port=40002,
+            local_ip="127.0.0.1",
+            release_port_pairs=(winner.ports.ports,),
+            detach_reservations=(winner.ports,),
+        ),
+        module.BridgeCommitPolicy(route_kind="direct", caller="door", callee="desk", connected_party="desk"),
+    )
+    await asyncio.sleep(0)
+
+    kwargs = registry.register_bridge.call_args.kwargs
+    assert kwargs["outbound_trunk_id"] == "provider-b"
+
+
+@pytest.mark.asyncio
+async def test_commit_updates_missing_trunk_identities_on_existing_bridge(monkeypatch):
+    from custom_components.voip_stack import outbound_bridge_commit as module
+    from custom_components.voip_stack.inbound_answer import AnswerCommitResult
+
+    from dataclasses import replace
+
+    invite, winner, registry, relay = _fixture()
+    invite = replace(invite, trunk_id="provider-a")
+    winner.trunk_id = "provider-b"
+    session = SimpleNamespace(
+        generation=7,
+        live=True,
+        state="connecting",
+        metadata={},
+        update_metadata=MagicMock(),
+        create_task=asyncio.create_task,
+        cleanup_waits_for=lambda _task: False,
+        legs={"dest-call": SimpleNamespace(trunk_id="")},
+    )
+    registry.is_generation_current = MagicMock(return_value=True)
+    registry.register_bridge.side_effect = AssertionError("duplicate bridge owner")
+    monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
+    monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
+    monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: SimpleNamespace(attach=MagicMock()))
+    monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
+
+    await module.async_commit_outbound_bridge(
+        MagicMock(),
+        registry,
+        module.BridgeCommitData(
+            invite=invite,
+            winner=winner,
+            source_relay_port=40000,
+            dest_relay_port=40002,
+            local_ip="127.0.0.1",
+            release_port_pairs=(winner.ports.ports,),
+            detach_reservations=(winner.ports,),
+        ),
+        module.BridgeCommitPolicy(route_kind="direct", caller="door", callee="desk", connected_party="desk"),
+        session=session,
+    )
+    await asyncio.sleep(0)
+
+    session.update_metadata.assert_called_once_with(
+        inbound_trunk_id="provider-a", outbound_trunk_id="provider-b"
+    )

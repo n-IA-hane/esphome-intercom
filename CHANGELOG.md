@@ -433,6 +433,12 @@ BLF and MWI, retain their normal owners and interfaces.
   regression witnesses in CI. Document the explicit
   [preview firmware overrides](docs/DEPLOYMENT_GUIDE.md#development-preview-firmware).
 
+- Report `inbound_trunk_name` and `outbound_trunk_name` beside the stable
+  trunk IDs in call events, resolved to the current display label when the
+  event is published, so renaming a line needs no automation edit. Bridge
+  commits and local transfers keep both sides' lines, and native triggers can
+  filter on the placing trunk with `outbound_trunk_id`.
+
 Physical checks cover the exercised S3 and P4 profiles and call routes,
 including P4 popup video and S3 audio parking/pickup. They do not establish
 universal hardware, codec or acoustic qualification. Active-video endpoint

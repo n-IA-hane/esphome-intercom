@@ -561,6 +561,63 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(fields["ingress"], "trunk")
         self.assertEqual(fields["origin"], "trunk")
 
+    def test_event_fields_expose_directional_trunk_identities(self) -> None:
+        registry = _registry()
+        registry.upsert(
+            "call-1",
+            state="connecting",
+            owner="bridge",
+            inbound_trunk_id="home",
+            outbound_trunk_id="work",
+        )
+
+        fields = _observed_event_fields(registry, "call-1", "connecting")
+
+        self.assertEqual(fields["inbound_trunk_id"], "home")
+        self.assertEqual(fields["outbound_trunk_id"], "work")
+
+    def test_event_fields_omit_unset_trunk_identities(self) -> None:
+        registry = _registry()
+        registry.upsert("call-1", state="connecting", owner="router")
+
+        fields = _observed_event_fields(registry, "call-1", "connecting")
+
+        self.assertNotIn("inbound_trunk_id", fields)
+        self.assertNotIn("outbound_trunk_id", fields)
+
+    def test_terminal_event_keeps_trunk_identities(self) -> None:
+        registry = _registry()
+        registry.upsert(
+            "call-1",
+            state="in_call",
+            owner="bridge",
+            inbound_trunk_id="home",
+            outbound_trunk_id="work",
+        )
+
+        asyncio.run(registry.terminate_call_wait("call-1", reason="remote_hangup"))
+        fields = registry.event_fields("call-1", "idle")
+
+        self.assertEqual(fields["inbound_trunk_id"], "home")
+        self.assertEqual(fields["outbound_trunk_id"], "work")
+
+    def test_bridge_registration_records_trunk_identities(self) -> None:
+        registry = _registry()
+
+        session = registry.register_bridge(
+            source_call_id="source",
+            dest_call_id="destination",
+            client=object(),
+            lifecycle_task=mock.MagicMock(),
+            state="connecting",
+            inbound_trunk_id="home",
+            outbound_trunk_id="work",
+        )
+
+        self.assertIsNotNone(session)
+        self.assertEqual(session.metadata["inbound_trunk_id"], "home")
+        self.assertEqual(session.metadata["outbound_trunk_id"], "work")
+
     def test_route_history_is_bounded_and_returned_with_events(self) -> None:
         registry = _registry()
         _observed_event_fields(registry, "call-1", "route_requested")

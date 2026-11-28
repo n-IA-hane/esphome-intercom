@@ -1166,6 +1166,8 @@ class CallRuntimeApi:
         route_kind: str = "",
         ingress: str = "",
         origin: str = "",
+        inbound_trunk_id: str = "",
+        outbound_trunk_id: str = "",
         source_role: LegRole = "caller",
         dest_role: LegRole = "callee",
         source_state: str = "",
@@ -1200,6 +1202,14 @@ class CallRuntimeApi:
             route_kind=route_kind,
             ingress=ingress,
             origin=origin,
+            **{
+                key: value
+                for key, value in (
+                    ("inbound_trunk_id", inbound_trunk_id),
+                    ("outbound_trunk_id", outbound_trunk_id),
+                )
+                if value
+            },
         )
         self.set_bridge_link(source_call_id, dest_call_id)
         self.add_leg(
