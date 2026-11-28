@@ -19,8 +19,13 @@ def supports_dahua_pcm(user_agent: str | None) -> bool:
     return str(user_agent or "").strip().casefold().startswith("dahua uac/")
 
 
-@lru_cache(maxsize=64)
 def codec_available(name: str, *, receive: bool = False) -> bool:
+    """Share one directional result across default and keyword call forms."""
+    return _probe_codec_available(name, receive)
+
+
+@lru_cache(maxsize=64)
+def _probe_codec_available(name: str, receive: bool) -> bool:
     """Probe the actual adapter in one direction, including two live packets."""
     from .media.codecs import CODECS
 
@@ -89,5 +94,8 @@ def preload_codec_capabilities() -> None:
         codec_available(name, receive=True)
 
 
-# Preserve the existing invalidation hook, clearing the directional probe owner.
+# Keep the existing cache inspection/invalidation API on the public boundary.
+codec_available.cache_clear = _probe_codec_available.cache_clear
+codec_available.cache_info = _probe_codec_available.cache_info
+codec_available.cache_parameters = _probe_codec_available.cache_parameters
 common_sip_codecs.cache_clear = codec_available.cache_clear

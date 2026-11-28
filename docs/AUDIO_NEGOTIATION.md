@@ -29,6 +29,16 @@ attributes. Every accepted sendrecv alternative must be usable in both
 directions. No private per-payload attributes, identity headers or ESP discovery
 are required for directional preferences.
 
+Home Assistant initializes optional codec capabilities in its executor before
+SIP listeners and codec forms use them. Subsequent SDP and capability checks
+share the cached results, including unavailable backends. Stock HAOS does not
+provide the optional SpanDSP library: G.726 transmission is unavailable, while
+G726-16/24/32 reception can use the existing PyAV decoder. G726-40 requires
+SpanDSP in both directions. Unavailable directions are rejected by local
+capability checks, and codecs missing either direction are excluded from
+bidirectional offers and new codec choices. Saved codec preferences remain
+intact. The normal HAOS installation requires no manual system packages.
+
 ## Implemented media envelope
 
 PCM format values support positive finite durations up to 1000 ms, integer
