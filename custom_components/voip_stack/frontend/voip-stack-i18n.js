@@ -518,6 +518,93 @@ const PT_BR = {
   "Answering {name}...": "Atendendo {name}...",
   "{name} is ringing...": "{name} está tocando...",
   "Missing phone: {name}": "Telefone ausente: {name}",
+  // Call end reasons
+  "Local decline": "Recusa local",
+  "Error": "Erro",
+  "(code {name})": "(código {name})",
+  "Remote hung up": "O outro lado desligou",
+  "Caller hung up": "O chamador desligou",
+  "Callee hung up": "O destinatário desligou",
+  "Remote lost": "Conexão com o outro lado perdida",
+  "Caller lost": "Conexão com o chamador perdida",
+  "Callee lost": "Conexão com o destinatário perdida",
+  "Remote declined": "O outro lado recusou",
+  "Caller declined": "O chamador recusou",
+  "Callee declined": "O destinatário recusou",
+  "Remote error": "Erro no outro lado",
+  "Caller error": "Erro no chamador",
+  "Callee error": "Erro no destinatário",
+  // Card, queues and media devices
+  "Auto Answer was not enabled:": "O atendimento automático não foi ativado:",
+  "Phone media error": "Erro de mídia do telefone",
+  "No endpoint": "Nenhum endpoint",
+  "No endpoint available": "Nenhum endpoint disponível",
+  "Switch entity not available": "Entidade de switch indisponível",
+  "Text entity not available": "Entidade de texto indisponível",
+  "Set card mode to Home Assistant softphone to call from HA": "Defina o modo do card como softphone do Home Assistant para ligar a partir do HA",
+  "ESP start_call service not available": "O serviço start_call do ESP não está disponível",
+  "Invalid ESP start_call service": "Serviço start_call do ESP inválido",
+  "DTMF is unavailable for this call.": "O DTMF não está disponível para esta chamada.",
+  "This browser is already handling another phone call.": "Este navegador já está atendendo outra chamada telefônica.",
+  "Reserved": "Reservado",
+  "Wrap-up": "Pós-atendimento",
+  "Unanswered": "Não atendidas",
+  "Camera {name}": "Câmera {name}",
+  "Speaker {name}": "Alto-falante {name}",
+  "Microphone {name}": "Microfone {name}",
+  // Dashboard commands
+  "A call identity is required to end a call.": "É necessário identificar a chamada para encerrá-la.",
+  "A phone command is already in progress.": "Já há um comando do telefone em andamento.",
+  "Choose a phone in the dashboard editor.": "Escolha um telefone no editor do dashboard.",
+  "Phone state is unavailable.": "O estado do telefone está indisponível.",
+  "The call has already ended.": "A chamada já foi encerrada.",
+  "The phone state request was superseded.": "A solicitação de estado do telefone foi substituída por outra.",
+  "The selected phone is already busy or unavailable.": "O telefone selecionado já está ocupado ou indisponível.",
+  "This contact has no destination.": "Este contato não tem destino.",
+  "This incoming call is no longer ringing.": "Esta chamada recebida não está mais tocando.",
+  "This phone has no ringing call available for pickup.": "Este telefone não tem chamada tocando disponível para captura.",
+  "Unknown phone command.": "Comando de telefone desconhecido.",
+  // Connection with Home Assistant
+  "Home Assistant did not respond.": "O Home Assistant não respondeu.",
+  "Home Assistant did not respond to the call-state request.": "O Home Assistant não respondeu à solicitação de estado da chamada.",
+  "Home Assistant is unreachable. Call media was closed locally.": "O Home Assistant está inacessível. A mídia da chamada foi encerrada localmente.",
+  "Home Assistant connection is unavailable.": "A conexão com o Home Assistant não está disponível.",
+  "Home Assistant connection changed.": "A conexão com o Home Assistant mudou.",
+  "Call media is active in another tab or could not be attached.": "A mídia da chamada está ativa em outra aba ou não pôde ser anexada.",
+  "Call media requires a resolved Home Assistant phone": "A mídia da chamada exige um telefone do Home Assistant identificado",
+  "Call service did not resolve a Home Assistant phone": "O serviço de chamada não identificou um telefone do Home Assistant",
+  // Browser audio
+  "Audio media update failed:": "Falha ao atualizar a mídia de áudio:",
+  "Audio WebSocket failed": "Falha no WebSocket de áudio",
+  "Audio WebSocket closed before negotiation": "O WebSocket de áudio fechou antes da negociação",
+  "Audio WebSocket closed before opening": "O WebSocket de áudio fechou antes de abrir",
+  "Audio WebSocket negotiation timed out": "Tempo esgotado na negociação do WebSocket de áudio",
+  "Browser audio preparation failed": "Falha ao preparar o áudio do navegador",
+  "Browser audio requires Home Assistant over HTTPS or another secure context.": "O áudio no navegador exige o Home Assistant via HTTPS ou outro contexto seguro.",
+  "This browser does not provide the Web Audio features required for calls.": "Este navegador não oferece os recursos de Web Audio necessários para chamadas.",
+  "This browser controls audio output through the operating system.": "Este navegador controla a saída de áudio pelo sistema operacional.",
+  "Microphone access is unavailable in this browser or Home Assistant app.": "O acesso ao microfone não está disponível neste navegador ou no app do Home Assistant.",
+  "No microphone audio track is available.": "Nenhuma faixa de áudio do microfone está disponível.",
+  // Browser video
+  "SIP video requires a secure browser context": "O vídeo SIP exige um contexto seguro no navegador",
+  "SIP video WebSocket failed": "Falha no WebSocket de vídeo SIP",
+  "SIP video WebSocket closed before negotiation": "O WebSocket de vídeo SIP fechou antes da negociação",
+  "SIP video WebSocket open timed out": "Tempo esgotado ao abrir o WebSocket de vídeo SIP",
+  "SIP video negotiation timed out": "Tempo esgotado na negociação do vídeo SIP",
+  "No negotiated SIP video direction is usable": "Nenhum sentido de vídeo SIP negociado pode ser usado",
+  "No browser camera track is available": "Nenhuma faixa de câmera do navegador está disponível",
+  "No browser camera track available": "Nenhuma faixa de câmera do navegador disponível",
+  "Camera playback did not start": "A reprodução da câmera não iniciou",
+  "Browser camera exceeds the negotiated SIP video frame size": "A câmera do navegador excede o tamanho de quadro de vídeo SIP negociado",
+  "Browser cannot capture negotiated SIP video": "O navegador não consegue capturar o vídeo SIP negociado",
+  "Browser cannot encode negotiated SIP video {name}": "O navegador não consegue codificar o vídeo SIP negociado {name}",
+  "WebCodecs VideoDecoder is unavailable": "O VideoDecoder do WebCodecs não está disponível",
+  "WebCodecs VideoDecoder is unavailable in worker": "O VideoDecoder do WebCodecs não está disponível no worker",
+  "Browser cannot encode JPEG outside the UI thread": "O navegador não consegue codificar JPEG fora da thread da interface",
+  "Browser cannot decode JPEG outside the UI thread": "O navegador não consegue decodificar JPEG fora da thread da interface",
+  "Browser cannot create the JPEG decoder worker": "O navegador não consegue criar o worker do decodificador JPEG",
+  "JPEG camera worker failed": "Falha no worker JPEG da câmera",
+  "JPEG worker setup timed out": "Tempo esgotado ao preparar o worker JPEG",
 };
 
 const DE = {
@@ -1050,7 +1137,17 @@ const DYNAMIC_MESSAGES = [
   [/^Answering (.+)\.\.\.$/, "Answering {name}..."],
   [/^(.+) is ringing\.\.\.$/, "{name} is ringing..."],
   [/^Missing phone: (.+)$/, "Missing phone: {name}"],
+  [/^Browser cannot encode negotiated SIP video (.+)$/, "Browser cannot encode negotiated SIP video {name}"],
+  [/^Camera (\d+)$/, "Camera {name}"],
+  [/^Speaker (\d+)$/, "Speaker {name}"],
+  [/^Microphone (\d+)$/, "Microphone {name}"],
 ];
+
+// formatEndReason() builds `<head>: <detail>` or `<head> (code N)`.
+const END_REASON_DETAIL = /^(Local decline|Local error|Declined|Error|(?:Remote|Caller|Callee) (?:declined|error)): (.+)$/;
+const END_REASON_CODE = /^(Error|(?:Local|Remote|Caller|Callee) error) \(code (\d+)\)$/;
+// Messages that wrap another message, which is translated on its own.
+const WRAPPED_MESSAGE = /^(Auto Answer was not enabled:|Audio media update failed:) (.+)$/;
 
 export function voipStackLanguage(hass) {
   return String(hass?.language || hass?.locale?.language || "en").toLowerCase();
@@ -1077,6 +1174,17 @@ export function voipStackTranslate(hass, text) {
   const videoReason = value.match(/^Video unavailable: (.+)$/);
   if (videoReason) {
     return `${voipStackTranslate(hass, "Video unavailable:")} ${voipStackTranslate(hass, videoReason[1])}`;
+  }
+  const endDetail = value.match(END_REASON_DETAIL);
+  // The detail is SIP text from the peer and remains literal.
+  if (endDetail && dictionary[endDetail[1]]) return `${dictionary[endDetail[1]]}: ${endDetail[2]}`;
+  const endCode = value.match(END_REASON_CODE);
+  if (endCode && dictionary[endCode[1]] && dictionary["(code {name})"]) {
+    return `${dictionary[endCode[1]]} ${dictionary["(code {name})"].replace("{name}", () => endCode[2])}`;
+  }
+  const wrapped = value.match(WRAPPED_MESSAGE);
+  if (wrapped && dictionary[wrapped[1]]) {
+    return `${dictionary[wrapped[1]]} ${voipStackTranslate(hass, wrapped[2])}`;
   }
   for (const [pattern, message] of DYNAMIC_MESSAGES) {
     const match = value.match(pattern);
