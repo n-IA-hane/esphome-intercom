@@ -132,6 +132,10 @@ path_mode=$(
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(
+  tests/test_debug_capture_media_ha.py
+  tests/test_forward_default_local_call_ha.py
+  tests/test_pbx_device_ha.py
+  tests/test_pickup_preliminary_session_ha.py
   tests/test_pbx_media_diagnostics.py
   tests/test_sip_client_remote_video_nat_ha.py
   tests/test_video_transcoder_concurrency_ha.py

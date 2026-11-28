@@ -167,9 +167,12 @@ also make an INVITE grow beyond the safe UDP size.
 
 For an INVITE larger than 1300 bytes with unknown path MTU, the call client
 attempts TCP, including when the authenticated retry crosses that threshold.
-The trunk's UDP registration remains active. A refused or reset TCP connection
-can fall back to the original UDP route before the INVITE is sent; a TCP timeout
-does not trigger that fallback. Explicit TCP and TLS settings are not downgraded.
+The trunk's UDP registration remains active. A refused or reset TCP connection,
+or a confirmed plain TCP connection-setup timeout toward a resolved address,
+can fall back to the original UDP route before the INVITE is sent. DNS and SIP
+response timeouts do not enable that recovery; a request already queued or sent
+over TCP is never replayed over UDP. Explicit TCP and TLS settings are not
+downgraded. See [transport diagnostics](troubleshooting.md#a-call-fails-before-an-outbound-invite-appears).
 See [RFC 3261, section 18.1.1](https://www.rfc-editor.org/rfc/rfc3261.html#section-18.1.1).
 
 ### Route incoming calls to a particular phone
