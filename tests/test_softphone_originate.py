@@ -120,7 +120,8 @@ def softphone_originate(monkeypatch):
                 "trunk_enabled": Mock(return_value=False),
                 "normalized_trunk_config": Mock(),
             },
-        "trunk_config": {"trunk_subentries": Mock()},
+        "trunk_config": {"trunk_subentries": Mock(),
+                          "trunk_identity": lambda record: str(record.data.get("trunk_id") or record.subentry_id)},
         "const": {
             "CONF_SIP_VIDEO": "sip_video",
             "CONF_TRUNK_AUTH_USERNAME": "trunk_auth_username",

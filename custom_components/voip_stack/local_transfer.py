@@ -112,13 +112,18 @@ async def try_local_audio_transfer(hass, runtime, grant, referrer):
         calls.register_bridge(source_call_id=goal.call_id, dest_call_id=new_destination,
                               client=client, lifecycle_task=watch_client(client), state="in_call",
                               caller=goal.caller, callee=consultation.callee, route_kind=consultation.route_kind,
+                              inbound_trunk_id=old_leg.trunk_id,
+                              outbound_trunk_id=destination_trunk_id,
                               expected_generation=goal.generation)
         goal.legs[new_destination].trunk_id = destination_trunk_id
         if target:
             calls.transfer_endpoint_claim(consultation.call_id, goal.call_id, target)
         goal.update_metadata(dest_endpoint_id=target, target_endpoint_id=target,
                                  connected_party=consultation.callee,
-                                 outbound_trunk_id=consultation.metadata.get("outbound_trunk_id", ""),
+                                 outbound_trunk_id=(
+                                     consultation.metadata.get("outbound_trunk_id")
+                                     or destination_trunk_id
+                                 ),
                                  policy_endpoint_ids=tuple(sorted(set(
                                      (*goal.endpoint_claims, *original.endpoint_claims, *consultation.endpoint_claims,
                                       *(original.metadata.get("policy_endpoint_ids") or ()),

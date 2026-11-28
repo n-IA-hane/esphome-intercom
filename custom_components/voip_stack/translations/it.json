@@ -1929,6 +1929,10 @@
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
         },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
+        },
         "called_number": {
           "name": "Numero chiamato",
           "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
@@ -1994,6 +1998,10 @@
         "trunk": {
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
         },
         "called_number": {
           "name": "Numero chiamato",
@@ -2069,6 +2077,10 @@
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
         },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
+        },
         "called_number": {
           "name": "Numero chiamato",
           "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
@@ -2134,6 +2146,10 @@
         "trunk": {
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
         },
         "called_number": {
           "name": "Numero chiamato",
@@ -2209,6 +2225,10 @@
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
         },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
+        },
         "called_number": {
           "name": "Numero chiamato",
           "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
@@ -2283,6 +2303,10 @@
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
         },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
+        },
         "called_number": {
           "name": "Numero chiamato",
           "description": "Numero estratto e normalizzato dalla chiamata in ingresso."
@@ -2352,6 +2376,10 @@
         "trunk": {
           "name": "Linea SIP",
           "description": "Filtra questa linea, mantenuta anche dopo una rinomina."
+        },
+        "outbound_trunk_id": {
+          "name": "Trunk chiamante",
+          "description": "Trunk usato per effettuare la chiamata. Lascia vuoto per tutte."
         },
         "called_number": {
           "name": "Numero chiamato",

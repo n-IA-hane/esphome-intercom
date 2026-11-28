@@ -41,13 +41,13 @@ async def async_setup_entry(
     register_endpoint_entity_manager(
         entry, "endpoint_connectivity_entity_manager", manager
     )
-    from .trunk_config import TRUNK_UPDATE_SIGNAL, trunk_subentries
+    from .trunk_config import TRUNK_UPDATE_SIGNAL, trunk_identity, trunk_subentries
 
     trunk_entities = {}
 
     @callback
     def update_trunks(identity=""):
-        records = {str(record.data.get("trunk_id") or record.subentry_id): record for record in trunk_subentries(entry)}
+        records = {trunk_identity(record): record for record in trunk_subentries(entry)}
         for removed in trunk_entities.keys() - records.keys():
             trunk_entities.pop(removed)
         for trunk_id, record in records.items():

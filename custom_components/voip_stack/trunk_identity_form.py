@@ -39,7 +39,7 @@ def trunk_identity_fields(entry, existing):
 
 def validate_trunk_identity_form(user_input, existing, entry, *, trunk_id=""):
     """Preserve omitted fields, and bind only one enabled line per SIP account."""
-    from .trunk_config import trunk_subentries
+    from .trunk_config import trunk_identity, trunk_subentries
 
     merged = {**existing, **user_input}
     errors = {}
@@ -57,7 +57,7 @@ def validate_trunk_identity_form(user_input, existing, entry, *, trunk_id=""):
         if binding not in _accounts(entry):
             errors["trunk_inbound_account"] = "trunk_inbound_account_invalid"
         elif any(
-            str(row.data.get("trunk_id") or row.subentry_id) != trunk_id
+            trunk_identity(row) != trunk_id
             and row.data.get("trunk_enabled", False)
             and row.data.get("trunk_inbound_account") == binding
             for row in trunk_subentries(entry)

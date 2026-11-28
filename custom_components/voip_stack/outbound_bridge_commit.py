@@ -126,6 +126,21 @@ async def async_commit_outbound_bridge(
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
 
+    trunk_metadata = {
+        key: value
+        for key, value in (
+            ("inbound_trunk_id", str(getattr(invite, "trunk_id", "") or "")),
+            (
+                "outbound_trunk_id",
+                str(
+                    getattr(winner, "trunk_id", "")
+                    or getattr(invite, "outbound_trunk_id", "")
+                    or ""
+                ),
+            ),
+        )
+        if value
+    }
     if session is None:
         watcher_ready = asyncio.Event()
         watcher = asyncio.create_task(
@@ -147,12 +162,21 @@ async def async_commit_outbound_bridge(
             source_state=policy.source_state,
             dest_state=policy.dest_state,
             expected_generation=policy.expected_generation,
+            **trunk_metadata,
         )
         if session is None:
             await _cancel_watcher()
             return None
     elif not registry.is_generation_current(invite.call_id, session.generation):
         return None
+    elif trunk_metadata and session.live:
+        missing = {
+            key: value
+            for key, value in trunk_metadata.items()
+            if not session.metadata.get(key)
+        }
+        if missing:
+            session.update_metadata(**missing)
 
     generation = session.generation
     if winner.trunk_id and dest_call_id in session.legs:

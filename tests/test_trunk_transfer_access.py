@@ -1,12 +1,17 @@
 """External-call access is enforced before sending or relaying SIP REFER."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 import json
 
 import pytest
 
-from custom_components.voip_stack import call_transfer
+from custom_components.voip_stack import call_transfer, sip_rtp_bridge
+from custom_components.voip_stack.core import audio_format, sdp
+from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+from custom_components.voip_stack.local_transfer import try_local_audio_transfer
+from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+from custom_components.voip_stack.runtime_data import VoipStackRuntime
 from custom_components.voip_stack.contact_config import materialize_contact_timeout
 from custom_components.voip_stack.phone_directory import PhoneDirectory
 from custom_components.voip_stack.roster import parse_roster_json
@@ -203,3 +208,97 @@ async def test_delegated_refer_cannot_launder_origin_through_ha_dialplan(metadat
     else:
         assert result.accepted
         client.refer.assert_awaited_once_with(target)
+
+
+class _Transport:
+    def __init__(self, protocol):
+        self.protocol = protocol
+        self.sent = []
+        self.closed = 0
+
+    def get_protocol(self):
+        return self.protocol
+
+    def set_protocol(self, protocol):
+        self.protocol = protocol
+
+    def is_closing(self):
+        return bool(self.closed)
+
+    def close(self):
+        self.closed += 1
+
+    def sendto(self, data, address):
+        assert not self.closed
+        self.sent.append((data, address))
+
+
+def _relay(index, releases):
+    fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+    wire = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+    result = sip_rtp_bridge.SipRtpRelay(
+        left=sip_rtp_bridge.RtpPeer("127.0.0.1", 10000 + index * 10, 96, fmt, rtp_format=wire),
+        right=sip_rtp_bridge.RtpPeer("127.0.0.1", 10002 + index * 10, 96, fmt, rtp_format=wire),
+        left_port=20000 + index * 10, right_port=20002 + index * 10,
+        on_release=lambda ports: releases.append((index, ports)),
+    )
+    for side in ("left", "right"):
+        protocol = sip_rtp_bridge._RelayProtocol(result, side)
+        transport = _Transport(protocol)
+        protocol.connection_made(transport)
+        setattr(result, f"{side}_transport", transport)
+    return result
+
+
+async def test_local_transfer_records_both_trunk_identities():
+    calls = SipEndpointRuntime(allow_dark_sessions=True)
+    original = calls.upsert("original", owner="bridge", state="in_call")
+    consultation = calls.upsert("consult", owner="bridge", state="in_call")
+    releases = []
+    first, second = _relay(0, releases), _relay(1, releases)
+    for session, wire, relay, trunk_id in (
+        (original, "a", first, "source-trunk"),
+        (consultation, "c", second, "dest-trunk"),
+    ):
+        calls.add_leg(session.call_id, wire, role="callee", state="in_call")
+        session.legs[wire].dialog = SimpleNamespace(
+            dialog=object(), close=AsyncMock(), terminate=AsyncMock(),
+            dialog_ids=SimpleNamespace(call_id=wire), on_refer=None,
+            on_media_update=None, on_connected_identity=None,
+            on_info_dtmf=None, on_info_video=None,
+        )
+        session.legs[wire].trunk_id = trunk_id
+        calls.set_bridge_link(session.call_id, wire)
+        calls.attach_relay(session.call_id, relay)
+    runtime = VoipStackRuntime(
+        transport_config={}, assist_config={}, trunk_config={},
+        endpoints=EndpointRegistry(), phones=None, sip=calls,
+    )
+    runtime.rtp_port_pool = {"used": {20000, 20002, 20010, 20012}}
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_entries=lambda _domain: [SimpleNamespace(runtime_data=runtime)]
+        )
+    )
+    grant = SimpleNamespace(
+        original=original, consultation=consultation,
+        pending_call_id="", endpoint_id="", current=lambda: True,
+    )
+    captured = {}
+
+    def capture_registration(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("captured")
+
+    left = first.right_transport
+    try:
+        with patch.object(calls, "register_bridge", side_effect=capture_registration):
+            with pytest.raises(RuntimeError, match="captured"):
+                await try_local_audio_transfer(hass, runtime, grant, None)
+        assert captured["inbound_trunk_id"] == "source-trunk"
+        assert captured["outbound_trunk_id"] == "dest-trunk"
+    finally:
+        escaped = left.get_protocol().relay
+        if escaped not in (first, second):
+            await escaped.stop()
+        await calls.shutdown()

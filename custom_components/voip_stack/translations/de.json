@@ -1929,6 +1929,10 @@
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
         },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
+        },
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
@@ -1994,6 +1998,10 @@
         "trunk": {
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
+        },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
         },
         "called_number": {
           "name": "Called number",
@@ -2069,6 +2077,10 @@
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
         },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
+        },
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
@@ -2134,6 +2146,10 @@
         "trunk": {
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
+        },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
         },
         "called_number": {
           "name": "Called number",
@@ -2209,6 +2225,10 @@
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
         },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
+        },
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
@@ -2283,6 +2303,10 @@
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
         },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
+        },
         "called_number": {
           "name": "Called number",
           "description": "The called number extracted and normalized at ingress."
@@ -2352,6 +2376,10 @@
         "trunk": {
           "name": "SIP trunk",
           "description": "Match this stable line even after it is renamed."
+        },
+        "outbound_trunk_id": {
+          "name": "Ausgehender Trunk",
+          "description": "Trunk, über den der Anruf geführt wurde. Für alle leer lassen."
         },
         "called_number": {
           "name": "Called number",
