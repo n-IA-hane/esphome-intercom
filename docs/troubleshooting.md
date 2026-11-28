@@ -216,10 +216,15 @@ triggered a TCP attempt. This can happen when video adds more SDP to the SIP
 request; it does not mean the video itself uses TCP. If every TCP connection
 candidate is explicitly refused/reset or reports protocol-unreachable before
 the request is sent, the client retries the original UDP route once, as described
-in RFC 3261 section 18.1.1. The log marks this with
-`reason=connection_rejected_before_send`. Timeouts and unrelated errors do not
-enable that retry. Explicit transport choices and reused registration flows
-remain unchanged, and TLS is never downgraded by this recovery.
+in RFC 3261 section 18.1.1. The same compatibility recovery covers a confirmed
+plain TCP connection-setup timeout toward a resolved IP address, such as a
+firewall silently dropping SYN packets while UDP remains reachable. It uses
+the existing setup budget and preserves the original SDP and dialog identity.
+The log marks this with `reason=connection_failed_before_send`. DNS, writer
+publication, unrelated errors, cancellation and SIP response timeouts do not
+enable that retry. A request already queued or sent over TCP is never replayed
+over UDP by this recovery. Explicit TCP/TLS choices and reused registration
+flows remain unchanged, and TLS is never downgraded.
 
 These entries describe application-level attempts and outcomes, not captured
 TCP SYN/RST packets. For an on-wire handshake or firewall diagnosis, capture

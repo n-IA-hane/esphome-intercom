@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import errno
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from .core import sip
 from .core.audio_format import AudioFormat
-from .core.sip_transport import bind_flow_usage
+from .core.sip_transport import bind_flow_usage, open_sip_tcp_connection, udp_fallback_allowed_before_send
 from .queue_utils import put_drop_oldest
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 
@@ -154,42 +153,44 @@ class SipTcpServer:
     async def _request_route(self, target: sip.SipUri, source: tuple[str, int]) -> tuple[str, int]:
         from .core.sip_resolution import SipServerResolver
 
-        async with asyncio.timeout(8.0):
-            if self.server is None:
-                raise ConnectionError("SIP TCP listener is stopped")
+        deadline = asyncio.get_running_loop().time() + 8.0
+        if self.server is None:
+            raise ConnectionError("SIP TCP listener is stopped")
+        async with asyncio.timeout_at(deadline):
             candidates = await SipServerResolver().resolve(target, transport="TCP")
-            connection_errors = []
-            for candidate in candidates:
-                for host, port, transport in candidate.endpoints():
-                    if transport != "TCP":
-                        continue
-                    address = (host, port)
-                    tx = self._tcp_writers.get(address)
-                    if tx is not None and not tx.writer.is_closing() and not tx.task.done():
-                        return address
-                    if len(self._client_tasks) >= self.max_connections:
-                        raise ConnectionError("SIP TCP connection budget exhausted")
-                    try:
-                        reader, writer = await asyncio.open_connection(host, port)
-                    except OSError as err:
-                        connection_errors.append(err)
-                        continue
-                    ready = asyncio.get_running_loop().create_future()
-                    task = asyncio.create_task(self._handle_client(reader, writer, ready), name="voip-sip-outbound-flow")
-                    task.add_done_callback(self._outbound_flow_done)
-                    try:
+        connection_errors = []
+        for candidate in candidates:
+            for host, port, transport in candidate.endpoints():
+                if transport != "TCP":
+                    continue
+                address = (host, port)
+                tx = self._tcp_writers.get(address)
+                if tx is not None and not tx.writer.is_closing() and not tx.task.done():
+                    return address
+                if len(self._client_tasks) >= self.max_connections:
+                    raise ConnectionError("SIP TCP connection budget exhausted")
+                try:
+                    reader, writer = await open_sip_tcp_connection(host, port, deadline=deadline)
+                except OSError as err:
+                    connection_errors.append(err)
+                    continue
+                ready = asyncio.get_running_loop().create_future()
+                task = asyncio.create_task(self._handle_client(reader, writer, ready), name="voip-sip-outbound-flow")
+                task.add_done_callback(self._outbound_flow_done)
+                try:
+                    async with asyncio.timeout_at(deadline):
                         published = await ready
-                    except BaseException:
-                        task.cancel()
-                        await asyncio.gather(task, return_exceptions=True)
-                        raise
-                    if published:
-                        return published
+                        if not published:
+                            await asyncio.gather(task, return_exceptions=True)
+                except BaseException:
+                    task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
-            if connection_errors and all(error.errno in {
-                    errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT} for error in connection_errors):
-                raise connection_errors[-1]
-            raise ConnectionError("SIP subscription next hop is unreachable")
+                    raise
+                if published:
+                    return published
+        if connection_errors and all(udp_fallback_allowed_before_send(error) for error in connection_errors):
+            raise connection_errors[-1]
+        raise ConnectionError("SIP subscription next hop is unreachable")
 
     @staticmethod
     def _outbound_flow_done(task):

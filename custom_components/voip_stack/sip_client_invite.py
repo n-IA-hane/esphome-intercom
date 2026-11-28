@@ -491,12 +491,12 @@ class SipInviteTransactions:
                 if self._cancel_requested or self._closing or self._closed:
                     self._invite_transaction_active = False
                     return "cancelled"
-                # Only a definite refusal/reset or protocol-unreachable error
-                # permits UDP fallback before this TCP request was sent.
-                if not exchange.tcp_refused_before_send():
+                # Retry only a classified connection failure before this TCP
+                # request was sent; DNS, lifecycle and response timeouts do not qualify.
+                if not exchange.tcp_setup_allows_udp_fallback():
                     return self._transport_failure(exchange.selection_error("TCP"), exchange.target, exchange.host, exchange.port)
                 _LOGGER.info("SIP request transport fallback call_id=%s bytes=%s from=TCP to=UDP "
-                             "reason=connection_rejected_before_send", self.dialog_ids.call_id, len(exchange.request))
+                             "reason=connection_failed_before_send", self.dialog_ids.call_id, len(exchange.request))
                 self.signaling_transport = "UDP"
                 exchange.udp_fallback_used = True
                 (self._reused_flow_send, self._reused_flow_responses, self._reused_flow_close,

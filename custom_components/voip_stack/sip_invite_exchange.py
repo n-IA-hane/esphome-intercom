@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Self
 
 from .core import sdp, sip
-from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES
+from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, udp_fallback_allowed_before_send
 
 
 if TYPE_CHECKING:
@@ -122,11 +121,9 @@ class InviteExchange:
             and not self.udp_fallback_used
         )
 
-    def tcp_refused_before_send(self) -> bool:
+    def tcp_setup_allows_udp_fallback(self) -> bool:
         return bool(self.selection_errors) and all(
-            isinstance(error, OSError)
-            and error.errno in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}
-            for error in self.selection_errors
+            udp_fallback_allowed_before_send(error) for error in self.selection_errors
         )
 
     def selection_error(self, transport: str) -> OSError | RuntimeError:

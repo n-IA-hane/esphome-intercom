@@ -3,12 +3,42 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import ipaddress
 import ssl
 import logging
 
 SIP_UDP_SAFE_REQUEST_BYTES = 1300
 # IPv4 UDP payload: 65535 bytes minus the IP and UDP headers.
 SIP_UDP_MAX_REQUEST_BYTES = 65507
+
+
+class SipTcpConnectTimeout(TimeoutError):
+    """A resolved plain TCP destination timed out before SIP could be sent."""
+
+
+def udp_fallback_allowed_before_send(error: BaseException) -> bool:
+    """Classify setup failures only; callers must still guard delivery state."""
+    return isinstance(error, SipTcpConnectTimeout) or (
+        isinstance(error, OSError)
+        and error.errno in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}
+    )
+
+
+async def open_sip_tcp_connection(host: str, port: int, *, deadline: float):
+    """Bound plain TCP setup with its existing deadline, excluding DNS guesses."""
+    try:
+        ipaddress.ip_address(host)
+        resolved = True
+    except ValueError:
+        resolved = False
+    try:
+        async with asyncio.timeout_at(deadline):
+            return await asyncio.open_connection(host, port)
+    except TimeoutError as err:
+        if not resolved:
+            raise
+        raise SipTcpConnectTimeout(errno.ETIMEDOUT, "SIP TCP connection setup timed out") from err
 
 
 async def default_tls_context() -> ssl.SSLContext:

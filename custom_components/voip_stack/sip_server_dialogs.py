@@ -5,13 +5,12 @@ from __future__ import annotations
 from .peer_media_profile import legacy_pcm_compatibility
 
 import asyncio
-import errno
 from dataclasses import replace
 from typing import Callable
 from .sip_listener_request import SipRequestResult
 from .core import sdp, sip
 from .core.sip_auth import DigestChallengeTracker
-from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox
+from .core.sip_transport import SIP_UDP_SAFE_REQUEST_BYTES, SipResponseMailbox, udp_fallback_allowed_before_send
 from .core.sip_dialog import DialogKey, apply_remote_offer_media, notify_media_commit, build_dialog_request, uas_request_matches_dialog
 from .core.sip_transaction import SIP_TIMER_B as _INVITE_2XX_TIMEOUT, async_run_dialog_request_transaction, matches_invite_error_ack
 import logging
@@ -467,8 +466,7 @@ class SipServerDialogs:
                 except OSError as err:
                     # Only setup failure before any request bytes were sent may
                     # retry UDP (RFC3261 section18.1.1), never a response timeout.
-                    if requested_transport == "TCP" or err.errno not in {
-                            errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}:
+                    if requested_transport == "TCP" or not udp_fallback_allowed_before_send(err):
                         raise
                     udp_fallback_used = True
                 else:

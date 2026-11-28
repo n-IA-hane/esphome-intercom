@@ -48,6 +48,7 @@ from .session_cleanup import async_wait_for_cleanup
 from .core import sdp, sip, sip_transfer
 from .core.sip_transport import (
     default_tls_context,
+    open_sip_tcp_connection,
     SipMessageDispatcher,
 )
 from .core.sip_auth import (
@@ -659,8 +660,9 @@ class SipCallClient(SipInviteTransactions, SipLocalOffers, SipDialogRequests):
                     )
             else:
                 budget = min(8.0, max(0.001, self._invite_setup_deadline - asyncio.get_running_loop().time())) if self._invite_setup_deadline is not None else 8.0
-                async with asyncio.timeout(budget):
-                    reader, writer = await asyncio.open_connection(host, port)
+                reader, writer = await open_sip_tcp_connection(
+                    host, port, deadline=asyncio.get_running_loop().time() + budget,
+                )
             if self._closing or self._closed:
                 writer.close()
                 with contextlib.suppress(Exception):
