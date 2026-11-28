@@ -32,7 +32,7 @@ from .const import (
 from .outbound_identity import outbound_identity
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     EndpointRouteResolver,
@@ -79,6 +79,7 @@ from .sip_runtime import (
 from .softphone_commands import (
     bind_service_call_controller as _bind_service_call_controller,
 )
+from .session_cleanup import async_wait_for_cleanup
 from .browser_phone_data import _ha_softphone_store
 
 
@@ -449,16 +450,24 @@ async def _async_dispatch_browser_call_route(
         # roster contacts, registered endpoints and trunk numbers are still
         # available to normal controllers.
         await async_require_service_admin(hass, call)
-    if route.action is RouteAction.PARKING and route.entry.metadata.get("parking_mode") == "directed_pickup":
+    if route.action is RouteAction.PARKING and route.entry.metadata.get("parking_mode") in {"directed_pickup", "pickup"}:
         from .call_pickup import pickup_browser
-        await _async_prepare_ha_outbound_call(hass, endpoint_id)
-        await pickup_browser(call, browser_endpoint, route.entry.metadata["parking_slot"])
-        return
-    if route.action is RouteAction.PARKING and route.entry.metadata.get("parking_mode") == "pickup":
         from .parking import pickup_browser_call
 
+        registry = _call_registry(hass)
+        preliminary = registry.get_session(routing_call_id or "")
+        token = preliminary.token if preliminary is not None else None
         await _async_prepare_ha_outbound_call(hass, endpoint_id)
-        await pickup_browser_call(call, browser_endpoint, route.entry.metadata["parking_slot"])
+        pickup = pickup_browser if route.entry.metadata["parking_mode"] == "directed_pickup" else pickup_browser_call
+        recovered = await pickup(call, browser_endpoint, route.entry.metadata["parking_slot"])
+        # Pickup adopts the retained caller's session. Its preliminary native
+        # route window must not survive as an empty, separately owned call.
+        if token is not None and recovered.call_id != token.call_id:
+            barrier = registry.request_termination(token.call_id,
+                TerminationIntent(TerminalReason.FORWARDED.value, initiator=TerminationInitiator.ROUTING),
+                generation=token.generation)
+            if barrier is not None:
+                await async_wait_for_cleanup(barrier)
         return
     if (
         force_ha_bridge or bool(call.data.get("ha_bridge", False))
