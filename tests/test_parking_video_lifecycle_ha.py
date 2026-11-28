@@ -392,8 +392,8 @@ async def test_established_video_parking_reuses_source_and_resumes_on_another_ph
             observe_offer(raw)
             return result
 
-        def observe_client_wire(client, raw, host, port):
-            result = native_client_send(client, raw, host, port)
+        def observe_client_wire(client, raw, host, port, *, network_target=None):
+            result = native_client_send(client, raw, host, port, network_target=network_target)
             if result:
                 observe_offer(raw)
             return result

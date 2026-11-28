@@ -925,12 +925,12 @@ async def test_native_add_contact_flow_creates_only_a_contact(hass, monkeypatch)
         _assert_native_contact_owner(hass, entry, contacts[0]["id"])
 
 
-async def test_native_cookbook_triggers_and_conditions_validate(hass):
+async def test_native_cookbook_triggers_and_conditions_validate(hass, tmp_path):
     import re
-    import yaml
     from homeassistant.helpers import config_validation as cv
     from homeassistant.helpers.trigger import async_validate_trigger_config
     from homeassistant.helpers.condition import async_validate_condition_config
+    from homeassistant.util.yaml import Secrets, load_yaml
     from custom_components.voip_stack.contact_config import replace_contacts
     from custom_components.voip_stack.duration_config import initialize_duration_config
 
@@ -939,7 +939,20 @@ async def test_native_cookbook_triggers_and_conditions_validate(hass):
     entry.add_to_hass(hass)
     replace_contacts(hass, entry, [{"id": "welcome", "name": "Welcome",
         "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}}])
-    text = (Path(__file__).parents[1] / "docs/AUTOMATION_DIALPLAN.md").read_text()
+
+    def load_examples():
+        text = (Path(__file__).parents[1] / "docs/AUTOMATION_DIALPLAN.md").read_text()
+        # File-managed examples resolve secrets through HA's configuration loader.
+        (tmp_path / "secrets.yaml").write_text('voip_gate_pin: "0042"\n')
+        secrets = Secrets(tmp_path)
+        examples = []
+        for index, block in enumerate(re.findall(r"```yaml\n(.*?)```", text, re.S)):
+            path = tmp_path / f"cookbook-{index}.yaml"
+            path.write_text(block)
+            examples.append(load_yaml(path, secrets))
+        return examples
+
+    examples = await hass.async_add_executor_job(load_examples)
     counts = {"triggers": 0, "conditions": 0}
 
     async def validate(value):
@@ -959,8 +972,8 @@ async def test_native_cookbook_triggers_and_conditions_validate(hass):
     async with _native_contact_events(hass, entry):
         _device, event = _assert_native_contact_owner(hass, entry, "welcome")
         assert event.entity_id == "event.welcome_call"
-        for block in re.findall(r"```yaml\n(.*?)```", text, re.S):
-            await validate(yaml.safe_load(block))
+        for example in examples:
+            await validate(example)
     assert counts["triggers"] >= 15
     assert counts["conditions"] >= 3
 

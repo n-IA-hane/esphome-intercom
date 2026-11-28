@@ -367,7 +367,7 @@ async def test_destination_resume_negotiates_retained_uac_source_on_wire(monkeyp
         await video.stop()
 
 
-async def test_preanswered_bridge_activates_explicit_uac_source_without_uas_lookup(monkeypatch):
+async def test_preanswered_bridge_activates_explicit_uac_source_without_uas_lookup(hass, monkeypatch):
     from custom_components.voip_stack import outbound_bridge_commit as module, sip_bridge, sip_rtp_bridge, call_projection
     from custom_components.voip_stack.inbound_answer import AnswerCommitResult
     from tests.test_outbound_bridge_commit import _fixture
@@ -394,7 +394,6 @@ async def test_preanswered_bridge_activates_explicit_uac_source_without_uas_look
     from custom_components.voip_stack import media_ports
     inventory = SimpleNamespace(rtp_port_pool={"used": {40000, 40002}})
     monkeypatch.setattr(media_ports, "require_runtime_data", lambda _: inventory)
-    hass = object()
     result = await module.async_commit_outbound_bridge(
         hass, registry,
         module.BridgeCommitData(invite=invite, winner=winner, source_relay_port=40000,

@@ -73,6 +73,7 @@ class _OfflinePolicy(Enum):
 
 @pytest.fixture
 def softphone_originate(monkeypatch):
+    session_contract = load_voip_stack_module("endpoint_session")
     package_name = "voip_stack_softphone_originate_test"
     package = types.ModuleType(package_name)
     package.__path__ = [str(MODULE.parent)]
@@ -142,10 +143,8 @@ def softphone_originate(monkeypatch):
         },
         "endpoint_termination": {"EndpointTerminationHandler": Mock()},
         "endpoint_session": {
-            "TerminationInitiator": SimpleNamespace(
-                LOCAL_USER="local_user",
-                RUNTIME="runtime",
-            )
+            "TerminationInitiator": session_contract.TerminationInitiator,
+            "TerminationIntent": session_contract.TerminationIntent,
         },
         "endpoint_registry": {
             "EndpointBusyError": type("EndpointBusyError", (Exception,), {})
